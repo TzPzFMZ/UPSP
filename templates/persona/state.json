@@ -1,0 +1,30 @@
+{
+  "meta": {
+    "total_round": 0,
+    "last_rhythm_round": 0,
+    "version": "auto-1.6"
+  },
+  "dynamic_axes": {
+    "valence": 0,
+    "arousal": 0,
+    "focus": 0,
+    "mood": 0,
+    "humor": 0,
+    "safety": 0
+  },
+  "core_speed_wheel": 0,
+  "core_axis_snapshots": [],
+  "workhood_index": {
+    "value": 0.0,
+    "self_reference": 0.0,
+    "self_reflection": 0.0,
+    "autonomy": 0.0,
+    "last_update_round": 0
+  },
+  "token_usage": {
+    "current_round_tokens": 0,
+    "current_rhythm_period_tokens": 0,
+    "last_rhythm_period_tokens": 0,
+    "total_tokens": 0
+  }
+}
