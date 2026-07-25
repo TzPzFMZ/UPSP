@@ -1,0 +1,31 @@
+{
+  "layer": "lately",
+  "description": "最近缓存：允许进入语料履带的近期语料块集合；主源为 STM/context/cache/lately_cache.jsonl",
+  "store": {
+    "path": "STM/context/cache/lately_cache.jsonl",
+    "format": "jsonl",
+    "schema": "corpus_block.v1"
+  },
+  "allowed_kinds": [
+    "interaction",
+    "assistant_reply",
+    "dialogue_progress",
+    "tool_fact",
+    "setup_fact",
+    "relay_handoff",
+    "minimum_commitment",
+    "fault_note",
+    "cache_summary",
+    "material"
+  ],
+  "budget_chars": 262144,
+  "trim_chars": 65536,
+  "compact_ratio": 0.618,
+  "compact_shard_chars": 8192,
+  "compact_shard_ratio": 0.314,
+  "fifo_policy": "complete_block",
+  "retired_round_window": {
+    "window_by_step": "retired by Spec 061; lately length is character-managed",
+    "retention_rounds": "retired by Spec 061; batch deletion uses trim_chars"
+  }
+}

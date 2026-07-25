@@ -1,0 +1,13 @@
+# Spec634 cold snapshots are byte-preserving evidence, not editable text.
+docs/library/archive/dds/UPSP_Base_DDS_v0.44.0-pre-consolidation.md -text -diff
+docs/library/archive/current-state/pre-spec634/AGENTS.md -text -diff
+docs/library/archive/current-state/pre-spec634/CODEX_MEMORY.md -text -diff
+docs/library/archive/current-state/pre-spec634/CODEX_AGENT_SESSION.md -text -diff
+docs/library/archive/current-state/pre-spec634/CODEX_CONTEXT_CHECKPOINT_20260513.md -text -diff
+docs/library/archive/current-state/pre-spec634/current_entry_index.md -text -diff
+
+# Generated GUI outputs and frozen Spec696 substage snapshots are byte-checked artifacts.
+UPSP/gui/app.js -text -diff
+UPSP/gui/markdown-mermaid.js -text -diff
+UPSP/gui/markdown.css -text -diff
+.speckit/specs/696-seed-gui-rich-markdown/consolidated_gui_substages/** -text -diff

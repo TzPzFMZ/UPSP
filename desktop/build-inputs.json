@@ -1,0 +1,30 @@
+{
+  "schema_version": "upsp_windows_build_inputs.v1",
+  "architecture": "win-x64",
+  "inputs": {
+    "dotnet_sdk": {
+      "version": "10.0.302",
+      "file": "dotnet-sdk-10.0.302-win-x64.zip",
+      "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.302/dotnet-sdk-10.0.302-win-x64.zip",
+      "sha256": "2cb9d5d98aeda0582ec02a1e429a613df6d97a1ce0f06b361f7def9b7e7c1a6b"
+    },
+    "python_embed": {
+      "version": "3.13.14",
+      "file": "python-3.13.14-embed-amd64.zip",
+      "url": "https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip",
+      "sha256": "90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907"
+    },
+    "nsis": {
+      "version": "3.12",
+      "file": "nsis-3.12.zip",
+      "url": "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.12/nsis-3.12.zip",
+      "sha256": "56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f"
+    },
+    "webview2_bootstrapper": {
+      "channel": "evergreen",
+      "file": "MicrosoftEdgeWebview2Setup.exe",
+      "url": "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/67ea10bf-049f-4ee6-ade4-ffb14d45b7d1/MicrosoftEdgeWebview2Setup.exe",
+      "sha256": "0223fa1e8d5bd5e4344fb8734e60d088e79f262c0a24444d01f240bc996f04e5"
+    }
+  }
+}

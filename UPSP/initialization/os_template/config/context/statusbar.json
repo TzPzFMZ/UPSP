@@ -1,0 +1,20 @@
+{
+  "_comment": "STATUSBAR状态栏层装配规则（每轮刷新，位于now之后、POPUP之前）",
+  "_version": "Base-0.11.0",
+  "_dds_ref": "§19.3 / §19.5 / §21.1",
+
+  "layer": {
+    "frequency": "statusbar",
+    "refresh": "every_round",
+    "cache_hit_rate": "~0%",
+    "attention_position": "second_last_before_popup"
+  },
+
+  "content": {
+    "modules": ["STATUSBAR"],
+    "includes_relation_focus_summary": true,
+    "relation_body_location": "CONTENT / relation_read.body"
+  },
+
+  "trim_policy": "none"
+}

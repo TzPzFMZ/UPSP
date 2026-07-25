@@ -1,0 +1,1062 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UPSP 轮直播</title>
+  <script src="vendor/markdown-it.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f6f8;
+      --panel: #ffffff;
+      --panel-soft: #fbfcfe;
+      --line: #d8dee8;
+      --line-strong: #aeb8c8;
+      --text: #17202d;
+      --muted: #657286;
+      --blue: #1f6feb;
+      --green: #16794c;
+      --orange: #b35a00;
+      --red: #b42318;
+      --violet: #6f55d9;
+      --code: #111827;
+      --highlight: #fff3bf;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.5 "Microsoft YaHei", "Segoe UI", sans-serif;
+    }
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 10px;
+      padding: 12px;
+    }
+    header,
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-width: 0;
+    }
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    .meta,
+    .toolbar-group {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+    }
+    .toolbar {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+    }
+    .strip {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+    .round-strip {
+      flex: 0 0 220px;
+    }
+    .frame-strip {
+      flex: 1 1 auto;
+    }
+    .pill,
+    .strip-button,
+    .icon-button,
+    select {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 6px;
+      padding: 4px 8px;
+      color: var(--muted);
+      font: inherit;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .strip-button,
+    .icon-button {
+      cursor: pointer;
+    }
+    .strip-button.active,
+    .icon-button.active {
+      color: #ffffff;
+      background: var(--blue);
+      border-color: var(--blue);
+    }
+    .icon-button:disabled {
+      cursor: not-allowed;
+      color: #9aa5b5;
+      background: #eef1f5;
+    }
+    .live-main {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+      gap: 10px;
+      min-height: 0;
+    }
+    .context-grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      grid-template-rows: minmax(120px, 0.72fr) repeat(2, minmax(160px, 1fr));
+      gap: 10px;
+      min-height: 0;
+    }
+    .context-grid > .pane:nth-child(-n + 4) {
+      grid-column: auto / span 3;
+    }
+    .context-grid > .pane:nth-child(n + 5):nth-child(-n + 7),
+    .context-grid > .pane:nth-child(n + 8):nth-child(-n + 10) {
+      grid-column: auto / span 4;
+    }
+    .pane {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .pane-title {
+      padding: 7px 9px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 38px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--panel-soft);
+    }
+    .pane:first-child .pane-title {
+      color: var(--blue);
+    }
+    .pane-title-main {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pane-title-main span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .pane-tools {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .pane-tools select {
+      max-width: 150px;
+      padding: 3px 6px;
+    }
+    .pane-body {
+      overflow: auto;
+      padding: 10px;
+      color: var(--code);
+    }
+    .markdown {
+      overflow-wrap: anywhere;
+      font: 12px/1.55 "Microsoft YaHei", "Segoe UI", sans-serif;
+    }
+    .markdown h2,
+    .markdown h3 {
+      margin: 0 0 8px;
+      line-height: 1.25;
+      color: var(--text);
+    }
+    .markdown h2 { font-size: 14px; }
+    .markdown h3 { font-size: 13px; margin-top: 10px; }
+    .markdown p,
+    .markdown ul,
+    .markdown ol,
+    .markdown table,
+    .markdown pre {
+      margin: 0 0 8px;
+    }
+    .markdown table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .markdown th,
+    .markdown td {
+      border: 1px solid var(--line);
+      padding: 4px 6px;
+      vertical-align: top;
+      text-align: left;
+    }
+    .markdown th {
+      background: #f2f5f9;
+    }
+    .markdown code {
+      background: #eef1f5;
+      border-radius: 4px;
+      padding: 1px 3px;
+      font-family: Consolas, "Microsoft YaHei", monospace;
+    }
+    .markdown pre {
+      overflow: auto;
+      background: #f0f3f7;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      white-space: pre-wrap;
+    }
+    .raw {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: 12px/1.5 Consolas, "Microsoft YaHei", monospace;
+      color: var(--code);
+    }
+    .corpus-block-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .corpus-block-card {
+      border: 1px solid var(--line);
+      border-left: 4px solid #6b7280;
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+    }
+    .corpus-block-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 8px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+      font: 12px/1.35 "Microsoft YaHei", "Segoe UI", sans-serif;
+      color: var(--text);
+      background: rgba(248, 250, 252, 0.86);
+    }
+    .corpus-block-title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 700;
+    }
+    .corpus-block-meta {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .corpus-block-body {
+      padding: 8px;
+    }
+    .corpus-block-card.tone-blue { border-left-color: #2563eb; background: #f8fbff; }
+    .corpus-block-card.tone-green { border-left-color: #059669; background: #f7fdf9; }
+    .corpus-block-card.tone-amber { border-left-color: #d97706; background: #fffaf0; }
+    .corpus-block-card.tone-purple { border-left-color: #7c3aed; background: #fbf8ff; }
+    .corpus-block-card.tone-rose { border-left-color: #e11d48; background: #fff8fb; }
+    .corpus-block-card.tone-slate { border-left-color: #475569; background: #f8fafc; }
+    .chat-shell {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      background: var(--panel);
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .chat-head {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      background: var(--panel-soft);
+    }
+    .conversation {
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: #fafbfc;
+    }
+    .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 9px 10px;
+      max-width: min(980px, 100%);
+      transition: border-color 120ms ease, background 120ms ease;
+    }
+    .card.highlighted {
+      border-color: #d19b00;
+      background: var(--highlight);
+      box-shadow: 0 0 0 1px rgba(209, 155, 0, 0.28);
+    }
+    .card.user {
+      align-self: flex-end;
+      border-color: #b8c7e6;
+      background: #eef5ff;
+    }
+    .card.assistant-progress,
+    .card.assistant-streaming,
+    .card.assistant-final {
+      align-self: flex-start;
+      border-color: #b8dcc8;
+      background: #f1fbf5;
+    }
+    .card.assistant-streaming {
+      border-color: #8fc8a8;
+      box-shadow: inset 3px 0 0 #4ca66f;
+    }
+    .card.assistant-streaming .card-summary::after {
+      content: " |";
+      animation: stream-caret 1s steps(2, start) infinite;
+    }
+    .card.assistant-final {
+      border-color: #99c6b0;
+    }
+    @keyframes stream-caret {
+      50% { opacity: 0; }
+    }
+    .card.tool-call,
+    .card.tool-result,
+    .card.runtime-parse,
+    .card.settlement,
+    .card.context-update {
+      align-self: stretch;
+    }
+    .card.tool-call { border-left: 4px solid var(--blue); }
+    .card.tool-result { border-left: 4px solid var(--green); }
+    .card.runtime-parse { border-left: 4px solid #6f7f95; }
+    .card.settlement { border-left: 4px solid var(--orange); }
+    .card.context-update { border-left: 4px solid var(--violet); }
+    .card.warning-error {
+      align-self: stretch;
+      border-left: 4px solid var(--red);
+      background: #fff5f4;
+    }
+    .card-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+    .card.collapsible .card-title {
+      align-items: center;
+      cursor: pointer;
+      margin-bottom: 0;
+    }
+    .card-title-main {
+      align-items: center;
+      display: flex;
+      gap: 7px;
+      min-width: 0;
+    }
+    .card-summary {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .card-toggle {
+      align-items: center;
+      background: #eef2f7;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      color: var(--muted);
+      display: inline-flex;
+      flex: 0 0 auto;
+      font-size: 11px;
+      height: 20px;
+      justify-content: center;
+      line-height: 1;
+      padding: 0;
+      width: 20px;
+    }
+    .card-toggle:hover {
+      background: #e1e8f0;
+    }
+    .card-body {
+      margin-top: 7px;
+    }
+    .card.collapsed .card-body {
+      display: none;
+    }
+    .input-row {
+      border-top: 1px solid var(--line);
+      padding: 10px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      background: #ffffff;
+    }
+    textarea {
+      min-height: 44px;
+      max-height: 120px;
+      resize: vertical;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 9px 10px;
+      font: inherit;
+    }
+    .send-disabled {
+      cursor: not-allowed;
+      min-width: 78px;
+    }
+    .empty {
+      color: var(--muted);
+      font-style: italic;
+    }
+    @media (max-width: 1100px) {
+      .app {
+        height: auto;
+        min-height: 100vh;
+        grid-template-rows: auto auto auto;
+      }
+      .toolbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .round-strip {
+        flex-basis: auto;
+      }
+      .live-main {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(520px, 58vh) minmax(360px, 1fr);
+      }
+      .context-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-rows: repeat(5, minmax(120px, 1fr));
+      }
+      .context-grid > .pane {
+        grid-column: auto / span 1;
+      }
+    }
+    @media (max-width: 720px) {
+      .app {
+        grid-template-rows: auto auto auto;
+      }
+      header,
+      .meta,
+      .chat-head {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .context-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: none;
+      }
+      .context-grid > .pane {
+        grid-column: auto;
+      }
+      .pane {
+        min-height: 180px;
+      }
+      .input-row {
+        grid-template-columns: 1fr;
+      }
+      .send-disabled {
+        min-height: 38px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <h1>UPSP 轮直播</h1>
+      <div class="meta">
+        <span class="pill" id="roundLabel">轮次：-</span>
+        <span class="pill" id="eventLabel">事件：0</span>
+        <span class="pill" id="modeLabel">LIVE</span>
+        <span class="pill" id="statusLabel">连接中</span>
+      </div>
+    </header>
+
+    <nav class="toolbar" aria-label="轮直播时间轴">
+      <div class="strip round-strip" id="roundStrip" aria-label="轮次选择"></div>
+      <div class="strip frame-strip" id="frameStrip" aria-label="调用步选择"></div>
+      <div class="toolbar-group">
+        <button class="icon-button active" id="liveToggle" type="button">LIVE</button>
+        <button class="icon-button" id="refreshToggle" type="button">暂停刷新</button>
+        <button class="icon-button" id="renderToggle" type="button">Markdown</button>
+        <button class="icon-button" id="eventCollapseToggle" type="button">展开事件</button>
+      </div>
+    </nav>
+
+    <div class="live-main">
+      <section class="context-grid" id="contextGrid" aria-label="实际调用上下文十窗"></section>
+
+      <section class="chat-shell" aria-label="滚动对话窗口">
+        <div class="chat-head">
+          <strong>滚动对话窗口</strong>
+          <span>用户输入、AI 回复、工具调用、工具结果、解析、落账全部在这一条流里</span>
+        </div>
+        <div class="conversation" id="conversation"></div>
+        <div class="input-row">
+          <textarea id="draftInput" aria-label="用户输入" placeholder="用户输入（第一版不发送 live provider）"></textarea>
+          <button class="icon-button send-disabled" type="button" disabled title="第一版只读观察，不触发 send --live">未接线</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const contextGrid = document.getElementById("contextGrid");
+    const conversation = document.getElementById("conversation");
+    const roundStrip = document.getElementById("roundStrip");
+    const frameStrip = document.getElementById("frameStrip");
+    const roundLabel = document.getElementById("roundLabel");
+    const eventLabel = document.getElementById("eventLabel");
+    const statusLabel = document.getElementById("statusLabel");
+    const modeLabel = document.getElementById("modeLabel");
+    const liveToggle = document.getElementById("liveToggle");
+    const refreshToggle = document.getElementById("refreshToggle");
+    const renderToggle = document.getElementById("renderToggle");
+    const eventCollapseToggle = document.getElementById("eventCollapseToggle");
+
+    let latestState = null;
+    let lastEventIndex = 0;
+    let currentRound = "latest";
+    let actualRound = null;
+    let liveMode = true;
+    let refreshPaused = false;
+    let selectedFrameId = null;
+    let renderMode = "markdown";
+    let pinnedToBottom = true;
+    const paneLocks = {};
+    const manualCollapseState = {};
+
+    const md = window.markdownit({
+      html: false,
+      linkify: false,
+      typographer: false,
+      breaks: false,
+    });
+    disableImageRule(md);
+
+    function disableImageRule(markdown) {
+      markdown.renderer.rules.image = (tokens, index) => {
+        const token = tokens[index];
+        const src = token.attrGet("src") || "";
+        const alt = token.content || "";
+        return `<code>![${escapeText(alt)}](${escapeText(src)})</code>`;
+      };
+    }
+
+    conversation.addEventListener("scroll", () => {
+      const gap = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight;
+      pinnedToBottom = gap < 24;
+    });
+
+    liveToggle.addEventListener("click", () => {
+      liveMode = true;
+      selectedFrameId = latestState?.latest_frame_id || null;
+      renderCurrentState();
+    });
+
+    refreshToggle.addEventListener("click", () => {
+      refreshPaused = !refreshPaused;
+      refreshToggle.classList.toggle("active", refreshPaused);
+      refreshToggle.textContent = refreshPaused ? "恢复刷新" : "暂停刷新";
+      statusLabel.textContent = refreshPaused
+        ? "刷新已暂停"
+        : `已恢复 ${new Date().toLocaleTimeString()}`;
+      if (!refreshPaused) {
+        poll();
+        loadRounds();
+      }
+    });
+
+    renderToggle.addEventListener("click", () => {
+      renderMode = renderMode === "markdown" ? "raw" : "markdown";
+      renderToggle.textContent = renderMode === "markdown" ? "Markdown" : "原文";
+      renderCurrentState();
+    });
+
+    eventCollapseToggle.addEventListener("click", () => {
+      const cards = (latestState?.conversation || []).filter((card) => card.collapsible);
+      const shouldExpand = cards.some((card) => isCardCollapsed(card));
+      for (const card of cards) {
+        const cardId = String(card.card_id || `${card.event_index}:${card.type}:${card.title}`);
+        manualCollapseState[cardId] = !shouldExpand;
+      }
+      renderCurrentState({ preserveScroll: true });
+    });
+
+    function escapeText(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function renderContent(target, contentMd, contentRaw) {
+      const text = renderMode === "raw" ? String(contentRaw || "") : String(contentMd || "");
+      if (target._contentText === text && target._renderMode === renderMode) {
+        return false;
+      }
+      target._contentText = text;
+      target._renderMode = renderMode;
+      if (renderMode === "raw") {
+        target.innerHTML = `<pre class="raw">${escapeText(text || "(空)")}</pre>`;
+      } else {
+        target.innerHTML = `<div class="markdown">${md.render(text || "_（空）_")}</div>`;
+      }
+      return true;
+    }
+
+    function renderPaneContent(target, pane) {
+      const blocks = Array.isArray(pane?.content_blocks) ? pane.content_blocks : [];
+      if (!blocks.length) {
+        return renderContent(target, pane?.content_md || pane?.content || "", pane?.content_raw || pane?.content || "");
+      }
+      const key = JSON.stringify(blocks.map((block) => [
+        block.block_id,
+        block.title,
+        block.tone,
+        renderMode === "raw" ? block.content_raw : block.content_md,
+      ]));
+      if (target._contentText === key && target._renderMode === renderMode) {
+        return false;
+      }
+      target._contentText = key;
+      target._renderMode = renderMode;
+      target.innerHTML = `<div class="corpus-block-stack">${blocks.map(renderCorpusBlock).join("")}</div>`;
+      return true;
+    }
+
+    function renderCorpusBlock(block) {
+      const title = escapeText(block.title || `语料块 ${Number(block.index || 0) || ""}`.trim());
+      const tone = String(block.tone || "slate").replace(/[^a-z0-9_-]/gi, "");
+      const text = renderMode === "raw"
+        ? String(block.content_raw || block.content_md || "")
+        : String(block.content_md || block.content_raw || "");
+      const chars = Number(renderMode === "raw" ? block.raw_chars : block.chars) || text.length;
+      const body = renderMode === "raw"
+        ? `<pre class="raw">${escapeText(text || "(空)")}</pre>`
+        : `<div class="markdown">${md.render(text || "_（空）_")}</div>`;
+      return `
+        <section class="corpus-block-card tone-${tone}">
+          <div class="corpus-block-head">
+            <div class="corpus-block-title">${title}</div>
+            <div class="corpus-block-meta">${chars} 字</div>
+          </div>
+          <div class="corpus-block-body">${body}</div>
+        </section>
+      `;
+    }
+
+    function isCardCollapsed(card) {
+      if (!card?.collapsible) {
+        return false;
+      }
+      const cardId = String(card.card_id || `${card.event_index}:${card.type}:${card.title}`);
+      if (Object.prototype.hasOwnProperty.call(manualCollapseState, cardId)) {
+        return Boolean(manualCollapseState[cardId]);
+      }
+      return Boolean(card.default_collapsed);
+    }
+
+    function updateEventCollapseToggle() {
+      const cards = (latestState?.conversation || []).filter((card) => card.collapsible);
+      eventCollapseToggle.disabled = cards.length === 0;
+      const anyCollapsed = cards.some((card) => isCardCollapsed(card));
+      eventCollapseToggle.textContent = anyCollapsed ? "展开事件" : "收起事件";
+    }
+
+    function scrollConversationToBottom({ smooth = true } = {}) {
+      const top = conversation.scrollHeight;
+      if (typeof conversation.scrollTo === "function") {
+        conversation.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+      } else {
+        conversation.scrollTop = top;
+      }
+    }
+
+    function frames() {
+      return latestState?.call_frames || [];
+    }
+
+    function frameById(frameId) {
+      return frames().find((frame) => frame.frame_id === frameId) || null;
+    }
+
+    function effectiveFrameId() {
+      if (!latestState) {
+        return null;
+      }
+      if (liveMode || !selectedFrameId) {
+        return latestState.latest_frame_id || null;
+      }
+      return selectedFrameId;
+    }
+
+    function effectiveFrame() {
+      return frameById(effectiveFrameId()) || frames()[frames().length - 1] || null;
+    }
+
+    function panesForGlobalSelection() {
+      const frame = effectiveFrame();
+      return frame?.context_panes || latestState?.context_panes || [];
+    }
+
+    function renderRoundStrip(rounds) {
+      const known = Array.isArray(rounds) ? rounds : [];
+      const activeRound = currentRound === "latest" ? "latest" : String(currentRound);
+      roundStrip.innerHTML = "";
+      const latestButton = document.createElement("button");
+      latestButton.className = `strip-button ${activeRound === "latest" ? "active" : ""}`;
+      latestButton.type = "button";
+      latestButton.textContent = "最新";
+      latestButton.addEventListener("click", () => selectRound("latest"));
+      roundStrip.appendChild(latestButton);
+      for (const item of known) {
+        const round = String(item.round);
+        const button = document.createElement("button");
+        button.className = `strip-button ${activeRound === round ? "active" : ""}`;
+        button.type = "button";
+        button.textContent = `R${round}`;
+        button.addEventListener("click", () => selectRound(round));
+        roundStrip.appendChild(button);
+      }
+    }
+
+    function renderFrameStrip() {
+      frameStrip.innerHTML = "";
+      const selected = effectiveFrameId();
+      for (const frame of frames()) {
+        const button = document.createElement("button");
+        button.className = `strip-button ${frame.frame_id === selected ? "active" : ""}`;
+        button.type = "button";
+        button.textContent = frame.label;
+        button.addEventListener("click", () => {
+          selectedFrameId = frame.frame_id;
+          liveMode = frame.frame_id === latestState.latest_frame_id;
+          renderCurrentState({ scrollHighlight: !liveMode });
+        });
+        frameStrip.appendChild(button);
+      }
+      if (!frames().length) {
+        const empty = document.createElement("span");
+        empty.className = "pill";
+        empty.textContent = "等待调用步";
+        frameStrip.appendChild(empty);
+      }
+    }
+
+    function selectRound(round) {
+      currentRound = round;
+      actualRound = null;
+      lastEventIndex = 0;
+      latestState = null;
+      liveMode = true;
+      selectedFrameId = null;
+      pinnedToBottom = true;
+      conversation.innerHTML = "";
+      poll();
+    }
+
+    function renderPanes() {
+      const globalPanes = panesForGlobalSelection();
+      for (const pane of globalPanes) {
+        const lock = paneLocks[pane.id] || { paused: false, frameId: null };
+        const lockedFrame = lock.paused && liveMode ? frameById(lock.frameId) : null;
+        const paneSource = lockedFrame
+          ? (lockedFrame.context_panes || []).find((item) => item.id === pane.id) || pane
+          : pane;
+        const node = ensurePaneNode(pane.id);
+        updatePaneNode(node, paneSource, lock);
+        contextGrid.appendChild(node);
+      }
+    }
+
+    function ensurePaneNode(paneId) {
+      let node = contextGrid.querySelector(`[data-pane-id="${CSS.escape(paneId)}"]`);
+      if (node) {
+        return node;
+      }
+      node = document.createElement("article");
+      node.className = "pane";
+      node.dataset.paneId = paneId;
+      node.innerHTML = `
+        <div class="pane-title">
+          <div class="pane-title-main">
+            <span class="pane-name"></span>
+            <span class="pane-chars"></span>
+          </div>
+          <div class="pane-tools"></div>
+        </div>
+        <div class="pane-body"></div>
+      `;
+      return node;
+    }
+
+    function updatePaneNode(node, pane, lock) {
+      node.querySelector(".pane-name").textContent = pane.title || pane.id;
+      node.querySelector(".pane-chars").textContent = `${Number(pane.chars || 0)} 字`;
+      renderPaneTools(node.querySelector(".pane-tools"), pane.id, lock);
+      const body = node.querySelector(".pane-body");
+      const beforeMax = Math.max(0, body.scrollHeight - body.clientHeight);
+      const previousTop = body.scrollTop;
+      const wasAtBottom = beforeMax - previousTop < 4;
+      const contentChanged = renderPaneContent(body, pane);
+      if (!contentChanged) {
+        return;
+      }
+      requestAnimationFrame(() => {
+        const afterMax = Math.max(0, body.scrollHeight - body.clientHeight);
+        const expectedTop = Math.min(previousTop, afterMax);
+        const currentTop = body.scrollTop;
+        const userMovedScroll = Math.abs(currentTop - expectedTop) > 2
+          && Math.abs(currentTop - afterMax) > 2;
+        if (userMovedScroll) {
+          return;
+        }
+        body.scrollTop = wasAtBottom ? afterMax : expectedTop;
+      });
+    }
+
+    function renderPaneTools(target, paneId, lock) {
+      target.innerHTML = "";
+      if (!liveMode) {
+        const disabled = document.createElement("button");
+        disabled.className = "icon-button";
+        disabled.type = "button";
+        disabled.disabled = true;
+        disabled.textContent = "暂停";
+        target.appendChild(disabled);
+        return;
+      }
+      if (lock.paused) {
+        const select = document.createElement("select");
+        for (const frame of frames()) {
+          const option = document.createElement("option");
+          option.value = frame.frame_id;
+          option.textContent = frame.label;
+          option.selected = frame.frame_id === lock.frameId;
+          select.appendChild(option);
+        }
+        select.addEventListener("change", () => {
+          paneLocks[paneId] = { paused: true, frameId: select.value };
+          renderPanes();
+        });
+        target.appendChild(select);
+      }
+      const button = document.createElement("button");
+      button.className = `icon-button ${lock.paused ? "active" : ""}`;
+      button.type = "button";
+      button.textContent = lock.paused ? "播放" : "暂停";
+      button.addEventListener("click", () => {
+        const current = paneLocks[paneId] || { paused: false, frameId: null };
+        paneLocks[paneId] = current.paused
+          ? { paused: false, frameId: null }
+          : { paused: true, frameId: effectiveFrameId() };
+        renderPanes();
+      });
+      target.appendChild(button);
+    }
+
+    function renderConversation(cards, options = {}) {
+      const selected = effectiveFrameId();
+      const seen = new Set();
+      let changed = false;
+      if (!cards || cards.length === 0) {
+        const emptyHtml = '<div class="empty">等待 round JSONL 事件...</div>';
+        if (conversation.innerHTML !== emptyHtml) {
+          conversation.innerHTML = emptyHtml;
+        }
+        return;
+      }
+      for (const card of cards) {
+        const cardId = String(card.card_id || `${card.event_index}:${card.type}:${card.title}`);
+        seen.add(cardId);
+        let node = conversation.querySelector(`[data-card-id="${CSS.escape(cardId)}"]`);
+        if (!node) {
+          node = document.createElement("article");
+          node.dataset.cardId = cardId;
+          conversation.appendChild(node);
+          changed = true;
+        }
+        const collapsible = Boolean(card.collapsible);
+        const collapsed = isCardCollapsed(card);
+        node.className = [
+          "card",
+          card.type || "runtime-parse",
+          collapsible ? "collapsible" : "",
+          collapsed ? "collapsed" : "",
+          card.frame_id && card.frame_id === selected ? "highlighted" : "",
+        ].filter(Boolean).join(" ");
+        node.dataset.frameId = card.frame_id || "";
+        const title = escapeText(card.title || card.type || "事件");
+        const summary = escapeText(card.summary || card.title || card.type || "事件");
+        const index = escapeText(card.event_index || "");
+        const phase = escapeText(card.phase || "");
+        const toggle = collapsible
+          ? `<button class="card-toggle" type="button" data-card-toggle aria-expanded="${collapsed ? "false" : "true"}" title="${collapsed ? "展开" : "收起"}">${collapsed ? "▸" : "▾"}</button>`
+          : "";
+        const head = `
+          <div class="card-title">
+            <span class="card-title-main">${toggle}<span class="card-summary">${collapsible ? summary : title}</span></span>
+            <span>#${index} ${phase}</span>
+          </div>
+        `;
+        const contentHost = document.createElement("div");
+        renderContent(contentHost, card.content_md || card.content || "", card.content_raw || card.content || "");
+        const nextHtml = `${head}<div class="card-body">${contentHost.innerHTML}</div>`;
+        if (node._html !== nextHtml) {
+          node._html = nextHtml;
+          node.innerHTML = nextHtml;
+          changed = true;
+        }
+        if (collapsible) {
+          const toggleCard = () => {
+            manualCollapseState[cardId] = !isCardCollapsed(card);
+            renderCurrentState({ preserveScroll: true });
+          };
+          const toggleButton = node.querySelector("[data-card-toggle]");
+          const titleRow = node.querySelector(".card-title");
+          if (toggleButton) {
+            toggleButton.onclick = (event) => {
+              event.stopPropagation();
+              toggleCard();
+            };
+          }
+          if (titleRow) {
+            titleRow.onclick = toggleCard;
+          }
+        }
+      }
+      for (const node of Array.from(conversation.querySelectorAll("[data-card-id]"))) {
+        if (!seen.has(node.dataset.cardId)) {
+          node.remove();
+          changed = true;
+        }
+      }
+      if (options.scrollHighlight) {
+        const highlighted = conversation.querySelector(".card.highlighted");
+        if (highlighted) {
+          highlighted.scrollIntoView({ block: "center", behavior: "smooth" });
+          pinnedToBottom = false;
+          return;
+        }
+      }
+      if (options.preserveScroll) {
+        return;
+      }
+      if (pinnedToBottom && liveMode && changed) {
+        scrollConversationToBottom({ smooth: false });
+      }
+    }
+
+    function renderCurrentState(options = {}) {
+      if (!latestState) {
+        return;
+      }
+      if (liveMode) {
+        selectedFrameId = latestState.latest_frame_id || selectedFrameId;
+      }
+      renderFrameStrip();
+      renderPanes();
+      renderConversation(latestState.conversation || [], options);
+      updateEventCollapseToggle();
+      roundLabel.textContent = `轮次：${actualRound ?? latestState.round ?? "-"}`;
+      eventLabel.textContent = `事件：${latestState.last_event_index || 0}`;
+      modeLabel.textContent = liveMode ? "LIVE" : "回放";
+      liveToggle.classList.toggle("active", liveMode);
+      liveToggle.textContent = liveMode ? "LIVE" : "回到最新";
+    }
+
+    async function loadRounds() {
+      if (refreshPaused) {
+        return;
+      }
+      try {
+        const res = await fetch("/api/rounds", { cache: "no-store" });
+        if (!res.ok) {
+          return;
+        }
+        const payload = await res.json();
+        renderRoundStrip(payload.rounds || []);
+      } catch (_err) {
+        // Round list is helpful, but the live state endpoint remains the primary path.
+      }
+    }
+
+    async function poll() {
+      if (refreshPaused) {
+        statusLabel.textContent = "刷新已暂停";
+        return;
+      }
+      const query = new URLSearchParams({ round: currentRound, after: String(lastEventIndex) });
+      try {
+        const res = await fetch(`/api/live/events?${query.toString()}`, { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const payload = await res.json();
+        if (currentRound === "latest" && actualRound !== null && payload.round !== actualRound) {
+          actualRound = payload.round ?? actualRound;
+          lastEventIndex = 0;
+          latestState = null;
+          poll();
+          return;
+        }
+        actualRound = payload.round ?? actualRound;
+        if (!payload.state) {
+          if (payload.last_event_index !== undefined) {
+            lastEventIndex = payload.last_event_index;
+          }
+          statusLabel.textContent = `无新事件 ${new Date().toLocaleTimeString()}`;
+          return;
+        }
+        latestState = payload.state || {};
+        if (latestState.last_event_index) {
+          lastEventIndex = latestState.last_event_index;
+        }
+        renderCurrentState();
+        statusLabel.textContent = `已连接 ${new Date().toLocaleTimeString()}`;
+      } catch (err) {
+        statusLabel.textContent = `连接异常：${err.message}`;
+      }
+    }
+
+    loadRounds();
+    poll();
+    setInterval(poll, 1200);
+    setInterval(loadRounds, 5000);
+  </script>
+</body>
+</html>

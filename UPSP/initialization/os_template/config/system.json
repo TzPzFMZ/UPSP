@@ -1,0 +1,70 @@
+{
+  "_comment": "系统级基础配置",
+  "_version": "Base-0.11.1",
+
+  "heartbeat": {
+    "interval": 5
+  },
+
+  "standby": {
+    "idle_threshold_min": 30
+  },
+
+  "round": {
+    "time_limit": 600
+  },
+
+  "rhythm": {
+    "period": 32
+  },
+
+  "identity_timeout": 3600,
+
+  "emergency": {
+    "contact": null,
+    "local_fallback_model": null,
+    "physical_alert": false
+  },
+
+  "health_check": {
+    "on_boot": "active",
+    "on_standby": "active",
+    "on_rhythm": "full"
+  },
+
+  "fatigue": {
+    "force_sleep_hours": 0
+  },
+
+  "autonomous_trigger": {
+    "tacit_pending_threshold": 512,
+    "connection_pending_threshold": 512
+  },
+
+  "audit": {
+    "round_snapshot_retention": 64,
+    "state_backup_retention": 8
+  },
+
+  "token_usage": {
+    "warning_ratio": 0.7,
+    "critical_ratio": 0.85,
+    "forced_rhythm_on_usage": false,
+    "_comment_forced_rhythm": "Base版关闭：单步API无持续上下文积累。Plus/Pro版开启。"
+  },
+
+  "connectivity": {
+    "max_latency_records": 32
+  },
+
+  "general_tools": {
+    "file_read_window_chars": 16384,
+    "web_fetch_window_chars": 4096,
+    "web_search_window_results": 5
+  },
+
+  "execution_permission": {
+    "level": "unlimited",
+    "_comment": "通用执行权限档位：limited=受限档，unlimited=放行档。真实狗粮应通过 CLI 显式指定档位。"
+  }
+}

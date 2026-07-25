@@ -1,0 +1,206 @@
+{
+  "_comment": "docs 文件注册表——脚本读此表决定当前场景该消费哪些文档文件",
+  "_version": "DDS v0.19.1",
+  "_spec": "DDS §12 docs/ 消费方式",
+  "_note": "DDS v0.19.1: docs 按 inject/lookup/popup/persona 登记。docs 不整篇注入 LLM 上下文；脚本查表、校验或抽取后转写到 STATUSBAR / LOOKUP / POPUP。popup 分 guide/reminder/warning 三 tier；reaction 默认主卡为 reaction_step_guide；跨轮中继正文归属 runtime.relay_intents 隐藏 payload，模型可见层只给目标卡和意图指针。",
+
+  "inject": [
+    {
+      "file": "dynamic.md",
+      "path": "protocol/base/dynamic.md",
+      "target": "STATUSBAR",
+      "trigger": "every_round",
+      "description": "动态六轴定义+区间表——脚本读数→查表→自然语言注入"
+    },
+    {
+      "file": "relation.md",
+      "path": "protocol/base/relation.md",
+      "target": "STATUSBAR",
+      "trigger": "has_interlocutor",
+      "description": "关系六轴定义——脚本读数→查表→自然语言注入"
+    },
+    {
+      "file": "core.md",
+      "path": "protocol/base/core.md",
+      "target": "STATUSBAR",
+      "trigger": "first_round_or_speed_change",
+      "description": "核心六轴定义——脚本读数→查表→自然语言注入"
+    },
+    {
+      "file": "workhood.md",
+      "path": "protocol/base/workhood.md",
+      "target": "STATUSBAR",
+      "trigger": "every_round",
+      "description": "工化指数公式——脚本计算→注入STATUSBAR"
+    }
+  ],
+
+  "lookup": [
+    {
+      "file": "interaction.md",
+      "path": "protocol/base/interaction.md",
+      "usage": "交互感受词与动态六轴Δ值的人类可读镜像；Runtime结构化真源为logic/feeling_lookup.py",
+      "description": "交互感受词表说明（四层）"
+    },
+    {
+      "file": "relational.md",
+      "path": "protocol/base/relational.md",
+      "usage": "关系感受词与关系六轴Δ值的人类可读镜像；Runtime结构化真源为logic/feeling_lookup.py",
+      "description": "关系感受词表说明（四层）"
+    },
+    {
+      "file": "heat.md",
+      "path": "protocol/base/heat.md",
+      "usage": "热度公式+衰减参数→脚本计算",
+      "description": "热度公式+衰减参数"
+    },
+    {
+      "file": "shapes.md",
+      "path": "protocol/base/shapes.md",
+      "usage": "记忆形态查表（脚本+LLM参考）",
+      "description": "记忆形态表"
+    },
+    {
+      "file": "modes.md",
+      "path": "protocol/base/modes.md",
+      "usage": "协议预设模式参数（脚本查表）",
+      "description": "协议预设模式说明"
+    },
+    {
+      "file": "round.md",
+      "path": "protocol/base/round.md",
+      "usage": "五类轮参数+节律点触发条件（脚本查表）",
+      "description": "五类轮说明+节律点参数"
+    },
+    {
+      "file": "containers.md",
+      "path": "protocol/base/containers.md",
+      "usage": "容器系统参考（脚本+LLM参考）",
+      "description": "容器系统说明"
+    },
+    {
+      "file": "workbench.md",
+      "path": "protocol/base/workbench.md",
+      "usage": "WB挂载槽位/操作表（脚本查表）",
+      "description": "WB挂载槽位/操作表"
+    },
+    {
+      "file": "context.md",
+      "path": "protocol/base/context.md",
+      "usage": "上下文装配参数表（脚本查表）",
+      "description": "脚本上下文装配参数表"
+    },
+    {
+      "file": "files.md",
+      "path": "protocol/base/files.md",
+      "usage": "文件系统参数表（脚本查表）",
+      "description": "脚本文件系统参数表"
+    },
+    {
+      "file": "tools.md",
+      "path": "protocol/base/tools.md",
+      "usage": "工具注册表短索引与查表参考（POPUP guide 来源另见 popup.guide）",
+      "description": "协议工具、通用工具与基座工具注册表"
+    },
+    {
+      "file": "workflows.md",
+      "path": "protocol/base/workflows.md",
+      "usage": "协议级固定操作流边界说明（脚本+LLM参考）",
+      "description": "协议工作流说明"
+    },
+    {
+      "file": "workflow_slots.md",
+      "path": "protocol/base/workflow_slots.md",
+      "usage": "流程插槽等级与插槽清单（脚本查表+LLM参考）",
+      "description": "流程插槽注册表"
+    },
+    {
+      "file": "schema.md",
+      "path": "protocol/base/schema.md",
+      "usage": "JSON schema校验（脚本）+ 三步输出模板（脚本提取→注入RULES）",
+      "description": "JSON数据字典 + 起手步/反应步/善后步输出表格模板（§20-22）"
+    },
+    {
+      "file": "terminology.md",
+      "path": "protocol/base/terminology.md",
+      "usage": "术语校对（脚本校验）",
+      "description": "术语辞典"
+    }
+  ],
+
+  "popup": {
+    "guide": [
+      {
+        "file": "tools.md",
+        "path": "protocol/base/tools.md",
+        "tier": "guide",
+        "usage": "协议工具与通用工具短索引和边界说明；字段纪律以 provider-native schema 为准",
+        "source_mode": "template",
+        "description": "工具短索引与边界说明"
+      },
+      {
+        "file": "popup.md",
+        "path": "protocol/base/popup.md",
+        "tier": "guide",
+        "usage": "cleanup_feeling_words / cleanup_schema_attention / step_output_schema_attention 等普通 guide 模板源",
+        "source_mode": "template",
+        "description": "POPUP 普通 guide 模板源"
+      },
+      {
+        "file": "schema.md",
+        "path": "protocol/base/schema.md",
+        "tier": "guide",
+        "usage": "setup / reaction / cleanup 本步输出契约抽取源",
+        "source_mode": "template",
+        "description": "三步输出 guide 源"
+      }
+    ],
+    "reminder": [
+      {
+        "file": "popup.md",
+        "path": "protocol/base/popup.md",
+        "tier": "reminder",
+        "usage": "identity_prompt / identity_resolution_card / legacy tool_request_card 等 reminder 模板源",
+        "source_mode": "template",
+        "description": "POPUP reminder 模板源"
+      }
+    ],
+    "warning": [
+      {
+        "file": "popup.md",
+        "path": "protocol/base/popup.md",
+        "tier": "warning",
+        "usage": "security_review / structure_warning / native_tool_result 等 warning 模板源",
+        "source_mode": "template",
+        "description": "POPUP warning 模板源"
+      }
+    ]
+  },
+
+  "persona": [
+    {
+      "file": "glossary.md",
+      "path": "persona/glossary.md",
+      "consume": "runtime_growth",
+      "description": "位格专属术语表（运行时填充）"
+    },
+    {
+      "file": "interaction_feelings.md",
+      "path": "persona/interaction_feelings.md",
+      "consume": "deferred",
+      "description": "位格自用交互感受扩展草案（当前不加载）"
+    },
+    {
+      "file": "relation_feelings.md",
+      "path": "persona/relation_feelings.md",
+      "consume": "deferred",
+      "description": "位格自用关系感受扩展草案（当前不加载）"
+    },
+    {
+      "file": "modes.md",
+      "path": "persona/modes.md",
+      "consume": "runtime_growth",
+      "description": "位格活动模式参数——覆盖协议层预设模式（运行时填充）"
+    }
+  ]
+}

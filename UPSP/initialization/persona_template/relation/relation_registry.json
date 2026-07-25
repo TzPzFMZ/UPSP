@@ -1,0 +1,11 @@
+{
+  "_comment": "关系域注册表（初始化时只生成位格自身关系卡）",
+  "_version": "Base-0.46.9",
+  "categories": [
+    "self",
+    "ours",
+    "them",
+    "orgs"
+  ],
+  "cards": []
+}

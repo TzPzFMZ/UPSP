@@ -1,0 +1,630 @@
+"""
+心跳闹钟 — UPSP 的时间感知器
+DDS §23.5 心跳机制
+
+硬约束（18 项布尔检查，V6 训练材料阈值）：
+  1. 不计轮数（轮数由 runtime.py 管）
+  2. 不调 API（零网络请求）
+  3. 不注入 LLM（不碰上下文）
+  4. 不判断业务（只看数值/时间/待处理事实源，不看语义）
+  5. 不回滚（只置位，不消费）
+  6. 轮内暂停（runtime 调 pause()，善后步调 resume()）
+
+18 个布尔标记（V6: 17→18，新增进化集材料阈值置位）：
+  1-10: fatigue_expired(退役残留清理)/feeling_settle_due/api_degraded/stm_degrade_pending/
+        process_down/user_message_waiting/rhythm_due/standby_due/
+        continue_requested/shelve_timer_expired
+  11: token_usage_warning   ← V2 新增
+  12: identity_timeout      ← V2 新增；Spec598 后退役为残留清理
+  13: calendar_day_due      ← V5 新增（日历日：日志+语料备份）
+  14: calendar_week_due     ← V5 新增（日历周：周志+语料备份）
+  15: calendar_month_due    ← V5 新增（日历月：月志+语料备份）
+  16: calendar_quarter_due  ← V5 新增（日历季：季志+语料备份）
+  17: calendar_year_due     ← V5 新增（日历年：年志+语料备份）
+  18: evolution_pending     ← V6 新增（Raw/Tacit 或 Raw/Connection 达阈值）
+
+engines/ vs scripts/ 边界：
+  心跳只管 WHEN（到了该检查的时间）→ 置位 flag
+  脚本处理 HOW（具体怎么处理 flag）→ 消费 flag
+"""
+import threading
+from datetime import datetime
+
+from data.state_store import StateStore
+from data.config_store import ConfigStore
+from data.connectivity_store import ConnectivityStore
+from data.memory_heat import MemoryHeat
+from data.evolution_store import EvolutionStore
+from constants import (
+    TZ_SHANGHAI, HEARTBEAT_DEFAULT_INTERVAL,
+    RHYTHM_INTERVAL_ROUNDS,
+    STANDBY_IDLE_MINUTES, IDENTITY_TIMEOUT_SECONDS,
+    TOKEN_WARNING_RATIO,
+)
+
+
+HEARTBEAT_TRIGGER_GROUPS = {
+    "interaction": (
+        "user_message_waiting",
+    ),
+    "rhythm": (
+        "rhythm_due",
+        "calendar_day_due",
+        "calendar_week_due",
+        "calendar_month_due",
+        "calendar_quarter_due",
+        "calendar_year_due",
+        "api_degraded",
+        "process_down",
+        "token_usage_warning",
+        "context_pressure",
+        "cache_compaction_due",
+    ),
+    "relay": (
+        "continue_requested",
+    ),
+    "autonomous": (
+        "fatigue_expired",
+        "stm_degrade_pending",
+        "evolution_pending",
+    ),
+    "standby": (
+        "standby_due",
+        "shelve_timer_expired",
+    ),
+}
+
+HEARTBEAT_TRIGGER_PRIORITY = (
+    "rhythm",
+    "interaction",
+    "relay",
+    "autonomous",
+    "standby",
+)
+
+HEARTBEAT_GROUP_ROUND_TYPES = {
+    "interaction": "interactive",
+    "rhythm": "rhythm",
+    "relay": "relay",
+    "autonomous": "autonomous",
+    "standby": "standby",
+}
+
+HEARTBEAT_QUALIFIER_FLAGS = (
+    "identity_timeout",
+)
+
+HEARTBEAT_HEALTH_ONLY_FLAGS = ()
+
+HEARTBEAT_LOCAL_MAINTENANCE_FLAGS = (
+    "feeling_settle_due",
+)
+
+
+EMERGENCY_GUIDE_FLAGS = (
+    "api_degraded",
+    "process_down",
+)
+
+CONTEXT_PRESSURE_GUIDE_FLAGS = (
+    "token_usage_warning",
+    "context_pressure",
+)
+
+CACHE_COMPACTION_GUIDE_FLAGS = (
+    "cache_compaction_due",
+)
+
+MAIN_AXIS_GUIDE_FLAGS = (
+    "rhythm_due",
+)
+
+CALENDAR_GUIDE_ITEMS = (
+    ("calendar_day", "calendar_day_due"),
+    ("calendar_week", "calendar_week_due"),
+    ("calendar_month", "calendar_month_due"),
+    ("calendar_quarter", "calendar_quarter_due"),
+    ("calendar_year", "calendar_year_due"),
+)
+
+CALENDAR_GUIDE_FLAGS = tuple(flag for _kind, flag in CALENDAR_GUIDE_ITEMS)
+
+
+def _active_flags(flags, names):
+    flags = flags or {}
+    return [name for name in names if flags.get(name)]
+
+
+def _decision_round_type(flags):
+    flags = flags or {}
+    for group in HEARTBEAT_TRIGGER_PRIORITY:
+        if any(flags.get(flag) for flag in HEARTBEAT_TRIGGER_GROUPS[group]):
+            return HEARTBEAT_GROUP_ROUND_TYPES[group]
+    return None
+
+
+def round_type_from_heartbeat_flags(flags):
+    """把 heartbeat flags 解释为五类轮触发；qualifier 不单独起轮。"""
+    return _decision_round_type(flags)
+
+
+def round_decision_from_heartbeat_flags(flags):
+    """返回 Runtime/CLI/GUIDE 共用的轮型判定结果。"""
+    flags = flags or {}
+    round_type = _decision_round_type(flags)
+    guide_queue = []
+
+    emergency_flags = _active_flags(flags, EMERGENCY_GUIDE_FLAGS)
+    if emergency_flags:
+        guide_queue.append({"kind": "emergency", "flags": emergency_flags})
+
+    context_pressure_flags = _active_flags(flags, CONTEXT_PRESSURE_GUIDE_FLAGS)
+    if context_pressure_flags:
+        guide_queue.append({
+            "kind": "context_pressure",
+            "flags": context_pressure_flags,
+        })
+
+    cache_compaction_flags = _active_flags(flags, CACHE_COMPACTION_GUIDE_FLAGS)
+    if cache_compaction_flags:
+        guide_queue.append({
+            "kind": "cache_compaction",
+            "flags": cache_compaction_flags,
+        })
+
+    main_flags = _active_flags(flags, MAIN_AXIS_GUIDE_FLAGS)
+    if main_flags:
+        guide_queue.append({"kind": "main_axis_rhythm", "flags": main_flags})
+
+    for kind, flag in CALENDAR_GUIDE_ITEMS:
+        if flags.get(flag):
+            guide_queue.append({"kind": kind, "flags": [flag]})
+
+    if flags.get("user_message_waiting"):
+        interaction_item = {"kind": "interaction", "flags": ["user_message_waiting"]}
+        if round_type in {"rhythm", "interactive"}:
+            guide_queue.append(interaction_item)
+
+    deferred_items = []
+    if flags.get("continue_requested") and round_type in {"rhythm", "interactive"}:
+        deferred_items.append({"kind": "relay", "flags": ["continue_requested"]})
+    elif flags.get("continue_requested") and round_type == "relay":
+        guide_queue.append({"kind": "relay", "flags": ["continue_requested"]})
+
+    if flags.get("standby_due") and round_type not in {None, "standby"}:
+        deferred_items.append({"kind": "standby", "flags": ["standby_due"]})
+    elif flags.get("standby_due") and round_type == "standby":
+        guide_queue.append({"kind": "standby", "flags": ["standby_due"]})
+
+    return {
+        "round_type": round_type,
+        "active_flags": [name for name, value in flags.items() if value],
+        "guide_queue": guide_queue,
+        "coalesced": len(guide_queue) > 1,
+        "deferred_items": deferred_items,
+    }
+
+
+class HeartbeatManager:
+    """
+    心跳闹钟管理器
+
+    后台线程每隔 interval 秒 tick。
+    每次 tick 做 18 项布尔检查，有满足就置位。
+    善后步是 flag 的唯一消费者（清零）。
+    """
+
+    def __init__(self, state_store=None, config_store=None, interval=None,
+                 memory_heat=None, connectivity_store=None, evolution_store=None):
+        self.sm = state_store or StateStore()
+        self.cfg = config_store or ConfigStore()
+        active_endpoint_ids = getattr(self.cfg, "get_active_model_profile_ids", None)
+        self.conn = connectivity_store or ConnectivityStore(
+            active_endpoint_ids=active_endpoint_ids,
+        )
+        self.evolution_store = evolution_store or EvolutionStore()
+        self.interval = interval or self._load_interval()
+        self.memory_heat = memory_heat or MemoryHeat()
+
+        # 线程控制
+        self._running = False
+        self._paused = False
+        self._thread = None
+        self._wakeup = threading.Event()
+        self._pause_ev = threading.Event()
+        self._pause_ev.set()
+        self._stop_ev = threading.Event()
+
+        # 消息队列
+        self._msg_queue = []
+        self._msg_lock = threading.Lock()
+
+    def _load_interval(self):
+        try:
+            return self.cfg.get_heartbeat_interval()
+        except Exception:
+            return HEARTBEAT_DEFAULT_INTERVAL
+
+    def _load_evolution_thresholds(self):
+        try:
+            return self.cfg.get_autonomous_trigger_params()
+        except Exception:
+            return {
+                "tacit_pending_threshold": 512,
+                "connection_pending_threshold": 512,
+            }
+
+    def _load_rhythm_interval(self):
+        try:
+            return int(self.cfg.get_rhythm_interval() or RHYTHM_INTERVAL_ROUNDS)
+        except Exception:
+            return RHYTHM_INTERVAL_ROUNDS
+
+    def _load_standby_threshold(self):
+        try:
+            return int(self.cfg.get_standby_threshold() or STANDBY_IDLE_MINUTES)
+        except Exception:
+            return STANDBY_IDLE_MINUTES
+
+    def _load_token_warning_ratio(self):
+        try:
+            params = self.cfg.get_token_params()
+            return float(params.get("warning_ratio", TOKEN_WARNING_RATIO))
+        except Exception:
+            return TOKEN_WARNING_RATIO
+
+    # ----------------------------------------------------------
+    # 启动/停止
+    # ----------------------------------------------------------
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._stop_ev.clear()
+        self._thread = threading.Thread(
+            target=self._tick_loop, name="heartbeat", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        self._stop_ev.set()
+        self._pause_ev.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=self.interval + 1)
+
+    # ----------------------------------------------------------
+    # 暂停/恢复（轮内控制）
+    # ----------------------------------------------------------
+
+    def pause(self):
+        self._paused = True
+        self._pause_ev.clear()
+
+    def resume(self, run_tick=True):
+        self._paused = False
+        self._pause_ev.set()
+        if not run_tick:
+            return
+        try:
+            if self._do_tick():
+                self._wakeup.set()
+        except Exception:
+            pass
+
+    def wait_for_wakeup(self, timeout=None):
+        result = self._wakeup.wait(timeout=timeout)
+        self._wakeup.clear()
+        return result
+
+    def wake(self):
+        self._wakeup.set()
+
+    # ----------------------------------------------------------
+    # 外部消息
+    # ----------------------------------------------------------
+
+    def enqueue_message(self, message):
+        with self._msg_lock:
+            self._msg_queue.append(message)
+        # P1-1: 外部输入到达时写时间戳→起手步读此字段判断是否加载 relation 场景规则
+        now = datetime.now(TZ_SHANGHAI)
+        try:
+            self.sm.update_many({"base.meta.last_external_input_at": now.isoformat()})
+        except Exception:
+            pass
+        # 直接置位唤醒，不等下次心跳 tick（竞态修复）
+        try:
+            self.sm.set_flag("user_message_waiting", True)
+            self._do_tick()
+            self._wakeup.set()
+        except Exception:
+            pass
+
+    def dequeue_messages(self):
+        with self._msg_lock:
+            msgs = self._msg_queue[:]
+            self._msg_queue.clear()
+            return msgs
+
+    def discard_messages(self):
+        return self.dequeue_messages()
+
+    # ----------------------------------------------------------
+    # 核心 tick 循环
+    # ----------------------------------------------------------
+
+    def _tick_loop(self):
+        while self._running:
+            self._pause_ev.wait()
+            if self._stop_ev.is_set():
+                break
+
+            any_set = self._do_tick()
+            if any_set:
+                self._wakeup.set()
+
+            # 更新最后心跳时间
+            try:
+                self.sm.set("base.meta.last_heartbeat_at",
+                            datetime.now(TZ_SHANGHAI).isoformat())
+            except Exception:
+                pass
+
+            self._stop_ev.wait(timeout=self.interval)
+
+    def _do_tick(self):
+        """一次 tick 的全部布尔检查（异常记录到 state.last_error）"""
+        try:
+            state = self.sm.load()
+        except Exception as e:
+            try:
+                self.sm._set_internal("base.meta.last_error",
+                    f"心跳tick读state失败: {e}")
+            except Exception:
+                pass
+            return False
+
+        base = state.get("base", {})
+        meta = base.get("meta", {})
+        flags = base.get("heartbeat_flags", {})
+        token = base.get("token_usage", {})
+        alert_deferrals = base.get("alert_deferrals", {})
+
+        new_flags = {}
+        clear_flags = []
+        tick_errors = []
+        now = datetime.now(TZ_SHANGHAI)
+
+        # --- 1. fatigue_expired（退役）---
+        # Spec598: live Runtime 不再维护疲劳倒计时；历史残留 flag 只清理。
+        if flags.get("fatigue_expired"):
+            clear_flags.append("fatigue_expired")
+
+        # --- 2. feeling_settle_due ---
+        next_settle = meta.get("next_settle_at")
+        if next_settle and not flags.get("feeling_settle_due"):
+            try:
+                if now >= datetime.fromisoformat(next_settle):
+                    new_flags["feeling_settle_due"] = True
+            except (ValueError, TypeError):
+                pass
+
+        # --- 3. api_degraded ---
+        api_degraded = self._check_api_degraded()
+        if self._alert_deferred(alert_deferrals, "api_degraded", now):
+            if flags.get("api_degraded"):
+                clear_flags.append("api_degraded")
+        elif api_degraded:
+            if not flags.get("api_degraded"):
+                new_flags["api_degraded"] = True
+        elif flags.get("api_degraded"):
+            clear_flags.append("api_degraded")
+
+        # --- 4. stm_degrade_pending ---
+        if not flags.get("stm_degrade_pending"):
+            try:
+                if self.memory_heat.has_pending_degrade():
+                    new_flags["stm_degrade_pending"] = True
+            except Exception:
+                pass
+
+        # --- 4b. evolution_pending ---
+        if not flags.get("evolution_pending"):
+            try:
+                if self.evolution_store.should_trigger(self._load_evolution_thresholds()):
+                    new_flags["evolution_pending"] = True
+            except Exception as e:
+                tick_errors.append(f"evolution_pending: {e}")
+
+        # --- 5. process_down ---
+        if self._alert_deferred(alert_deferrals, "process_down", now):
+            if flags.get("process_down"):
+                clear_flags.append("process_down")
+        elif not flags.get("process_down"):
+            if self._check_process_down():
+                new_flags["process_down"] = True
+
+        # --- 6. user_message_waiting ---
+        if not flags.get("user_message_waiting"):
+            with self._msg_lock:
+                if self._msg_queue:
+                    new_flags["user_message_waiting"] = True
+
+        # --- 7. rhythm_due ---
+        total = meta.get("total_round", 0)
+        last_rhythm = meta.get("last_rhythm_round", 0)
+        rhythm_interval = self._load_rhythm_interval()
+        rhythm_due = total - last_rhythm >= rhythm_interval and total > 0
+        if rhythm_due:
+            if not flags.get("rhythm_due"):
+                new_flags["rhythm_due"] = True
+        elif flags.get("rhythm_due"):
+            clear_flags.append("rhythm_due")
+
+        # --- 8. standby_due ---
+        ref_time = (
+            meta.get("last_round_closed_at")
+            or meta.get("last_external_input_at")
+            or meta.get("last_update")
+        )
+        if ref_time:
+            try:
+                idle_min = (now - datetime.fromisoformat(ref_time)).total_seconds() / 60
+                standby_due = idle_min >= self._load_standby_threshold()
+                if standby_due:
+                    if not flags.get("standby_due"):
+                        new_flags["standby_due"] = True
+                elif flags.get("standby_due"):
+                    clear_flags.append("standby_due")
+            except (ValueError, TypeError):
+                pass
+
+        # --- 9. shelve_timer_expired ---
+        shelve_at = meta.get("shelve_timer_at")
+        if shelve_at and not flags.get("shelve_timer_expired"):
+            try:
+                if now > datetime.fromisoformat(shelve_at):
+                    new_flags["shelve_timer_expired"] = True
+            except (ValueError, TypeError):
+                pass
+
+        meta_updates = {}
+
+        # --- 11. 日历五项（V5: 日/周/月/季/年）---
+        last_cal = meta.get("last_calendar_check_at")
+        if last_cal:
+            try:
+                last_date = datetime.fromisoformat(last_cal).date()
+                today = now.date()
+                if today > last_date:
+                    new_flags["calendar_day_due"] = True
+                if today.isocalendar()[:2] != last_date.isocalendar()[:2]:
+                    new_flags["calendar_week_due"] = True
+                if today.month != last_date.month or today.year != last_date.year:
+                    new_flags["calendar_month_due"] = True
+                if (today.year != last_date.year or
+                    (today.month - 1) // 3 != (last_date.month - 1) // 3):
+                    new_flags["calendar_quarter_due"] = True
+                if today.year != last_date.year:
+                    new_flags["calendar_year_due"] = True
+            except (ValueError, TypeError):
+                pass
+        else:
+            meta_updates["base.meta.last_calendar_check_at"] = now.isoformat()
+
+        # --- 12. token_usage_warning（V2 新增）---
+        try:
+            ratio = float(token.get("usage_ratio", 0) or 0)
+        except (TypeError, ValueError):
+            ratio = 0.0
+        token_warning = ratio >= self._load_token_warning_ratio()
+        if self._alert_deferred(alert_deferrals, "token_usage_warning", now):
+            if flags.get("token_usage_warning"):
+                clear_flags.append("token_usage_warning")
+        elif token_warning:
+            if not flags.get("token_usage_warning"):
+                new_flags["token_usage_warning"] = True
+        elif flags.get("token_usage_warning"):
+            clear_flags.append("token_usage_warning")
+
+        # --- 13. identity_timeout（退役）---
+        # Spec598: 身份超时倒计时不再从 confirmed_at / external input 间隔派生。
+        # 历史状态文件可能残留该 flag；心跳只负责清掉，不再清 confirmed_at。
+        if flags.get("identity_timeout"):
+            clear_flags.append("identity_timeout")
+
+        # 批量置位
+        updates = {}
+        if new_flags:
+            updates.update({f"base.heartbeat_flags.{k}": v for k, v in new_flags.items()})
+        if clear_flags:
+            updates.update({f"base.heartbeat_flags.{k}": False for k in clear_flags})
+        updates.update(meta_updates)
+        if updates:
+            try:
+                self.sm.update_many(updates)
+            except Exception as e:
+                try:
+                    self.sm._set_internal("base.meta.last_error",
+                        f"心跳tick写flags失败: {e}")
+                except Exception:
+                    pass
+            final_flags = dict(flags)
+            for flag in clear_flags:
+                final_flags[flag] = False
+            final_flags.update(new_flags)
+            return (
+                bool(new_flags)
+                or bool(round_type_from_heartbeat_flags(final_flags))
+                or bool(final_flags.get("feeling_settle_due"))
+            )
+        if tick_errors:
+            try:
+                self.sm._set_internal("base.meta.last_error",
+                    f"心跳tick异常: {'; '.join(tick_errors[:3])}")
+            except Exception:
+                pass
+
+        return (
+            bool(round_type_from_heartbeat_flags(flags))
+            or bool(flags.get("feeling_settle_due"))
+        )
+
+    # ----------------------------------------------------------
+    # 辅助检查
+    # ----------------------------------------------------------
+
+    def _check_api_degraded(self):
+        """检查 connectivity.json 是否有 API 降级（通过 ConnectivityStore）"""
+        try:
+            return self.conn.has_degraded()
+        except Exception:
+            return False
+
+    @staticmethod
+    def _alert_deferred(alert_deferrals, alert_type, now):
+        """判断某类紧急项是否仍在搁置窗口内。"""
+        if not isinstance(alert_deferrals, dict):
+            return False
+        item = alert_deferrals.get(alert_type)
+        if not isinstance(item, dict):
+            return False
+        if str(item.get("status") or "").strip().lower() != "deferred":
+            return False
+        defer_until = item.get("defer_until")
+        if not defer_until:
+            return False
+        try:
+            until = datetime.fromisoformat(str(defer_until))
+        except Exception:
+            return False
+        return now < until
+
+    def _check_process_down(self):
+        """Base 单进程模型：tick 能执行即主进程存活。无守护锁机制时返回 False。"""
+        return False
+
+
+# ============================================================
+# 自检
+# ============================================================
+
+if __name__ == "__main__":
+    sm = StateStore()
+    sm.init_if_missing()
+    hb = HeartbeatManager(sm, interval=2)
+    print(f"心跳间隔：{hb.interval}s，18 项检查")
+    print("启动心跳（Ctrl+C 停止）...")
+    hb.start()
+    try:
+        while True:
+            if hb.wait_for_wakeup(timeout=10):
+                flags = sm.get_flags()
+                active = [k for k, v in flags.items() if v]
+                print(f"  活跃 flags: {active}")
+            else:
+                print("  tick...（无新 flag）")
+    except KeyboardInterrupt:
+        print("\n停止...")
+        hb.stop()

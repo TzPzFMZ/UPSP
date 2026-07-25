@@ -1,0 +1,16 @@
+{
+  "schema_version": "upsp_product_manifest.v1",
+  "name": "UPSP",
+  "version": "0.1.0-alpha.4",
+  "windows_file_version": "0.1.0.4",
+  "channel": "alpha",
+  "build_number": 4,
+  "author": {
+    "zh-CN": "由 TzPzFMZ 发起、设计并与 AI 协作开发",
+    "en-US": "Initiated and designed by TzPzFMZ, developed in collaboration with AI"
+  },
+  "repository_url": "https://github.com/TzPzFMZ/UPSP",
+  "releases_url": "https://github.com/TzPzFMZ/UPSP/releases",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 TzPzFMZ"
+}

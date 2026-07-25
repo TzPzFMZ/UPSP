@@ -1,0 +1,1066 @@
+import type {
+  AboutPayload,
+  DepositionDetailPayload,
+  DepositionIndexPayload,
+  DepositionItem,
+  DepositionKind,
+  JsonObject,
+  LiveEventsPayload,
+  LivePayload,
+  LiveState,
+  PageId,
+  PermissionLevel,
+  PersonaCorePayload,
+  PersonaStatePayload,
+  ProtocolCatalogPayload,
+  RoundListPayload,
+  RuntimeStatus,
+  SettingValue,
+  SettingsFileId,
+  SettingsPayload,
+  TaskProjectionPayload,
+} from "./contracts";
+import {
+  aboutProjection,
+  depositionProjection,
+  els,
+  polling,
+  personaProjection,
+  protocolProjection,
+  runtimePages,
+  runtimeProjection,
+  settingsProjection,
+  state,
+  taskProjection,
+} from "./state";
+import { configuredLocale, t } from "./i18n";
+import {
+  getActivePageTab,
+  changeLocale,
+  relayRuntimeState,
+  renderChat,
+  renderComposerState,
+  renderIdentity,
+  renderOverview,
+  renderSourceState,
+  renderStage,
+  renderGlobalSettings,
+  openGlobalSettings,
+  renderStageAndFocus,
+  selectDepositionItem,
+} from "./view";
+
+class RuntimeRequestError extends Error {
+  status: number;
+  code: string;
+  payload: JsonObject;
+
+  constructor(message: string, status = 0, code = "request_failed", payload: JsonObject = {}) {
+    super(message);
+    this.name = "RuntimeRequestError";
+    this.status = status;
+    this.code = code;
+    this.payload = payload;
+  }
+}
+
+function errorView(error: unknown): RuntimeRequestError {
+  if (error instanceof RuntimeRequestError) return error;
+  if (error instanceof Error) return new RuntimeRequestError(error.message);
+  return new RuntimeRequestError(String(error || "unknown"));
+}
+
+function jsonObject(value: unknown): JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonObject
+    : {};
+}
+
+async function fetchRuntimeJson<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(path, { cache: "no-store", ...options });
+  let payload: unknown = {};
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+  if (!response.ok) {
+    const object = jsonObject(payload);
+    const code = typeof object.error === "string" ? object.error : "request_failed";
+    throw new RuntimeRequestError(
+      typeof object.error === "string" ? object.error : `HTTP ${response.status}`,
+      response.status,
+      code,
+      object,
+    );
+  }
+  return payload as T;
+}
+
+function runtimeProjectionAdvanced(): boolean {
+  const baseline = runtimeProjection.submitBaseline;
+  if (!baseline || runtimeProjection.round == null) return false;
+  return runtimeProjection.round !== baseline.round
+    || Number(runtimeProjection.live?.last_event_index || 0) > baseline.eventIndex;
+}
+
+export function refreshRuntimeUi(): void {
+  const key = JSON.stringify([
+    runtimeProjection.host,
+    runtimeProjection.round,
+    runtimeProjection.live?.last_event_index || 0,
+    runtimeProjection.live?.round_lifecycle?.state || "",
+    runtimeProjection.status?.send_in_flight || false,
+    runtimeProjection.status?.relay_in_flight || false,
+    runtimeProjection.status?.stage || "",
+    runtimeProjection.status?.stop_requested || false,
+    runtimeProjection.status?.can_stop || false,
+    runtimeProjection.status?.cli?.data?.round_type || "",
+    (runtimeProjection.status?.cli?.data?.active_flags || []).join(","),
+    runtimeProjection.sending,
+    runtimeProjection.stopping,
+    taskProjection.relayPending,
+    runtimeProjection.awaitingProjection,
+    runtimeProjection.error,
+    runtimeProjection.sendFeedback,
+    runtimeProjection.exportFeedback,
+    runtimeProjection.conversationHistoryVersion,
+    runtimeProjection.conversationHistoryError,
+  ]);
+  if (key === runtimeProjection.renderKey) {
+    renderComposerState();
+    return;
+  }
+  runtimeProjection.renderKey = key;
+  renderSourceState();
+  renderIdentity();
+  renderOverview();
+  renderChat();
+  if (runtimePages.has(state.activePage)) renderStage(state.activePage);
+}
+
+function validateLiveState(statePayload: LiveState | null): void {
+  if (statePayload !== null && statePayload?.schema_version !== "round_live_state.v2") {
+    throw new Error("round_live_state_schema_mismatch");
+  }
+}
+
+function cacheLatestConversation(round: number | null, liveState: LiveState | null): void {
+  if (round === null || !Number.isInteger(round) || !liveState) return;
+  runtimeProjection.conversationRounds.set(round, liveState);
+  if (!runtimeProjection.conversationRoundOrder.includes(round)) {
+    runtimeProjection.conversationRoundOrder = [
+      ...runtimeProjection.conversationRoundOrder,
+      round,
+    ].sort((left, right) => left - right);
+  }
+}
+
+async function syncConversationHistory({ force = false }: { force?: boolean } = {}): Promise<void> {
+  const latestRound = runtimeProjection.round;
+  cacheLatestConversation(latestRound, runtimeProjection.live);
+  if (
+    !force
+    && runtimeProjection.conversationHistoryInitialized
+    && runtimeProjection.conversationHistoryLatest === latestRound
+  ) return;
+
+  runtimeProjection.conversationHistoryInitialized = true;
+  runtimeProjection.conversationHistoryLatest = latestRound;
+  try {
+    const payload = await fetchRuntimeJson<RoundListPayload>("./api/rounds");
+    if (!Array.isArray(payload.rounds)) throw new Error("round_list_schema_mismatch");
+    const roundIds = [...new Set(payload.rounds
+      .map((item) => Number(item.round))
+      .filter((round) => Number.isInteger(round)))]
+      .sort((left, right) => left - right);
+    if (latestRound !== null && Number.isInteger(latestRound) && !roundIds.includes(latestRound)) {
+      roundIds.push(latestRound);
+      roundIds.sort((left, right) => left - right);
+    }
+
+    const retained = new Set(roundIds);
+    [...runtimeProjection.conversationRounds.keys()].forEach((round) => {
+      if (!retained.has(round)) runtimeProjection.conversationRounds.delete(round);
+    });
+    const missing = roundIds.filter((round) => !runtimeProjection.conversationRounds.has(round));
+    const failed: Array<{ round: number; error: unknown }> = [];
+    await Promise.all(missing.map(async (round) => {
+      try {
+        const roundPayload = await fetchRuntimeJson<LivePayload>(`./api/live/state?round=${round}`);
+        validateLiveState(roundPayload.state || null);
+        if (Number(roundPayload.round) !== round || !roundPayload.state) {
+          throw new Error("round_history_projection_mismatch");
+        }
+        runtimeProjection.conversationRounds.set(round, roundPayload.state);
+      } catch (error) {
+        failed.push({ round, error });
+      }
+    }));
+    runtimeProjection.conversationRoundOrder = roundIds.filter(
+      (round) => runtimeProjection.conversationRounds.has(round),
+    );
+    if (state.selectedLedgerRound !== null && !retained.has(state.selectedLedgerRound)) {
+      state.selectedLedgerRound = null;
+    }
+    if (state.selectedContextRound !== null && !retained.has(state.selectedContextRound)) {
+      state.selectedContextRound = null;
+    }
+    runtimeProjection.conversationHistoryError = failed.length
+      ? t("较早对话未完全载入")
+      : "";
+  } catch (error) {
+    runtimeProjection.conversationHistoryError = t("较早对话未完全载入");
+  }
+  runtimeProjection.conversationHistoryVersion += 1;
+}
+
+async function fetchFullLiveProjection(): Promise<{ round: number | null; state: LiveState | null }> {
+  const payload = await fetchRuntimeJson<LivePayload>("./api/live/state?round=latest");
+  validateLiveState(payload.state || null);
+  return { round: payload.round ?? null, state: payload.state || null };
+}
+
+async function fetchLiveProjection(forceFull = false): Promise<{ round: number | null; state: LiveState | null }> {
+  if (forceFull || runtimeProjection.fullRefreshNeeded) return fetchFullLiveProjection();
+  const after = Number(runtimeProjection.live?.last_event_index || 0);
+  const payload = await fetchRuntimeJson<LiveEventsPayload>(`./api/live/events?round=latest&after=${after}`);
+  if (payload.schema_version !== "round_live_events.v1") {
+    throw new Error("round_live_events_schema_mismatch");
+  }
+  const nextRound = payload.round ?? null;
+  if (nextRound !== runtimeProjection.round) return fetchFullLiveProjection();
+  if (payload.state != null) {
+    validateLiveState(payload.state);
+    return { round: nextRound, state: payload.state };
+  }
+  return { round: runtimeProjection.round, state: runtimeProjection.live };
+}
+
+export function pollRuntime({ forceFull = false, ignoreVisibility = false }: { forceFull?: boolean; ignoreVisibility?: boolean } = {}): Promise<boolean> {
+  if (document.hidden && !ignoreVisibility) return Promise.resolve(false);
+  if (polling.runtime) {
+    if (forceFull) polling.runtimeForceQueued = true;
+    return polling.runtime;
+  }
+  const request = (async () => {
+    try {
+      const [status, livePayload] = await Promise.all([
+        fetchRuntimeJson<RuntimeStatus>("./api/runtime/status"),
+        fetchLiveProjection(forceFull),
+      ]);
+      if (status.schema_version !== "seed_gui_runtime_status.v2") {
+        throw new Error("runtime_status_schema_mismatch");
+      }
+      runtimeProjection.host = "connected";
+      runtimeProjection.status = status;
+      runtimeProjection.live = livePayload.state;
+      runtimeProjection.round = livePayload.round;
+      runtimeProjection.error = "";
+      runtimeProjection.fullRefreshNeeded = false;
+      await syncConversationHistory();
+      if (runtimeProjection.awaitingProjection && runtimeProjectionAdvanced()) {
+        runtimeProjection.awaitingProjection = false;
+        runtimeProjection.submitBaseline = null;
+      }
+    } catch (error: unknown) {
+      const failure = errorView(error);
+      runtimeProjection.host = "error";
+      runtimeProjection.status = null;
+      runtimeProjection.fullRefreshNeeded = true;
+      runtimeProjection.error = `${t("宿主状态读取失败")}：${failure.code || failure.message || "unknown"}`;
+    }
+    refreshRuntimeUi();
+    return true;
+  })();
+  polling.runtime = request.finally(() => {
+    polling.runtime = null;
+    if (polling.runtimeForceQueued) {
+      polling.runtimeForceQueued = false;
+      pollRuntime({ forceFull: true, ignoreVisibility: true });
+    }
+  });
+  return polling.runtime;
+}
+
+export function runtimePollingActive(): boolean {
+  const status = runtimeProjection.status;
+  const lifecycle = runtimeProjection.live?.round_lifecycle?.state;
+  return Boolean(
+    status?.send_in_flight
+    || status?.relay_in_flight
+    || status?.mutation_in_flight
+    || status?.can_stop
+    || status?.stop_requested
+    || (lifecycle && !["closed", "settled", "unsettled"].includes(lifecycle)),
+  );
+}
+
+export function pollTaskProjection({ force = false, ignoreVisibility = false }: { force?: boolean; ignoreVisibility?: boolean } = {}): Promise<boolean> {
+  if (document.hidden && !ignoreVisibility) return Promise.resolve(false);
+  if (polling.task) {
+    if (force) polling.taskForceQueued = true;
+    return polling.task;
+  }
+  if (!taskProjection.data) taskProjection.loading = true;
+  let changed = force;
+  const request = (async () => {
+    try {
+      const payload = await fetchRuntimeJson<TaskProjectionPayload>("./api/workbench/task");
+      if (payload.schema_version !== "seed_gui_task_projection.v1"
+          || (payload.task !== null && typeof payload.task !== "object")) {
+        throw new Error("task_projection_schema_mismatch");
+      }
+      const nextKey = JSON.stringify(payload);
+      changed = changed || nextKey !== taskProjection.renderKey || Boolean(taskProjection.error);
+      taskProjection.data = payload;
+      taskProjection.renderKey = nextKey;
+      taskProjection.error = "";
+    } catch (error: unknown) {
+      const failure = errorView(error);
+      const nextError = `${t("任务真账读取失败")}：${failure.code || failure.message || "unknown"}`;
+      changed = changed || nextError !== taskProjection.error;
+      taskProjection.error = nextError;
+    } finally {
+      taskProjection.loading = false;
+    }
+    if (changed) {
+      renderSourceState();
+      renderOverview();
+      if (state.activePage === "run" && getActivePageTab("run") === "tools") {
+        renderStage("run");
+      }
+    }
+    return true;
+  })();
+  polling.task = request.finally(() => {
+    polling.task = null;
+    if (polling.taskForceQueued) {
+      polling.taskForceQueued = false;
+      pollTaskProjection({ force: true, ignoreVisibility: true });
+    }
+  });
+  return polling.task;
+}
+
+export async function pollProtocolCatalog({ force = false }: { force?: boolean } = {}): Promise<boolean> {
+  if (!force && protocolProjection.catalog) return false;
+  protocolProjection.loading = true;
+  try {
+    const payload = await fetchRuntimeJson<ProtocolCatalogPayload>("./api/protocol/catalog");
+    if (
+      payload.schema_version !== "seed_gui_protocol_catalog.v1"
+      || !Array.isArray(payload.rules?.categories)
+      || !Array.isArray(payload.docs?.entries)
+    ) {
+      throw new Error("protocol_catalog_schema_mismatch");
+    }
+    protocolProjection.catalog = payload;
+    protocolProjection.renderKey = JSON.stringify(payload);
+    protocolProjection.error = "";
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    protocolProjection.error = `${t("协议目录读取失败")}：${failure.code || failure.message || "unknown"}`;
+  } finally {
+    protocolProjection.loading = false;
+  }
+  if (state.activePage === "audit") renderStage("audit");
+  return true;
+}
+
+function validateSettingsPayload(payload: SettingsPayload): void {
+  const fileIds: SettingsFileId[] = ["system", "now", "lately", "periodic", "high_freq", "relation"];
+  if (
+    payload.schema_version !== "seed_gui_settings.v3"
+    || !payload.files
+    || !fileIds.every((fileId) => (
+      typeof payload.files[fileId]?.revision === "string"
+      && payload.files[fileId]?.values !== null
+      && typeof payload.files[fileId]?.values === "object"
+    ))
+    || typeof payload.interface?.revision !== "string"
+    || !["system", "zh-CN", "en-US"].includes(payload.interface?.values?.locale)
+    || typeof payload.model_catalog?.revision !== "string"
+    || !Array.isArray(payload.model_catalog?.connections)
+    || !Array.isArray(payload.model_catalog?.models)
+    || typeof payload.persona?.model_routing?.revision !== "string"
+    || typeof payload.persona?.setup_model_ready !== "boolean"
+  ) {
+    throw new Error("settings_projection_schema_mismatch");
+  }
+}
+
+function acceptSettingsPayload(payload: SettingsPayload): void {
+  validateSettingsPayload(payload);
+  settingsProjection.data = payload;
+  settingsProjection.renderKey = JSON.stringify(payload);
+  settingsProjection.error = "";
+  const nextLocale = configuredLocale(payload.interface.values.locale);
+  if (nextLocale !== state.locale) changeLocale(nextLocale);
+}
+
+function refreshSettingsUi(): void {
+  if (state.activePage === "settings") renderStage("settings");
+  if (state.globalSettingsOpen) renderGlobalSettings();
+  renderComposerState();
+}
+
+function refreshPersonaUi(): void {
+  if (state.systemWindowOpen && state.activePage === "persona") renderStage("persona");
+}
+
+export function pollPersonaCore({ force = false }: { force?: boolean } = {}): Promise<boolean> {
+  if (polling.personaCore) return polling.personaCore;
+  if (!force && personaProjection.core) return Promise.resolve(false);
+  personaProjection.coreLoading = true;
+  refreshPersonaUi();
+  const request = (async () => {
+    try {
+      const payload = await fetchRuntimeJson<PersonaCorePayload>("./api/persona/core");
+      if (
+        payload.schema_version !== "seed_gui_persona_core.v1"
+        || typeof payload.source_ref !== "string"
+        || typeof payload.content_md !== "string"
+        || !payload.content_md.trim()
+      ) {
+        throw new Error("persona_core_schema_mismatch");
+      }
+      personaProjection.core = payload;
+      personaProjection.coreRenderKey = JSON.stringify(payload);
+      personaProjection.coreError = "";
+    } catch (error: unknown) {
+      const failure = errorView(error);
+      personaProjection.coreError = `${t("核心档案读取失败")}：${failure.code || failure.message || "unknown"}`;
+    } finally {
+      personaProjection.coreLoading = false;
+    }
+    refreshPersonaUi();
+    return true;
+  })();
+  polling.personaCore = request.finally(() => { polling.personaCore = null; });
+  return polling.personaCore;
+}
+
+export function pollPersonaState({
+  force = false,
+  ignoreVisibility = false,
+}: { force?: boolean; ignoreVisibility?: boolean } = {}): Promise<boolean> {
+  if (!ignoreVisibility && (
+    document.hidden
+    || !state.systemWindowOpen
+    || state.activePage !== "persona"
+  )) return Promise.resolve(false);
+  if (polling.personaState) return polling.personaState;
+  personaProjection.stateLoading = true;
+  if (!personaProjection.state) refreshPersonaUi();
+  const request = (async () => {
+    try {
+      const payload = await fetchRuntimeJson<PersonaStatePayload>("./api/persona/state");
+      if (
+        payload.schema_version !== "seed_gui_persona_state.v1"
+        || typeof payload.observed_at !== "string"
+        || typeof payload.source_ref !== "string"
+        || !Array.isArray(payload.fields)
+        || payload.fields.some((field) => typeof field?.path !== "string")
+      ) {
+        throw new Error("persona_state_schema_mismatch");
+      }
+      const nextKey = JSON.stringify(payload);
+      const changed = force
+        || nextKey !== personaProjection.stateRenderKey
+        || Boolean(personaProjection.stateError);
+      personaProjection.state = payload;
+      personaProjection.stateRenderKey = nextKey;
+      personaProjection.stateError = "";
+      personaProjection.stateStale = false;
+      if (changed) refreshPersonaUi();
+    } catch (error: unknown) {
+      const failure = errorView(error);
+      personaProjection.stateError = `${t("生命状态读取失败")}：${failure.code || failure.message || "unknown"}`;
+      personaProjection.stateStale = Boolean(personaProjection.state);
+      refreshPersonaUi();
+    } finally {
+      personaProjection.stateLoading = false;
+    }
+    return true;
+  })();
+  polling.personaState = request.finally(() => { polling.personaState = null; });
+  return polling.personaState;
+}
+
+export function pollPersonaProjection({ force = false }: { force?: boolean } = {}): Promise<boolean[]> {
+  return Promise.all([
+    pollPersonaCore({ force }),
+    pollPersonaState({ force, ignoreVisibility: true }),
+  ]);
+}
+
+export function pollSettings({ force = false }: { force?: boolean } = {}): Promise<boolean> {
+  if (polling.settings) {
+    if (force) polling.settingsForceQueued = true;
+    return polling.settings;
+  }
+  if (!force && settingsProjection.data) return Promise.resolve(false);
+  settingsProjection.loading = true;
+  const request = (async () => {
+    try {
+      acceptSettingsPayload(await fetchRuntimeJson<SettingsPayload>("./api/settings"));
+      settingsProjection.feedback = "";
+    } catch (error: unknown) {
+      const failure = errorView(error);
+      settingsProjection.error = failure.status === 404
+        ? t("本地宿主版本过旧，请重启 GUI 服务")
+        : `${t("设置读取失败")}：${failure.code || failure.message || "unknown"}`;
+    } finally {
+      settingsProjection.loading = false;
+    }
+    refreshSettingsUi();
+    return true;
+  })();
+  polling.settings = request.finally(() => {
+    polling.settings = null;
+    if (polling.settingsForceQueued) {
+      polling.settingsForceQueued = false;
+      void pollSettings({ force: true });
+    }
+  });
+  return polling.settings;
+}
+
+export async function submitSettings(
+  updates: Array<[SettingsFileId, Record<string, SettingValue>]>,
+): Promise<void> {
+  if (settingsProjection.pending || !settingsProjection.data || !updates.length) return;
+  settingsProjection.pending = true;
+  settingsProjection.feedback = t("正在保存设置");
+  settingsProjection.error = "";
+  refreshSettingsUi();
+  try {
+    for (const [fileId, changes] of updates) {
+      const payload = await fetchRuntimeJson<SettingsPayload>("./api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          revision: fileId === "interface"
+            ? settingsProjection.data.interface.revision
+            : fileId === "models"
+              ? settingsProjection.data.model_catalog.revision
+            : fileId === "model_routing"
+              ? settingsProjection.data.persona.model_routing.revision
+              : settingsProjection.data.files[fileId]?.revision,
+          file: fileId,
+          changes,
+        }),
+      });
+      acceptSettingsPayload(payload);
+    }
+    settingsProjection.feedback = t("设置已保存");
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    settingsProjection.error = failure.status === 409
+      ? t("设置已被其他操作更新，请重新载入后再试")
+      : `${t("设置保存失败")}：${failure.code || failure.message || "unknown"}`;
+    settingsProjection.feedback = "";
+  } finally {
+    settingsProjection.pending = false;
+  }
+  refreshSettingsUi();
+}
+
+export async function submitProviderKey(
+  connectionId: string,
+  action: "set" | "delete",
+  key: string,
+): Promise<void> {
+  if (settingsProjection.pending || !settingsProjection.data) return;
+  settingsProjection.pending = true;
+  settingsProjection.error = "";
+  settingsProjection.feedback = action === "set" ? t("正在保存密钥") : t("正在删除密钥");
+  refreshSettingsUi();
+  try {
+    const payload = await fetchRuntimeJson<SettingsPayload>("./api/settings/provider-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        connection_id: connectionId,
+        action,
+        key,
+        revision: settingsProjection.data.model_catalog.revision,
+      }),
+    });
+    acceptSettingsPayload(payload);
+    settingsProjection.feedback = action === "set" ? t("密钥已保存") : t("密钥已删除");
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    settingsProjection.error = failure.status === 409
+      ? t("当前有其他写入正在进行，请稍后再试")
+      : `${action === "set" ? t("密钥保存失败") : t("密钥删除失败")}：${failure.code || failure.message || "unknown"}`;
+    settingsProjection.feedback = "";
+  } finally {
+    settingsProjection.pending = false;
+  }
+  refreshSettingsUi();
+}
+
+export async function submitModelCatalog(
+  entity: "connection" | "model",
+  action: "create" | "update" | "delete",
+  id: string | null,
+  values: JsonObject,
+): Promise<void> {
+  if (settingsProjection.pending || !settingsProjection.data) return;
+  settingsProjection.pending = true;
+  settingsProjection.error = "";
+  settingsProjection.feedback = t("正在保存设置");
+  refreshSettingsUi();
+  try {
+    const payload = await fetchRuntimeJson<SettingsPayload>("./api/settings/model-catalog", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: settingsProjection.data.model_catalog.revision,
+        entity,
+        action,
+        id,
+        values,
+      }),
+    });
+    acceptSettingsPayload(payload);
+    settingsProjection.feedback = t("设置已保存");
+    state.editingConnectionId = null;
+    state.editingModelId = null;
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    settingsProjection.error = failure.status === 409
+      ? t("设置已被其他操作更新，请重新载入后再试")
+      : `${t("设置保存失败")}：${failure.code || failure.message || "unknown"}`;
+    settingsProjection.feedback = "";
+  } finally {
+    settingsProjection.pending = false;
+  }
+  refreshSettingsUi();
+}
+
+export function depositionPage(kind: DepositionKind): PageId {
+  return kind === "memory" ? "mem" : kind === "container" ? "containers" : "relations";
+}
+
+export function loadActiveDepositionDetail(pageId: PageId): void {
+  const selection = pageId === "mem"
+    ? ["memory", state.selectedMemoryId] as const
+    : pageId === "containers"
+      ? ["container", state.selectedContainerId] as const
+      : pageId === "relations"
+        ? ["relation", state.selectedRelationId] as const
+        : null;
+  if (selection?.[1]) void loadDepositionDetail(selection[0], selection[1]);
+}
+
+export async function loadDepositionDetail(kind: DepositionKind, itemId: string, { force = false, render = true }: { force?: boolean; render?: boolean } = {}): Promise<void> {
+  if (!itemId || depositionProjection.pendingDetails.has(`${kind}:${itemId}`)) return;
+  if (!force && depositionProjection.details[kind]?.[itemId]) return;
+  const key = `${kind}:${itemId}`;
+  depositionProjection.pendingDetails.add(key);
+  delete depositionProjection.detailErrors[key];
+  try {
+    const payload = await fetchRuntimeJson<DepositionDetailPayload>(`./api/deposition/${kind}?id=${encodeURIComponent(itemId)}`);
+    if (payload.schema_version !== "seed_gui_deposition_detail.v1" || payload.kind !== kind || payload.item?.id !== itemId) {
+      throw new Error("deposition_detail_schema_mismatch");
+    }
+    depositionProjection.details[kind][itemId] = payload;
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    depositionProjection.detailErrors[key] = `${t("详情读取失败")}：${failure.code || failure.message || "unknown"}`;
+  } finally {
+    depositionProjection.pendingDetails.delete(key);
+  }
+  if (render && state.activePage === depositionPage(kind)) renderStage(state.activePage);
+}
+
+export function pollDeposition({ force = false, ignoreVisibility = false }: { force?: boolean; ignoreVisibility?: boolean } = {}): Promise<boolean> {
+  if (document.hidden && !ignoreVisibility) return Promise.resolve(false);
+  if (polling.deposition) {
+    if (force) polling.depositionForceQueued = true;
+    return polling.deposition;
+  }
+  if (!depositionProjection.index) depositionProjection.loading = true;
+  let changed = force;
+  const request = (async () => {
+    try {
+      const payload = await fetchRuntimeJson<DepositionIndexPayload>("./api/deposition");
+      if (payload.schema_version !== "seed_gui_deposition_index.v1"
+          || !Array.isArray(payload.memory)
+          || !Array.isArray(payload.containers)
+          || !Array.isArray(payload.relations)) {
+        throw new Error("deposition_index_schema_mismatch");
+      }
+      const nextKey = JSON.stringify(payload);
+      changed = changed || nextKey !== depositionProjection.renderKey || Boolean(depositionProjection.error);
+      depositionProjection.index = payload;
+      depositionProjection.renderKey = nextKey;
+      depositionProjection.error = "";
+      if (changed) {
+        const selected: Array<[DepositionKind, DepositionItem | null]> = [
+          ["memory", selectDepositionItem("memory", payload.memory)],
+          ["container", selectDepositionItem("container", payload.containers)],
+          ["relation", selectDepositionItem("relation", payload.relations)],
+        ];
+        await Promise.all(selected.map(([kind, item]) => (
+          item ? loadDepositionDetail(kind, item.id, { force: true }) : Promise.resolve()
+        )));
+      }
+    } catch (error: unknown) {
+      const failure = errorView(error);
+      const nextError = `${t("沉淀索引读取失败")}：${failure.code || failure.message || "unknown"}`;
+      changed = changed || nextError !== depositionProjection.error;
+      depositionProjection.error = nextError;
+    } finally {
+      depositionProjection.loading = false;
+    }
+    if (changed) {
+      renderSourceState();
+      if (["mem", "relations", "containers"].includes(state.activePage)) {
+        renderStage(state.activePage);
+        loadActiveDepositionDetail(state.activePage);
+      }
+    }
+    return true;
+  })();
+  polling.deposition = request.finally(() => {
+    polling.deposition = null;
+    if (polling.depositionForceQueued) {
+      polling.depositionForceQueued = false;
+      pollDeposition({ force: true, ignoreVisibility: true });
+    }
+  });
+  return polling.deposition;
+}
+
+export async function submitContainerFocus(action: string, containerId: string): Promise<void> {
+  const mutation = depositionProjection.focusMutation;
+  if (mutation.pending) return;
+  mutation.pending = true;
+  mutation.feedback = "";
+  renderStage("containers");
+  try {
+    const payload = await fetchRuntimeJson<{ schema_version: string; submission_source: string; receipt?: import("./contracts").ContainerFocusReceipt }>("./api/container/focus", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, container_id: containerId }),
+    });
+    if (payload.schema_version !== "seed_gui_container_focus_result.v1"
+        || payload.submission_source !== "seed_gui"
+        || payload.receipt?.tool_id !== "container_focus"
+        || payload.receipt?.status !== "applied") {
+      throw new Error("container_focus_receipt_mismatch");
+    }
+    mutation.receipt = payload.receipt;
+    mutation.feedback = `已由 processor ${payload.receipt.action}：${payload.receipt.container_id || "无目标"}。`;
+    await pollDeposition({ force: true, ignoreVisibility: true });
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    const receipt = jsonObject(failure.payload.receipt);
+    if (receipt.tool_id === "container_focus") {
+      mutation.receipt = receipt as import("./contracts").ContainerFocusReceipt;
+    }
+    const labels = {
+      400: t("焦点参数无效"),
+      403: t("请求来源被拒绝"),
+      404: t("容器不存在"),
+      409: t("焦点状态冲突或已有写入在途"),
+      503: t("本地焦点处理器不可用"),
+    };
+    mutation.feedback = `${labels[failure.status as keyof typeof labels] || t("焦点变更失败")}：${failure.code || failure.message}`;
+  } finally {
+    mutation.pending = false;
+    if (state.activePage === "containers") renderStage("containers");
+  }
+}
+
+function confirmUnlimitedPermission(permissionLevel: PermissionLevel): boolean {
+  if (permissionLevel !== "unlimited" || runtimeProjection.unlimitedConfirmed) return true;
+  const confirmed = window.confirm(t("完整权限会允许运行时使用 unrestricted 工具。仅确认当前页面会话使用完整权限？"));
+  if (!confirmed) {
+    els.permissionLevel.value = "limited";
+    runtimeProjection.unlimitedConfirmed = false;
+    return false;
+  }
+  runtimeProjection.unlimitedConfirmed = true;
+  return true;
+}
+
+export async function submitRuntimeMessage(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const message = els.messageInput.value;
+  const permissionLevel = els.permissionLevel.value as PermissionLevel;
+  runtimeProjection.sendFeedback = "";
+  if (!settingsProjection.data?.persona.setup_model_ready) {
+    runtimeProjection.sendFeedback = t("尚未配置可用模型，完成模型服务与起手路由后即可发送。");
+    openGlobalSettings("models");
+    refreshRuntimeUi();
+    return;
+  }
+  if (!message.trim()) {
+    runtimeProjection.sendFeedback = t("请输入非空消息。");
+    refreshRuntimeUi();
+    return;
+  }
+  if (new TextEncoder().encode(message).length > 1024 * 1024) {
+    runtimeProjection.sendFeedback = t("消息超过 1 MiB。");
+    refreshRuntimeUi();
+    return;
+  }
+  if (!confirmUnlimitedPermission(permissionLevel)) {
+    runtimeProjection.sendFeedback = t("已保持受限权限。");
+    refreshRuntimeUi();
+    return;
+  }
+  runtimeProjection.submitBaseline = {
+    round: runtimeProjection.round,
+    eventIndex: Number(runtimeProjection.live?.last_event_index || 0),
+  };
+  els.messageInput.value = "";
+  runtimeProjection.sending = true;
+  runtimeProjection.awaitingProjection = true;
+  refreshRuntimeUi();
+  try {
+    await fetchRuntimeJson<JsonObject>("./api/runtime/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        permission_level: permissionLevel,
+        unlimited_confirmed: permissionLevel === "unlimited" && runtimeProjection.unlimitedConfirmed,
+      }),
+    });
+  } catch (error: unknown) {
+    if (!els.messageInput.value) els.messageInput.value = message;
+    const failure = errorView(error);
+    runtimeProjection.awaitingProjection = false;
+    runtimeProjection.submitBaseline = null;
+    const labels = {
+      400: t("输入参数无效"),
+      403: t("来源或完整权限确认被拒绝"),
+      409: t("已有运行时写操作正在执行"),
+      502: t("运行时执行失败"),
+      503: t("本地运行时宿主不可用"),
+    };
+    runtimeProjection.sendFeedback = `${labels[failure.status as keyof typeof labels] || t("提交失败")}：${failure.code || failure.message}`;
+  } finally {
+    runtimeProjection.sending = false;
+    await pollRuntime({ forceFull: true, ignoreVisibility: true });
+  }
+}
+
+export function pollAbout({ force = false }: { force?: boolean } = {}): Promise<boolean> {
+  if (polling.about) return polling.about;
+  if (!force && aboutProjection.data) return Promise.resolve(false);
+  aboutProjection.loading = true;
+  const request = (async () => {
+    try {
+      const payload = await fetchRuntimeJson<AboutPayload>("./api/about");
+      if (
+        payload.schema_version !== "seed_gui_about.v1"
+        || typeof payload.product?.version !== "string"
+        || typeof payload.links?.repository !== "string"
+        || typeof payload.build?.git_head !== "string"
+      ) throw new Error("about_projection_schema_mismatch");
+      aboutProjection.data = payload;
+      aboutProjection.error = "";
+    } catch (error: unknown) {
+      const failure = errorView(error);
+      aboutProjection.error = `${t("关于信息读取失败")}：${failure.code || failure.message || "unknown"}`;
+    } finally {
+      aboutProjection.loading = false;
+    }
+    renderIdentity();
+    if (state.globalSettingsOpen && state.globalSettingsTab === "about") renderGlobalSettings();
+    return true;
+  })();
+  polling.about = request.finally(() => { polling.about = null; });
+  return polling.about;
+}
+
+export async function submitRuntimeStop(): Promise<void> {
+  if (runtimeProjection.stopping) return;
+  runtimeProjection.stopping = true;
+  runtimeProjection.sendFeedback = t("正在请求停止");
+  refreshRuntimeUi();
+  try {
+    const receipt = await fetchRuntimeJson<{
+      schema_version?: string;
+      reason?: string;
+      stage?: string;
+    }>("./api/runtime/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (receipt.schema_version !== "seed_gui_runtime_stop_receipt.v1") {
+      throw new Error("runtime_stop_receipt_mismatch");
+    }
+    runtimeProjection.sendFeedback = receipt.reason === "local_cleanup_in_progress"
+      ? t("正在本地善后")
+      : t("已请求停止；将完成本地保存与结算");
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    const labels = {
+      403: t("请求来源被拒绝"),
+      409: t("当前没有正在执行的轮次"),
+      503: t("本地运行时宿主不可用"),
+    };
+    runtimeProjection.sendFeedback = `${labels[failure.status as keyof typeof labels] || t("停止失败")}：${failure.code || failure.message}`;
+  } finally {
+    runtimeProjection.stopping = false;
+    await pollRuntime({ forceFull: true, ignoreVisibility: true });
+  }
+}
+
+export async function submitRuntimeRelay(): Promise<void> {
+  const relay = relayRuntimeState();
+  if (taskProjection.relayPending) return;
+  taskProjection.relayFeedback = "";
+  if (!relay.ready) {
+    taskProjection.relayFeedback = t("当前结构化状态不是可执行中继。");
+    renderStage("run");
+    return;
+  }
+  if (relay.mutationInFlight || relay.inFlight) {
+    taskProjection.relayFeedback = t("已有运行时写操作正在执行。");
+    renderStage("run");
+    return;
+  }
+  const permissionLevel = els.permissionLevel.value as PermissionLevel;
+  if (!confirmUnlimitedPermission(permissionLevel)) {
+    taskProjection.relayFeedback = t("已保持受限权限；未执行中继。");
+    renderStage("run");
+    return;
+  }
+  taskProjection.relayPending = true;
+  renderSourceState();
+  renderComposerState();
+  renderStage("run");
+  try {
+    const payload = await fetchRuntimeJson<{ ok?: boolean; command?: string }>("./api/runtime/relay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        permission_level: permissionLevel,
+        unlimited_confirmed: permissionLevel === "unlimited" && runtimeProjection.unlimitedConfirmed,
+      }),
+    });
+    if (payload.ok !== true || payload.command !== "relay") {
+      throw new Error("runtime_relay_response_mismatch");
+    }
+    taskProjection.relayFeedback = t("中继已完成；界面只显示随后重读到的真实轮次账本。");
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    const labels = {
+      400: t("中继参数无效"),
+      403: t("来源或完整权限确认被拒绝"),
+      409: t("中继状态已变化或已有写操作在途"),
+      502: t("运行时中继执行失败"),
+      503: t("本地运行时宿主不可用"),
+    };
+    taskProjection.relayFeedback = `${labels[failure.status as keyof typeof labels] || t("中继失败")}：${failure.code || failure.message}`;
+  } finally {
+    taskProjection.relayPending = false;
+    await Promise.all([
+      pollRuntime({ forceFull: true, ignoreVisibility: true }),
+      pollTaskProjection({ force: true, ignoreVisibility: true }),
+    ]);
+  }
+}
+
+export async function retryProjection(target: string): Promise<void> {
+  if (target === "history") {
+    await syncConversationHistory({ force: true });
+    refreshRuntimeUi();
+    return;
+  }
+  if (target === "runtime") {
+    await Promise.all([
+      pollRuntime({ forceFull: true, ignoreVisibility: true }),
+      pollTaskProjection({ force: true, ignoreVisibility: true }),
+      pollDeposition({ force: true, ignoreVisibility: true }),
+    ]);
+    return;
+  }
+  if (target === "task") {
+    await pollTaskProjection({ force: true, ignoreVisibility: true });
+    return;
+  }
+  if (target === "deposition") {
+    await pollDeposition({ force: true, ignoreVisibility: true });
+  }
+}
+
+function evidenceExportPayload(): { round: number; payload: JsonObject } | null {
+  const selectedRound = state.selectedLedgerRound ?? runtimeProjection.round;
+  const live = selectedRound === runtimeProjection.round
+    ? runtimeProjection.live
+    : selectedRound == null ? null : runtimeProjection.conversationRounds.get(selectedRound) || null;
+  if (!live || selectedRound == null) return null;
+  return {
+    round: selectedRound,
+    payload: {
+      schema_version: "seed_gui_evidence_export.v1",
+      exported_at: new Date().toISOString(),
+      source: {
+        projection_schema: live.schema_version,
+        round: selectedRound,
+        last_event_index: Number(live.last_event_index || 0),
+        host: "127.0.0.1",
+      },
+      runtime_projection: {
+        schema_version: live.schema_version,
+        round: selectedRound,
+        last_event_index: Number(live.last_event_index || 0),
+        latest_frame_id: live.latest_frame_id || "",
+        statusbar_projection: live.statusbar_projection || null,
+        round_lifecycle: live.round_lifecycle || null,
+        call_frames: (live.call_frames || []).map((frame) => ({
+          frame_id: frame.frame_id || "",
+          round: frame.round ?? selectedRound,
+          label: frame.label || "",
+          phase: frame.phase || "",
+          iteration: frame.iteration ?? null,
+          call_channel: frame.call_channel || "",
+          event_start_index: frame.event_start_index ?? null,
+          event_end_index: frame.event_end_index ?? null,
+          layer_source: frame.layer_source || "",
+          historical: Boolean(frame.historical),
+        })),
+        context_panes: live.context_panes || [],
+        conversation: live.conversation || [],
+        manifest: live.manifest || {},
+      },
+      task_projection: taskProjection.data,
+      deposition_index: depositionProjection.index,
+    },
+  };
+}
+
+export function exportCurrentEvidence(): void {
+  const evidence = evidenceExportPayload();
+  if (!evidence) {
+    runtimeProjection.exportFeedback = t("没有可导出的真实轮次投影。");
+    renderStageAndFocus("audit", "[data-export-evidence]");
+    return;
+  }
+  try {
+    const body = `${JSON.stringify(evidence.payload, null, 2)}\n`;
+    const url = URL.createObjectURL(new Blob([body], { type: "application/json;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `upsp-seed-round-${String(evidence.round).padStart(6, "0")}-evidence.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    runtimeProjection.exportFeedback = t("已从当前结构化投影生成本地 JSON。");
+  } catch (error: unknown) {
+    runtimeProjection.exportFeedback = `${t("导出失败")}：${errorView(error).message || "unknown"}`;
+  }
+  renderStageAndFocus("audit", "[data-export-evidence]");
+}

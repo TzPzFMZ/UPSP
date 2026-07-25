@@ -1,0 +1,27 @@
+{
+  "schema_version": "upsp_persona_model_routing.v1",
+  "cross_phase_failover_enabled": true,
+  "routes": {
+    "setup": {
+      "primary": null,
+      "backups": [
+        null,
+        null
+      ]
+    },
+    "reaction": {
+      "primary": null,
+      "backups": [
+        null,
+        null
+      ]
+    },
+    "cleanup": {
+      "primary": null,
+      "backups": [
+        null,
+        null
+      ]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "_comment": "记忆与休眠相关配置",
+  "_version": "Base-0.10.0",
+
+  "fatigue": {
+    "seek_sleep": 50,
+    "warning": 80,
+    "sleep_window": "02:00-06:00",
+    "idle_acceleration_minutes": 30
+  },
+
+  "dreams": {
+    "threshold": 0.5,
+    "random_weight": 0.2,
+    "wake_window_hours": 12
+  },
+
+  "privacy_declassify": {
+    "manual_enabled": false,
+    "auto_enabled": false,
+    "frequency": "monthly",
+    "auto_modes": [
+      "redact"
+    ],
+    "max_items_per_run": 20,
+    "requires_review_modes": [
+      "delete"
+    ]
+  }
+}

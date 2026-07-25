@@ -1,0 +1,29 @@
+{
+  "_comment": "POPUP装配规则（事件驱动，messages绝对末位）",
+  "_version": "Base-0.11.0",
+  "_dds_ref": "§19.3 / §21.1 / §24",
+
+  "layer": {
+    "frequency": "event",
+    "refresh": "event_driven",
+    "cache_hit_rate": "~0%",
+    "attention_position": "absolute_last (strongest attention)"
+  },
+
+  "lifecycle": {
+    "states": ["active", "consumed", "expired"],
+    "description": "POPUP不属于可裁剪层，使用active/consumed/expired生命周期而非缓存重建逻辑"
+  },
+
+  "popup_types": [
+    "api_fault (api_degraded=true)",
+    "process_anomaly (process_down=true)",
+    "identity_prompt (身份未明普通提示，decision_required=false)",
+    "security_review (三级反抗/异常输入，decision_required=true)",
+    "structure_warning (悬空容器/结构补救提示)",
+    "failover (连续熔断)"
+  ],
+
+  "merge_rule": "多事件合并为一条POPUP，按guide -> reminder -> handoff -> warning稳定排序；warning永远在POPUP内部末尾",
+  "budget_chars": 500
+}

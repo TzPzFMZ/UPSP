@@ -1,0 +1,34 @@
+{
+  "_comment": "高频层装配规则（每轮刷新）",
+  "_version": "Base-0.10.0",
+  "_dds_ref": "§19.3 / §19.5 / §21.1",
+
+  "layer": {
+    "frequency": "high_freq",
+    "refresh": "every_round",
+    "cache_hit_rate": "~0%",
+    "attention_position": "mid-rear"
+  },
+
+  "index_display_limits": {
+    "container_index": 1,
+    "ltm_heat_index": 16,
+    "stm_heat_index": 16,
+    "skills_inverted": 8,
+    "relation_inverted": 8,
+    "relation_domain": 8,
+    "ltm_inverted": 8,
+    "stm_inverted": 8,
+    "association_index": 8
+  },
+
+  "content_limits": {
+    "reference_window_chars": 65536
+  },
+
+  "trim_policy": "by_module_tag",
+  "trim_order": {
+    "CONTENT": "先关最低优先级只读容器→裁STM召回条目(热度低→高)→压缩焦点容器正文(WB焦点不裁)",
+    "EXPLORER": "先截未命中倒排索引→再截超出top-N条目"
+  }
+}

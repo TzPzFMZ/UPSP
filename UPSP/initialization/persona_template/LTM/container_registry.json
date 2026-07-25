@@ -1,0 +1,15 @@
+{
+  "_comment": "容器类型注册表（9个工作容器类型声明）",
+  "_version": "Base-0.15.2",
+  "containers": [
+    {"prefix": "DC", "type": "dialectics", "name": "辩证链", "path": "LTM/Dialectics/"},
+    {"prefix": "EC", "type": "events", "name": "事件链", "path": "LTM/Events/"},
+    {"prefix": "PRJ", "type": "projects", "name": "项目", "path": "LTM/Projects/"},
+    {"prefix": "SKL", "type": "skills", "name": "技能", "path": "LTM/Skills/"},
+    {"prefix": "IMM", "type": "immune", "name": "免疫", "path": "LTM/Immune/"},
+    {"prefix": "CHR", "type": "chronicle", "name": "编年史", "path": "LTM/Chronicle/"},
+    {"prefix": "COR", "type": "corpus", "name": "语料库", "path": "LTM/Corpus/"},
+    {"prefix": "FUT", "type": "future", "name": "未来", "path": "LTM/Future/"},
+    {"prefix": "ITR", "type": "iteration", "name": "迭代", "path": "LTM/Iteration/"}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "_comment": "媒体质量配置（各存储层级的图片/音视频质量）",
+  "_version": "Base-0.10.0",
+
+  "media_quality": {
+    "stm": "original",
+    "f": "1080p",
+    "s": "720p",
+    "a": "480p",
+    "backup": "same_as_a"
+  }
+}

@@ -1,0 +1,1738 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>UPSP Rules 工作台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --map-width: 440px;
+      --compare-left-width: 46%;
+      --edge-detail-height: 118px;
+      --bg: oklch(0.962 0.012 210);
+      --surface: oklch(0.995 0.004 210);
+      --surface-soft: oklch(0.982 0.009 212);
+      --surface-strong: oklch(0.93 0.018 214);
+      --ink: oklch(0.225 0.018 225);
+      --muted: oklch(0.48 0.021 225);
+      --line: oklch(0.85 0.016 218);
+      --line-strong: oklch(0.74 0.025 218);
+      --teal: oklch(0.47 0.105 190);
+      --teal-soft: oklch(0.91 0.045 190);
+      --blue: oklch(0.46 0.095 245);
+      --amber: oklch(0.68 0.12 82);
+      --red: oklch(0.5 0.11 25);
+      --green: oklch(0.52 0.105 150);
+      --purple: oklch(0.49 0.095 302);
+      --code: oklch(0.975 0.008 220);
+      --shadow: 0 18px 50px oklch(0.42 0.025 230 / 0.12);
+      --mono: "Cascadia Mono", "Consolas", monospace;
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      background:
+        linear-gradient(135deg, oklch(0.985 0.009 205), var(--bg) 38%, oklch(0.95 0.018 225));
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    button, input, textarea {
+      font: inherit;
+    }
+
+    button {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+      transition: background 160ms ease-out, border-color 160ms ease-out, transform 160ms ease-out;
+    }
+
+    button:hover {
+      border-color: var(--teal);
+      background: var(--teal-soft);
+    }
+
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.48; cursor: default; }
+
+    .app {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      height: 100vh;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklch, var(--surface) 88%, var(--surface-soft));
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .pill.good { border-color: color-mix(in oklch, var(--green), var(--line)); color: var(--green); }
+    .pill.warn { border-color: color-mix(in oklch, var(--amber), var(--line)); color: oklch(0.48 0.1 82); }
+    .pill.bad { border-color: color-mix(in oklch, var(--red), var(--line)); color: var(--red); }
+
+    main {
+      display: grid;
+      grid-template-columns: 300px minmax(560px, 1fr) 8px minmax(320px, var(--map-width));
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    aside, .editor-pane, .map-pane {
+      min-height: 0;
+      overflow: auto;
+    }
+
+    aside {
+      padding: 14px;
+      border-right: 1px solid var(--line);
+      background: oklch(0.979 0.009 214);
+    }
+
+    .search {
+      width: 100%;
+      min-height: 36px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--ink);
+      outline: none;
+    }
+
+    .search:focus {
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px oklch(0.76 0.07 190 / 0.22);
+    }
+
+    .group {
+      margin-top: 14px;
+    }
+
+    .group-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0 2px 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 720;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .file-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .file-button {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      column-gap: 8px;
+      width: 100%;
+      min-height: 46px;
+      padding: 8px 9px;
+      text-align: left;
+      border-color: color-mix(in oklch, var(--line) 88%, transparent);
+    }
+
+    .file-button.active {
+      border-color: var(--teal);
+      background: color-mix(in oklch, var(--teal-soft) 72%, var(--surface));
+      box-shadow: 0 8px 24px oklch(0.47 0.105 190 / 0.1);
+    }
+
+    .file-name {
+      min-width: 0;
+      font-weight: 680;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-path {
+      grid-column: 1 / 2;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-status {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      align-self: center;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 34px;
+      height: 22px;
+      padding: 0 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .status-badge.original {
+      border-color: var(--line);
+      color: var(--muted);
+    }
+
+    .status-badge.draft {
+      border-color: color-mix(in oklch, var(--amber), var(--line));
+      background: oklch(0.965 0.035 82);
+      color: oklch(0.45 0.095 82);
+    }
+
+    .status-badge.changed {
+      border-color: color-mix(in oklch, var(--green), var(--line));
+      background: oklch(0.958 0.035 150);
+      color: oklch(0.39 0.095 150);
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--line-strong);
+    }
+
+    .dot.draft { background: var(--amber); }
+    .dot.changed { background: var(--green); }
+    .dot.selected { background: var(--teal); }
+
+    .editor-pane {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      background: color-mix(in oklch, var(--surface) 82%, transparent);
+    }
+
+    .doc-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .doc-title {
+      min-width: 0;
+      font-weight: 760;
+      font-size: 16px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .doc-meta {
+      margin-top: 3px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mode-tabs {
+      display: flex;
+      gap: 6px;
+    }
+
+    .mode-tabs button {
+      min-height: 32px;
+      padding: 5px 10px;
+      font-size: 12px;
+    }
+
+    .mode-tabs button.active {
+      background: var(--teal);
+      border-color: var(--teal);
+      color: oklch(0.99 0.004 190);
+    }
+
+    .content-zone {
+      min-height: 0;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: minmax(240px, var(--compare-left-width)) 8px minmax(240px, 1fr);
+      background: color-mix(in oklch, var(--surface-soft) 70%, var(--surface));
+    }
+
+    .compare-panel, .work-panel {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .pane-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 38px;
+      padding: 8px 13px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklch, var(--surface) 92%, var(--surface-soft));
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .pane-label span:first-child {
+      color: var(--ink);
+    }
+
+    .pane-meta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      min-width: 0;
+      white-space: nowrap;
+    }
+
+    .pane-label code {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .char-count {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--teal);
+    }
+
+    .preview, .draft-preview, .source-editor {
+      min-height: 0;
+      overflow: auto;
+      padding: 22px 18px 28px;
+    }
+
+    .preview {
+      background: var(--surface);
+    }
+
+    .compare-resizer {
+      min-height: 0;
+      border-left: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, transparent 0 2px, color-mix(in oklch, var(--line-strong) 80%, transparent) 2px 4px, transparent 4px 100%),
+        color-mix(in oklch, var(--surface-strong) 55%, var(--surface));
+      cursor: col-resize;
+      touch-action: none;
+    }
+
+    .compare-resizer:hover,
+    .compare-resizer.dragging {
+      background:
+        linear-gradient(90deg, transparent 0 2px, var(--teal) 2px 4px, transparent 4px 100%),
+        color-mix(in oklch, var(--teal-soft) 58%, var(--surface));
+    }
+
+    .work-panel {
+      background: oklch(0.985 0.007 220);
+    }
+
+    .draft-preview {
+      display: block;
+      background: var(--surface);
+    }
+
+    .source-editor {
+      display: none;
+      width: 100%;
+      min-height: 100%;
+      resize: none;
+      border: 0;
+      outline: none;
+      background: oklch(0.985 0.007 220);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.62;
+      tab-size: 2;
+    }
+
+    .content-zone.mode-edit .source-editor { display: block; }
+    .content-zone.mode-edit .draft-preview,
+    .content-zone.mode-edit .work-panel .diff-panel { display: none; }
+
+    .content-zone.mode-preview .draft-preview { display: block; }
+    .content-zone.mode-preview .source-editor,
+    .content-zone.mode-preview .work-panel .diff-panel { display: none; }
+
+    .content-zone.mode-diff .work-panel .diff-panel { display: grid; }
+    .content-zone.mode-diff .draft-preview,
+    .content-zone.mode-diff .source-editor { display: none; }
+
+    .markdown {
+      max-width: none;
+    }
+
+    .markdown h1,
+    .markdown h2,
+    .markdown h3 {
+      margin: 1.1em 0 0.45em;
+      line-height: 1.22;
+      letter-spacing: 0;
+    }
+
+    .markdown h1 { font-size: 28px; }
+    .markdown h2 { font-size: 21px; padding-top: 7px; border-top: 1px solid var(--line); }
+    .markdown h3 { font-size: 16px; color: var(--teal); }
+    .markdown p { margin: 0.55em 0; }
+    .markdown ul, .markdown ol { padding-left: 1.4em; }
+    .markdown li { margin: 0.25em 0; }
+    .markdown code {
+      padding: 0.12em 0.35em;
+      border-radius: 5px;
+      background: var(--code);
+      font-family: var(--mono);
+      font-size: 0.92em;
+    }
+    .markdown pre {
+      overflow: auto;
+      padding: 12px 13px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--code);
+    }
+    .markdown pre code {
+      padding: 0;
+      background: transparent;
+    }
+    .markdown blockquote {
+      margin: 12px 0;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: color-mix(in oklch, var(--surface-soft) 70%, var(--surface));
+      color: var(--muted);
+    }
+    .markdown table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: 13px;
+    }
+    .markdown th, .markdown td {
+      border: 1px solid var(--line);
+      padding: 7px 8px;
+      vertical-align: top;
+    }
+    .markdown th {
+      background: var(--surface-soft);
+      text-align: left;
+    }
+
+    .save-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      padding: 12px 15px;
+      border-top: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .note-input {
+      min-height: 36px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      outline: none;
+    }
+
+    .save-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .primary {
+      border-color: var(--teal);
+      background: var(--teal);
+      color: oklch(0.99 0.004 190);
+      font-weight: 680;
+    }
+
+    .primary:hover {
+      background: color-mix(in oklch, var(--teal) 84%, var(--ink));
+      color: oklch(0.99 0.004 190);
+    }
+
+    .map-pane {
+      display: grid;
+      grid-template-rows: auto auto var(--edge-detail-height) 8px minmax(240px, 1fr);
+      border-left: 1px solid var(--line);
+      background: oklch(0.976 0.01 216);
+    }
+
+    .map-resizer {
+      min-height: 0;
+      border-left: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, transparent 0 2px, color-mix(in oklch, var(--line-strong) 80%, transparent) 2px 4px, transparent 4px 100%),
+        color-mix(in oklch, var(--surface-strong) 50%, var(--surface));
+      cursor: col-resize;
+      touch-action: none;
+    }
+
+    .map-resizer:hover,
+    .map-resizer.dragging {
+      background:
+        linear-gradient(90deg, transparent 0 2px, var(--teal) 2px 4px, transparent 4px 100%),
+        color-mix(in oklch, var(--teal-soft) 58%, var(--surface));
+    }
+
+    body.resizing-map,
+    body.resizing-compare,
+    body.resizing-edge-detail {
+      cursor: col-resize;
+      user-select: none;
+    }
+
+    body.resizing-edge-detail {
+      cursor: row-resize;
+    }
+
+    .map-header, .issues, .edge-detail, .diff-panel {
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .panel-title {
+      margin: 0 0 6px;
+      font-size: 13px;
+      font-weight: 780;
+      letter-spacing: 0;
+    }
+
+    .panel-copy {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .step-filter {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .step-filter button {
+      min-height: 30px;
+      padding: 4px 9px;
+      font-size: 12px;
+    }
+
+    .step-filter button.active {
+      border-color: var(--blue);
+      background: oklch(0.91 0.045 245);
+      color: var(--blue);
+    }
+
+    .issues {
+      display: grid;
+      gap: 8px;
+    }
+
+    .edge-detail {
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      min-height: 0;
+      overflow: auto;
+      background: oklch(0.98 0.018 190);
+      color: var(--ink);
+      font-size: 12px;
+    }
+
+    .edge-detail strong {
+      font-size: 12px;
+    }
+
+    .edge-detail code {
+      font-family: var(--mono);
+      color: var(--teal);
+    }
+
+    .edge-detail .muted {
+      color: var(--muted);
+    }
+
+    .edge-detail-resizer {
+      min-height: 8px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(0deg, transparent 0 2px, color-mix(in oklch, var(--line-strong) 80%, transparent) 2px 4px, transparent 4px 100%),
+        color-mix(in oklch, var(--surface-strong) 45%, var(--surface));
+      cursor: row-resize;
+      touch-action: none;
+    }
+
+    .edge-detail-resizer:hover,
+    .edge-detail-resizer.dragging {
+      background:
+        linear-gradient(0deg, transparent 0 2px, var(--teal) 2px 4px, transparent 4px 100%),
+        color-mix(in oklch, var(--teal-soft) 58%, var(--surface));
+    }
+
+    .issue {
+      padding: 9px 10px;
+      border: 1px solid color-mix(in oklch, var(--red), var(--line));
+      border-radius: 7px;
+      background: oklch(0.96 0.025 25);
+      color: oklch(0.36 0.09 25);
+      font-size: 12px;
+    }
+
+    .map-wrap {
+      position: relative;
+      min-height: 360px;
+      overflow: auto;
+      background:
+        linear-gradient(90deg, oklch(0.91 0.012 220) 1px, transparent 1px),
+        linear-gradient(0deg, oklch(0.91 0.012 220) 1px, transparent 1px);
+      background-size: 34px 34px;
+    }
+
+    .map-canvas {
+      position: relative;
+      min-width: 560px;
+    }
+
+    .map-svg {
+      position: absolute;
+      inset: 0;
+      pointer-events: auto;
+    }
+
+    .map-edge {
+      fill: none;
+      stroke: var(--line-strong);
+      stroke-width: 2.1;
+      stroke-linecap: round;
+      opacity: 0.42;
+      pointer-events: none;
+      transition: opacity 160ms ease-out, stroke-width 160ms ease-out, filter 160ms ease-out;
+    }
+
+    .map-edge-hit {
+      fill: none;
+      stroke: transparent;
+      stroke-width: 14;
+      stroke-linecap: round;
+      cursor: pointer;
+      pointer-events: stroke;
+    }
+
+    .map-edge.hovered {
+      opacity: 0.88;
+      stroke-width: 4;
+      filter: drop-shadow(0 0 4px oklch(0.47 0.105 190 / 0.26));
+    }
+
+    .map-edge.active {
+      opacity: 0.92;
+      stroke-width: 2.5;
+      stroke: var(--teal);
+    }
+
+    .map-edge.selected {
+      opacity: 1;
+      stroke-width: 4.2;
+      stroke: var(--teal);
+      filter: drop-shadow(0 0 5px oklch(0.47 0.105 190 / 0.34));
+    }
+
+    .map-node {
+      position: absolute;
+      display: grid;
+      align-content: center;
+      min-height: 36px;
+      padding: 6px 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: color-mix(in oklch, var(--surface) 92%, transparent);
+      box-shadow: 0 8px 18px oklch(0.33 0.02 225 / 0.08);
+      color: var(--ink);
+      text-align: left;
+      font-size: 12px;
+    }
+
+    .map-node.step {
+      width: 92px;
+      border-color: var(--blue);
+      background: oklch(0.91 0.045 245);
+      color: var(--blue);
+      font-weight: 780;
+      text-align: center;
+    }
+
+    .map-node.rule {
+      width: 255px;
+      font-family: var(--mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .map-node.active {
+      z-index: 2;
+      border-color: var(--teal);
+      background: var(--teal-soft);
+      transform: translateY(-1px);
+    }
+
+    .map-node.has-draft {
+      border-color: color-mix(in oklch, var(--amber), var(--line));
+    }
+
+    .map-node.changed-draft {
+      border-color: color-mix(in oklch, var(--green), var(--line));
+      box-shadow: 0 8px 18px oklch(0.39 0.095 150 / 0.12);
+    }
+
+    .map-node.missing-target {
+      border-color: color-mix(in oklch, var(--red), var(--line));
+      background: oklch(0.96 0.024 25);
+    }
+
+    .diff-panel {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: auto;
+      border-bottom: 0;
+      min-height: 0;
+    }
+
+    .diff-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 9px;
+    }
+
+    .diff-tabs button {
+      min-height: 30px;
+      padding: 4px 9px;
+      font-size: 12px;
+    }
+
+    .diff-tabs button.active {
+      background: var(--surface-strong);
+      border-color: var(--line-strong);
+    }
+
+    .diff-output {
+      margin: 0;
+      min-height: 0;
+      max-height: none;
+      overflow: auto;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: oklch(0.982 0.006 220);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .log-list {
+      display: none;
+      gap: 8px;
+    }
+
+    .log-list.active { display: grid; }
+    .diff-output.hidden { display: none; }
+
+    .log-item {
+      padding: 8px 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-soft);
+      font-size: 12px;
+    }
+
+    .log-item code {
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .empty {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 10;
+      max-width: 360px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      color: var(--ink);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity 180ms ease-out, transform 180ms ease-out;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1180px) {
+      main {
+        grid-template-columns: 270px minmax(0, 1fr);
+      }
+      .map-resizer {
+        display: none;
+      }
+      .map-pane {
+        grid-column: 1 / -1;
+        border-left: 0;
+        border-top: 1px solid var(--line);
+        max-height: 650px;
+      }
+      .content-zone {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .compare-resizer {
+        display: none;
+      }
+      .preview {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .work-panel {
+        min-height: 360px;
+      }
+    }
+
+    @media (max-width: 760px) {
+      header {
+        grid-template-columns: 1fr;
+      }
+      .status-row {
+        justify-content: flex-start;
+      }
+      main {
+        grid-template-columns: 1fr;
+      }
+      aside {
+        max-height: 360px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .doc-bar, .save-bar {
+        grid-template-columns: 1fr;
+      }
+      .content-zone {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>UPSP Rules 信息图工作台</h1>
+        <div class="subtitle">草案编辑不会写回生产 rules；最终定版另走写回步骤。</div>
+      </div>
+      <div class="status-row">
+        <span class="pill" id="registryVersion">registry: -</span>
+        <span class="pill good" id="fileCount">rules: -</span>
+        <span class="pill warn" id="draftCount">drafts: -</span>
+        <span class="pill" id="issueBadge">issues: -</span>
+      </div>
+    </header>
+
+    <main>
+      <aside>
+        <input class="search" id="search" type="search" placeholder="搜索 rules 文件或描述">
+        <div id="fileGroups"></div>
+      </aside>
+
+      <section class="editor-pane">
+        <div class="doc-bar">
+          <div>
+            <div class="doc-title" id="docTitle">选择一个 rules 文件</div>
+            <div class="doc-meta" id="docMeta">等待载入</div>
+          </div>
+          <div class="mode-tabs">
+            <button id="previewTab" class="active" type="button">修改后</button>
+            <button id="editTab" type="button">编辑</button>
+            <button id="diffTab" type="button">diff</button>
+          </div>
+        </div>
+        <div class="content-zone mode-preview" id="contentZone">
+          <section class="compare-panel original-panel">
+            <div class="pane-label">
+              <span>生产原文</span>
+              <span class="pane-meta">
+                <span class="char-count" id="originalCount">0 字</span>
+                <code id="originalState">original</code>
+              </span>
+            </div>
+            <article class="preview markdown" id="originalPreview"></article>
+          </section>
+          <div class="compare-resizer" id="compareResizer" role="separator" aria-label="调整原文与修改后宽度" aria-orientation="vertical"></div>
+          <section class="work-panel">
+            <div class="pane-label">
+              <span id="workPanelTitle">修改后预览</span>
+              <span class="pane-meta">
+                <span class="char-count" id="draftCountText">0 字</span>
+                <code id="draftState">draft</code>
+              </span>
+            </div>
+            <article class="draft-preview markdown" id="draftPreview"></article>
+            <textarea class="source-editor" id="sourceEditor" spellcheck="false"></textarea>
+            <div class="diff-panel">
+              <div class="diff-tabs">
+                <button class="active" id="currentDiffTab" type="button">当前 diff</button>
+                <button id="logTab" type="button">历史记录</button>
+              </div>
+              <pre class="diff-output" id="currentDiff">选择文件后显示 diff。</pre>
+              <div class="log-list" id="logList"></div>
+            </div>
+          </section>
+        </div>
+        <div class="save-bar">
+          <input class="note-input" id="saveNote" type="text" placeholder="保存备注，例如：拆出记忆常驻纪律">
+          <div class="save-actions">
+            <span class="pill" id="sourceState">source: -</span>
+            <button class="primary" id="saveDraft" type="button">保存草案</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="map-resizer" id="mapResizer" role="separator" aria-label="调整加载关系图宽度" aria-orientation="vertical"></div>
+      <section class="map-pane">
+        <div class="map-header">
+          <h2 class="panel-title">加载关系图</h2>
+          <p class="panel-copy">点文件或 step，会高亮当前加载路径；连线颜色表示加载层级。</p>
+          <div class="step-filter" id="stepFilter">
+            <button class="active" type="button" data-step="all">全部</button>
+            <button type="button" data-step="setup">setup</button>
+            <button type="button" data-step="reaction">reaction</button>
+            <button type="button" data-step="cleanup">cleanup</button>
+          </div>
+        </div>
+        <div class="issues" id="issues"></div>
+        <div class="edge-detail" id="edgeDetail"></div>
+        <div class="edge-detail-resizer" id="edgeDetailResizer" role="separator" aria-label="调整加载说明区高度" aria-orientation="horizontal"></div>
+        <div class="map-wrap">
+          <div class="map-canvas" id="mapCanvas"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const state = {
+      index: null,
+      selectedPath: "",
+      selectedStep: "all",
+      selectedEdgeKey: "",
+      document: null,
+      mode: "preview",
+      diffMode: "current",
+      filter: ""
+    };
+
+    const categoryLabels = {
+      permanent: "固定层",
+      passive_read: "被动只读",
+      step_level: "步级层",
+      periodic: "场景层",
+      on_demand: "按需层",
+      unregistered: "未登记"
+    };
+
+    const categoryColors = {
+      permanent: "var(--blue)",
+      passive_read: "var(--teal)",
+      step_level: "var(--teal)",
+      periodic: "var(--amber)",
+      on_demand: "var(--purple)",
+      unregistered: "var(--muted)"
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function charCount(value) {
+      return Array.from(String(value || "")).length;
+    }
+
+    function formatCharCount(value) {
+      return `${charCount(value)} 字`;
+    }
+
+    function edgeKey(edge) {
+      return `${edge.step}|${edge.source}|${edge.target}|${edge.category}|${edge.conditional ? "1" : "0"}`;
+    }
+
+    function edgeLabel(edge) {
+      const target = edge.target.replace("file:", "");
+      return `${edge.step} -> ${target}；${edgeDisplayReason(edge)}`;
+    }
+
+    function edgeDisplayReason(edge) {
+      return edge.reason === "条件场景触发" ? "场景触发" : (edge.reason || "未标注原因");
+    }
+
+    function fileStatus(item) {
+      if (item.draft_changed) return {label: "已改", className: "changed"};
+      if (item.draft_exists) return {label: "草案", className: "draft"};
+      return {label: "原文", className: "original"};
+    }
+
+    function selectedEdge() {
+      const key = state.selectedEdgeKey;
+      if (!key) return null;
+      return visibleEdges().find((edge) => edgeKey(edge) === key) || null;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function inlineMarkdown(text) {
+      return escapeHtml(text)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    }
+
+    function renderMarkdown(md) {
+      const lines = String(md || "").replace(/\r\n/g, "\n").split("\n");
+      const html = [];
+      let inCode = false;
+      let codeLines = [];
+      let inList = false;
+      let inOrdered = false;
+      let paragraph = [];
+
+      function flushParagraph() {
+        if (paragraph.length) {
+          html.push(`<p>${inlineMarkdown(paragraph.join(" "))}</p>`);
+          paragraph = [];
+        }
+      }
+      function closeList() {
+        if (inList) {
+          html.push(inOrdered ? "</ol>" : "</ul>");
+          inList = false;
+          inOrdered = false;
+        }
+      }
+      function renderTable(startIndex) {
+        const rows = [];
+        let i = startIndex;
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+          rows.push(lines[i]);
+          i += 1;
+        }
+        if (rows.length < 2 || !/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(rows[1])) {
+          return null;
+        }
+        const cells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => inlineMarkdown(cell.trim()));
+        const head = cells(rows[0]);
+        const body = rows.slice(2).map(cells);
+        const table = [
+          "<table><thead><tr>",
+          ...head.map((cell) => `<th>${cell}</th>`),
+          "</tr></thead><tbody>",
+          ...body.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`),
+          "</tbody></table>"
+        ].join("");
+        return { html: table, next: i };
+      }
+
+      for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (/^\s*```/.test(line)) {
+          if (inCode) {
+            html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+            codeLines = [];
+            inCode = false;
+          } else {
+            flushParagraph();
+            closeList();
+            inCode = true;
+          }
+          continue;
+        }
+        if (inCode) {
+          codeLines.push(line);
+          continue;
+        }
+        if (/^\s*\|.*\|\s*$/.test(line)) {
+          const table = renderTable(i);
+          if (table) {
+            flushParagraph();
+            closeList();
+            html.push(table.html);
+            i = table.next - 1;
+            continue;
+          }
+        }
+        if (!line.trim()) {
+          flushParagraph();
+          closeList();
+          continue;
+        }
+        const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+        if (heading) {
+          flushParagraph();
+          closeList();
+          const level = heading[1].length;
+          html.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`);
+          continue;
+        }
+        const unordered = /^\s*[-*]\s+(.+)$/.exec(line);
+        const ordered = /^\s*\d+\.\s+(.+)$/.exec(line);
+        if (unordered || ordered) {
+          flushParagraph();
+          const isOrdered = Boolean(ordered);
+          if (!inList || inOrdered !== isOrdered) {
+            closeList();
+            html.push(isOrdered ? "<ol>" : "<ul>");
+            inList = true;
+            inOrdered = isOrdered;
+          }
+          html.push(`<li>${inlineMarkdown((unordered || ordered)[1])}</li>`);
+          continue;
+        }
+        const quote = /^>\s+(.+)$/.exec(line);
+        if (quote) {
+          flushParagraph();
+          closeList();
+          html.push(`<blockquote>${inlineMarkdown(quote[1])}</blockquote>`);
+          continue;
+        }
+        paragraph.push(line.trim());
+      }
+      flushParagraph();
+      closeList();
+      if (inCode) html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+      return html.join("\n") || '<p class="empty">空文件。</p>';
+    }
+
+    function toast(message) {
+      const node = $("toast");
+      node.textContent = message;
+      node.classList.add("show");
+      window.clearTimeout(toast.timer);
+      toast.timer = window.setTimeout(() => node.classList.remove("show"), 2400);
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || data.error || response.statusText);
+      }
+      return data;
+    }
+
+    async function loadIndex() {
+      state.index = await fetchJson("/api/rules-workbench");
+      $("registryVersion").textContent = `registry: ${state.index.registry_version || "-"}`;
+      $("fileCount").textContent = `rules: ${state.index.files.length}`;
+      $("draftCount").textContent = `drafts: ${state.index.files.filter((item) => item.draft_exists).length}`;
+      renderIssueBadge();
+      renderFileGroups();
+      renderIssues();
+      renderMap();
+      if (!state.selectedPath && state.index.files.length) {
+        await selectFile(state.index.files[0].rel_path);
+      }
+    }
+
+    function renderFileGroups() {
+      const root = $("fileGroups");
+      root.innerHTML = "";
+      const query = state.filter.toLowerCase();
+      const groups = state.index.groups || {};
+      Object.keys(groups).forEach((category) => {
+        const items = (groups[category] || []).filter((item) => {
+          const hay = `${item.rel_path} ${item.description} ${item.layer} ${item.trigger}`.toLowerCase();
+          return !query || hay.includes(query);
+        });
+        if (!items.length) return;
+        const group = document.createElement("section");
+        group.className = "group";
+        group.innerHTML = `
+          <div class="group-title">
+            <span>${categoryLabels[category] || category}</span>
+            <span>${items.length}</span>
+          </div>
+          <div class="file-list"></div>
+        `;
+        const list = group.querySelector(".file-list");
+        items.forEach((item) => {
+          const status = fileStatus(item);
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "file-button";
+          if (item.rel_path === state.selectedPath) button.classList.add("active");
+          button.innerHTML = `
+            <span class="file-name">${escapeHtml(item.file)}</span>
+            <span class="file-path">${escapeHtml(item.rel_path)}</span>
+            <span class="file-status">
+              <span class="status-badge ${status.className}">${status.label}</span>
+              <span class="dot ${status.className === "changed" ? "changed" : (item.draft_exists ? "draft" : "")} ${item.rel_path === state.selectedPath ? "selected" : ""}"></span>
+            </span>
+          `;
+          button.addEventListener("click", () => selectFile(item.rel_path));
+          list.appendChild(button);
+        });
+        root.appendChild(group);
+      });
+    }
+
+    function renderIssues() {
+      const issues = (state.index.graph && state.index.graph.issues) || [];
+      $("issues").innerHTML = issues.map((issue) => `
+        <div class="issue">
+          <strong>${escapeHtml(issue.id)}</strong><br>
+          ${escapeHtml(issue.message)}
+        </div>
+      `).join("") || '<span class="empty">暂无结构风险。</span>';
+    }
+
+    function renderIssueBadge() {
+      const issues = (state.index.graph && state.index.graph.issues) || [];
+      const badge = $("issueBadge");
+      badge.className = "pill";
+      if (!issues.length) {
+        badge.textContent = "issues: 0";
+        badge.classList.add("good");
+        badge.title = "暂无结构风险";
+        return;
+      }
+      const hasRed = issues.some((issue) => issue.severity === "red");
+      badge.textContent = `issues: ${issues.length}`;
+      badge.classList.add(hasRed ? "bad" : "warn");
+      badge.title = issues.map((issue) => `${issue.id}: ${issue.message}`).join("\n");
+    }
+
+    function renderEdgeDetail() {
+      const detail = $("edgeDetail");
+      const edge = selectedEdge();
+      if (!edge) {
+        detail.className = "edge-detail";
+        detail.innerHTML = `
+          <span class="muted">点一条连线查看加载原因。颜色表示固定层、步级层和场景层。</span>
+        `;
+        return;
+      }
+      const target = edge.target.replace("file:", "");
+      const mode = categoryLabels[edge.category] || "加载关系";
+      const explanation = "按当前 step 与场景装配关系显示；后续注册表重设时再统一裁掉过时的条件口径。";
+      detail.className = "edge-detail";
+      detail.innerHTML = `
+        <strong>${escapeHtml(mode)}：<code>${escapeHtml(edge.step)}</code> -> <code>${escapeHtml(target)}</code></strong>
+        <span>${escapeHtml(edgeDisplayReason(edge))}</span>
+        <span class="muted">${escapeHtml(explanation)}</span>
+      `;
+    }
+
+    async function selectFile(relPath) {
+      state.selectedPath = relPath;
+      renderFileGroups();
+      renderMap();
+      const encoded = encodeURIComponent(relPath);
+      state.document = await fetchJson(`/api/rules-workbench/files/${encoded}`);
+      $("docTitle").textContent = relPath.split("/").pop();
+      $("docMeta").textContent = relPath;
+      $("sourceState").textContent = `source: ${state.document.source}`;
+      $("originalState").textContent = "production";
+      $("draftState").textContent = state.document.draft_exists ? "draft" : "same as original";
+      $("originalCount").textContent = formatCharCount(state.document.original_content || state.document.production_content || "");
+      $("draftCountText").textContent = formatCharCount(state.document.content);
+      $("sourceEditor").value = state.document.content;
+      $("originalPreview").innerHTML = renderMarkdown(state.document.original_content || state.document.production_content || "");
+      $("draftPreview").innerHTML = renderMarkdown(state.document.content);
+      $("currentDiff").textContent = state.document.current_diff || "当前文件没有草案 diff。";
+      await refreshLog();
+    }
+
+    function setMode(mode) {
+      state.mode = mode;
+      $("contentZone").classList.toggle("mode-preview", mode === "preview");
+      $("contentZone").classList.toggle("mode-edit", mode === "edit");
+      $("contentZone").classList.toggle("mode-diff", mode === "diff");
+      $("previewTab").classList.toggle("active", mode === "preview");
+      $("editTab").classList.toggle("active", mode === "edit");
+      $("diffTab").classList.toggle("active", mode === "diff");
+      $("workPanelTitle").textContent = mode === "edit" ? "草案编辑" : (mode === "diff" ? "草案 diff" : "修改后预览");
+      if (mode === "preview") {
+        $("draftPreview").innerHTML = renderMarkdown($("sourceEditor").value);
+      }
+    }
+
+    async function saveDraft() {
+      if (!state.selectedPath) return;
+      const content = $("sourceEditor").value;
+      const note = $("saveNote").value;
+      const encoded = encodeURIComponent(state.selectedPath);
+      state.document = await fetchJson(`/api/rules-workbench/files/${encoded}/draft`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({content, note})
+      });
+      $("sourceState").textContent = `source: ${state.document.source}`;
+      $("draftState").textContent = state.document.draft_exists ? "draft" : "same as original";
+      $("draftCountText").textContent = formatCharCount(state.document.content);
+      $("draftPreview").innerHTML = renderMarkdown(state.document.content);
+      $("currentDiff").textContent = state.document.diff_record.diff || "保存成功，内容与上次草案一致。";
+      $("saveNote").value = "";
+      toast("草案已保存，生产 rules 未改动。");
+      await loadIndex();
+      await refreshLog();
+      state.selectedPath = state.document.rel_path;
+      renderFileGroups();
+      renderMap();
+    }
+
+    async function refreshLog() {
+      const data = await fetchJson("/api/rules-workbench/diff-log");
+      const records = (data.records || []).slice().reverse();
+      const log = $("logList");
+      if (!records.length) {
+        log.innerHTML = '<div class="empty">暂无 diff 记录。</div>';
+        return;
+      }
+      log.innerHTML = records.map((record) => `
+        <div class="log-item">
+          <div><strong>${escapeHtml(record.rel_path)}</strong></div>
+          <div>${escapeHtml(record.timestamp || "")}</div>
+          <div>${escapeHtml(record.note || "无备注")}</div>
+          <code>${escapeHtml((record.new_hash || "").slice(0, 12))}</code>
+        </div>
+      `).join("");
+    }
+
+    function setDiffMode(mode) {
+      state.diffMode = mode;
+      $("currentDiffTab").classList.toggle("active", mode === "current");
+      $("logTab").classList.toggle("active", mode === "log");
+      $("currentDiff").classList.toggle("hidden", mode !== "current");
+      $("logList").classList.toggle("active", mode === "log");
+    }
+
+    function setStep(step) {
+      state.selectedStep = step;
+      state.selectedEdgeKey = "";
+      document.querySelectorAll("#stepFilter button").forEach((button) => {
+        button.classList.toggle("active", button.dataset.step === step);
+      });
+      renderMap();
+    }
+
+    function visibleEdges() {
+      const edges = (state.index.graph && state.index.graph.edges) || [];
+      return edges.filter((edge) => state.selectedStep === "all" || edge.step === state.selectedStep);
+    }
+
+    function renderMap() {
+      if (!state.index) return;
+      const canvas = $("mapCanvas");
+      const edges = visibleEdges();
+      renderEdgeDetail();
+      const involved = new Set();
+      edges.forEach((edge) => {
+        involved.add(edge.source);
+        involved.add(edge.target);
+      });
+      if (state.selectedPath) involved.add(`file:${state.selectedPath}`);
+      const files = state.index.files.filter((file) => involved.has(`file:${file.rel_path}`));
+      const steps = ["setup", "reaction", "cleanup"].filter((step) => state.selectedStep === "all" || state.selectedStep === step);
+      const height = Math.max(460, Math.max(files.length, steps.length) * 44 + 80);
+      const wrapWidth = canvas.parentElement ? canvas.parentElement.clientWidth : 560;
+      const width = Math.max(560, Math.floor(wrapWidth || 560));
+      const fileWidth = clamp(width - 260, 220, 310);
+      const fileX = width - fileWidth - 26;
+      canvas.style.height = `${height}px`;
+      canvas.style.width = `${width}px`;
+      canvas.innerHTML = "";
+
+      const positions = {};
+      steps.forEach((step, idx) => {
+        positions[`step:${step}`] = {x: 28, y: 52 + idx * 150, w: 92, h: 42};
+      });
+      files.forEach((file, idx) => {
+        positions[`file:${file.rel_path}`] = {x: fileX, y: 24 + idx * 44, w: fileWidth, h: 36};
+      });
+
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("class", "map-svg");
+      svg.setAttribute("width", width);
+      svg.setAttribute("height", height);
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+      function activateEdge(edge, key, event) {
+        event.stopPropagation();
+        state.selectedEdgeKey = key;
+        const relPath = edge.target.startsWith("file:") ? edge.target.slice(5) : "";
+        if (relPath) selectFile(relPath);
+        else renderMap();
+      }
+
+      const drawableEdges = [];
+      edges.forEach((edge, idx) => {
+        const a = positions[edge.source];
+        const b = positions[edge.target];
+        if (!a || !b) return;
+        const key = edgeKey(edge);
+        const domKey = `edge-${idx}`;
+        const x1 = a.x + a.w;
+        const y1 = a.y + a.h / 2;
+        const x2 = b.x;
+        const y2 = b.y + b.h / 2;
+        const mid = x1 + (x2 - x1) * 0.55;
+        const d = `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`;
+        drawableEdges.push({edge, key, domKey, d});
+      });
+
+      drawableEdges.forEach(({edge, key, domKey, d}) => {
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", d);
+        path.setAttribute("class", `map-edge ${edge.conditional ? "conditional" : ""}`);
+        path.dataset.edgeKey = domKey;
+        path.style.stroke = categoryColors[edge.category] || "var(--line-strong)";
+        const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+        title.textContent = edgeLabel(edge);
+        path.appendChild(title);
+        if (edge.target === `file:${state.selectedPath}`) path.classList.add("active");
+        if (state.selectedEdgeKey === key) path.classList.add("selected");
+        svg.appendChild(path);
+      });
+
+      drawableEdges
+        .slice()
+        .sort((a, b) => Number(a.edge.conditional) - Number(b.edge.conditional))
+        .forEach(({edge, key, domKey, d}) => {
+          const hit = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          hit.setAttribute("d", d);
+          hit.setAttribute("class", "map-edge-hit");
+          hit.setAttribute("role", "button");
+          hit.setAttribute("tabindex", "0");
+          hit.setAttribute("aria-label", edgeLabel(edge));
+          const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+          title.textContent = edgeLabel(edge);
+          hit.appendChild(title);
+          const setHovered = (value) => {
+            const path = svg.querySelector(`.map-edge[data-edge-key="${domKey}"]`);
+            if (path) path.classList.toggle("hovered", value);
+          };
+          hit.addEventListener("mouseenter", () => setHovered(true));
+          hit.addEventListener("mouseleave", () => setHovered(false));
+          hit.addEventListener("focus", () => setHovered(true));
+          hit.addEventListener("blur", () => setHovered(false));
+          hit.addEventListener("click", (event) => activateEdge(edge, key, event));
+          hit.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              activateEdge(edge, key, event);
+            }
+          });
+          svg.appendChild(hit);
+        });
+      canvas.appendChild(svg);
+
+      steps.forEach((step) => {
+        const pos = positions[`step:${step}`];
+        const node = document.createElement("button");
+        node.type = "button";
+        node.className = "map-node step";
+        if (state.selectedStep === step) node.classList.add("active");
+        node.style.left = `${pos.x}px`;
+        node.style.top = `${pos.y}px`;
+        node.style.width = `${pos.w}px`;
+        node.textContent = step;
+        node.addEventListener("click", () => setStep(step));
+        canvas.appendChild(node);
+      });
+
+      const issueIds = new Set(((state.index.graph && state.index.graph.issues) || []).map((issue) => issue.id));
+      files.forEach((file) => {
+        const pos = positions[`file:${file.rel_path}`];
+        const node = document.createElement("button");
+        node.type = "button";
+        node.className = "map-node rule";
+        if (file.rel_path === state.selectedPath) node.classList.add("active");
+        if (file.draft_changed) node.classList.add("changed-draft");
+        else if (file.draft_exists) node.classList.add("has-draft");
+        if (issueIds.has("reaction_missing_memory_contract") && state.selectedStep === "reaction" && file.rel_path === "protocol/base/memory.md") {
+          node.classList.add("missing-target");
+        }
+        node.style.left = `${pos.x}px`;
+        node.style.top = `${pos.y}px`;
+        node.style.width = `${pos.w}px`;
+        node.textContent = file.rel_path;
+        node.title = file.description || file.rel_path;
+        node.addEventListener("click", () => selectFile(file.rel_path));
+        canvas.appendChild(node);
+      });
+    }
+
+    $("search").addEventListener("input", (event) => {
+      state.filter = event.target.value;
+      renderFileGroups();
+    });
+    $("previewTab").addEventListener("click", () => setMode("preview"));
+    $("editTab").addEventListener("click", () => setMode("edit"));
+    $("diffTab").addEventListener("click", () => setMode("diff"));
+    $("sourceEditor").addEventListener("input", () => {
+      const content = $("sourceEditor").value;
+      $("draftCountText").textContent = formatCharCount(content);
+      $("draftPreview").innerHTML = renderMarkdown(content);
+      if (state.document && content !== state.document.content) {
+        $("draftState").textContent = "unsaved";
+      } else if (state.document) {
+        $("draftState").textContent = state.document.draft_exists ? "draft" : "same as original";
+      }
+    });
+    $("saveDraft").addEventListener("click", () => saveDraft().catch((error) => toast(`保存失败：${error.message}`)));
+    $("currentDiffTab").addEventListener("click", () => setDiffMode("current"));
+    $("logTab").addEventListener("click", () => setDiffMode("log"));
+    document.querySelectorAll("#stepFilter button").forEach((button) => {
+      button.addEventListener("click", () => setStep(button.dataset.step));
+    });
+
+    function initMapResize() {
+      const resizer = $("mapResizer");
+      if (!resizer) return;
+      try {
+        const savedWidth = Number(localStorage.getItem("rulesWorkbenchMapWidth"));
+        if (savedWidth) {
+          document.documentElement.style.setProperty("--map-width", `${clamp(savedWidth, 320, 900)}px`);
+        }
+      } catch {}
+
+      let startX = 0;
+      let startWidth = 0;
+
+      function onMove(event) {
+        const maxWidth = clamp(window.innerWidth - 760, 360, 900);
+        const width = clamp(startWidth - (event.clientX - startX), 320, maxWidth);
+        document.documentElement.style.setProperty("--map-width", `${width}px`);
+        try { localStorage.setItem("rulesWorkbenchMapWidth", String(width)); } catch {}
+        renderMap();
+      }
+
+      function onUp() {
+        document.body.classList.remove("resizing-map");
+        resizer.classList.remove("dragging");
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      }
+
+      resizer.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        startX = event.clientX;
+        startWidth = $("mapCanvas").closest(".map-pane").getBoundingClientRect().width;
+        document.body.classList.add("resizing-map");
+        resizer.classList.add("dragging");
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+      });
+    }
+
+    function initCompareResize() {
+      const resizer = $("compareResizer");
+      const zone = $("contentZone");
+      const original = document.querySelector(".original-panel");
+      if (!resizer || !zone || !original) return;
+      try {
+        const savedWidth = Number(localStorage.getItem("rulesWorkbenchCompareLeftWidth"));
+        if (savedWidth) {
+          document.documentElement.style.setProperty("--compare-left-width", `${clamp(savedWidth, 280, 900)}px`);
+        }
+      } catch {}
+
+      let startX = 0;
+      let startWidth = 0;
+
+      function onMove(event) {
+        const zoneWidth = zone.getBoundingClientRect().width;
+        const maxWidth = clamp(zoneWidth - 260, 300, 980);
+        const width = clamp(startWidth + (event.clientX - startX), 240, maxWidth);
+        document.documentElement.style.setProperty("--compare-left-width", `${width}px`);
+        try { localStorage.setItem("rulesWorkbenchCompareLeftWidth", String(width)); } catch {}
+      }
+
+      function onUp() {
+        document.body.classList.remove("resizing-compare");
+        resizer.classList.remove("dragging");
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      }
+
+      resizer.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        startX = event.clientX;
+        startWidth = original.getBoundingClientRect().width;
+        document.body.classList.add("resizing-compare");
+        resizer.classList.add("dragging");
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+      });
+    }
+
+    function initEdgeDetailResize() {
+      const resizer = $("edgeDetailResizer");
+      const detail = $("edgeDetail");
+      if (!resizer || !detail) return;
+      try {
+        const savedHeight = Number(localStorage.getItem("rulesWorkbenchEdgeDetailHeight"));
+        if (savedHeight) {
+          document.documentElement.style.setProperty("--edge-detail-height", `${clamp(savedHeight, 72, 360)}px`);
+        }
+      } catch {}
+
+      let startY = 0;
+      let startHeight = 0;
+
+      function onMove(event) {
+        const height = clamp(startHeight + (event.clientY - startY), 72, 360);
+        document.documentElement.style.setProperty("--edge-detail-height", `${height}px`);
+        try { localStorage.setItem("rulesWorkbenchEdgeDetailHeight", String(height)); } catch {}
+      }
+
+      function onUp() {
+        document.body.classList.remove("resizing-edge-detail");
+        resizer.classList.remove("dragging");
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      }
+
+      resizer.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        startY = event.clientY;
+        startHeight = detail.getBoundingClientRect().height;
+        document.body.classList.add("resizing-edge-detail");
+        resizer.classList.add("dragging");
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+      });
+    }
+
+    initMapResize();
+    initCompareResize();
+    initEdgeDetailResize();
+    window.addEventListener("resize", () => renderMap());
+
+    loadIndex().catch((error) => {
+      $("originalPreview").innerHTML = `<p class="empty">载入失败：${escapeHtml(error.message)}</p>`;
+      toast(`载入失败：${error.message}`);
+    });
+  </script>
+</body>
+</html>

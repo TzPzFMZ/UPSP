@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UPSP 轮审计</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: oklch(0.965 0.006 215);
+      --panel: oklch(0.995 0.004 215);
+      --panel-soft: oklch(0.975 0.007 220);
+      --panel-strong: oklch(0.925 0.012 225);
+      --text: oklch(0.235 0.015 230);
+      --muted: oklch(0.48 0.018 230);
+      --line: oklch(0.86 0.011 225);
+      --accent: oklch(0.43 0.095 190);
+      --accent-soft: oklch(0.92 0.035 190);
+      --amber: oklch(0.66 0.11 78);
+      --wine: oklch(0.46 0.09 20);
+      --green: oklch(0.56 0.09 150);
+      --code-bg: oklch(0.985 0.006 220);
+      --add: oklch(0.94 0.04 150);
+      --remove: oklch(0.94 0.035 25);
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--text);
+      min-height: 34px;
+      padding: 7px 10px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: var(--accent); background: var(--accent-soft); }
+    button.active { border-color: var(--accent); background: var(--accent-soft); color: oklch(0.28 0.08 190); }
+    button:disabled { opacity: 0.45; cursor: default; }
+
+    .shell {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 100vh;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklch, var(--panel) 92%, var(--panel-soft));
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 19px;
+      font-weight: 720;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .pill.good { border-color: color-mix(in oklch, var(--green), var(--line)); color: var(--green); }
+    .pill.warn { border-color: color-mix(in oklch, var(--amber), var(--line)); color: oklch(0.48 0.1 78); }
+    .pill.bad { border-color: color-mix(in oklch, var(--wine), var(--line)); color: var(--wine); }
+
+    main {
+      display: grid;
+      grid-template-columns: 292px minmax(0, 1fr);
+      min-height: 0;
+    }
+
+    aside {
+      min-height: 0;
+      overflow: auto;
+      padding: 14px;
+      border-right: 1px solid var(--line);
+      background: oklch(0.982 0.006 215);
+    }
+
+    .aside-title {
+      margin: 2px 2px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .round-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .round-button {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      width: 100%;
+      text-align: left;
+    }
+
+    .round-meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .workspace {
+      min-width: 0;
+      min-height: 0;
+      overflow: auto;
+      padding: 16px 18px 26px;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding-bottom: 12px;
+      background: linear-gradient(to bottom, var(--bg) 80%, color-mix(in oklch, var(--bg) 0%, transparent));
+    }
+
+    .step-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-height: 36px;
+    }
+
+    .nav {
+      display: flex;
+      gap: 8px;
+    }
+
+    .overview {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 10px 12px;
+      min-width: 0;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .metric-value {
+      margin-top: 2px;
+      font-weight: 720;
+      overflow-wrap: anywhere;
+    }
+
+    .panels {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 10px;
+    }
+
+    details.panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: clip;
+    }
+
+    details.panel > summary {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      list-style: none;
+      cursor: pointer;
+      background: var(--panel-soft);
+      font-weight: 680;
+    }
+
+    details.panel > summary span:first-child {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    details.panel > summary::-webkit-details-marker { display: none; }
+    details.panel > summary::before {
+      content: "▸";
+      display: inline-block;
+      flex: 0 0 auto;
+      color: var(--accent);
+      transition: transform 140ms ease-out;
+    }
+    details.panel[open] > summary::before { transform: rotate(90deg); }
+
+    .summary-tail {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+      text-align: right;
+    }
+
+    .panel-body {
+      padding: 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .nested {
+      border: 0;
+      border-top: 1px solid color-mix(in oklch, var(--line), transparent 35%);
+      border-radius: 0;
+      background: var(--panel);
+    }
+
+    .nested:first-child { border-top: 0; }
+
+    .nested > summary {
+      background: var(--panel);
+      padding-left: 18px;
+      font-weight: 620;
+    }
+
+    pre {
+      margin: 0;
+      padding: 12px 14px;
+      max-height: 420px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: var(--code-bg);
+      font-family: Consolas, "Cascadia Mono", "Microsoft YaHei UI", monospace;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .empty {
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      background: var(--panel);
+      color: var(--muted);
+    }
+
+    .error { color: var(--wine); }
+
+    .diff-wrap {
+      max-height: 520px;
+      overflow: auto;
+      background: var(--code-bg);
+    }
+
+    .diff-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      border-bottom: 1px solid color-mix(in oklch, var(--line), transparent 40%);
+      font-family: Consolas, "Cascadia Mono", "Microsoft YaHei UI", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .diff-cell {
+      min-height: 22px;
+      padding: 2px 8px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .diff-cell:first-child { border-right: 1px solid color-mix(in oklch, var(--line), transparent 40%); }
+    .added { background: var(--add); }
+    .removed { background: var(--remove); }
+    .same { color: var(--muted); }
+
+    .notice {
+      padding: 10px 12px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+      font-size: 12px;
+    }
+
+    @media (max-width: 980px) {
+      header { grid-template-columns: 1fr; }
+      .status-row { justify-content: flex-start; }
+      main { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .toolbar { grid-template-columns: 1fr; }
+      .nav { justify-content: flex-start; }
+      .overview { grid-template-columns: 1fr; }
+      .diff-row { grid-template-columns: 1fr; }
+      .diff-cell:first-child { border-right: 0; border-bottom: 1px solid color-mix(in oklch, var(--line), transparent 40%); }
+    }
+  </style>
+  <script src="./round-index.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <h1>UPSP 轮审计</h1>
+        <div class="subtitle">round_*.jsonl 事件流审阅台，静态投影只作调试查看</div>
+      </div>
+      <div class="status-row">
+        <span id="sourcePill" class="pill warn">数据源：加载中</span>
+        <span id="roundPill" class="pill">轮次：未选择</span>
+        <span id="stepPill" class="pill">步骤：未选择</span>
+      </div>
+    </header>
+
+    <main>
+      <aside>
+        <div class="aside-title">当前 FIFO 保留轮次</div>
+        <div id="roundList" class="round-list"></div>
+      </aside>
+
+      <div class="workspace">
+        <div class="toolbar">
+          <div id="stepTabs" class="step-tabs"></div>
+          <div class="nav">
+            <button id="prevStep" type="button" title="上一屏">‹</button>
+            <button id="nextStep" type="button" title="下一屏">›</button>
+            <button id="reload" type="button" title="刷新">刷新</button>
+          </div>
+        </div>
+        <div id="content">
+          <div class="empty">选择一个当前保留的 round JSONL。</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const state = {
+      source: "loading",
+      rounds: [],
+      currentRound: null,
+      timeline: [],
+      events: [],
+      stepIndex: 0,
+      apiRoundsUrl: null
+    };
+
+    const el = {
+      sourcePill: document.getElementById("sourcePill"),
+      roundPill: document.getElementById("roundPill"),
+      stepPill: document.getElementById("stepPill"),
+      roundList: document.getElementById("roundList"),
+      stepTabs: document.getElementById("stepTabs"),
+      content: document.getElementById("content"),
+      prev: document.getElementById("prevStep"),
+      next: document.getElementById("nextStep"),
+      reload: document.getElementById("reload")
+    };
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, ch => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
+      }[ch]));
+    }
+
+    function text(value) {
+      if (value === undefined || value === null || value === "") return "";
+      if (typeof value === "string") return value;
+      return JSON.stringify(value, null, 2);
+    }
+
+    function bytesLabel(size) {
+      const value = Number(size || 0);
+      if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+      if (value >= 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
+      return `${value} B`;
+    }
+
+    function countChars(value) {
+      return text(value).length;
+    }
+
+    function setPill(node, label, tone) {
+      node.className = `pill ${tone || ""}`.trim();
+      node.textContent = label;
+    }
+
+    function updateStatus() {
+      const sourceLabel = state.source === "api"
+        ? "数据源：本地服务"
+        : state.source === "static"
+          ? "数据源：静态投影"
+          : state.source === "empty"
+            ? "数据源：未生成"
+            : "数据源：加载中";
+      setPill(el.sourcePill, sourceLabel, state.source === "empty" ? "bad" : state.source === "loading" ? "warn" : "good");
+      setPill(el.roundPill, state.currentRound ? `轮次：round_${state.currentRound}` : "轮次：未选择", "");
+      const step = state.timeline[state.stepIndex];
+      setPill(el.stepPill, step ? `步骤：${step.label}` : "步骤：未选择", "");
+    }
+
+    function renderRoundButtons() {
+      el.roundList.innerHTML = "";
+      if (!state.rounds.length) {
+        el.roundList.innerHTML = `<div class="empty">当前没有可展示的 round_*.jsonl。若直接打开 HTML，请先运行静态投影生成脚本。</div>`;
+        return;
+      }
+      state.rounds.slice().reverse().forEach(item => {
+        const button = document.createElement("button");
+        button.className = "round-button" + (item.round === state.currentRound ? " active" : "");
+        button.type = "button";
+        button.innerHTML = `
+          <span>round_${escapeHtml(item.round)}</span>
+          <span class="round-meta">${escapeHtml(bytesLabel(item.size))}</span>
+        `;
+        button.addEventListener("click", () => loadRound(item.round));
+        el.roundList.appendChild(button);
+      });
+    }
+
+    function renderStepTabs() {
+      el.stepTabs.innerHTML = "";
+      state.timeline.forEach((step, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = index === state.stepIndex ? "active" : "";
+        button.textContent = step.label;
+        button.addEventListener("click", () => {
+          state.stepIndex = index;
+          renderStep();
+        });
+        el.stepTabs.appendChild(button);
+      });
+    }
+
+    function details(title, body, options = {}) {
+      const tail = options.tail ? `<span class="summary-tail">${escapeHtml(options.tail)}</span>` : "";
+      return `
+        <details class="panel ${options.nested ? "nested" : ""}">
+          <summary><span>${escapeHtml(title)}</span>${tail}</summary>
+          <div class="panel-body">${body}</div>
+        </details>
+      `;
+    }
+
+    function pre(value) {
+      return `<pre>${escapeHtml(text(value))}</pre>`;
+    }
+
+    function markerFromLine(line) {
+      const marker = String(line || "").match(/^<!--\s*(.*?)\s*-->$/);
+      return marker && marker[1] ? marker[1] : "";
+    }
+
+    function messageMarker(message) {
+      const firstLine = text(message.content || "").split(/\r?\n/, 1)[0] || "";
+      return markerFromLine(firstLine);
+    }
+
+    const CONTEXT_LAYERS = [
+      { id: "permanent", title: "永固层", match: marker => marker.includes("永固层") },
+      { id: "periodic", title: "定期层", match: marker => marker.includes("定期层") },
+      { id: "lately", title: "最近缓存", match: marker => marker.includes("最近缓存 lately") },
+      { id: "high_freq", title: "高频层", match: marker => marker.includes("高频层") },
+      { id: "now", title: "当前缓存", match: marker => marker.includes("当前缓存 now") },
+      { id: "popup", title: "弹窗层", match: marker => marker.includes("POPUP") || marker.includes("弹窗层") }
+    ];
+
+    function contextLayerForMarker(marker) {
+      return CONTEXT_LAYERS.find(layer => layer.match(marker));
+    }
+
+    function renderTextByContextLayer(content) {
+      const raw = text(content);
+      if (!raw) return pre(raw);
+      const layerBuckets = CONTEXT_LAYERS.map(layer => ({ ...layer, lines: [] }));
+      let activeLayer = layerBuckets[0];
+
+      raw.split(/\r?\n/).forEach(line => {
+        const nextLayer = contextLayerForMarker(markerFromLine(line));
+        if (nextLayer) {
+          activeLayer = layerBuckets.find(layer => layer.id === nextLayer.id) || activeLayer;
+        }
+        activeLayer.lines.push(line);
+      });
+
+      return layerBuckets.map(layer => {
+        const layerText = layer.lines.join("\n");
+        const body = layerText
+          ? pre(layerText)
+          : `<div class="notice">本步未挂载这一层。</div>`;
+        return details(layer.title, body, {
+          nested: true,
+          tail: `${layer.lines.length} 行 · ${layerText.length} 字`,
+        });
+      }).join("");
+    }
+
+    function renderPlainMessage(message, index) {
+      const role = message.role || "unknown";
+      return details(
+        `message ${index + 1} · ${role}`,
+        pre(message.content || ""),
+        { nested: true, tail: `${countChars(message.content || "")} 字` }
+      );
+    }
+
+    function renderMessagesByContextLayer(messages) {
+      const layerBuckets = CONTEXT_LAYERS.map(layer => ({ ...layer, items: [] }));
+      let activeLayer = layerBuckets[0];
+
+      messages.forEach((message, index) => {
+        const marker = messageMarker(messages[index]);
+        const nextLayer = contextLayerForMarker(marker);
+        if (nextLayer) {
+          activeLayer = layerBuckets.find(layer => layer.id === nextLayer.id) || activeLayer;
+        }
+        activeLayer.items.push({ message, index });
+      });
+
+      return layerBuckets.map(layer => {
+        const totalChars = layer.items.reduce((sum, item) => sum + countChars(item.message.content || ""), 0);
+        const body = layer.items.length
+          ? layer.items.map(item => renderPlainMessage(item.message, item.index)).join("")
+          : `<div class="notice">本步未挂载这一层。</div>`;
+        return details(layer.title, body, {
+          nested: true,
+          tail: `${layer.items.length} 条 · ${totalChars} 字`,
+        });
+      }).join("");
+    }
+
+    function renderInputMessages(snapshot) {
+      const messages = snapshot.messages || [];
+      if (!messages.length) return `<div class="notice">本步没有 messages 输入快照。</div>`;
+      return renderMessagesByContextLayer(messages);
+    }
+
+    function eventList(events) {
+      if (!events || !events.length) return pre("无事件");
+      return events.map(event => {
+        const label = `${event.event_index || "?"} · ${event.event_type || "unknown"}`;
+        const tail = [event.phase, event.iteration ? `iter ${event.iteration}` : ""].filter(Boolean).join(" · ");
+        return details(label, pre(event), { nested: true, tail });
+      }).join("");
+    }
+
+    function diffRows(previousText, currentText) {
+      const left = text(previousText).split(/\r?\n/);
+      const right = text(currentText).split(/\r?\n/);
+      const max = Math.max(left.length, right.length);
+      const cap = 900;
+      const rows = [];
+      for (let i = 0; i < Math.min(max, cap); i += 1) {
+        const oldLine = left[i] || "";
+        const newLine = right[i] || "";
+        const same = oldLine === newLine;
+        rows.push(`<div class="diff-row">
+          <div class="diff-cell ${same ? "same" : "removed"}">${escapeHtml(oldLine)}</div>
+          <div class="diff-cell ${same ? "same" : "added"}">${escapeHtml(newLine)}</div>
+        </div>`);
+      }
+      const notice = max > cap
+        ? `<div class="notice">diff 已截断显示前 ${cap} 行，完整内容请展开输入快照或原始事件。</div>`
+        : "";
+      return `${notice}<div class="diff-wrap">${rows.join("")}</div>`;
+    }
+
+    function renderOverview(step) {
+      const eventCount = (step.events || []).length;
+      const inputChars = countChars(step.input_snapshot || {});
+      const outputChars = countChars((step.llm_output_raw || {}).response || "");
+      const settlementChars = countChars(step.step_settlement || {});
+      return `
+        <div class="overview">
+          <div class="metric"><div class="metric-label">阶段</div><div class="metric-value">${escapeHtml(step.label)}</div></div>
+          <div class="metric"><div class="metric-label">事件</div><div class="metric-value">${eventCount}</div></div>
+          <div class="metric"><div class="metric-label">输入</div><div class="metric-value">${inputChars} 字</div></div>
+          <div class="metric"><div class="metric-label">输出/落账</div><div class="metric-value">${outputChars} / ${settlementChars} 字</div></div>
+        </div>
+      `;
+    }
+
+    function renderStep() {
+      renderStepTabs();
+      updateStatus();
+      const step = state.timeline[state.stepIndex];
+      if (!step) {
+        el.content.innerHTML = `<div class="empty">此轮没有可展示的步骤事件。</div>`;
+        return;
+      }
+      const previous = state.timeline[state.stepIndex - 1];
+      el.content.innerHTML = `
+        ${renderOverview(step)}
+        <div class="panels">
+          ${details("输入快照（messages）", renderInputMessages(step.input_snapshot || {}), {
+            tail: `${(step.input_snapshot || {}).messages ? (step.input_snapshot || {}).messages.length : 0} 条`
+          })}
+          ${(step.input_snapshot || {}).step_md ? details("step.md 渲染", renderTextByContextLayer((step.input_snapshot || {}).step_md), {
+            tail: `${countChars((step.input_snapshot || {}).step_md)} 字`
+          }) : ""}
+          ${(step.input_snapshot || {}).manifest ? details("manifest", pre((step.input_snapshot || {}).manifest), {
+            tail: `${countChars((step.input_snapshot || {}).manifest)} 字`
+          }) : ""}
+          ${details("LLM 原始输出", pre(step.llm_output_raw || {}), {
+            tail: `${countChars(step.llm_output_raw || {})} 字`
+          })}
+          ${details("解析结果", pre(step.llm_output_parsed || {}), {
+            tail: `${countChars(step.llm_output_parsed || {})} 字`
+          })}
+          ${details("落账结果", pre(step.step_settlement || {}), {
+            tail: `${countChars(step.step_settlement || {})} 字`
+          })}
+          ${details("与上一步 diff", diffRows(previous ? previous.text : "", step.text || ""), {
+            tail: previous ? `${previous.label} → ${step.label}` : "首步"
+          })}
+          ${details("原始事件", eventList(step.events || []), {
+            tail: `${(step.events || []).length} 条`
+          })}
+        </div>
+      `;
+      el.prev.disabled = state.stepIndex <= 0;
+      el.next.disabled = state.stepIndex >= state.timeline.length - 1;
+    }
+
+    function unique(values) {
+      return values.filter((value, index, array) => value && array.indexOf(value) === index);
+    }
+
+    function apiRoundListCandidates() {
+      if (location.protocol === "file:") return [];
+      return unique([
+        new URL("./api/rounds", document.baseURI).href,
+        new URL("/api/rounds", location.origin).href
+      ]);
+    }
+
+    function apiRoundUrl(round) {
+      const base = state.apiRoundsUrl || new URL("./api/rounds", document.baseURI).href;
+      return `${base.replace(/\/$/, "")}/${encodeURIComponent(String(round))}`;
+    }
+
+    async function tryApiRounds() {
+      if (location.protocol === "file:") return null;
+      for (const url of apiRoundListCandidates()) {
+        try {
+          const response = await fetch(url, { cache: "no-store" });
+          if (!response.ok) continue;
+          const data = await response.json();
+          return { url, data };
+        } catch (_error) {
+          // Try the next candidate before falling back to static projection.
+        }
+      }
+      return null;
+    }
+
+    function staticIndex() {
+      return window.UPSP_ROUND_AUDIT_INDEX || null;
+    }
+
+    function findStaticRound(round) {
+      const index = staticIndex();
+      if (!index || !Array.isArray(index.rounds)) return null;
+      return index.rounds.find(item => Number(item.round) === Number(round)) || null;
+    }
+
+    function staticRoundScriptPath(item, round) {
+      const fallback = `round-data/round_${Number(round)}.js`;
+      const raw = item && typeof item.static_file === "string" ? item.static_file : fallback;
+      const normalized = raw.replace(/\\/g, "/").replace(/^\.\//, "");
+      if (!/^round-data\/round_\d+\.js$/.test(normalized)) return `./${fallback}`;
+      return `./${normalized}`;
+    }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const existing = Array.from(document.scripts).find(script => script.dataset.roundSrc === src);
+        if (existing) {
+          existing.addEventListener("load", resolve, { once: true });
+          existing.addEventListener("error", reject, { once: true });
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = src;
+        script.async = true;
+        script.dataset.roundSrc = src;
+        script.addEventListener("load", resolve, { once: true });
+        script.addEventListener("error", () => reject(new Error(`无法加载 ${src}`)), { once: true });
+        document.head.appendChild(script);
+      });
+    }
+
+    async function loadStaticRound(round) {
+      window.UPSP_ROUND_AUDIT_ROUNDS = window.UPSP_ROUND_AUDIT_ROUNDS || {};
+      if (!window.UPSP_ROUND_AUDIT_ROUNDS[round]) {
+        await loadScript(staticRoundScriptPath(findStaticRound(round), round));
+      }
+      const data = window.UPSP_ROUND_AUDIT_ROUNDS[round];
+      if (!data) throw new Error(`静态投影缺少 round_${round}`);
+      return data;
+    }
+
+    async function loadRound(round) {
+      state.currentRound = Number(round);
+      renderRoundButtons();
+      updateStatus();
+      try {
+        let data;
+        if (state.source === "api") {
+          const response = await fetch(apiRoundUrl(round), { cache: "no-store" });
+          if (!response.ok) throw new Error(`读取 round_${round} 失败`);
+          data = await response.json();
+        } else {
+          data = await loadStaticRound(round);
+        }
+        state.events = data.events || [];
+        state.timeline = data.timeline || [];
+        state.stepIndex = 0;
+        renderStep();
+      } catch (error) {
+        el.content.innerHTML = `<div class="empty error">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function loadRounds() {
+      state.source = "loading";
+      updateStatus();
+      const apiData = await tryApiRounds();
+      if (apiData && apiData.data && Array.isArray(apiData.data.rounds)) {
+        state.source = "api";
+        state.apiRoundsUrl = apiData.url;
+        state.rounds = apiData.data.rounds;
+      } else if (staticIndex() && Array.isArray(staticIndex().rounds)) {
+        state.source = "static";
+        state.apiRoundsUrl = null;
+        state.rounds = staticIndex().rounds;
+      } else {
+        state.source = "empty";
+        state.apiRoundsUrl = null;
+        state.rounds = [];
+      }
+      state.currentRound = null;
+      state.timeline = [];
+      state.events = [];
+      state.stepIndex = 0;
+      renderRoundButtons();
+      renderStepTabs();
+      updateStatus();
+      el.content.innerHTML = state.rounds.length
+        ? `<div class="empty">选择一个当前保留的 round_*.jsonl。</div>`
+        : `<div class="empty error">未发现 round 审计数据。服务模式请启动 tools/serve_round_audit.py；静态模式请生成 OS/audit/round-index.js。</div>`;
+    }
+
+    el.prev.addEventListener("click", () => {
+      if (state.stepIndex > 0) {
+        state.stepIndex -= 1;
+        renderStep();
+      }
+    });
+
+    el.next.addEventListener("click", () => {
+      if (state.stepIndex < state.timeline.length - 1) {
+        state.stepIndex += 1;
+        renderStep();
+      }
+    });
+
+    el.reload.addEventListener("click", loadRounds);
+
+    loadRounds();
+  </script>
+</body>
+</html>

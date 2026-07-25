@@ -1,0 +1,15 @@
+{
+  "_comment": "关系域配置",
+  "_version": "Base-0.10.0",
+
+  "relation_focus": {
+    "max_slots": 3
+  },
+
+  "relation_card_write": {
+    "single_declaration": true,
+    "single_target": true,
+    "large_delta_guard": false,
+    "max_delta_chars": 800
+  }
+}

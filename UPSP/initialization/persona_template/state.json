@@ -1,0 +1,134 @@
+{
+  "base": {
+    "meta": {
+      "total_round": 0,
+      "daily_round": 0,
+      "last_calendar_check_at": null,
+      "last_rhythm_round": 0,
+      "last_heartbeat_at": null,
+      "last_standby_round": 0,
+      "last_round_closed_at": null,
+      "last_external_input_at": null,
+      "last_update": null,
+      "version": "official-base-v2",
+      "next_settle_at": null,
+      "last_state_settlement_id": null,
+      "shelve_timer_at": null,
+      "last_error": null
+    },
+    "core_axes": {
+      "S": 50,
+      "C": 50,
+      "V": 50,
+      "A": 50,
+      "R": 50,
+      "B": 50
+    },
+    "dynamic_axes": {
+      "valence": {
+        "value": 0
+      },
+      "arousal": {
+        "value": 0
+      },
+      "focus": {
+        "value": 0
+      },
+      "mood": {
+        "value": 0
+      },
+      "humor": {
+        "value": 0
+      },
+      "safety": {
+        "value": 0
+      }
+    },
+    "comfort_zone": {
+      "valence": 0,
+      "arousal": 0,
+      "focus": 0,
+      "mood": 0,
+      "humor": 0,
+      "safety": 0
+    },
+    "core_speed_wheel": {
+      "current": 0,
+      "max": 128
+    },
+    "workhood_index": {
+      "value": 24.7,
+      "self_reference": 24.7,
+      "self_reflection": 24.7,
+      "autonomy": 24.7
+    },
+    "activity_mode": "待命",
+    "fatigue": {
+      "value": 0.0,
+      "awake_since": null
+    },
+    "token_usage": {
+      "current_tokens": 0,
+      "window_size": 0,
+      "usage_ratio": 0.0,
+      "last_round_input": 0,
+      "last_round_output": 0
+    },
+    "identity": {
+      "confirmed": false,
+      "confirmed_at": null,
+      "timeout_seconds": 3600,
+      "local_default_relation_id": null,
+      "current_relation_id": null,
+      "current_declared_name": null,
+      "current_source": "unbound"
+    },
+    "sleep_state": {
+      "level": "awake",
+      "entered_at": null
+    },
+    "focus": null,
+    "old_focus": null,
+    "runtime": {
+      "phase": "idle",
+      "standby_countdown": 0,
+      "pending_relay_target": {},
+      "relay_intents": [],
+      "relay_intent_seq": 0,
+      "work_intent_debt": {}
+    },
+    "heartbeat_flags": {
+      "fatigue_expired": false,
+      "feeling_settle_due": false,
+      "api_degraded": false,
+      "stm_degrade_pending": false,
+      "process_down": false,
+      "user_message_waiting": false,
+      "rhythm_due": false,
+      "standby_due": false,
+      "continue_requested": false,
+      "shelve_timer_expired": false,
+      "token_usage_warning": false,
+      "context_pressure": false,
+      "cache_compaction_due": false,
+      "identity_timeout": false,
+      "calendar_day_due": false,
+      "calendar_week_due": false,
+      "calendar_month_due": false,
+      "calendar_quarter_due": false,
+      "calendar_year_due": false,
+      "evolution_pending": false
+    },
+    "alert_deferrals": {},
+    "feeling_buffer": [],
+    "context_cache": {
+      "permanent_expired": true,
+      "periodic_expired": true,
+      "popup_active": false
+    }
+  },
+  "plus": {},
+  "pro": {},
+  "dlc": {},
+  "mod": {}
+}

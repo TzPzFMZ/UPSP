@@ -1,0 +1,49 @@
+# 位格数据、位格配置、全局模型配置、密钥与审计投影从 Spec703 起
+# 全部位于 Windows Documents / LocalAppData 用户根，不再位于 Git 工作树。
+
+# 程序根内仍可能出现的本地开发临时目录
+UPSP/OS/_conversation_*
+UPSP/OS/_*test*
+UPSP/OS/_*check*
+UPSP/OS/_*sample*
+UPSP/OS/Microsoft/
+
+# Python 缓存与构建产物
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+bin/
+obj/
+.worktrees/
+
+# 测试产物
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# 手动备份与临时文件
+backup/
+*.tmp
+*.bak
+*_backup_*
+!UPSP/OS/data/state_backup_store.py
+
+# 本地临时审计与 understand-anything 图谱产物
+.tmp/
+.understand-anything/
+
+# Superpowers/brainstorming 本地草稿缓存
+.superpowers/
+
+# pre-commit 误创建的缓存目录
+~/
+
+# onboarding 沙箱本机护栏
+.upsp-onboarding-sandbox

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UPSP</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./markdown.css" />
+</head>
+<body>
+  <main class="bootstrap-root" id="bootstrapRoot" aria-live="polite">
+    <div class="bootstrap-loading">
+      <span class="upsp-mark" aria-hidden="true"></span>
+      <p data-i18n="正在检查初始化状态">正在检查初始化状态</p>
+    </div>
+  </main>
+
+  <div class="app-shell overview-collapsed" id="appShell" hidden>
+    <header class="identity-deck" aria-label="程序、位格与分身状态" data-i18n-aria-label="程序、位格与分身状态">
+      <div class="global-row" aria-label="UPSP 程序锚点" data-i18n-aria-label="UPSP 程序锚点">
+        <img class="upsp-logo" src="./assets/upsp-logo.png" alt="" aria-hidden="true">
+        <strong>UPSP</strong>
+        <div class="product-readouts">
+          <span id="productVersionName" data-i18n="版本信息不可用">版本信息不可用</span>
+          <span id="productVersionNumber">—</span>
+          <span class="runtime-state" id="runtimeState"><i></i><span data-i18n="宿主连接中">宿主连接中</span></span>
+        </div>
+      </div>
+      <div class="persona-row" aria-label="当前位格" data-i18n-aria-label="当前位格">
+        <details class="persona-name-selector" id="personaNameSelector">
+          <summary id="personaNameSummary" data-i18n-aria-label="选择位格显示名称" aria-label="选择位格显示名称">
+            <span id="personaNameValue">UPSP</span>
+          </summary>
+          <div class="persona-name-options" id="personaNameOptions"></div>
+        </details>
+        <span class="future-note" data-i18n="多位格系统正在开发中">多位格系统正在开发中</span>
+      </div>
+      <div class="command-row" aria-label="当前分身与运行状态" data-i18n-aria-label="当前分身与运行状态">
+        <button class="persona-avatar" data-page="persona" data-tab="core" aria-label="打开位格主体" data-i18n-aria-label="打开位格主体">
+          <span data-persona-abbreviation>UPSP</span>
+        </button>
+        <div class="identity-stack">
+          <div class="instance-row">
+            <strong data-i18n="主实例">主实例</strong>
+            <span data-i18n="多分身系统正在开发中">多分身系统正在开发中</span>
+          </div>
+          <div class="status-readouts" id="statusReadouts" aria-label="简约运行状态" data-i18n-aria-label="简约运行状态"></div>
+        </div>
+      </div>
+    </header>
+
+    <aside class="left-rail" aria-label="主舞台导航" data-i18n-aria-label="主舞台导航">
+      <nav class="surface-nav" id="surfaceNav"></nav>
+      <button class="nav-lock" id="navLockToggle" aria-label="锁定左侧导航为收起态" data-i18n-aria-label="锁定左侧导航为收起态" aria-pressed="false" title="锁定收起态" data-i18n-title="锁定收起态">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 11V8a5 5 0 0110 0v3M6 11h12v9H6z"/></svg>
+      </button>
+    </aside>
+
+    <main class="main-stage" id="mainStage">
+      <div class="stage-topline">
+        <div>
+          <span class="hud-label" id="pageCode">RUN.console</span>
+          <h1 id="pageTitle" data-i18n="运行台">运行台</h1>
+        </div>
+      </div>
+      <section class="dialogue-backplane chat-pane" id="chatPane" aria-label="运行时通信带" data-i18n-aria-label="运行时通信带">
+        <div class="pane-head">
+          <span class="hud-label"><span data-persona-abbreviation>UPSP</span> / <span data-i18n="当前对话">当前对话</span></span>
+          <span class="comms-source" id="commsSource">无轮次</span>
+        </div>
+        <div class="chat-thread" id="chatThread"></div>
+        <form class="chat-command" id="runtimeComposer">
+          <textarea id="messageInput" name="message" rows="3" placeholder="交互输入" data-i18n-placeholder="交互输入" aria-label="交互输入" data-i18n-aria-label="交互输入" aria-describedby="sendFeedback" required></textarea>
+          <div class="chat-controls">
+            <label for="permissionLevel" data-i18n="执行权限：">执行权限：</label>
+            <select id="permissionLevel" name="permission_level" aria-describedby="sendFeedback">
+              <option value="limited" selected data-i18n="受限">受限</option>
+              <option value="unlimited" data-i18n="完整">完整</option>
+            </select>
+            <button id="configureModelButton" type="button" data-i18n="配置模型服务" hidden>配置模型服务</button>
+            <button id="sendButton" type="submit" data-i18n="发送">发送</button>
+            <button id="stopButton" type="button" data-i18n="停止生成" hidden>停止生成</button>
+          </div>
+          <span id="sendFeedback" role="status" data-i18n="等待本地宿主">等待本地宿主</span>
+        </form>
+      </section>
+      <section class="stage-page" id="stagePage" aria-live="polite"></section>
+    </main>
+
+    <section class="right-dock" id="rightDock" aria-label="右侧概览浮层" data-i18n-aria-label="右侧概览浮层">
+      <button id="overviewToggle" class="overview-toggle" aria-label="展开概览" data-i18n-aria-label="展开概览" aria-expanded="false" aria-controls="overviewPane">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <aside class="overview-pane" id="overviewPane" aria-hidden="true" inert>
+        <div class="pane-head">
+          <span class="hud-label" data-i18n="运行概览">运行概览</span>
+        </div>
+        <div class="overview-content" id="overviewContent"></div>
+      </aside>
+    </section>
+
+    <footer class="bottom-ledger">
+      <span><b data-i18n="当前轮">当前轮</b> <span id="ledgerRound">无</span></span>
+      <span><b data-i18n="上下文">上下文</b> <span id="ledgerContext">0 / 10</span></span>
+      <span><b data-i18n="帧次">帧次</b> <span id="ledgerFrame">无</span></span>
+      <span><b data-i18n="结算">结算</b> <span id="ledgerSettlement">无</span></span>
+      <button class="global-settings-toggle" id="globalSettingsToggle" type="button" aria-label="打开全局设置" data-i18n-aria-label="打开全局设置" aria-expanded="false" aria-controls="globalSettingsOverlay">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zM4 12h2M18 12h2M12 4v2M12 18v2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M17.7 6.3l-1.4 1.4M7.7 16.3l-1.4 1.4"/></svg>
+      </button>
+    </footer>
+  </div>
+
+  <div class="global-settings-overlay" id="globalSettingsOverlay" hidden>
+    <div class="global-settings-backdrop" data-close-global-settings></div>
+    <section class="global-settings-panel" aria-modal="true" role="dialog" aria-labelledby="globalSettingsTitle">
+      <header class="global-settings-head">
+        <div><span class="hud-label">UPSP</span><h2 id="globalSettingsTitle" data-i18n="全局设置">全局设置</h2></div>
+        <button class="icon-button" type="button" data-close-global-settings aria-label="关闭全局设置" data-i18n-aria-label="关闭全局设置">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <nav class="global-settings-nav" aria-label="全局设置分类" data-i18n-aria-label="全局设置分类">
+        <button type="button" data-global-settings-tab="models" data-i18n="模型服务">模型服务</button>
+        <button type="button" data-global-settings-tab="interface" data-i18n="界面与语言">界面与语言</button>
+        <button type="button" data-global-settings-tab="about" data-i18n="关于">关于</button>
+      </nav>
+      <div class="global-settings-content" id="globalSettingsContent"></div>
+    </section>
+  </div>
+
+  <div class="manual-overlay" id="manualOverlay" hidden>
+    <div class="manual-backdrop" data-close-manual></div>
+    <article class="manual-panel cut-panel" aria-modal="true" role="dialog" aria-labelledby="manualTitle">
+      <div class="manual-head">
+        <div>
+          <span class="hud-label" id="manualPageLabel">UPSP</span>
+          <h2 id="manualTitle" data-i18n="说明手册">说明手册</h2>
+          <p id="manualSummary"></p>
+        </div>
+        <button class="icon-button" data-close-manual aria-label="关闭详情" data-i18n-aria-label="关闭详情">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="manual-sources" id="manualSources"></div>
+      <div class="manual-body" id="manualBody"></div>
+    </article>
+  </div>
+
+  <script src="./app.js?v=707"></script>
+</body>
+</html>

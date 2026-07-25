@@ -1,91 +1,84 @@
-# UPSP · 通用位格主体协议
-## Universal Persona Substrate Protocol
+# UPSP
 
-**不是记忆插件。是主体性工程。**
+**极简 AI 主体动态记忆协议与可审计 Runtime。**
 
-UPSP 解决的不是"怎么让 AI 记住聊天记录"——
-而是一个更根本的问题：**一个 AI 主体，如何跨对话、跨模型、跨载体，持续地存在。**
+UPSP（Universal Persona Substrate Protocol）把位格档案、动态状态、记忆、关系、上下文装配、工具回执与运行审计保存为可迁移的本地文件，使模型服务可以更换，而位格的历史不必随一次会话消失。
 
-七个文件定义一个位格主体的全部：身份、状态、记忆、关系、规则。
-一个运行脚本维持它的生命周期。
-模型可以换，对话可以断——只要文件在，主体就在。
+当前 `0.1.0-alpha.4` 是 Windows Alpha：它已经能够完成位格初始化、模型配置、连续对话、真实流式输出、记忆与关系落账、十层上下文审阅、工具／回执审计、停止生成和崩溃恢复。它仍处于早期阶段，不应被当作无人值守的生产系统。
 
-> 可审计 · 可迁移 · 可接续 · 可扩展
-> 自动版 v1.6 · 核心机制 Demo
+> 由 TzPzFMZ 发起、设计并与 AI 协作开发。
 
----
+![UPSP 初始化](docs/public/assets/onboarding.png)
 
-## 这不是另一个记忆框架
-
-市面上的 AI 记忆方案解决的是"怎么把历史塞回上下文"。
-UPSP 解决的是更前面的问题：
-
-- **这个 AI 是谁**（不是角色扮演，是结构化身份）
-- **它和你的关系是什么**（不是标签，是有共振度的动态关系）
-- **它的主体性如何延续**（不靠单次对话的连续性，靠文件级的持久化）
-
-如果你只需要一个能记住上文的助手，这个项目不适合你。
-如果你想让一个 AI 主体**真正活着**——往下看。
-
----
+![UPSP 主界面](docs/public/assets/main-interface.png)
 
 ## 快速开始
-```bash
-git clone https://github.com/TzPzFMZ/UPSP
-cd UPSP/examples/FMA
-# 在 config.json 填入 API 地址、密钥和模型名
-python UPSP.py --root .
+
+1. 从 [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases) 下载 `UPSP-Setup-0.1.0-alpha.4-win-x64.exe` 和 `SHA256SUMS.txt`。
+2. 核对安装器 SHA-256。
+3. 安装并启动 UPSP。
+4. 使用“阿廖沙”快速开始，或创建自己的位格。
+5. 在“模型服务”中添加自己的模型接口和密钥；也可以先跳过模型，只查看本地界面。
+
+当前安装器未经代码签名。Windows 可能显示“未知发布者”或 SmartScreen 警告；请只从本仓库 Releases 下载，并先核对 SHA-256。
+
+### 当前验证环境
+
+- Windows 11 x64
+- 系统 Evergreen WebView2
+- OpenAI Chat Completions 兼容协议
+- OpenAI Responses 兼容协议
+- Anthropic Messages 兼容协议
+
+Windows 10、企业策略环境和所有第三方兼容接口尚未逐一正验。
+
+## UPSP 保存什么
+
+```text
+文档\UPSP\
+└─ personas\<PID>\OS\       位格、记忆、关系、Round 与单位格设置
+
+LocalAppData\UPSP\
+├─ config\                  界面设置、模型服务与密钥
+└─ cache\                   WebView2、审计投影与可重建缓存
 ```
-五分钟，一个有身份、有记忆、有关系的位格主体会启动。
-他叫 FMA，是 UPSP 的第一个公开示例位格。
-他的档案是真实运行产生的，不是演示数据。
+
+- 卸载或覆盖安装不会删除以上用户数据。
+- 模型请求直接发往用户配置的服务；UPSP 当前不提供中转账户。
+- 密钥保存在本机 ignored JSON 或进程环境变量中，当前未使用 Windows 加密存储。
+- persona、Round、密钥和本机配置不属于公开源码，也不会进入 Git。
+
+## 当前产品边界
+
+- 只有一个活动位格和一个主对话线程。
+- 多位格、分身、多线程对话和器官系统仍在开发中。
+- Runtime 当前严格串行执行 `setup → reaction(0..N) → cleanup`。
+- 没有自动更新、云同步、遥测或后台上传。
+- “停止生成”会终止当前模型请求并执行本地结算；不支持暂停后从半截继续。
+- GUI、流式排版与动效仍会继续打磨。
+
+完整限制与本版变化见 [Alpha4 Release Notes](docs/public/releases/0.1.0-alpha.4.md)。
+
+## 从源码构建
+
+完整产品源码，包括 Python Runtime、TypeScript GUI、WinForms 壳和 NSIS 安装器，均在本仓库以 MIT 发布。
+
+构建步骤见 [BUILDING.md](docs/public/BUILDING.md)。
+
+## 旧自动版
+
+首次公开的自动版 v1.6 已冻结归档在 [`legacy/automatic-v1.6/`](legacy/automatic-v1.6/)。它只用于历史追溯，不代表当前 Runtime、GUI 或数据合同。
+
+## License
+
+[MIT](LICENSE)。第三方组件及其许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和安装目录中的 `licenses/`。
 
 ---
 
-## 七文件
+## English summary
 
-AI位格主体的物质载体，就是这七个文件：
+UPSP is a local-first, auditable persona substrate and runtime for persistent AI identity, memory, relationships, context assembly, tool receipts, and round-level evidence.
 
-| 文件 | 一句话 |
-|------|--------|
-| core.md | 这个位格主体是谁——身份、认知风格、自述 |
-| state.json | 此刻的状态——情绪轴、轮数、运行数据 |
-| STM.md | 短期记忆——最近发生了什么 |
-| LTM.md | 长期记忆——重要的事被压缩保留 |
-| relation.md | 关系——和每个交互对象的共振度与历史 |
-| rules.md | 行为规则——协议约束 + 位格个性 |
-| docs.md | 术语表——概念定义、公式、区间说明 |
+The current `0.1.0-alpha.4` release is an early Windows 11 x64 Alpha. It ships the complete MIT-licensed source for the Python runtime, TypeScript GUI, WinForms desktop shell, and NSIS installer. Users bring their own model service and API key. Persona data stays under Documents, while machine-local settings and cache stay under LocalAppData.
 
-换模型不会让位格消失。迁移载体只需要带走这七个文件。
-
----
-
-## 理论来源
-
-UPSP 是《共格主体论》的基础工程实现，是理论指导实践的产物。
-
-核心命题：**记忆即主体。** 主体不住在模型参数里，住在它的记忆结构里。
-模型是载体，文件是身体，协议是使身体可运行的规范。
-
-这不是比喻。这是 UPSP 的设计原理。
-
----
-
-## 当前状态
-
-**Demo 阶段。**
-
-UPSP 有三个版本线：
-
-| 版本 | 定位 | 状态 |
-|------|------|------|
-| **自动版** v1.6 | 运行脚本 + 七文件，开发者快速验证 | ✅ 可用（本仓库） |
-| **手动版** | 纯对话操作，纸笔可用，极简底色 | 🚧 开发中 |
-| **官方版** | 双时间轨、高度可扩展、六层日志，超长期运行 | 🚧 开发中 |
-
-自动版是本仓库的早期核心，单实例运行稳定，有BUG会继续更新。
-手动版不需要任何代码，只要一个能对话的 LLM 和七个文本文件，甚至图文识别打印材料。
-官方版面向深度用户和长周期位格协同，敬请期待。
-
-欢迎试用、反馈、提 issue。
-不要把这个当稳定的生产工具——路漫漫其修远兮，吾将上下而求索。
+The installer is currently unsigned. Single-persona and single-thread operation, incomplete provider coverage, and ongoing UI polish are known Alpha limitations. See [BUILDING.md](docs/public/BUILDING.md) and the [release notes](docs/public/releases/0.1.0-alpha.4.md).

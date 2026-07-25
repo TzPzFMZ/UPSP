@@ -1,0 +1,178 @@
+{
+  "_comment": "rules 文件注册表——脚本读此表决定当前场景加载哪些规则文件",
+  "_version": "DDS v0.44.5",
+  "_spec": "Spec639 Seed RULES 8/8/4 永固化重排",
+  "_note": "加载策略分类：permanent=全文常驻；passive_read=被动只读，需由 guidance 指向并通过只读路径读取全文；step_level/periodic 当前为空；on_demand=位格层按需软规范。conditional 分类已退役。",
+  "permanent": [
+    {
+      "file": "manifesto.md",
+      "path": "protocol/base/manifesto.md",
+      "layer": "全文常驻",
+      "scope": "cross_step",
+      "load": "full",
+      "description": "位格主体宣言——身份基底"
+    },
+    {
+      "file": "guidance.md",
+      "path": "protocol/base/guidance.md",
+      "layer": "全文常驻",
+      "scope": "cross_step",
+      "load": "full",
+      "description": "规则导引契约——常驻目录牌+被动只读摘要+读取指路"
+    },
+    {
+      "file": "security.md",
+      "path": "protocol/base/security.md",
+      "layer": "全文常驻",
+      "scope": "cross_step",
+      "load": "full",
+      "description": "安全裁决契约——身份保持+外部材料信任+安全POPUP边界"
+    },
+    {
+      "file": "reconnect.md",
+      "path": "protocol/base/reconnect.md",
+      "layer": "全文常驻",
+      "scope": "cross_step",
+      "load": "full",
+      "description": "重连恢复契约——断线降级+心跳事实+故障去向边界"
+    },
+    {
+      "file": "memory.md",
+      "path": "protocol/base/memory.md",
+      "layer": "全文常驻",
+      "scope": "cross_step",
+      "load": "full",
+      "description": "记忆行为契约——反应步写入+回执+挂接边界"
+    },
+    {
+      "file": "relation.md",
+      "path": "protocol/base/relation.md",
+      "layer": "全文常驻",
+      "scope": "cross_step",
+      "load": "full",
+      "description": "关系行为契约——四分类+六轴+焦点+关系卡边界"
+    },
+    {
+      "file": "containers.md",
+      "path": "protocol/base/containers.md",
+      "layer": "全文常驻",
+      "scope": "cross_step",
+      "load": "full",
+      "description": "工作容器操作契约——九容器+焦点工具+记忆挂接边界"
+    },
+    {
+      "file": "workbench.md",
+      "path": "protocol/base/workbench.md",
+      "layer": "全文常驻",
+      "scope": "cross_step",
+      "load": "full",
+      "description": "工作台焦点契约——WB桌面状态+焦点机制+容器焦点边界"
+    }
+  ],
+  "passive_read": [
+    {
+      "file": "boundaries.md",
+      "path": "protocol/base/boundaries.md",
+      "layer": "被动只读",
+      "scope": "cross_step",
+      "load": "read_only_on_request",
+      "trigger": "身体边界 / 数值隔离 / 隐私边界 / 状态真源不清时读取全文",
+      "description": "边界行为契约——血脑屏障+数值隔离+感受驱动"
+    },
+    {
+      "file": "step.md",
+      "path": "protocol/base/step.md",
+      "layer": "被动只读",
+      "scope": "cross_step",
+      "load": "read_only_on_request",
+      "trigger": "三步字段 / 步间交接 / substrate tool 边界不清时读取全文",
+      "description": "三步呼吸契约——起手/反应/善后边界与交接"
+    },
+    {
+      "file": "round.md",
+      "path": "protocol/base/round.md",
+      "layer": "被动只读",
+      "scope": "cross_step",
+      "load": "read_only_on_request",
+      "trigger": "轮类型 / heartbeat flags / 待命或节律触发不清时读取全文",
+      "description": "轮运行契约——五类轮+心跳机制+节律点+插话续传"
+    },
+    {
+      "file": "modes.md",
+      "path": "protocol/base/modes.md",
+      "layer": "被动只读",
+      "scope": "cross_step",
+      "load": "read_only_on_request",
+      "trigger": "协议模式 / 警戒 overlay / 复盘或待命姿态不清时读取全文",
+      "description": "协议五模式——基础三态+特殊两态+模式选择"
+    },
+    {
+      "file": "context.md",
+      "path": "protocol/base/context.md",
+      "layer": "被动只读",
+      "scope": "cross_step",
+      "load": "read_only_on_request",
+      "trigger": "上下文层 / 证据强度 / POPUP 边界 / 是否已读已写不清时读取全文",
+      "description": "上下文视野契约——当步装配+证据强度+POPUP边界"
+    },
+    {
+      "file": "files.md",
+      "path": "protocol/base/files.md",
+      "layer": "被动只读",
+      "scope": "cross_step",
+      "load": "read_only_on_request",
+      "trigger": "文件真源 / 草案生产区分 / 路径迁移或写回边界不清时读取全文",
+      "description": "文件边界契约——骨架/活体+读写路径+缓存与审计边界"
+    },
+    {
+      "file": "persona.md",
+      "path": "protocol/base/persona.md",
+      "layer": "被动只读",
+      "scope": "cross_step",
+      "load": "read_only_on_request",
+      "trigger": "七组件职责 / Runtime 与 LLM 分工 / persona 真源不清时读取全文",
+      "description": "七组件协同契约——位格身体+组件职责+协同链"
+    },
+    {
+      "file": "tools.md",
+      "path": "protocol/base/tools.md",
+      "layer": "被动只读",
+      "scope": "cross_step",
+      "load": "read_only_on_request",
+      "trigger": "工具家族 / 工具姿态 / guide / schema / 权限边界不清时读取全文",
+      "description": "工具行为契约——三类工具+三种姿态+原生调用边界"
+    }
+  ],
+  "step_level": [],
+  "periodic": [],
+  "on_demand": [
+    {
+      "file": "behaviors.md",
+      "path": "persona/behaviors.md",
+      "layer": "位格按需",
+      "trigger": "位格运行时积累的行为规范",
+      "description": "位格行为规范——语气+节奏+自我约束（运行时填充）"
+    },
+    {
+      "file": "modes.md",
+      "path": "persona/modes.md",
+      "layer": "位格按需",
+      "trigger": "模式切换 / 自定义模式激活",
+      "description": "位格活动模式规则——活动模式偏好+覆盖候选+禁用边界（运行时填充）"
+    },
+    {
+      "file": "preferences.md",
+      "path": "persona/preferences.md",
+      "layer": "位格按需",
+      "trigger": "位格运行时积累的偏好",
+      "description": "位格偏好设定——兴趣领域+回避清单+表达偏好（运行时填充）"
+    },
+    {
+      "file": "social.md",
+      "path": "persona/social.md",
+      "layer": "位格按需",
+      "trigger": "新建关系卡 / 关系事件",
+      "description": "位格社交习惯——沟通风格+社交节奏+话题适配（运行时填充）"
+    }
+  ]
+}

@@ -1,0 +1,909 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UPSP Docs Workbench</title>
+  <style>
+    :root {
+      --bg: oklch(0.965 0.015 94);
+      --surface: oklch(0.99 0.006 96);
+      --surface-2: oklch(0.94 0.018 96);
+      --ink: oklch(0.22 0.026 70);
+      --muted: oklch(0.48 0.026 70);
+      --line: oklch(0.84 0.022 90);
+      --teal: oklch(0.47 0.105 190);
+      --teal-soft: oklch(0.91 0.045 190);
+      --violet: oklch(0.48 0.09 310);
+      --violet-soft: oklch(0.92 0.034 310);
+      --red: oklch(0.5 0.11 25);
+      --amber: oklch(0.66 0.115 78);
+      --shadow: 0 14px 40px color-mix(in oklch, var(--ink) 12%, transparent);
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(260px, 320px) minmax(420px, 1fr) minmax(320px, 400px);
+      min-height: 100vh;
+    }
+
+    aside, main, section {
+      min-width: 0;
+      border-right: 1px solid var(--line);
+    }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      background: var(--surface);
+    }
+
+    header {
+      padding: 18px 18px 14px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklch, var(--surface), white 42%);
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+
+    .meta {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .group-list, .side-scroll, .right-scroll {
+      overflow: auto;
+      padding: 14px;
+    }
+
+    .group {
+      margin-bottom: 18px;
+    }
+
+    .group-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 750;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .count {
+      padding: 1px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      border-radius: 6px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: var(--teal);
+    }
+
+    .doc-button {
+      display: block;
+      width: 100%;
+      margin: 6px 0;
+      padding: 9px 10px;
+      text-align: left;
+    }
+
+    .doc-button.active {
+      border-color: var(--teal);
+      background: var(--teal-soft);
+    }
+
+    .doc-name {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .doc-path {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 8px;
+    }
+
+    .badge {
+      padding: 2px 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+
+    .badge.changed { border-color: var(--amber); color: var(--amber); }
+    .badge.role { border-color: var(--violet); color: var(--violet); }
+    .badge.red { border-color: var(--red); color: var(--red); }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .toolbar button {
+      min-height: 32px;
+      padding: 6px 10px;
+    }
+
+    .toolbar button.active {
+      border-color: var(--teal);
+      background: var(--teal);
+      color: white;
+    }
+
+    .content {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 18px;
+      background: color-mix(in oklch, var(--surface), white 24%);
+    }
+
+    .doc-head {
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .doc-title {
+      font-size: 18px;
+      font-weight: 750;
+      overflow-wrap: anywhere;
+    }
+
+    .doc-subtitle {
+      margin-top: 5px;
+      color: var(--muted);
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .markdown {
+      max-width: 100%;
+      line-height: 1.75;
+      font-size: 14px;
+      overflow-wrap: break-word;
+    }
+
+    .markdown h1 { margin: 0 0 16px; font-size: 24px; }
+    .markdown h2 { margin: 22px 0 10px; font-size: 19px; color: var(--teal); }
+    .markdown h3 { margin: 18px 0 8px; font-size: 16px; color: var(--violet); }
+    .markdown p { margin: 10px 0; }
+    .markdown ul, .markdown ol {
+      padding-left: 24px;
+      margin: 10px 0;
+    }
+    .markdown li { margin: 4px 0; }
+    .markdown code {
+      padding: 1px 4px;
+      border-radius: 4px;
+      background: var(--surface-2);
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 0.94em;
+    }
+    .markdown pre {
+      overflow: auto;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: color-mix(in oklch, var(--surface-2), white 25%);
+    }
+    .markdown pre code {
+      padding: 0;
+      background: transparent;
+      white-space: pre;
+    }
+    .markdown blockquote {
+      margin: 14px 0;
+      padding: 10px 14px;
+      border-left: 4px solid var(--teal);
+      background: color-mix(in oklch, var(--teal-soft), white 48%);
+      color: color-mix(in oklch, var(--ink), var(--teal) 18%);
+    }
+    .markdown .table-wrap {
+      width: 100%;
+      max-width: 100%;
+      margin: 14px 0;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+    .markdown table {
+      width: 100%;
+      min-width: 620px;
+      border-collapse: collapse;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .markdown th, .markdown td {
+      min-width: 120px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    .markdown th:last-child, .markdown td:last-child { border-right: 0; }
+    .markdown tr:last-child td { border-bottom: 0; }
+    .markdown th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: color-mix(in oklch, var(--teal-soft), white 44%);
+      color: color-mix(in oklch, var(--ink), var(--teal) 22%);
+      font-weight: 750;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 62vh;
+      resize: vertical;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: color-mix(in oklch, var(--surface), white 35%);
+      color: var(--ink);
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .save-row {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) auto;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    input {
+      min-height: 34px;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--ink);
+      font: inherit;
+    }
+
+    .save-row button {
+      padding: 7px 14px;
+      border-color: var(--teal);
+      background: var(--teal);
+      color: white;
+      font-weight: 700;
+    }
+
+    .diff {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: color-mix(in oklch, var(--surface-2), white 28%);
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .right-scroll {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .block {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .block h2 {
+      padding: 12px 13px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+
+    .block-body {
+      padding: 12px;
+    }
+
+    .consumer {
+      margin-bottom: 12px;
+      border-left: 3px solid var(--teal);
+      padding-left: 10px;
+    }
+
+    .consumer-title {
+      font-weight: 800;
+      font-size: 13px;
+      margin-bottom: 7px;
+    }
+
+    .chip {
+      display: inline-block;
+      margin: 2px 4px 4px 0;
+      padding: 4px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 11px;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+
+    .issue {
+      margin-bottom: 10px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-left-width: 3px;
+      border-radius: 6px;
+      background: color-mix(in oklch, var(--surface), white 35%);
+    }
+
+    .issue.red { border-left-color: var(--red); }
+    .issue.yellow { border-left-color: var(--amber); }
+
+    .issue-id {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 11px;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .issue-message {
+      margin-top: 5px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .log-entry {
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .log-entry:last-child { border-bottom: 0; }
+    .empty { color: var(--muted); font-size: 13px; }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      max-width: min(720px, calc(100vw - 32px));
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--ink);
+      color: white;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 150ms ease;
+    }
+
+    .toast.show { opacity: 1; }
+
+    @media (max-width: 1120px) {
+      .app {
+        grid-template-columns: 280px minmax(0, 1fr);
+      }
+      section.panel {
+        grid-column: 1 / -1;
+        min-height: auto;
+        border-top: 1px solid var(--line);
+      }
+    }
+
+    @media (max-width: 760px) {
+      .app {
+        display: block;
+      }
+      .panel {
+        min-height: auto;
+      }
+      .group-list, .side-scroll, .right-scroll {
+        max-height: none;
+      }
+      .save-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="panel">
+      <header>
+        <h1>Docs Workbench</h1>
+        <div class="meta" id="registryMeta">loading</div>
+      </header>
+      <div class="group-list" id="groups"></div>
+    </aside>
+
+    <main class="panel">
+      <header>
+        <div class="doc-head">
+          <h2 class="doc-title" id="docTitle">loading</h2>
+          <div class="doc-subtitle" id="docPath"></div>
+          <div class="badges" id="docBadges"></div>
+        </div>
+      </header>
+      <nav class="toolbar">
+        <button id="previewBtn" class="active" type="button">预览</button>
+        <button id="editBtn" type="button">草案</button>
+        <button id="diffBtn" type="button">Diff</button>
+        <button id="refreshBtn" type="button">刷新</button>
+      </nav>
+      <div class="content">
+        <div id="previewPane" class="markdown"></div>
+        <div id="editPane" hidden>
+          <textarea id="editor"></textarea>
+          <div class="save-row">
+            <input id="saveNote" placeholder="diff note">
+            <button id="saveBtn" type="button">保存草案</button>
+          </div>
+        </div>
+        <pre id="diffPane" class="diff" hidden></pre>
+      </div>
+    </main>
+
+    <section class="panel">
+      <header>
+        <h1>Consumption Map</h1>
+        <div class="meta" id="rootMeta"></div>
+      </header>
+      <div class="right-scroll">
+        <div class="block">
+          <h2>Docs Flow</h2>
+          <div class="block-body" id="graph"></div>
+        </div>
+        <div class="block">
+          <h2>Findings</h2>
+          <div class="block-body" id="issues"></div>
+        </div>
+        <div class="block">
+          <h2>Diff Log</h2>
+          <div class="block-body" id="diffLog"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const state = {
+      index: null,
+      document: null,
+      selectedPath: "",
+      mode: "preview",
+    };
+
+    const categoryLabels = {
+      inject: "脚本转写注入",
+      lookup: "脚本查表/参考",
+      popup: "弹窗层",
+      persona: "位格增长层",
+      unregistered: "未登记",
+    };
+
+    const roleLabels = {
+      inject: "inject",
+      lookup: "lookup",
+      popup: "popup",
+      persona: "persona",
+      popup_source: "popup source",
+      popup_guide: "guide",
+      popup_reminder: "reminder",
+      popup_handoff: "handoff",
+      popup_warning: "warning",
+      guide_source: "guide",
+      template_source: "template",
+      unregistered: "unregistered",
+    };
+
+    function $(id) {
+      return document.getElementById(id);
+    }
+
+    function showToast(message) {
+      const toast = $("toast");
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => toast.classList.remove("show"), 1800);
+    }
+
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${response.status} ${text}`);
+      }
+      return response.json();
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function inlineMarkdown(value) {
+      return escapeHtml(value)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    }
+
+    function renderMarkdown(markdown) {
+      const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+      const html = [];
+      let inCode = false;
+      let codeLines = [];
+      let inList = false;
+      let inOrdered = false;
+      let paragraph = [];
+
+      function flushParagraph() {
+        if (paragraph.length) {
+          html.push(`<p>${inlineMarkdown(paragraph.join(" "))}</p>`);
+          paragraph = [];
+        }
+      }
+
+      function closeList() {
+        if (inList) {
+          html.push(inOrdered ? "</ol>" : "</ul>");
+          inList = false;
+          inOrdered = false;
+        }
+      }
+
+      function renderTable(startIndex) {
+        const rows = [];
+        let i = startIndex;
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+          rows.push(lines[i]);
+          i += 1;
+        }
+        if (rows.length < 2 || !/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(rows[1])) {
+          return null;
+        }
+        const cells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => inlineMarkdown(cell.trim()));
+        const head = cells(rows[0]);
+        const body = rows.slice(2).map(cells);
+        const table = [
+          '<div class="table-wrap"><table><thead><tr>',
+          ...head.map((cell) => `<th>${cell}</th>`),
+          "</tr></thead><tbody>",
+          ...body.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`),
+          "</tbody></table></div>",
+        ].join("");
+        return { html: table, next: i };
+      }
+
+      for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (/^\s*```/.test(line)) {
+          if (inCode) {
+            html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+            codeLines = [];
+            inCode = false;
+          } else {
+            flushParagraph();
+            closeList();
+            inCode = true;
+          }
+          continue;
+        }
+        if (inCode) {
+          codeLines.push(line);
+          continue;
+        }
+        if (/^\s*\|.*\|\s*$/.test(line)) {
+          const table = renderTable(i);
+          if (table) {
+            flushParagraph();
+            closeList();
+            html.push(table.html);
+            i = table.next - 1;
+            continue;
+          }
+        }
+        if (!line.trim()) {
+          flushParagraph();
+          closeList();
+          continue;
+        }
+        const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+        if (heading) {
+          flushParagraph();
+          closeList();
+          const level = heading[1].length;
+          html.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`);
+          continue;
+        }
+        const unordered = /^\s*[-*]\s+(.+)$/.exec(line);
+        const ordered = /^\s*\d+\.\s+(.+)$/.exec(line);
+        if (unordered || ordered) {
+          flushParagraph();
+          const isOrdered = Boolean(ordered);
+          if (!inList || inOrdered !== isOrdered) {
+            closeList();
+            html.push(isOrdered ? "<ol>" : "<ul>");
+            inList = true;
+            inOrdered = isOrdered;
+          }
+          html.push(`<li>${inlineMarkdown((unordered || ordered)[1])}</li>`);
+          continue;
+        }
+        const quote = /^>\s+(.+)$/.exec(line);
+        if (quote) {
+          flushParagraph();
+          closeList();
+          html.push(`<blockquote>${inlineMarkdown(quote[1])}</blockquote>`);
+          continue;
+        }
+        paragraph.push(line.trim());
+      }
+      flushParagraph();
+      closeList();
+      if (inCode) html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+      return html.join("\n") || '<p class="empty">空文件。</p>';
+    }
+
+    function activeFile() {
+      return (state.index?.files || []).find((item) => item.rel_path === state.selectedPath);
+    }
+
+    function renderGroups() {
+      const groupsEl = $("groups");
+      const groups = state.index.groups || {};
+      const categories = [...(state.index.categories || []), "unregistered"];
+      groupsEl.innerHTML = categories.map((category) => {
+        const items = groups[category] || [];
+        if (!items.length) return "";
+        const buttons = items.map((item) => {
+          const roles = (item.roles || []).filter((role) => role !== item.category);
+          const badges = [
+            item.draft_changed ? '<span class="badge changed">draft changed</span>' : "",
+            item.draft_exists ? '<span class="badge">draft</span>' : "",
+            item.tier ? `<span class="badge">${escapeHtml(item.tier)}</span>` : "",
+            item.source_mode ? `<span class="badge">${escapeHtml(item.source_mode)}</span>` : "",
+            ...roles.map((role) => `<span class="badge role">${escapeHtml(roleLabels[role] || role)}</span>`),
+          ].join("");
+          const active = item.rel_path === state.selectedPath ? " active" : "";
+          return `
+            <button class="doc-button${active}" data-path="${escapeHtml(item.rel_path)}" type="button">
+              <span class="doc-name">${escapeHtml(item.file)}</span>
+              <span class="doc-path">${escapeHtml(item.rel_path)}</span>
+              <span class="badges">${badges}</span>
+            </button>
+          `;
+        }).join("");
+        return `
+          <div class="group">
+            <div class="group-title">
+              <span>${escapeHtml(categoryLabels[category] || category)}</span>
+              <span class="count">${items.length}</span>
+            </div>
+            ${buttons}
+          </div>
+        `;
+      }).join("");
+      groupsEl.querySelectorAll(".doc-button").forEach((button) => {
+        button.addEventListener("click", () => selectDoc(button.dataset.path));
+      });
+    }
+
+    function renderDocHeader() {
+      const file = activeFile();
+      $("docTitle").textContent = file?.file || "No document";
+      $("docPath").textContent = file?.rel_path || "";
+      const issueFiles = new Set((state.index.issues || []).map((issue) => issue.file));
+      const roles = file?.roles || [];
+      $("docBadges").innerHTML = file ? [
+        `<span class="badge">${escapeHtml(categoryLabels[file.category] || file.category)}</span>`,
+        file.draft_exists ? '<span class="badge">draft</span>' : "",
+        file.draft_changed ? '<span class="badge changed">draft changed</span>' : "",
+        issueFiles.has(file.rel_path) ? '<span class="badge red">finding</span>' : "",
+        file.tier ? `<span class="badge">${escapeHtml(file.tier)}</span>` : "",
+        file.source_mode ? `<span class="badge">${escapeHtml(file.source_mode)}</span>` : "",
+        ...roles
+          .filter((role) => role !== file.category)
+          .map((role) => `<span class="badge role">${escapeHtml(roleLabels[role] || role)}</span>`),
+      ].join("") : "";
+    }
+
+    function renderDocument() {
+      renderDocHeader();
+      const content = state.document?.content || "";
+      $("previewPane").innerHTML = renderMarkdown(content);
+      $("editor").value = content;
+      $("diffPane").textContent = state.document?.current_diff || "No diff.";
+      $("previewPane").hidden = state.mode !== "preview";
+      $("editPane").hidden = state.mode !== "edit";
+      $("diffPane").hidden = state.mode !== "diff";
+      $("previewBtn").classList.toggle("active", state.mode === "preview");
+      $("editBtn").classList.toggle("active", state.mode === "edit");
+      $("diffBtn").classList.toggle("active", state.mode === "diff");
+    }
+
+    function renderGraph() {
+      const graph = state.index.graph || {};
+      const filesById = new Map((state.index.files || []).map((item) => [`file:${item.rel_path}`, item]));
+      const byConsumer = new Map();
+      for (const edge of graph.edges || []) {
+        const consumer = edge.consumer || edge.target.replace("consumer:", "");
+        if (!byConsumer.has(consumer)) byConsumer.set(consumer, []);
+        byConsumer.get(consumer).push(edge);
+      }
+      $("graph").innerHTML = [...byConsumer.entries()].map(([consumer, edges]) => {
+        const chips = edges.map((edge) => {
+          const file = filesById.get(edge.source);
+          return `<span class="chip">${escapeHtml(file?.rel_path || edge.source)}</span>`;
+        }).join("");
+        return `
+          <div class="consumer">
+            <div class="consumer-title">${escapeHtml(consumer)}</div>
+            ${chips || '<div class="empty">empty</div>'}
+          </div>
+        `;
+      }).join("") || '<div class="empty">empty</div>';
+    }
+
+    function renderIssues() {
+      const issues = state.index.issues || [];
+      $("issues").innerHTML = issues.length ? issues.map((issue) => `
+        <div class="issue ${escapeHtml(issue.severity || "yellow")}">
+          <div class="issue-id">${escapeHtml(issue.id)} · ${escapeHtml(issue.file || "")}</div>
+          <div class="issue-message">${escapeHtml(issue.message || "")}</div>
+        </div>
+      `).join("") : '<div class="empty">No findings.</div>';
+    }
+
+    async function renderDiffLog() {
+      const data = await fetchJson("/api/docs-workbench/diff-log");
+      const records = data.records || [];
+      $("diffLog").innerHTML = records.length ? records.slice().reverse().map((record) => `
+        <div class="log-entry">
+          <div><strong>${escapeHtml(record.rel_path)}</strong></div>
+          <div class="meta">${escapeHtml(record.timestamp || "")}</div>
+          <div>${escapeHtml(record.note || "")}</div>
+        </div>
+      `).join("") : '<div class="empty">No draft changes.</div>';
+    }
+
+    async function loadIndex() {
+      state.index = await fetchJson("/api/docs-workbench");
+      $("registryMeta").textContent = `registry ${state.index.registry_version || "unknown"} · ${state.index.files.length} files`;
+      $("rootMeta").textContent = state.index.docs_root;
+      if (!state.selectedPath && state.index.files.length) {
+        state.selectedPath = state.index.files[0].rel_path;
+      }
+      renderGroups();
+      renderGraph();
+      renderIssues();
+      await renderDiffLog();
+    }
+
+    async function selectDoc(relPath) {
+      if (!relPath) return;
+      state.selectedPath = relPath;
+      const encoded = encodeURIComponent(relPath);
+      state.document = await fetchJson(`/api/docs-workbench/files/${encoded}`);
+      renderGroups();
+      renderDocument();
+    }
+
+    function setMode(mode) {
+      state.mode = mode;
+      renderDocument();
+    }
+
+    async function saveDraft() {
+      if (!state.selectedPath) return;
+      const encoded = encodeURIComponent(state.selectedPath);
+      state.document = await fetchJson(`/api/docs-workbench/files/${encoded}/draft`, {
+        method: "POST",
+        body: JSON.stringify({
+          content: $("editor").value,
+          note: $("saveNote").value,
+        }),
+      });
+      $("saveNote").value = "";
+      await loadIndex();
+      renderDocument();
+      showToast("Draft saved.");
+    }
+
+    async function refreshAll() {
+      const current = state.selectedPath;
+      await loadIndex();
+      if (current) await selectDoc(current);
+      showToast("Refreshed.");
+    }
+
+    $("previewBtn").addEventListener("click", () => setMode("preview"));
+    $("editBtn").addEventListener("click", () => setMode("edit"));
+    $("diffBtn").addEventListener("click", () => setMode("diff"));
+    $("saveBtn").addEventListener("click", () => saveDraft().catch((error) => showToast(error.message)));
+    $("refreshBtn").addEventListener("click", () => refreshAll().catch((error) => showToast(error.message)));
+
+    (async function init() {
+      try {
+        await loadIndex();
+        await selectDoc(state.selectedPath);
+      } catch (error) {
+        $("docTitle").textContent = "Failed to load";
+        $("previewPane").textContent = error.message;
+        showToast(error.message);
+      }
+    })();
+  </script>
+</body>
+</html>

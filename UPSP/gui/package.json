@@ -1,0 +1,31 @@
+{
+  "name": "@upsp/seed-gui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:check": "node scripts/build.mjs --check",
+    "test:i18n": "node scripts/test-i18n.mjs",
+    "test:markdown": "node scripts/test-markdown.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "npm run typecheck && npm run test:i18n && npm run test:markdown && npm run build:check && node --check app.js && node --check markdown-mermaid.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "highlight.js": "11.11.1",
+    "katex": "0.18.1",
+    "mermaid": "11.16.0",
+    "rehype-highlight": "7.0.2",
+    "rehype-katex": "7.0.1",
+    "rehype-sanitize": "6.0.0",
+    "rehype-stringify": "10.0.1",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "remark-parse": "11.0.0",
+    "remark-rehype": "11.1.2",
+    "typescript": "7.0.2",
+    "type-fest": "5.8.0",
+    "unified": "11.0.5"
+  }
+}

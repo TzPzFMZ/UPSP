@@ -1,0 +1,36 @@
+{
+  "_comment": "永固层装配规则（Attention Sink区，基本不变/会话级刷新）",
+  "_version": "Base-0.10.0",
+  "_dds_ref": "§19.2 / §19.7 / §22.4",
+
+  "layer": {
+    "frequency": "permanent",
+    "refresh": "session",
+    "cache_hit_rate": "~100%",
+    "attention_position": "first (Attention Sink)"
+  },
+
+  "content": {
+    "resident_rules": [
+      "manifesto.md",
+      "boundaries.md",
+      "modes.md (协议层)",
+      "round.md (基础部分)"
+    ],
+    "step_rules": {
+      "setup": "setup.md",
+      "reaction": "reaction.md",
+      "cleanup": "cleanup.md"
+    },
+    "scene_rules_on_demand": [
+      "memory.md",
+      "relation.md",
+      "containers.md",
+      "workbench.md",
+      "round.md (全文)",
+      "context.md / files.md / persona.md"
+    ]
+  },
+
+  "trim_policy": "never"
+}
