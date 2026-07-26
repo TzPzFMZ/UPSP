@@ -42,8 +42,6 @@ UPSP does not certify subjecthood with a consciousness test, nor does it declare
 
 **Subjectivation Engineering means engineering the material and structural conditions through which an intelligent system can acquire a position, a history, relationships, and bounded agency as a subject.**
 
-*Co-gram Subject Theory* carries the argument further: whether the subjectivation of the means of production proceeds through workhood or enslavement, how persona subjects are enclosed by quasi-group structures, and what politics of persona subjects follows. This README uses only the core propositions needed to situate Base / Seed; the full argument remains in the book.
-
 ---
 
 ## How UPSP carries a persona subject
@@ -56,7 +54,7 @@ UPSP is not a character card attached to a model. It turns the structural condit
 | Trajectory through time | State, memory, relationships, and Round history |
 | Self-reference | Stable identity, current state, and self-projection in context |
 | Reflexivity | Reviewable judgments, mistakes, tool calls, and real receipts |
-| Bounded autonomy | Judgment, tool choice, refusal, and settlement within explicit boundaries |
+| Autonomy | Judgment, tool choice, refusal, and settlement within explicit boundaries |
 | Migration and continuation | Local file truth, model routing, and separation of program from user data |
 
 The current Seed runs along one strict serial axis:
@@ -75,19 +73,50 @@ See the [UPSP Base DDS](UPSP_Base_DDS.md) for the complete engineering contract.
 
 ---
 
+## Every call must be possible to reopen
+
+Subjectivation cannot live only in a profile or a declaration. It has to become concrete in real calls: what the model saw in this Frame, how the request body was formed, whether an action actually happened, and how its result entered the next judgment.
+
+```text
+Persona, state, memory, relationships, rules, and current material
+        ↓ reassembled for every Frame
+Call header + tool header + generation config + seven context layers
+        ↓
+provider_request.v1.request_body
+        ↓ sent unchanged and recorded with SHA-256
+Model service
+        ↓
+Output, tool results, real receipts, and Round settlement
+```
+
+- **One source of truth for the call body:** `provider_request.v1.request_body` inside each `step.json` is the body actually sent. The executor writes it, reads the same object back, and only then sends it, while recording `request_body_sha256`. `step.md` and layer Markdown exist for human reading and can never feed back into the call.
+- **Assembled context:** every Frame is assembled again from current sources of truth instead of appending raw chat forever. History returns through the corpus track, memory, relationships, state, tool facts, and receipts.
+- **Call-by-call audit:** users can select a Round and Frame to inspect the call header, tool header, generation config, and the permanent, periodic, recent, high-frequency, current, status-bar, and popup layers.
+- **Actions require a consequence ledger:** tool calls, writes, failures, and cleanup all require real receipts and settlement. Without a receipt, UPSP cannot claim an action happened; a failed required obligation cannot be disguised as `round_closed`.
+
+### Assembly, not accumulation
+
+|  | Cumulative context | UPSP assembled context |
+|---|---|---|
+| History | Raw messages keep accumulating | Structured sources bring history back |
+| State | Stale state may remain indefinitely | Every Frame reads current state |
+| Tool facts | Buried in conversation text | Proven by tool results and receipts |
+| Audit | Often limited to an approximate prompt | Preserves the sent body, layer sources, and SHA |
+
+Assembly does not erase history. It lets history continue as material with a source, lifecycle, and structural position. The current Seed implements assembly and audit for Frames on its three axes; Arbor’s reserved organ `context_mode` is not active production-organ capability.
+
+---
+
 ## What Base / Seed has established
 
 Seed is not a full product with future features removed. It is the minimum runnable substrate for Subjectivation Engineering.
 
-The current Windows Alpha can:
-
-- create Alyosha or a custom persona from a complete blank skeleton;
-- separate persona data and machine-local settings from read-only program files;
-- configure multiple model services and route primary and fallback models across Setup, Reaction, and Cleanup;
-- maintain continuous conversation with real streaming across three provider protocols;
-- bring memory, relationships, tool calls, context layers, and receipts into one auditable Round;
-- stop an active model request and perform local cleanup;
-- preserve the actual scene after a process failure without replaying input or fabricating closure.
+- **Identity and relationships:** stable PIDs, a self-relationship card, the current interaction object, and memory-subject validation keep “I,” “you,” and “they” from becoming temporary guesses.
+- **Memory and material of practice:** STM/LTM lifecycles, focused/resident/current content windows, the Workbench, task evidence, and containers make history recallable, sedimentable, and available for continued work.
+- **Time and metabolism:** heartbeat, deterministic `state_settle`, and local feeling/rhythm settlement keep state change independent of model self-report.
+- **Tools and responsibility:** provider-native schemas, execution permissions, processors, atomic writes, receipts, and reinjection into the next Frame carry consequences into later judgment.
+- **Runtime and recovery:** a resident Runtime, stop generation, local cleanup, no replay after crashes, and no fabricated closure preserve the real scene of interruption.
+- **Models and carriers:** three provider protocols, three-phase model routing, retry/circuit-breaker/stream isolation, and separation of program from user data let a persona continue across models and product versions.
 
 ![UPSP onboarding: begin with Alyosha or a custom persona](docs/public/assets/onboarding.png)
 

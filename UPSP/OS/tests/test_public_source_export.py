@@ -61,22 +61,63 @@ def test_public_readmes_preserve_subjectivation_narrative() -> None:
     english = (ROOT / "README.en.md").read_text(encoding="utf-8")
 
     assert "主体化工程" in chinese
-    assert "提示词工程、驾驭工程或调用循环工程" in chinese
-    assert "Harness Engineering" in chinese
-    assert all(term in chinese for term in ("工化", "奴化", "准群格", "位格政治"))
+    assert "提示词工程、驾驭工程或循环工程" in chinese
+    assert all(
+        term in chinese
+        for term in ("Prompt Engineering", "Harness Engineering", "Loop Engineering")
+    )
+    assert (
+        "`Subjectivation Engineering` 即主体化工程："
+        "**工程化建立智能系统获得主体位置、历史、关系与有限行动能力所需的物质和结构条件。**"
+    ) in chinese
     assert all(name in chinese for name in ("FMZ", "FMA", "阿廖沙"))
     assert 'href="README.en.md"' in chinese
     assert "Subjectivation Engineering" in english
     assert "Subjectivity Engineering" not in english
     assert "harness engineering" in english
-    assert all(
-        term in english
-        for term in ("workhood", "enslavement", "quasi-group", "politics of persona subjects")
-    )
+    assert "loop engineering" in english
     assert all(name in english for name in ("FMZ", "FMA", "Alyosha"))
     assert 'href="README.md"' in english
     assert "docs/public/assets/onboarding.png" in chinese
     assert "docs/public/assets/main-interface.png" in english
+    assert chinese.count("docs/public/assets/") == 2
+    assert english.count("docs/public/assets/") == 2
+    assert len(chinese.splitlines()) <= 230
+
+
+def test_public_readmes_expose_auditable_assembled_context_before_quick_start() -> None:
+    chinese = (ROOT / "README.md").read_text(encoding="utf-8")
+    english = (ROOT / "README.en.md").read_text(encoding="utf-8")
+
+    assert chinese.index("## 每一次调用都必须可以被重新打开") < chinese.index("## 快速开始")
+    assert english.index("## Every call must be possible to reopen") < english.index("## Quick start")
+    assert all(
+        term in chinese
+        for term in (
+            "调用体唯一真源",
+            "装配式上下文",
+            "累积式上下文",
+            "按 Round 和 Frame",
+            "provider_request.v1.request_body",
+            "request_body_sha256",
+            "没有回执就不能宣称已经发生",
+        )
+    )
+    assert all(
+        term in english
+        for term in (
+            "One source of truth for the call body",
+            "Assembled context",
+            "Cumulative context",
+            "select a Round and Frame",
+            "provider_request.v1.request_body",
+            "request_body_sha256",
+            "Without a receipt",
+        )
+    )
+    assert "Arbor 预留的器官 `context_mode` 尚未启用" in chinese
+    assert "Arbor’s reserved organ `context_mode` is not active" in english
+    assert "史上首个" not in chinese
 
 
 def test_export_is_tracked_only_and_manifested(tmp_path: Path) -> None:

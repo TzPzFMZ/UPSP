@@ -1,8 +1,8 @@
 # UPSP 官方版 Base 全文件详细设计规范（DDS）
 
-**版本**：DDS v0.47.6
+**版本**：DDS v0.47.7
 **日期**：2026-07-27
-**当前变更**：Spec712 补全 Base 内部 `Seed → Arbor → Torch` 发育谱系；Torch 正式定义为器官、分身与多位格协作稳定闭合后的“薪火”完成态，并与 `Base → Plus → Pro → Vita → Corpus` 产品代际分离。
+**当前变更**：Spec713 统一可审计调用与装配式上下文真源：`layers/*.json` 保存分层机器事实，`provider_request.v1.request_body` 保存唯一实际发送体，executor 写入后读回同一对象发送并记录 `request_body_sha256`；Markdown 只作派生审计视图。
 
 ---
 
@@ -161,7 +161,7 @@ LLM不接触任何位格内部状态数值。所有数值由脚本读取→查�
 
 ## 原则三：血脑屏障
 
-所有终端输入都经脚本入口管线转为语料块；LLM 不直接读取终端输入源。脚本从 `now_cache.jsonl`、`lately_cache.jsonl`、状态文件、索引、记忆条目、工作容器、关系卡、规则与文档查表结果等数据源装配 `step.json`。LLM 实际收到的是由 `step.json` 生成的 messages 数组。`context_buffer.json`、`near_cache.*`、`remote_index.json` 和 `remote_blocks/` 已退役，不再作为运行时读写路径。**架构级约束**：LLM 不直接碰 persona/ 真源文件。所有内环境影响都必须经结构化输出、协议工具或脚本事件通道，由脚本校验、路由并原子写入。WB 是焦点工作台与容器编辑窗口，负责 `focus_tool` 的容器正文投影和面单写回；`sync_tool` 与 `read_tool` 不占 WB 焦点，也不等于 WB 三区物流。WB 本身（status.json、三区文件、manifest.json）只由脚本操作，LLM 对 WB 只读。
+所有终端输入都经脚本入口管线转为语料块；LLM 不直接读取终端输入源。脚本从 `now_cache.jsonl`、`lately_cache.jsonl`、状态文件、索引、记忆条目、工作容器、关系卡、规则与文档查表结果等数据源装配 `layers/*.json`，executor 再按目标 provider 协议编译 `provider_request.v1.request_body`，写入 `step.json` 后读回同一对象作为实际发送体。`context_buffer.json`、`near_cache.*`、`remote_index.json` 和 `remote_blocks/` 已退役，不再作为运行时读写路径。**架构级约束**：LLM 不直接碰 persona/ 真源文件。所有内环境影响都必须经结构化输出、协议工具或脚本事件通道，由脚本校验、路由并原子写入。WB 是焦点工作台与容器编辑窗口，负责 `focus_tool` 的容器正文投影和面单写回；`sync_tool` 与 `read_tool` 不占 WB 焦点，也不等于 WB 三区物流。WB 本身（status.json、三区文件、manifest.json）只由脚本操作，LLM 对 WB 只读。
 
 **工具体系定义（v0.13.0修正）**：UPSP 工具采用“工具族 + 工具姿态”二维模型。工具族决定工具碰触的边界，工具姿态决定注意力与焦点占用。LLM 只声明 `tool_id`，脚本从注册表查出工具族、姿态、权限、风险、guide、handler 与 result_kind；不得要求 LLM 先声明工具族再声明子工具。
 
@@ -981,7 +981,7 @@ persona/
 │   │   │   ├── round_{N}.jsonl                # 机器账本：整轮事件流，N=total_round十进制编号
 │   │   │   └── round_{N}.md                   # 可选审计渲染
 │   │   ├── setup/                             # 起手步装配区
-│   │   │   ├── step.json                      # 起手步机器唯一上下文源
+│   │   │   ├── step.json                      # 起手步 provider_request.v1 唯一实际发送体
 │   │   │   ├── step.md                        # 起手步审计渲染
 │   │   │   ├── manifest.json                  # 起手步装配元数据
 │   │   │   └── layers/                        # 分层审计渲染
@@ -2536,7 +2536,7 @@ heat.json 承载 STM 条目的全部运行态字段——热度管理与生命�
 
 ### now_cache.jsonl / lately_cache.jsonl
 
-**职责**：`now_cache.jsonl` 和 `lately_cache.jsonl` 是语料热缓存主源。每行都是 Spec 035 七字段 `corpus_block`：`id`、`role`、`kind`、`text`、`loc`、`policy`、`ref`。血脑屏障的体现不再是 LLM 直接读取某个文件，而是所有外部交互先由脚本入口管线生成语料块，再由装配器把允许进入上下文的语料块写入 `step.json.messages`。LLM 只接收由 `step.json` 生成的 messages 数组。
+**职责**：`now_cache.jsonl` 和 `lately_cache.jsonl` 是语料热缓存主源。每行都是 Spec 035 七字段 `corpus_block`：`id`、`role`、`kind`、`text`、`loc`、`policy`、`ref`。血脑屏障的体现不再是 LLM 直接读取某个文件，而是所有外部交互先由脚本入口管线生成语料块，再由装配器把允许进入上下文的语料块写入 `layers/*.json`。executor 从这些分层机器真源编译目标协议请求；LLM 只接收 `step.json` 中最终 `request_body` 的内容。
 
 **now 与 lately 分工**：`now_cache.jsonl` 承载当前热输入缓冲，位置在高频层之后、POPUP 之前，默认 `policy.now=true`；`lately_cache.jsonl` 承载允许进入最近缓存履带的近期语料块，位置在定期层之后、高频层之前。所有正式语料块先进入 `now`；当 `now` 触发字符批量水位整理时，策略表允许的 `interaction`、`assistant_reply`、`dialogue_progress`、`tool_fact`、`setup_fact`、`relay_handoff`、`minimum_commitment`、`fault_note`、`cache_summary` 等普通块以完整块滚入 `lately`，随后镜像进 raw_log。正常 reaction `material` 在当前轮固定，now 只记录软水位溢出而不删除；轮末解除 pin 并以完整块迁入 lately，随后参与 lately FIFO，但显式排除 raw_log 和 cache summary。cleanup/final-reply 的 `round_retention=drop` 临时 material 仍在本步后清除。`protocol_tool_receipt`、泛型 `handoff`、运行期任务条、GUIDE、POPUP、reminder、`chronicle_focus` 等临时投影不进入 `lately/raw_log`。
 
@@ -2696,28 +2696,36 @@ STM/context/
 └── cleanup/                        # 善后步装配区
 ```
 
-每个装配区包含 `step.json`（机器唯一上下文源）+ `step.md`（审计渲染）+ `layers/`（分层审计渲染目录）。
+每个装配区包含 `layers/*.json`（分层机器真源）+ `step.json`（`provider_request.v1` 请求信封，`request_body` 为唯一实际发送体）+ `step.md` / `layers/*.md`（派生审计渲染）+ `manifest.json`（装配元数据）。
 
 ### step.json 与 step.md
 
-`step.json` 是机器唯一上下文源——messages 数组，按频率层组织，每条 message 带 role 标注。
-`step.md` 由 `step.json.messages` 渲染生成，是纯文本审计件，不得被脚本反向解析为机器源。
+`layers/*.json` 保存调用头、工具头、生成参数与七个上下文层的机器事实；每层记录稳定顺序、来源、字符数和 SHA-256。
+`step.json` 保存最终 `provider_request.v1` 请求信封，其中 `request_body` 是唯一实际发送体，`request_body_sha256` 用于完整性核对。
+`step.md` 与 `layers/*.md` 是从同一分层快照派生的人读审计件，不得被脚本反向解析为机器源。
 
-LLM API payload 的上下文正文只来自 `step.json.messages`。装配流程必须先构造 `messages`，再由同一数组渲染 `step.md` / `layers/*.md`，最后返回 `("", messages)` 给三步 runtime/executor。`step.md`、`layers/*.md` 或渲染过程中产生的完整审计文本不得作为 `system_prompt` 额外前置发送。
+装配流程必须先写入并校验 `layers/*.json`，再由 executor 按目标 provider 协议编译 `request_body`。executor 把请求信封写入 `step.json` 后，必须读回同一个 `request_body` 对象作为 HTTP payload；不得另用运行时参数重建第二份发送体。`step.md`、`layers/*.md` 或渲染过程中产生的完整审计文本不得作为 `system_prompt` 额外前置发送。
 
 每个 `step.json` 包含：
 
 ```json
 {
-  "step": "setup",
-  "round_id": "000001",
-  "phase": "presub",
-  "generated_at": "2026-04-29T00:00:00+09:00",
-  "messages": [...]
+  "schema": "provider_request.v1",
+  "call": {
+    "step": "setup",
+    "channel": "setup",
+    "attempt": 1
+  },
+  "provider": {
+    "provider": "openai_chat",
+    "model": "example-model"
+  },
+  "request_body": {},
+  "request_body_sha256": "..."
 }
 ```
 
-`step.md` 顶部标注同上（审计渲染版），随后按频率层排列渲染段。
+`step.md` 顶部标注调用审计信息，随后按频率层排列渲染段。
 
 五模块标签（STATUSBAR/EXPLORER/CONTENT/RULES/POPUP）通过 HTML 注释标注在各内容块上，供审计定位。
 
@@ -2725,8 +2733,9 @@ LLM API payload 的上下文正文只来自 `step.json.messages`。装配流程�
 
 | 层级 | 文件 | 维护者 | 用途 |
 |------|------|--------|------|
-| 零件级 | periodic_mounts.json / now_cache.jsonl / lately_cache.jsonl | 脚本 | 各频率层机器源，脚本按装配规则读写 |
-| 总装级 | step.json | 脚本拼装 | 机器唯一上下文源——messages 数组 |
+| 零件级 | periodic_mounts.json / now_cache.jsonl / lately_cache.jsonl | 脚本 | 上下文材料真源，脚本按生命周期读写 |
+| 分层级 | layers/*.json | ContextAssembler / executor | 调用头、工具头、生成参数与七层机器真源 |
+| 发送级 | step.json / request_body | executor | 唯一实际发送体及其 SHA-256 |
 | 渲染级 | step.md / layers/*.md | 脚本渲染 | 人类审计、debug、差异对比 |
 
 **装配区与三步的对应**：
@@ -2743,13 +2752,14 @@ LLM API payload 的上下文正文只来自 `step.json.messages`。装配流程�
 
 | 文件 | 职责 |
 |------|------|
-| step.json | 机器唯一上下文源（messages 数组，按频率层组织） |
-| step.md | 审计渲染（由 step.json 渲染生成，不反向解析为机器源） |
+| layers/*.json | 调用头、工具头、生成参数与七层机器真源 |
+| step.json | `provider_request.v1` 请求信封；`request_body` 是唯一实际发送体 |
+| step.md | 派生审计渲染，不反向解析为机器源 |
 | manifest.json | 上下文装配元数据（详见第十九章） |
 
-`layers/` 中的 `.md` 文件由 `step.json` 渲染生成，用于人类审计、debug、差异对比和安全复盘。不作为机器源。
+`layers/` 中的 `.md` 文件由对应 `.json` 分层快照派生，用于人类审计、debug、差异对比和安全复盘。不作为机器源。
 
-> **v0.7.5→v0.10.0演进**：v0.7.5 五模块缓存文件→频率层缓存文件（permanent/periodic/high_freq/tail.md）；v0.10.0 step.json 确认为机器唯一源，.md 文件全部降级为审计渲染。POPUP 是 messages 绝对末位 message，`layers/99_popup.md` 仅作审计镜像。
+> **v0.7.5→当前演进**：v0.7.5 五模块缓存文件→频率层缓存文件；旧 messages-list `step.json` 已退役。当前由 `layers/*.json` 保存分层机器真源，`step.json.request_body` 保存唯一实际发送体，所有 Markdown 文件只作审计渲染。POPUP 是上下文序列末位内容，`layers/99_popup.md` 仅作审计镜像。
 
 ## 9.6 media/
 
@@ -3302,7 +3312,7 @@ DDS 只规定分类、装配边界和跨文件不变量，不复制每份规则�
 
 # 十二、docs/
 
-docs/ 目录共 21 文件（protocol/base/ 17 + persona/ 4），所有文件均以**脚本消费**为主。LLM不直接读docs文件——脚本读docs→抽取/计算→写入 `step.json` 对应 messages 分组，并同步渲染到 `step.md` / `layers/*.md` 供审计。`schema.md`、`containers.md` 和 `popup.md` 可由脚本按需作为 LLM 参考材料或 POPUP 模板源装入 `step.json`。
+docs/ 目录共 21 文件（protocol/base/ 17 + persona/ 4），所有文件均以**脚本消费**为主。LLM不直接读docs文件——脚本读docs→抽取/计算→写入对应 `layers/*.json`，executor 再编译 `step.json.request_body`，同时生成 `step.md` / `layers/*.md` 供审计。`schema.md`、`containers.md` 和 `popup.md` 可由脚本按需作为 LLM 参考材料或 POPUP 模板源装入相应上下文层。
 
 ## 目录结构
 
@@ -3661,7 +3671,7 @@ LLM每轮看到的上下文是一个桌面，脚本负责往桌面上摆东西�
 
 ## 19.2 完整上下文结构
 
-LLM 每步收到的是由 `step.json.messages` 原样生成的 API payload 正文。messages 不是传统的 system + history + user 三段拼接，也不是 `step.md` 渲染文本加 messages 的双份拼接，而是按频率层组织的消息分组。每条 message 都带有 role 标注、频率层、来源、生命周期和 hash。
+LLM 每步收到的是 `step.json` 中 `provider_request.v1.request_body` 保存的实际 API payload。该对象由 `layers/*.json` 按目标 provider 协议编译，可能使用 `messages`、`input`、`system`、`instructions` 或 `tools` 等协议字段；它不是传统的 system + history + user 盲目累积，也不是 Markdown 渲染文本与结构化内容的双份拼接。
 
 总体顺序：
 
@@ -3676,7 +3686,7 @@ LLM 每步收到的是由 `step.json.messages` 原样生成的 API payload 正�
 9. 内部交接 message：三步内循环接力信息，不走外部免疫。
 10. POPUP message：如有，绝对末位，最后出现，不参与履带推进。
 
-`step.json` 是机器唯一源；`step.md` 与 `layers/*.md` 只是审计渲染。三步 runtime 传给 executor 的 `system_prompt` 固定为空字符串；若 executor 收到显式非空运输层 `system_prompt`，只能作为兼容外壳前置，不能由 `step.md` 或 `layers/*.md` 反向生成。
+`layers/*.json` 是分层机器真源；`step.json.request_body` 是唯一实际发送体。executor 写入请求信封后必须读回同一对象发送，并以 `request_body_sha256` 核对完整性；`step.md` 与 `layers/*.md` 只是派生审计渲染。三步 runtime 传给 executor 的 `system_prompt` 固定为空字符串；若 executor 收到显式非空运输层 `system_prompt`，只能作为兼容外壳前置，不能由 Markdown 审计件反向生成。
 
 POPUP message 是当步注意力事件通道，不等同安全事件。事件至少分三类：`identity_prompt`（普通身份提示，`decision_required=false`）、`security_review`（安全二值裁决，`decision_required=true`）、`structure_warning`（结构/运维警告，通常由反应步或后续轮补救）。POPUP 承载本步 GUIDE、reminder 与 warning：setup/cleanup 固定挂本步工作指南，reaction 由 Runtime 按当前状态只装配一份当前 GUIDE（普通交互、紧急处理、主轴节律、日历节律或合轮后的交互指南之一）与必要提醒；工具字段纪律以 provider-native schema 和短索引为准，不按请求追加完整工具 guide。Spec319 后 POPUP 内部按 `guide -> reminder -> warning` 稳定排序，warning 永远末尾；可见模块为 `GUIDE｜指南`、`REMINDER｜提醒`、`WARNING｜警告`，旧 `HANDOFF｜交接` 可见模块退役。元数据字段用于排序与运行真账，提示正文用于模型行动；`kind/tier/source/call_id/field/expected/actual/next_action` 等机器字段不作为可见字段行进入末位 POPUP。POPUP 不改变 `round_type`、heartbeat flag 或任务段交接。
 
@@ -3688,7 +3698,7 @@ POPUP message 是当步注意力事件通道，不等同安全事件。事件至
 标签用途：审计、调试、装配统计、内容来源追踪。
 
 ```
-step.json → messages 数组
+layers/*.json → provider 协议编译 → step.json.request_body
 
 ┌──────────────────────────────────────────────┐
 │ 00 永固层 permanent                           │
@@ -3713,7 +3723,7 @@ step.json → messages 数组
 │ 状态栏 + 关系焦点摘要，位于 POPUP 前             │
 ├──────────────────────────────────────────────┤
 │ 99 POPUP                                      │
-│ messages绝对末位，最高注意力，不履带推进         │
+│ 上下文序列绝对末位，最高注意力，不履带推进       │
 └──────────────────────────────────────────────┘
 ```
 
@@ -3730,9 +3740,9 @@ step.json → messages 数组
 | EXPLORER | → 高频层 | 全部索引（容器/LTM热度/STM热度/倒排/联想）与本步短工具带→高频层 |
 | CONTENT | → 高频层 | 挂载正文+参考窗口+工作台→高频层 |
 | RULES | → 永固层/按需参考 | 8份 permanent 全文常驻；passive_read 保留目录摘要，on_demand 只保留分类 |
-| POPUP | → 末位区（messages 绝对末位） | 当步注意力事件，最后出现；按 kind 区分普通提示、裁决请求和结构警告 |
+| POPUP | → 末位区（上下文序列绝对末位） | 当步注意力事件，最后出现；按 kind 区分普通提示、裁决请求和结构警告 |
 
-> **v0.7退役说明**：assembled.md 自 v0.7 起退役。v0.10.0 起机器源统一为 `step.json`，并按 setup/reaction/cleanup 子目录区分身份。历史文档中的 assembled.md 均指旧版 step.md 前身。`step.md` 与 `layers/*.md` 仅为从 `step.json` 渲染出的中文审计视图，不得作为机器源反向解析。
+> **v0.7退役说明**：assembled.md 自 v0.7 起退役。当前按 setup/reaction/cleanup 子目录区分调用，`layers/*.json` 与 `step.json.request_body` 分别承担分层机器真源和唯一实际发送体。历史文档中的 assembled.md 均指旧版 step.md 前身；`step.md` 与 `layers/*.md` 只作中文审计视图，不得作为机器源反向解析。
 
 ## 19.4 七文件与五模块（内容标签）的关系
 
@@ -3809,7 +3819,7 @@ step.json → messages 数组
 
 **硬约束**：上下文整理轮不修改定期层，不清理 `periodic_mounts.json`。定期层只由节律轮生成/替换；定期层内容超限只在生成阶段处理。
 
-**语料缓存（messages 数组）**：
+**语料缓存（供协议请求体编译的结构化语料）**：
 
 | 缓存 | 位置 | 轮数 | 刷新策略 | 上下文压力处理 |
 |------|------|------|---------|-----------|
@@ -3817,7 +3827,7 @@ step.json → messages 数组
 | 高频层 high_freq | 最近缓存后、当前缓存前 | 当前步 | 每轮重算 | 按需挂载正文与参考窗口 |
 | 当前缓存 now | STATUSBAR 前 | 默认 65536 字符 | 交互、资料、工具事实、起手事实和对话进展按 `kind` 写入；超过预算后按完整块即时结算，默认批量释放约 16384 字符 | 无最新块保护；eligible 旧块滚入 lately，now-only 旧块只从 now 淘汰 |
 | STATUSBAR 状态栏层 | now 后、POPUP 前 | 当前步 | 每轮重算 | 状态栏 + 关系焦点摘要；不承担 POPUP 语义 |
-| POPUP | messages绝对末位 | 事件驱动 | 最后出现 | 不推进、不裁剪 |
+| POPUP | 上下文序列绝对末位 | 事件驱动 | 最后出现 | 不推进、不裁剪 |
 
 **高频层索引排序**（起手步 LLM 扫描用，索引命中的条目自动挂载 CONTENT）：
 
@@ -3864,7 +3874,7 @@ UPSP 上下文工程的核心竞争力不是"装更多内容"，是**把 O(n) �
 
 - **每步重新装配频率层**：步边界天然卸载旧内容。本步需要的进，本步不需要的卸。
 - **步内只管理峰值占用**：唯一需要关心的是单步上下文峰值是否超过模型窗口，不关心历史累积。
-- **装配是脚本活，不是 LLM 的活**：频率层由脚本按规则拼装为 `step.json`，LLM 实际收到的是由 `step.json` 生成的 messages 数组，不需要自己管理记忆加载。
+- **装配是脚本活，不是 LLM 的活**：脚本按规则生成 `layers/*.json`，executor 按目标协议编译并读回发送 `step.json.request_body`；LLM 不需要自己管理记忆加载。
 
 | | 常规对话系统 | UPSP |
 |---|------------|------|
@@ -4185,7 +4195,7 @@ POPUP 不属于可裁剪层，使用 active/consumed/expired 生命周期，而�
 }
 ```
 
-读写规则：脚本读写，LLM不直接读写。`context_pressure` 不是长期状态字段，只是本步装配审计信息；如装配压力过高，只在本步 `manifest.json` 记录本次装配压力事实。`lately` / `now` 的条数、字符数、当前可见轮次和来源轮次聚合属于审计元信息，留在 `manifest.json`、`step.md`、`layers/*.md` 或 round audit，不作为独立缓存层 marker 注入 `step.json.messages`，也不迁入 STATUSBAR。
+读写规则：脚本读写，LLM不直接读写。`context_pressure` 不是长期状态字段，只是本步装配审计信息；如装配压力过高，只在本步 `manifest.json` 记录本次装配压力事实。`lately` / `now` 的条数、字符数、当前可见轮次和来源轮次聚合属于审计元信息，留在 `manifest.json`、`step.md`、`layers/*.md` 或 round audit，不作为独立缓存层 marker 写入模型可见分层，也不迁入 STATUSBAR。
 
 ---
 
@@ -4339,7 +4349,7 @@ filename: xxx.txt
 | ② | LLM挂载决策 | LLM | **中** | 读上下文+外部输入→拆解关键词→选出反应步必要临时挂载→安全二值裁决 | 挂载声明+安全判定 |
 | ③ | 脚本拆解 | 脚本 | **硬** | 解析LLM输出→结构化零件→产出脚本指令集（挂载清单+RULES选择+安全裁决+跳过/进入判定） | 脚本指令集 |
 
-起手步装配 = 频率层缓存（永固+定期+最近缓存 lately+高频+当前缓存 now+STATUSBAR）+ 本轮外部输入(按来源分筐进入 now) + POPUP(如有,messages绝对末位)。高频层含 EXPLORER + CONTENT（起手步期间CONTENT为空——待② LLM决定挂载什么）；STATUSBAR 独立位于 now 与 POPUP 之间。高频层中 EXPLORER 含五索引区（STM/LTM/Skills/工作容器/关系域）。
+起手步装配 = 频率层缓存（永固+定期+最近缓存 lately+高频+当前缓存 now+STATUSBAR）+ 本轮外部输入(按来源分筐进入 now) + POPUP(如有,上下文序列绝对末位)。高频层含 EXPLORER + CONTENT（起手步期间CONTENT为空——待② LLM决定挂载什么）；STATUSBAR 独立位于 now 与 POPUP 之间。高频层中 EXPLORER 含五索引区（STM/LTM/Skills/工作容器/关系域）。
 
 ### 起手步②输出栏目集
 
@@ -5147,7 +5157,7 @@ SKL- 技能    (12: 10 active · 2 expired)   ▸ SKL-habits-format-check · 04-
 - EXPLORER展开：单格口全量条目列表
 - CONTENT常驻清单：resident_list 中的记忆、容器、关系卡正文
 
-**与上下文工程的关系**：presenter 输出写入 STM/context/ 对应缓存文件，上下文装配时按频率层规则写入 `step.json` 对应 messages 分组，并同步渲染到 `step.md` / `layers/*.md` 供审计。
+**与上下文工程的关系**：presenter 输出写入 STM/context/ 对应缓存文件，上下文装配时按频率层规则写入对应 `layers/*.json`，executor 再编译 `step.json.request_body`，并同步生成 `step.md` / `layers/*.md` 供审计。
 
 ### DLC/mod扩展流程
 
@@ -5887,9 +5897,9 @@ config/context/
 └── popup.json         ← POPUP装配规则（此文件是装配规则说明，非运行时缓存——三步装配区无popup.md）
 ```
 
-按频率层分7个逻辑层配置；`interaction_input` / `material_input` / `internal_handoff` 不再是独立配置文件，而是 now 层内的来源语义与 `corpus_block.kind` 分流。每个json包含层元数据（frequency/刷新周期/注意力位置）+ 可配参数 + 内容清单 + 窗口压力处理规则或 lately 履带推进规则。五模块标签（STATUSBAR/EXPLORER/CONTENT/RULES/POPUP）保留为内容分类标签，用于审计时定位，但物理位置由频率层决定。总装逻辑不另开文件——频率梯度布局规则已在 rules/context.md（LLM行为约束）和 docs/context.md（脚本参数查表）中定义，脚本按三步各自的 step.json 按层序拼装 messages 数组。
+按频率层分7个逻辑层配置；`interaction_input` / `material_input` / `internal_handoff` 不再是独立配置文件，而是 now 层内的来源语义与 `corpus_block.kind` 分流。每个json包含层元数据（frequency/刷新周期/注意力位置）+ 可配参数 + 内容清单 + 窗口压力处理规则或 lately 履带推进规则。五模块标签（STATUSBAR/EXPLORER/CONTENT/RULES/POPUP）保留为内容分类标签，用于审计时定位，但物理位置由频率层决定。总装逻辑不另开文件——频率梯度布局规则已在 rules/context.md（LLM行为约束）和 docs/context.md（脚本参数查表）中定义，脚本按三步生成 `layers/*.json`，executor 再按目标协议编译唯一实际发送体。
 
-`config/context/*.json` 是装配规则，不是运行时缓存。运行时上下文数据写入 `STM/context/{setup|reaction|cleanup}/step.json`；STATUSBAR 作为 `now` 与 `POPUP` 之间的独立 message 写入 `step.json`，`layers/90_statusbar.md` 是审计镜像；POPUP 作为 messages 绝对末位写入 `step.json`，`layers/99_popup.md` 只是审计镜像。
+`config/context/*.json` 是装配规则，不是运行时缓存。运行时上下文数据写入 `STM/context/{setup|reaction|cleanup}/layers/*.json`；STATUSBAR 作为 `now` 与 `POPUP` 之间的独立层写入 `layers/60_statusbar.json`，`layers/60_statusbar.md` 是审计镜像；POPUP 作为上下文序列绝对末位写入 `layers/99_popup.json`，`layers/99_popup.md` 只是审计镜像。最终目标协议请求体单独保存在同目录 `step.json.request_body`。
 
 ---
 
