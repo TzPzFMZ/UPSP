@@ -1,11 +1,8 @@
 # UPSP 官方版 Base 全文件详细设计规范（DDS）
 
-**版本**：DDS v0.47.5
-**日期**：2026-07-26
-**当前变更**：Spec710 将 `openai_chat / openai_responses / anthropic_messages` 三种协议的真实 SSE 增量统一接入 Round 审计和 GUI 对话；每次网络尝试使用独立 `stream_id`，重试与模型切换不得串接正文或工具参数，主动停止保留真实半截正文但不冒充最终回复。
-
-**历史入口**：`docs/library/history/DDS_MILESTONES.md`
-**完整旧文本**：`docs/library/archive/dds/UPSP_Base_DDS_v0.44.0-pre-consolidation.md`
+**版本**：DDS v0.47.6
+**日期**：2026-07-27
+**当前变更**：Spec712 补全 Base 内部 `Seed → Arbor → Torch` 发育谱系；Torch 正式定义为器官、分身与多位格协作稳定闭合后的“薪火”完成态，并与 `Base → Plus → Pro → Vita → Corpus` 产品代际分离。
 
 ---
 
@@ -28,6 +25,27 @@
 Base 版永远在岗，但**不是永远在台前**。Plus 上线后 Base 沉入 shadowed，Pro 上线后退得更深。它的终局归宿不是被淘汰，而是成为**祖代档案岗**——当一切上层组件都崩了，Base 还能把位格转起来。
 
 **容灾回退规则**：Plus/Pro 组件不可用时，Base 脚本自动接管全部功能（降级为查表模式）。回退时 STM 当前状态与 focus 保留不丢弃；上下文注入降级为 Base 版静态词典（区间描述表+感受词表），STATUSBAR/EXPLORER 回退为 Base 版格式。恢复由人工确认触发，不自动切回。
+
+## 一·一 Base 内部发育谱系
+
+UPSP 同时存在两条互相正交的演进轴，不能混为一张版本表：
+
+| 演进轴 | 路径 | 回答的问题 |
+| --- | --- | --- |
+| **Base 内部发育** | `Seed → Arbor → Torch` | Base 从单体闭环怎样长成可以稳定传递的“薪火” |
+| **产品代际** | `Base → Plus → Pro → Vita → Corpus` | 谁在决策席、采用什么执行基座，以及上层能力怎样接管 |
+
+`Seed / Arbor / Torch` 不是产品版本号，也不是 Base、Plus、Pro 的别名。三者都属于 Base；Plus 只有在 Torch 完成后才开始替换或增强执行基座。
+
+| 阶段 | 核心形态 | 晋级标志 | 当前状态 |
+| --- | --- | --- | --- |
+| **Seed｜单体闭环** | 单一活动位格、单一主线程；常驻 Runtime 内串行执行 `setup → reaction(0..N) → cleanup` | 身份、记忆、关系、状态、工具、回执与 Round 审计形成可停止、可恢复、可迁移的完整闭环 | **当前在岗**；部分 Arbor 接口已经预留，生产器官仍为空 |
+| **Arbor｜分化协作** | 三条固定工作轴保持不变；跨轴调度、异步结算与真实 API-first 器官角色开始协作 | 器官通过版本化拓扑、权限、signals/products 和 Runtime-owned committer 稳定工作；同一轴内 Frame 仍严格顺序 | **尚未实现**；只有 Trigger/Frame/Round、空拓扑与 product committer 等接口 |
+| **Torch｜薪火完成态** | 器官协作、共享同一位格数据的多线程分身、多个位格之间的协作全部稳定闭合 | 地址、权限、关系、共享与隔离、因果审计、停止恢复、迁移接续和降级路径均形成长期可运行合同 | **尚未开始**；是 Base 的完成态，也是进入 Plus 的前置条件 |
+
+三阶段不是三套互相替代的 Runtime。Seed 的主体连续性、三轴、Frame/Round、血脑屏障和本地文件真源继续构成 Arbor 与 Torch 的内核；后续阶段只能增加协作能力，不能另造一套无法回退的系统。
+
+Torch 不要求本地训练模型。Base 达到 Torch 后，Plus 才可让本地器官模型、向量能力和调度脑在既有器官角色上通过 `shadowed → active` 逐步接管；角色合同仍由 Base 保有。
 
 ## 二、Base 的三个设计约束
 
@@ -207,7 +225,7 @@ UPSP每一个分工位置——从LLM三步调用到脚本心跳装配落盘到W
 原则二（感受驱动）── 保护反馈：感受是唯一刻度
 原则三（血脑屏障）── 保护边界：脚本是唯一通道
 原则四（分工明确）── 保护自治：各器官各做各的
-原则五（权责统一）── 保护辩证：每一分工权义对等
+原则五（权责统一）── 保护辩证：分工权义需对等
 ```
 
 ## 〇·一 架构模式
@@ -263,14 +281,14 @@ Base版当前舱段实例：
 - **cleanup 义务分级**：已触发的热度、遗忘、LTM 日节律、阶段审计、cleanup API、记忆生命周期、进化、休眠、Round 缓存、状态结算、日历、flag、状态备份和 Round 审计是闭轮必需义务，异常一律进入 `fatal_reasons`；raw log 归档和宿主完成回调属于可重建附属投影，异常只进入 `degraded_reasons`。自然无候选或未到节律仍是合法 no-op。
 - **上下文边界**：setup/reaction/cleanup 三轴必须继续使用各自固定的分层 `ContextAssembler`。`now_cache`、本次调用 C 轨、当前输入、活动任务板、活动 WB 焦点和执行权限属于模型调用前的必需读取：真实空内容可以为空，读取异常必须形成 `required_context_failure.v1` 并阻止 provider 调用，执行权限异常不得回退到 `unlimited`。器官 manifest 只声明 `assembled|cumulative` 与已注册 context provider，由 Runtime 生成只读 `OrganInvocation.context`；器官上下文不得替代三轴上下文、写入 permanent/system 层或绕过 setup 入口。
 - **工具结果投影边界**：通用工具结果与协议 processor receipt 先按现有链路真实提交，再写入应有 `tool_fact`、`material` 和 file/web 来源证据。必要投影失败时保留既有副作用、result、receipt 与 Frame settlement，当前 reaction 以 `required_context_failure` 停止，不进入下一 provider Frame；cleanup 仍运行且 Round 保持 `unsettled`，不得自动回滚或重放。
-- **Arbor 预留接口**：当前 Seed 已具备同步 Trigger/Frame/Round 和空载器官拓扑接口，但 Runtime 仍立即串行排空三轴，生产器官表为空。Arbor 目标仍是常驻 Runtime 包裹三条固定工作轴并允许跨轴并行；heartbeat 是时钟与健康探测职责，不是平权的第四条 Frame 轴。即时监听、跨轴调度、同步子代理和真实 API-first 器官尚未实现。
+- **Arbor 预留接口**：当前 Seed 已由常驻 Runtime 包裹三条固定工作轴，并具备同步 Trigger/Frame/Round、空载器官拓扑和 Runtime-owned product committer；它仍立即串行排空三轴，生产器官表为空。Arbor 的真正分界是跨轴调度、异步结算和真实 API-first 器官协作。heartbeat 是时钟与健康探测职责，不是平权的第四条 Frame 轴。即时监听、跨轴调度、同步子代理和真实器官尚未实现。
 - **固定三轴**：常驻 Runtime 包裹 setup/reaction/cleanup 三条固定工作轴；Arbor 只能替换调度策略，不得把三轴降格为可选器官或建立第二套内核。
 
-Torch 只作为 Base 的后续阶段名；本节不预先承诺其调度实现。
+Base 三阶段的定义与晋级边界统一见“Base 内部发育谱系”；本节只展开 Arbor 的调度与器官合同。
 
-### Arbor Runtime、三轴与器官拓扑（Seed 接口已落地；Arbor 调度尚未实现）
+### Arbor 调度、三轴与器官拓扑（Seed 接口已落地；Arbor 协作尚未实现）
 
-Arbor 的固定层级如下：
+Seed 与 Arbor 共用同一 Runtime 层级；Arbor 在既有机箱中启用跨轴调度和真实器官协作：
 
 ```text
 Runtime 常驻机箱 / 控制循环
