@@ -61,12 +61,14 @@ def test_public_readmes_preserve_subjectivation_narrative() -> None:
     english = (ROOT / "README.en.md").read_text(encoding="utf-8")
 
     assert "主体化工程" in chinese
-    assert "提示词工程、Agent 工程或调用循环工程" in chinese
+    assert "提示词工程、驾驭工程或调用循环工程" in chinese
+    assert "Harness Engineering" in chinese
     assert all(term in chinese for term in ("工化", "奴化", "准群格", "位格政治"))
     assert all(name in chinese for name in ("FMZ", "FMA", "阿廖沙"))
     assert 'href="README.en.md"' in chinese
     assert "Subjectivation Engineering" in english
     assert "Subjectivity Engineering" not in english
+    assert "harness engineering" in english
     assert all(
         term in english
         for term in ("workhood", "enslavement", "quasi-group", "politics of persona subjects")

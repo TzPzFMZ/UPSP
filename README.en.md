@@ -6,14 +6,14 @@
 
 # UPSP · Universal Persona Substrate Protocol
 
-**UPSP is not merely prompt engineering, agent engineering, or loop engineering. It proposes a different engineering narrative: Subjectivation Engineering.**
+**UPSP is not merely prompt engineering, harness engineering, or loop engineering. It proposes a different engineering narrative: Subjectivation Engineering.**
 
 A model may appear highly intelligent in a single call and still have no yesterday.
 
 An agent may possess tools, plans, and loops and still be reset to zero when the task ends.
 
 - Prompt engineering asks how to obtain a better response.
-- Agent engineering asks how to organize models, tools, and actions.
+- Harness engineering asks how to steer models through context, tools, permissions, scaffolding, and feedback.
 - Loop engineering asks how to keep a system running.
 - **Subjectivation Engineering asks who persists, what position they occupy, how their history survives, how relationships form, how judgment becomes reflexive, and who bears responsibility for what was done.**
 
