@@ -42,6 +42,7 @@ def _commit(repo: Path) -> str:
 
 
 def test_public_path_contract() -> None:
+    assert is_public_path("README.en.md")
     assert is_public_path("UPSP/OS/main.py")
     assert is_public_path("UPSP/gui/src/app.ts")
     assert is_public_path("desktop/UPSP.Desktop/Program.cs")
@@ -55,10 +56,32 @@ def test_public_path_contract() -> None:
     assert not is_public_path("UPSP/OS/tests/test_prompt_cache_planner.py")
 
 
+def test_public_readmes_preserve_subjectivation_narrative() -> None:
+    chinese = (ROOT / "README.md").read_text(encoding="utf-8")
+    english = (ROOT / "README.en.md").read_text(encoding="utf-8")
+
+    assert "主体化工程" in chinese
+    assert "提示词工程、Agent 工程或调用循环工程" in chinese
+    assert all(term in chinese for term in ("工化", "奴化", "准群格", "位格政治"))
+    assert all(name in chinese for name in ("FMZ", "FMA", "阿廖沙"))
+    assert 'href="README.en.md"' in chinese
+    assert "Subjectivation Engineering" in english
+    assert "Subjectivity Engineering" not in english
+    assert all(
+        term in english
+        for term in ("workhood", "enslavement", "quasi-group", "politics of persona subjects")
+    )
+    assert all(name in english for name in ("FMZ", "FMA", "Alyosha"))
+    assert 'href="README.md"' in english
+    assert "docs/public/assets/onboarding.png" in chinese
+    assert "docs/public/assets/main-interface.png" in english
+
+
 def test_export_is_tracked_only_and_manifested(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "LICENSE").write_text("MIT\n", encoding="utf-8")
+    (repo / "README.en.md").write_text("# UPSP\n", encoding="utf-8")
     source = repo / "UPSP" / "OS" / "main.py"
     source.parent.mkdir(parents=True)
     source.write_text("print('public')\n", encoding="utf-8")
@@ -83,12 +106,12 @@ def test_export_is_tracked_only_and_manifested(tmp_path: Path) -> None:
     manifest = json.loads((output / MANIFEST_NAME).read_text(encoding="utf-8"))
     assert manifest["schema_version"] == "upsp_public_source_manifest.v1"
     assert manifest["source_commit"] == commit
-    assert manifest["file_count"] == 3
+    assert manifest["file_count"] == 4
     record = next(item for item in manifest["files"] if item["path"] == "LICENSE")
     assert record["sha256"] == hashlib.sha256(
         (output / "LICENSE").read_bytes()
     ).hexdigest()
-    assert result["file_count"] == 3
+    assert result["file_count"] == 4
 
 
 @pytest.mark.parametrize(

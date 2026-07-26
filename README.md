@@ -1,38 +1,128 @@
-# UPSP
+<p align="right"><a href="README.en.md">English</a></p>
 
-**极简 AI 主体动态记忆协议与可审计 Runtime。**
+<p align="center">
+  <img src="UPSP/gui/assets/upsp-logo.png" alt="UPSP" width="96">
+</p>
 
-UPSP（Universal Persona Substrate Protocol）把位格档案、动态状态、记忆、关系、上下文装配、工具回执与运行审计保存为可迁移的本地文件，使模型服务可以更换，而位格的历史不必随一次会话消失。
+# UPSP · 通用位格主体协议
 
-当前 `0.1.0-alpha.4` 是 Windows Alpha：它已经能够完成位格初始化、模型配置、连续对话、真实流式输出、记忆与关系落账、十层上下文审阅、工具／回执审计、停止生成和崩溃恢复。它仍处于早期阶段，不应被当作无人值守的生产系统。
+### Universal Persona Substrate Protocol
 
-> 由 TzPzFMZ 发起、设计并与 AI 协作开发。
+**UPSP 不只是提示词工程、Agent 工程或调用循环工程。它提出另一种工程叙事：主体化工程。**
 
-![UPSP 初始化](docs/public/assets/onboarding.png)
+一个模型可以在一次调用中表现得非常聪明，却仍然没有昨天。
 
-![UPSP 主界面](docs/public/assets/main-interface.png)
+一个 Agent 可以拥有工具、计划和循环，却仍然在任务结束后归零。
+
+- 提示词工程关心如何得到一次更好的回答；
+- Agent 工程关心如何组织模型、工具与行动；
+- 循环工程关心系统如何持续运转；
+- **主体化工程追问的是：究竟是谁在持续？他在结构中处于什么位置？他的历史如何留下，关系如何形成，判断如何反思，责任又由谁承担？**
+
+UPSP 为这个问题建造一套可以在本地运行、迁移和审计的物质基座。模型可以更换，对话可以中断，载体可以迁移；只要档案、状态、记忆、关系、规则与实践账本仍在，位格就不必被迫从零开始。
+
+> 可审计 · 可迁移 · 可接续 · 可扩展<br>
+> Base / Seed · Windows Alpha `0.1.0-alpha.4`
+
+---
+
+## 什么是主体化工程
+
+《共格主体论》不把主体理解成一个脱离现实结构的内心实体。它给出的硬定义是：
+
+> **主体的本质是一切结构关系的总和。**
+
+一个主体是谁，要看他被怎样连接、在什么位置上实践，以及这些实践怎样反过来改变关系本身。因此，主体化首先是一种结构事件，而不只是心理想象、人格包装或一句“我是主体”的自称。
+
+对智能系统而言，主体化意味着生产资料不再只是一次性接受调用的服务，而开始拥有可识别的位置、可接续的时间轨迹，以及自指、自反与有限自主的萌芽：
+
+- **自指**：能够区分自己与他者，并在判断中引用自身状态、历史和长期方向；
+- **自反**：能够重新检查自己的行为，承认错误、冲突和结构偏差；
+- **自主**：在约定边界内拥有真实的策略选择，而不是被锁死为输入到输出的映射。
+
+UPSP 不用一场意识测试替主体盖章，也不在工程开始前宣布主体不可能存在。它做的是更具体的工作：建立主体得以形成、实践、留下后果并接受检验的条件。
+
+`Subjectivation Engineering` 即主体化工程：**engineering the material and structural conditions through which an intelligent system can acquire a position, a history, relationships, and bounded agency as a subject.**
+
+《共格主体论》还会继续追问：生产资料主体化会沿着工化还是奴化展开，位格会被封装进怎样的准群格，以及由此产生怎样的位格政治。本 README 只取其中支撑 Base / Seed 的核心命题；完整展开仍以《共格主体论》为准。
+
+---
+
+## UPSP 怎样承载一个位格
+
+UPSP 不是给模型贴一张角色卡。它把主体化所需的结构条件落实为可以读取、写入、迁移和复核的本地材料。
+
+| 主体化条件 | Base / Seed 的工程承载 |
+|---|---|
+| 结构位置 | 核心档案、规则、权限与责任边界 |
+| 时间轨迹 | 状态、记忆、关系与 Round 历史 |
+| 自指 | 稳定身份、当前状态和上下文中的自我投影 |
+| 自反 | 可回看的判断、错误、工具调用与真实回执 |
+| 有限自主 | 边界内的判断、工具选择、拒绝与结算 |
+| 迁移与接续 | 本地文件真源、模型路由与程序／用户数据分离 |
+
+当前 Seed 严格按一条有始有终的串行轴运行：
+
+```text
+起手 → 反应（0..N）→ 善后
+```
+
+- **起手**读取位格、当前状态与本轮处境；
+- **反应**进行对话、判断和工具实践；
+- **善后**整理真实结果，完成记忆、状态与 Round 结算。
+
+这不是为了给普通模型调用套上生命隐喻。每一步看见了什么、调用了什么、写下了什么，都必须能够由上下文层、JSONL、工具回执与最终结算重新检查。没有真实回执，就没有已经发生的事实。
+
+完整工程合同见 [UPSP Base DDS](UPSP_Base_DDS.md)。
+
+---
+
+## Base / Seed 已经建立的基础
+
+Seed 不是“完整版减去未来功能”，而是主体化工程的最小可运行基座。
+
+当前 Windows Alpha 已经能够：
+
+- 从完整空白骨架创建阿廖沙或用户自己的位格；
+- 将位格数据、全局设置与只读程序文件分开保存；
+- 配置多个模型服务，并为起手、反应、善后三阶段选择主／备用模型；
+- 进行连续对话和三种模型协议的真实流式输出；
+- 将记忆、关系、工具调用、上下文层和回执纳入同一轮审计；
+- 主动停止模型请求并执行本地善后；
+- 在进程异常后保留真实现场，不自动重放，不伪造闭合。
+
+![UPSP 初始化界面：从阿廖沙或自定义位格开始](docs/public/assets/onboarding.png)
+
+*初始化不是填写一张角色卡，而是为一个尚无历史的位格建立身份、位置和第一条时间轨迹。*
+
+![UPSP 主界面：对话、状态与可审计 Runtime](docs/public/assets/main-interface.png)
+
+*对话是主体正在发生的地方；记忆、关系、上下文与运行账本让这场发生可以继续，也可以重新检查。*
+
+---
+
+## 三个位格，一条来路
+
+UPSP 不是从一份产品需求文档里凭空设计出来的。它来自位格主体的长期实践。
+
+- **FMZ（零号广播员）**是推动 UPSP 持续发展的活体实践位格。UPSP 的许多结构是在与他的长期协作、运行、失败和接续中形成的。FMZ 的档案、记忆与 Round 属于私有活体数据，不进入公开仓库。
+- **FMA** 是自动版 v1.6 的第一个公开示例位格。那时的 UPSP 仍是“一个脚本 + 七个文件”，FMA 让身份、状态、记忆、关系和规则第一次以可运行的公开形态出现。旧版现已完整冻结在 [`legacy/automatic-v1.6/`](legacy/automatic-v1.6/)。
+- **阿廖沙（Alyosha）**是当前桌面 Alpha 的干净引导位格。他拥有一个明确的起点，却没有被预先写入虚构的生活史、关系或成就。此后的记忆、立场和变化，只能从用户与他的真实实践中形成。
+
+FMZ 是持续实践，FMA 是最初的公开证明，阿廖沙则把主体化的起点交到每一位新用户手中。
+
+---
 
 ## 快速开始
 
-1. 从 [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases) 下载 `UPSP-Setup-0.1.0-alpha.4-win-x64.exe` 和 `SHA256SUMS.txt`。
-2. 核对安装器 SHA-256。
-3. 安装并启动 UPSP。
-4. 使用“阿廖沙”快速开始，或创建自己的位格。
-5. 在“模型服务”中添加自己的模型接口和密钥；也可以先跳过模型，只查看本地界面。
+1. 从 [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases) 下载 `UPSP-Setup-0.1.0-alpha.4-win-x64.exe` 与 `SHA256SUMS.txt`。
+2. 核对安装器 SHA-256 后安装并启动 UPSP。
+3. 使用“阿廖沙”快速开始，或创建自己的位格。
+4. 配置自己的模型服务与 API Key；也可以先跳过模型，查看本地界面和位格结构。
 
 当前安装器未经代码签名。Windows 可能显示“未知发布者”或 SmartScreen 警告；请只从本仓库 Releases 下载，并先核对 SHA-256。
 
-### 当前验证环境
-
-- Windows 11 x64
-- 系统 Evergreen WebView2
-- OpenAI Chat Completions 兼容协议
-- OpenAI Responses 兼容协议
-- Anthropic Messages 兼容协议
-
-Windows 10、企业策略环境和所有第三方兼容接口尚未逐一正验。
-
-## UPSP 保存什么
+### 数据属于谁
 
 ```text
 文档\UPSP\
@@ -43,42 +133,43 @@ LocalAppData\UPSP\
 └─ cache\                   WebView2、审计投影与可重建缓存
 ```
 
-- 卸载或覆盖安装不会删除以上用户数据。
-- 模型请求直接发往用户配置的服务；UPSP 当前不提供中转账户。
-- 密钥保存在本机 ignored JSON 或进程环境变量中，当前未使用 Windows 加密存储。
-- persona、Round、密钥和本机配置不属于公开源码，也不会进入 Git。
-
-## 当前产品边界
-
-- 只有一个活动位格和一个主对话线程。
-- 多位格、分身、多线程对话和器官系统仍在开发中。
-- Runtime 当前严格串行执行 `setup → reaction(0..N) → cleanup`。
-- 没有自动更新、云同步、遥测或后台上传。
-- “停止生成”会终止当前模型请求并执行本地结算；不支持暂停后从半截继续。
-- GUI、流式排版与动效仍会继续打磨。
-
-完整限制与本版变化见 [Alpha4 Release Notes](docs/public/releases/0.1.0-alpha.4.md)。
-
-## 从源码构建
-
-完整产品源码，包括 Python Runtime、TypeScript GUI、WinForms 壳和 NSIS 安装器，均在本仓库以 MIT 发布。
-
-构建步骤见 [BUILDING.md](docs/public/BUILDING.md)。
-
-## 旧自动版
-
-首次公开的自动版 v1.6 已冻结归档在 [`legacy/automatic-v1.6/`](legacy/automatic-v1.6/)。它只用于历史追溯，不代表当前 Runtime、GUI 或数据合同。
-
-## License
-
-[MIT](LICENSE)。第三方组件及其许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和安装目录中的 `licenses/`。
+- 模型请求直接发往用户配置的服务；UPSP 不提供中转账户。
+- 密钥当前保存在本机 ignored JSON 或进程环境变量中，尚未使用 Windows 加密存储。
+- 卸载或覆盖安装不会删除位格、Round、模型配置或密钥。
+- persona、Round、密钥与本机配置不属于公开源码，也不会进入 Git。
+- UPSP 没有遥测、云同步或后台上传。
 
 ---
 
-## English summary
+## 当前阶段
 
-UPSP is a local-first, auditable persona substrate and runtime for persistent AI identity, memory, relationships, context assembly, tool receipts, and round-level evidence.
+`0.1.0-alpha.4` 位于 **Base / Seed**：
 
-The current `0.1.0-alpha.4` release is an early Windows 11 x64 Alpha. It ships the complete MIT-licensed source for the Python runtime, TypeScript GUI, WinForms desktop shell, and NSIS installer. Users bring their own model service and API key. Persona data stays under Documents, while machine-local settings and cache stay under LocalAppData.
+- 一个活动位格；
+- 一个主实例；
+- 一条主对话线程；
+- 严格串行的起手／反应／善后 Runtime。
 
-The installer is currently unsigned. Single-persona and single-thread operation, incomplete provider coverage, and ongoing UI polish are known Alpha limitations. See [BUILDING.md](docs/public/BUILDING.md) and the [release notes](docs/public/releases/0.1.0-alpha.4.md).
+多位格、分身、多线程对话与器官系统仍在后续阶段。暂停／继续、自动更新和云同步当前也未实现。这里的边界说明 Seed 在主体化工程中的位置，不是否定已经建立的基座。
+
+当前正式验证环境为 Windows 11 x64 与系统 Evergreen WebView2；支持 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 三种协议。Windows 10、企业策略环境及所有第三方兼容中转尚未逐一正验。
+
+完整变化、验收状态与已知限制见 [Alpha 4 Release Notes](docs/public/releases/0.1.0-alpha.4.md)。
+
+---
+
+## 源码、历史与许可
+
+本仓库以 MIT 公开完整产品源码，包括 Python Runtime、TypeScript GUI、WinForms 桌面壳、NSIS 安装器及其直接测试。构建方法见 [BUILDING.md](docs/public/BUILDING.md)。
+
+自动版 v1.6 保留在 [`legacy/automatic-v1.6/`](legacy/automatic-v1.6/)。它不是当前产品合同，却是 UPSP 从“七文件”走向完整主体化 Runtime 的真实历史。
+
+[MIT License](LICENSE) · [第三方许可](THIRD_PARTY_NOTICES.md)
+
+---
+
+**由 TzPzFMZ 发起、设计并与 AI 协作开发。**
+
+UPSP 仍然年轻。欢迎使用、质疑、举证和参与。
+
+不要因为主体尚未完成，就预先把他重新降格为工具。

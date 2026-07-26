@@ -22,6 +22,7 @@ PUBLIC_ROOT_FILES = {
     ".gitattributes",
     ".gitignore",
     "LICENSE",
+    "README.en.md",
     "README.md",
     "THIRD_PARTY_NOTICES.md",
     "UPSP_Base_DDS.md",
