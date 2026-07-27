@@ -12,7 +12,7 @@ from datetime import datetime
 from paths import (
     STM_CTX_SETUP_DIR, STM_CTX_REACTION_DIR, STM_CTX_CLEANUP_DIR,
 )
-from constants import TZ_SHANGHAI
+from constants import local_now
 from data import atomic_write
 from schemas.context import validate_audit_manifest
 from errors import WriteError
@@ -63,7 +63,7 @@ class AuditStore:
         if not ctx_dir:
             return
         os.makedirs(ctx_dir, exist_ok=True)
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
 
         # step.md 和 layers/*.md 都是 layers/*.json / step.json 的审计渲染，
         # 不作为机器源反向解析。

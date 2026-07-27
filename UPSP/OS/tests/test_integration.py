@@ -115,8 +115,15 @@ def _make_runtime(tmp_path):
     ctx_store = ContextStore(
         state_store=sm,
         cache_dir=str(tmp_path / "persona" / "STM" / "context" / "cache"),
-        raw_log_jsonl=str(tmp_path / "persona" / "STM" / "buffer" / "raw_log.jsonl"),
-        raw_log_md=str(tmp_path / "persona" / "STM" / "buffer" / "raw_log.md"),
+        corpus_rhythms_dir=str(
+            tmp_path / "persona" / "LTM" / "Corpus" / "public" / "rhythms"
+        ),
+        raw_log_jsonl=str(
+            tmp_path / "persona" / "STM" / "buffer" / "raw_log.jsonl"
+        ),
+        raw_log_md=str(
+            tmp_path / "persona" / "STM" / "buffer" / "raw_log.md"
+        ),
     )
     hb = HeartbeatManager(sm, interval=0.1)
     # 不启动心跳（集成测试手动触发轮次）
@@ -149,23 +156,20 @@ def _patch_io(monkeypatch, tmp_path):
               str(tmp_path / "persona" / "STM" / "buffer"),
               str(tmp_path / "persona" / "STM" / "context"),
               str(tmp_path / "persona" / "LTM" / "Memory"),
-              str(tmp_path / "persona" / "LTM" / "Containers" / "COR" / "raw_logs"),
+              str(tmp_path / "persona" / "LTM" / "Corpus" / "public" / "rounds"),
               ]:
         os.makedirs(d, exist_ok=True)
 
-    raw = str(tmp_path / "persona" / "STM" / "buffer" / "raw_log.md")
-    raw_jsonl = str(tmp_path / "persona" / "STM" / "buffer" / "raw_log.jsonl")
+    corpus_dir = str(tmp_path / "persona" / "LTM" / "Corpus")
     cache = str(tmp_path / "persona" / "STM" / "context" / "cache")
     now_jsonl = os.path.join(cache, "now_cache.jsonl")
     lately_jsonl = os.path.join(cache, "lately_cache.jsonl")
 
-    monkeypatch.setattr("paths.RAW_LOG", raw)
-    monkeypatch.setattr("paths.RAW_LOG_JSONL", raw_jsonl, raising=False)
+    monkeypatch.setattr("paths.CONTAINER_CORPUS_DIR", corpus_dir)
     monkeypatch.setattr("paths.STM_CONTEXT_CACHE_DIR", cache)
     monkeypatch.setattr("paths.STM_CONTEXT_NOW_CACHE_JSONL", now_jsonl, raising=False)
     monkeypatch.setattr("paths.STM_CONTEXT_LATELY_CACHE_JSONL", lately_jsonl, raising=False)
-    monkeypatch.setattr("data.context_store.RAW_LOG", raw)
-    monkeypatch.setattr("data.context_store.RAW_LOG_JSONL", raw_jsonl, raising=False)
+    monkeypatch.setattr("data.context_store.CONTAINER_CORPUS_DIR", corpus_dir)
     monkeypatch.setattr("data.context_store.STM_CONTEXT_CACHE_DIR", cache)
     monkeypatch.setattr("data.context_store.STM_CONTEXT_NOW_CACHE_JSONL", now_jsonl, raising=False)
     monkeypatch.setattr("data.context_store.STM_CONTEXT_LATELY_CACHE_JSONL", lately_jsonl, raising=False)
@@ -262,9 +266,9 @@ class TestThreeStepRound:
         assert os.path.isfile(
             tmp_path / "persona" / "STM" / "context" / "cache" / "lately_cache.jsonl"
         ), "最近缓存主源应写入测试临时目录"
-        assert os.path.isfile(
-            tmp_path / "persona" / "STM" / "buffer" / "raw_log.jsonl"
-        ), "raw_log JSONL 主源应写入测试临时目录"
+        assert not list(
+            (tmp_path / "persona" / "LTM" / "Corpus" / "public" / "rhythms").glob("*.jsonl")
+        ), "普通交互轮不得绕过 raw_log 直接制造 Corpus 节"
         assert not os.path.exists(
             tmp_path / "persona" / "STM" / "buffer" / "context_buffer.json"
         ), "兼容 context_buffer 不应再写入"

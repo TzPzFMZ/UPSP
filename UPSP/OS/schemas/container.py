@@ -19,9 +19,7 @@ DDS §13-18
 
 必选8字段: id / type / title / status / created_at / updated_at / entries / tags
 """
-from datetime import datetime, timezone, timedelta
-
-TZ = timezone(timedelta(hours=8))
+from constants import local_now
 
 # ============================================================
 # 容器类型定义
@@ -80,7 +78,7 @@ CONTAINER_META_FIELDS = {
 
 def default_container_meta(container_id, ctype, title=""):
     """返回全新的容器 meta.json"""
-    now = datetime.now(TZ).isoformat()
+    now = local_now().isoformat()
     return {
         "id": container_id,
         "type": ctype,
@@ -133,7 +131,7 @@ def default_container_registry():
 
 def default_registry_entry(prefix, name, path, status=None):
     """返回注册表中的一个容器条目"""
-    now = datetime.now(TZ).isoformat()
+    now = local_now().isoformat()
     return {
         "prefix": prefix,
         "name": name,

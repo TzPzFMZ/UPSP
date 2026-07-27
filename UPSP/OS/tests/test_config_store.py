@@ -109,22 +109,18 @@ def test_spec700_api_override_is_process_only_and_normalized(monkeypatch, tmp_pa
 
 def test_private_memory_controls_default_to_disabled(monkeypatch, tmp_path):
     module = _load_config_store()
+    from errors import ReadError
     monkeypatch.setattr(module, "_CONFIG_MAP", {
-        "memory": (str(tmp_path / "missing-memory.json"), lambda: {}),
+        "memory": (str(tmp_path / "missing-memory.json"), module.default_memory_config),
     })
-    config = module.ConfigStore().get_memory_privacy_declassify_config()
-    assert config["manual_enabled"] is False
-    assert config["auto_enabled"] is False
+    with pytest.raises(ReadError):
+        module.ConfigStore().get_memory_privacy_declassify_config()
 
 
 def test_spec700_config_store_writes_canonical_file_and_revision(monkeypatch, tmp_path):
     module = _load_config_store()
     path = tmp_path / "system.json"
-    path.write_text(json.dumps({
-        "heartbeat": {"interval": 5},
-        "rhythm": {"period": 32},
-        "unknown": {"preserved": True},
-    }), encoding="utf-8")
+    path.write_text(json.dumps(module.default_system_config()), encoding="utf-8")
     monkeypatch.setattr(module, "_CONFIG_MAP", {
         "system": (str(path), module.default_system_config),
     })
@@ -137,7 +133,7 @@ def test_spec700_config_store_writes_canonical_file_and_revision(monkeypatch, tm
     assert store.revision("system") != before
     assert store.get_rhythm_interval() == 41
     assert store.get_heartbeat_interval() == 7
-    assert json.loads(path.read_text(encoding="utf-8"))["unknown"] == {"preserved": True}
+    assert json.loads(path.read_text(encoding="utf-8"))["heartbeat"]["interval"] == 7
 
 
 def test_spec700_vertical_inheritance_explicit_backups_and_cross_phase_order(monkeypatch, tmp_path):
@@ -216,6 +212,10 @@ def test_spec700_legacy_api_migrates_once_and_malformed_new_file_fails_closed(mo
             "context_window": 1000000,
         })
     legacy_path.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    routing_path.write_text(
+        json.dumps(module.default_model_routing_config(), ensure_ascii=False),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(module, "LEGACY_CONFIG_API", str(legacy_path))
     monkeypatch.setattr(module, "GLOBAL_MODELS_CONFIG", str(models_path))
     monkeypatch.setattr(module, "CONFIG_MODEL_ROUTING", str(routing_path))
@@ -225,10 +225,10 @@ def test_spec700_legacy_api_migrates_once_and_malformed_new_file_fails_closed(mo
         "interface": (str(interface_path), module.default_interface_config),
     })
     store = module.ConfigStore(use_api_environment=False)
-    assert set(store.init_all()) == {"models", "model_routing", "interface"}
+    assert set(store.init_all()) == {"models", "interface"}
     assert len(store.load("models")["connections"]) == 1
     assert len(store.load("models")["models"]) == 1
-    assert store.load("model_routing")["routes"]["setup"]["primary"] is not None
+    assert store.load("model_routing")["routes"]["setup"]["primary"] is None
     assert store.load("model_routing")["routes"]["reaction"]["primary"] is None
 
     models_path.write_text("{broken", encoding="utf-8")

@@ -17,17 +17,17 @@ from data.atomic_write import atomic_write_json
 from paths import HEAT_JSON
 from schemas.memory import default_heat_entry, default_heat_json
 from errors import ReadError
-from constants import (
-    RECALL_BOOST, TZ_SHANGHAI, HEAT_LOCKED_VALUE,
-)
+from constants import local_now
+from data.config_store import ConfigStore
 from data.stm_heat_calculator import STMHeatCalculator
 
 
 class MemoryHeat:
     """热度值读写管理"""
 
-    def __init__(self):
-        pass
+    def __init__(self, heat_config=None):
+        self.config = heat_config or ConfigStore().load("memory")["heat"]
+        self.calculator = STMHeatCalculator(self.config)
 
     # ==============================================================
     # 读写
@@ -57,7 +57,7 @@ class MemoryHeat:
         entries = heat.get("entries", {})
         if mem_id not in entries:
             # 不存在就创建一个默认条目
-            entries[mem_id] = default_heat_entry()
+            entries[mem_id] = self.new_entry()
             self.save_heat(heat)
         return entries[mem_id]
 
@@ -82,11 +82,10 @@ class MemoryHeat:
                 changed = self._apply_heat_lock(info) or changed
         return data, changed
 
-    @staticmethod
-    def _apply_heat_lock(info):
+    def _apply_heat_lock(self, info):
         changed = False
         fixed = {
-            "H": HEAT_LOCKED_VALUE,
+            "H": self.config["locked_value"],
             "zone": "显著",
             "AH_low": 0,
             "degrade": False,
@@ -124,7 +123,17 @@ class MemoryHeat:
             for mem_id, info in entries.items()
             if mem_id not in touched_this_round
         }
-        updates = STMHeatCalculator().tick_decay(decay_entries)
+        updates = self.calculator.tick_decay(decay_entries)
+        significant = self.config["zone_thresholds"]["significant"]
+        for mem_id in touched_this_round:
+            info = entries.get(mem_id)
+            if (
+                isinstance(info, dict)
+                and info.get("H", 0) >= significant
+            ):
+                updates[mem_id] = {
+                    "AH_high": info.get("AH_high", 0) + 1,
+                }
         for mem_id, fields in updates.items():
             info = entries.get(mem_id)
             if not isinstance(info, dict):
@@ -173,15 +182,15 @@ class MemoryHeat:
     # 热度增加（被回忆时调用）
     # ==============================================================
 
-    def recall_boost(self, mem_id, boost=RECALL_BOOST, round_num=None):
+    def recall_boost(self, mem_id, boost=None, round_num=None):
         """记忆被回忆时加热。不存在则自动创建。
         round_num 可选，传入则同步更新 meta.json 的 last_recalled_round。"""
         heat = self.load_heat()
         entries = heat.get("entries", {})
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
 
         if mem_id not in entries:
-            entries[mem_id] = default_heat_entry()
+            entries[mem_id] = self.new_entry()
             # 修正 compression 字段：auto-created条目可能权重被default_heat_entry误判
             try:
                 from data.memory_store import MemoryStore
@@ -191,7 +200,7 @@ class MemoryHeat:
                 pass
 
         info = entries[mem_id]
-        new_h, ah_high, new_zone = STMHeatCalculator().recall_boost(
+        new_h, ah_high, new_zone = self.calculator.recall_boost(
             info.get("H", 0),
             info.get("AH_high", 0),
             boost=boost,
@@ -234,7 +243,15 @@ class MemoryHeat:
             meta = MemoryStore().load_meta()
         except Exception:
             meta = {}
-        return STMHeatCalculator().check_upgrade(entries, meta)
+        return self.calculator.check_upgrade(entries, meta)
+
+    def new_entry(self, weight=2):
+        return default_heat_entry(
+            weight=weight,
+            initial_by_weight=self.config["initial_by_weight"],
+            significant_threshold=self.config["zone_thresholds"]["significant"],
+            uncertain_threshold=self.config["zone_thresholds"]["uncertain"],
+        )
 
     def mark_stored(self, mem_id):
         """标记条目已存入 LTM"""

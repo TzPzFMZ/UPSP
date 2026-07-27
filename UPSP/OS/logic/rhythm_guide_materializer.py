@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from logic.cache_compaction_guide import (
     CACHE_COMPACTION_ITEM_ID,
     materialize_cache_compaction_rhythm_guide,
@@ -26,13 +26,11 @@ def materialize_current_rhythm_guide(
         completed_flags=None,
         context_store=None,
         state_store=None,
-        connectivity_store=None,
-        process_health_checker=None):
+        connectivity_store=None):
     flags, _cleared_flags = reconcile_recovered_emergency_flags(
         flags,
         state_store=state_store,
         connectivity_store=connectivity_store,
-        process_health_checker=process_health_checker,
     )
     guide = current_guide(flags, completed_flags=completed_flags)
     kind = str((guide or {}).get("kind") or "").strip()
@@ -74,7 +72,7 @@ def materialize_current_rhythm_guide(
         "guide_slot": "rhythm",
         "title": _title_for(kind),
         "status": "open",
-        "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
+        "created_at": local_now().isoformat(),
         "reason": "runtime heartbeat rhythm guide materialized",
         "source_refs": [
             f"round:{int(round_num or 0)}",
@@ -104,15 +102,12 @@ def reconcile_recovered_emergency_flags(
         flags,
         *,
         state_store=None,
-        connectivity_store=None,
-        process_health_checker=None):
+        connectivity_store=None):
     """Clear recovered emergency flags atomically; keep them on write failure."""
     flags = dict(flags or {})
     clear_flags = []
     if flags.get("api_degraded") and _api_health_recovered(connectivity_store):
         clear_flags.append("api_degraded")
-    if flags.get("process_down") and _process_health_recovered(process_health_checker):
-        clear_flags.append("process_down")
     if not clear_flags:
         return flags, []
     if state_store is None:
@@ -175,7 +170,7 @@ def _supersede_active_guide(
     guide_id = str(guide.get("guide_id") or "").strip()
     if not guide_id:
         return ""
-    superseded_at = datetime.now(TZ_SHANGHAI).isoformat()
+    superseded_at = local_now().isoformat()
     guide["status"] = "superseded"
     guide["superseded_at"] = superseded_at
     guide["superseded_by"] = {
@@ -235,15 +230,6 @@ def _api_health_recovered(connectivity_store):
             and all(status == "ok" for status in statuses)
             and not bool(connectivity_store.has_degraded())
         )
-    except Exception:
-        return False
-
-
-def _process_health_recovered(process_health_checker):
-    if not callable(process_health_checker):
-        return False
-    try:
-        return not bool(process_health_checker())
     except Exception:
         return False
 

@@ -8,7 +8,7 @@ from datetime import datetime
 
 from paths import ALERTS_MD
 from errors import ReadError, WriteError
-from constants import TZ_SHANGHAI
+from constants import local_now
 
 
 class AlertStore:
@@ -27,7 +27,7 @@ class AlertStore:
     def append_alert(self, round_num, step, event_type, detail, action):
         """按 DDS Markdown 列表行格式追加一条警报。"""
         os.makedirs(os.path.dirname(ALERTS_MD), exist_ok=True)
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         line = (
             f"- `{now}` | round={self._format_round(round_num)} "
             f"| step={self._one_line(step)} "

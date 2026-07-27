@@ -3,7 +3,7 @@
 from copy import deepcopy
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 
 
 OPEN_STATUSES = {"open"}
@@ -55,7 +55,7 @@ def _next_intent_id(sm, source_round):
 def create_relay_intent(sm, *, source_round, handoff_text,
                         reaction_finalize_id="", user_input_ref=""):
     pool = list(_load_pool(sm))
-    now = datetime.now(TZ_SHANGHAI).isoformat()
+    now = local_now().isoformat()
     intent = {
         "relay_intent_id": _next_intent_id(sm, source_round),
         "status": "open",
@@ -87,7 +87,7 @@ def mark_relay_handoff_projected(sm, relay_intent_id, *, round_num):
     if not intent_id:
         return None
     pool = list(_load_pool(sm))
-    now = datetime.now(TZ_SHANGHAI).isoformat()
+    now = local_now().isoformat()
     for item in pool:
         if not isinstance(item, dict):
             continue
@@ -155,7 +155,7 @@ def settle_relay_intent(sm, request, *, round_num):
         if item.get("relay_intent_id") != intent_id:
             continue
         item["status"] = SETTLED_STATUSES[status]
-        item["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
+        item["updated_at"] = local_now().isoformat()
         item["settlement"] = {
             "status": SETTLED_STATUSES[status],
             "note": note,
@@ -191,7 +191,7 @@ def settle_open_relay_intents(sm, *, status, round_num, note="", source="runtime
             "settled_relay_intent_ids": [],
         }
     pool = list(_load_pool(sm))
-    now = datetime.now(TZ_SHANGHAI).isoformat()
+    now = local_now().isoformat()
     settled = []
     for item in pool:
         if not isinstance(item, dict):

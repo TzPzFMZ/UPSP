@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from logic.memory_privacy import (
     can_see_memory,
     confirmed_subjects_from_state,
@@ -169,7 +169,7 @@ def apply_memory_recall_completion_requests(requests, data_modules, round_num=No
             memory_store.update_entry_title_and_body(mem_id, title, completed_body)
             meta["title"] = title
             meta["recalled"] = True
-            meta["last_recalled_at"] = datetime.now(TZ_SHANGHAI).isoformat()
+            meta["last_recalled_at"] = local_now().isoformat()
             if round_num is not None:
                 meta["last_recalled_round"] = round_num
             memory_store.set_meta(mem_id, meta)

@@ -2,7 +2,7 @@
 import re
 
 from logic.feeling_lookup import FeelingWordTable
-from logic.mem_id import generate_mem_id, make_heat_entry, make_meta_template
+from logic.mem_id import generate_mem_id, make_meta_template
 
 
 EMPTY_VALUES = {"", "无", "暂无", "略", "不需要", "免", "none", "None", "-", "—"}
@@ -345,7 +345,7 @@ def apply_memory_write_declarations(declarations, state, round_num, data_modules
                 mem_id, meta.get("type", "memory"), weight, title,
                 subject=subject, round_num=round_num,
                 dream=False, current_overview="")
-            memory_heat.set_entry(mem_id, make_heat_entry(weight=weight))
+            memory_heat.set_entry(mem_id, memory_heat.new_entry(weight=weight))
             if keywords:
                 memory_index.add_stm_keywords(mem_id, keywords)
 

@@ -17,7 +17,6 @@
 
   "popup_types": [
     "api_fault (api_degraded=true)",
-    "process_anomaly (process_down=true)",
     "identity_prompt (身份未明普通提示，decision_required=false)",
     "security_review (三级反抗/异常输入，decision_required=true)",
     "structure_warning (悬空容器/结构补救提示)",

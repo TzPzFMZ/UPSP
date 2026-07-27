@@ -9,9 +9,8 @@ DDS §9 记忆体系 + §9.2 记忆编号 + §10 LTM降格
   keywords.json — 倒排索引（关键词→条目ID列表）
   index.md   — 索引行表格（人类可读）
 """
-from datetime import datetime, timezone, timedelta
-
-TZ = timezone(timedelta(hours=8))
+from datetime import datetime
+from constants import local_now
 
 # ============================================================
 # memory.md 条目格式（DDS §9.2）
@@ -58,12 +57,26 @@ HEAT_ENTRY_FIELDS = {
 }
 
 
-def default_heat_entry(weight=2):
+def default_heat_entry(
+    weight=2,
+    initial_by_weight=None,
+    significant_threshold=70,
+    uncertain_threshold=40,
+):
     """返回全新的 heat.json 条目"""
-    now = datetime.now(TZ).isoformat()
+    now = local_now().isoformat()
+    mapping = initial_by_weight or {
+        "1": 40, "2": 50, "3": 60, "4": 70, "5": 80,
+    }
+    heat = mapping[str(max(1, min(5, int(weight))))]
+    zone = (
+        "显著" if heat >= significant_threshold
+        else "未定" if heat >= uncertain_threshold
+        else "衰减"
+    )
     return {
-        "H": 50,
-        "zone": "未定",
+        "H": heat,
+        "zone": zone,
         "AH_high": 0,
         "AH_low": 0,
         "last_heat_at": now,
@@ -109,7 +122,7 @@ META_ENTRY_FIELDS = {
 
 def default_meta_entry(mem_id, title="", weight=2, subject=None, model=""):
     """返回全新的 meta.json 条目（20字段）"""
-    now = datetime.now(TZ).isoformat()
+    now = local_now().isoformat()
     return {
         "id": mem_id,
         "type": "F" if weight >= 5 else "S" if weight >= 3 else "A",

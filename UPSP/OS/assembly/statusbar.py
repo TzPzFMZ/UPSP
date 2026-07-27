@@ -9,9 +9,10 @@ DDS §19.3 STATUSBAR 独立状态栏层（位于 now 之后、POPUP 之前）
 from datetime import datetime
 
 
-RETIRED_STATUSBAR_FLAGS = {
+RESERVED_STATUSBAR_FLAGS = {
     "identity_timeout",
     "fatigue_expired",
+    "process_down",
 }
 
 
@@ -59,7 +60,7 @@ class StatusBarBuilder:
         tz = f"UTC{offset[:3]}:{offset[3:]}" if offset else "本地时区"
         active = [
             k for k, v in flags.items()
-            if v and k not in RETIRED_STATUSBAR_FLAGS
+            if v and k not in RESERVED_STATUSBAR_FLAGS
         ]
         return {
             "schema": "statusbar_snapshot.v1",

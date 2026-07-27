@@ -1,22 +1,16 @@
-"""
-上下文缓存读写 — now_cache/lately_cache + raw_log.jsonl
-DDS §19 上下文工程
-
-now_cache.jsonl: 当前缓存语料块主源
-lately_cache.jsonl: 最近缓存语料块主源
-raw_log.jsonl: 原始语料备份主源
-"""
+"""上下文缓存读写：now/lately 热缓存、raw_log 与 Corpus 节归档。"""
 import json
 import os
 import hashlib
 import re
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from data.atomic_write import atomic_write_text
 from data.config_store import ConfigStore
 from errors import WriteError
 from paths import (
+    CONTAINER_CORPUS_DIR,
     RAW_LOG,
     RAW_LOG_JSONL,
     STM_CONTEXT_CACHE_DIR,
@@ -25,15 +19,15 @@ from paths import (
 )
 from schemas.context import context_safe_read_tool_result
 
-_DEFAULT_RAW_LOG = RAW_LOG
-_DEFAULT_RAW_LOG_JSONL = RAW_LOG_JSONL
 _DEFAULT_CONTEXT_CACHE_DIR = STM_CONTEXT_CACHE_DIR
 _DEFAULT_NOW_CACHE_JSONL = STM_CONTEXT_NOW_CACHE_JSONL
 _DEFAULT_LATELY_CACHE_JSONL = STM_CONTEXT_LATELY_CACHE_JSONL
+_DEFAULT_RAW_LOG = RAW_LOG
+_DEFAULT_RAW_LOG_JSONL = RAW_LOG_JSONL
 
 
 class ContextStore:
-    """now/lately 语料缓存与 raw_log 备份管理。"""
+    """now/lately 语料缓存、raw_log 与 Corpus 节归档管理。"""
 
     CACHE_COMPACTION_DEBT_SCHEMA = "cache_compaction_debt.v1"
 
@@ -88,7 +82,7 @@ class ContextStore:
 
     def __init__(self, state_store=None, config_store=None,
                  cache_dir=None, now_cache_jsonl=None, lately_cache_jsonl=None,
-                 raw_log_jsonl=None, raw_log_md=None):
+                 corpus_rhythms_dir=None, raw_log_jsonl=None, raw_log_md=None):
         self.state_store = state_store
         self.config_store = config_store or ConfigStore()
         self._cache_dir_override = cache_dir
@@ -96,6 +90,7 @@ class ContextStore:
         self._lately_cache_jsonl_override = lately_cache_jsonl
         self._raw_log_jsonl_override = raw_log_jsonl
         self._raw_log_md_override = raw_log_md
+        self._corpus_rhythms_dir_override = corpus_rhythms_dir
         self._last_cache_stats = self._empty_cache_stats()
 
     # ==========================================================
@@ -108,7 +103,7 @@ class ContextStore:
                             interaction_source="unresolved",
                             interaction_object_id=None):
         """保存一轮交互/回复语料到 now/lately 主源。"""
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         common = {
             "round": round_num,
             "timestamp": now,
@@ -171,7 +166,7 @@ class ContextStore:
             return
         if not self._persistent_lane_for_kind(kind_value):
             raise ValueError(f"普通语料必须声明持久轨道: {kind_value}")
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         entry_data = {
             "round": round_num,
             "role": role,
@@ -267,7 +262,7 @@ class ContextStore:
             "role": role,
             "kind": kind_value,
             "content": content,
-            "timestamp": datetime.now(TZ_SHANGHAI).isoformat(),
+            "timestamp": local_now().isoformat(),
             "interaction_object": interaction_object,
             "identity_status": identity_status,
             "interaction_source": interaction_source,
@@ -463,7 +458,7 @@ class ContextStore:
             "schema_version": self.CACHE_COMPACTION_DEBT_SCHEMA,
             "status": "open",
             "created_round": self._sanitize_int(round_num, 0),
-            "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
+            "created_at": local_now().isoformat(),
             "cache_stats": stats if isinstance(stats, dict) else {},
             "compaction_plan": plan if isinstance(plan, dict) else {},
             "candidate_ids": candidate_ids,
@@ -481,7 +476,7 @@ class ContextStore:
             debt.update(sanitized)
         if "completed_shards" in fields:
             debt["completed_shards"] = self._unique_text_list(fields.get("completed_shards"))
-        debt["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
+        debt["updated_at"] = local_now().isoformat()
         self._write_json_atomic(self.cache_compaction_debt_path(), debt)
         return dict(debt)
 
@@ -955,7 +950,7 @@ class ContextStore:
         if self._is_template_placeholder(kind, content):
             return None
         round_num = self._entry_round(normalized) or 0
-        timestamp = normalized.get("timestamp") or datetime.now(TZ_SHANGHAI).isoformat()
+        timestamp = normalized.get("timestamp") or local_now().isoformat()
         policy = self._policy_for_entry(normalized, kind, cache_policy)
         interaction_ref = {
             "object": normalized.get("interaction_object", "unknown"),
@@ -1188,16 +1183,24 @@ class ContextStore:
             return self._raw_log_jsonl_override
         if RAW_LOG_JSONL == _DEFAULT_RAW_LOG_JSONL:
             if self._raw_log_md_override:
-                return os.path.join(os.path.dirname(self._raw_log_md_override), "raw_log.jsonl")
+                return os.path.join(
+                    os.path.dirname(self._raw_log_md_override),
+                    "raw_log.jsonl",
+                )
             if RAW_LOG != _DEFAULT_RAW_LOG:
                 return os.path.join(os.path.dirname(RAW_LOG), "raw_log.jsonl")
-            return RAW_LOG_JSONL
         return RAW_LOG_JSONL
 
     def _raw_log_md(self):
         if self._raw_log_md_override:
             return self._raw_log_md_override
         return RAW_LOG
+
+    def _corpus_rhythms_dir(self):
+        return (
+            self._corpus_rhythms_dir_override
+            or os.path.join(CONTAINER_CORPUS_DIR, "public", "rhythms")
+        )
 
     def _raw_log_key(self, block):
         ref = block.get("ref") if isinstance(block.get("ref"), dict) else {}
@@ -1215,7 +1218,7 @@ class ContextStore:
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    def _normalize_raw_log_block(self, block):
+    def _normalize_corpus_block(self, block):
         if not isinstance(block, dict):
             return None
         clone = {
@@ -1262,41 +1265,90 @@ class ContextStore:
             clone["ref"].pop("raw_log_key", None)
         return clone
 
-    def _mirror_lately_blocks_to_raw_log(self, lately_blocks):
-        """raw_log 只镜像 lately 接纳的语料块；以 stable raw_log_key 去重。"""
-        normalized_existing = [
+    def _mirror_lately_blocks_to_raw_log(self, blocks):
+        """raw_log 只镜像刚被 lately 接纳的语料块。"""
+        from data.chronicle_store import dedupe_corpus_records
+
+        existing = [
             block for block in (
-                self._normalize_raw_log_block(item)
+                self._normalize_corpus_block(item)
                 for item in self._read_jsonl(self._raw_log_jsonl())
             )
             if block
         ]
-        by_key = {
-            self._raw_log_key(block): block
-            for block in normalized_existing
-        }
-        changed = False
-        for block in lately_blocks or []:
-            if self._is_compacted_summary(block):
-                continue
-            if block.get("kind") in self._raw_log_excluded_kinds():
-                continue
-            raw_block = self._normalize_raw_log_block(block)
-            if not raw_block:
-                continue
-            key = self._raw_log_key(raw_block)
-            if key in by_key:
-                continue
-            by_key[key] = raw_block
-            normalized_existing.append(raw_block)
-            changed = True
-        if not changed and os.path.isfile(self._raw_log_jsonl()):
+        incoming = [
+            block for block in (
+                self._normalize_corpus_block(item)
+                for item in blocks or []
+                if (
+                    not self._is_compacted_summary(item)
+                    and item.get("kind") not in self._raw_log_excluded_kinds()
+                )
+            )
+            if block
+        ]
+        merged = dedupe_corpus_records(existing + incoming)
+        if merged == existing and os.path.isfile(self._raw_log_jsonl()):
             return
-        self._write_jsonl_atomic(self._raw_log_jsonl(), normalized_existing)
+        self._write_jsonl_atomic(self._raw_log_jsonl(), merged)
+        atomic_write_text(self._raw_log_md(), self._render_raw_log_md(merged))
+
+    def read_raw_log(self):
+        path = self._raw_log_md()
+        if not os.path.isfile(path):
+            return ""
         try:
-            atomic_write_text(self._raw_log_md(), self._render_raw_log_md(normalized_existing))
-        except WriteError:
-            pass
+            with open(path, "r", encoding="utf-8") as handle:
+                return handle.read()
+        except OSError:
+            return ""
+
+    def archive_raw_log(self):
+        """主轴节律轮把当前 raw_log 原子归档为一份节级 Corpus。"""
+        from data.chronicle_store import dedupe_corpus_records
+
+        records = dedupe_corpus_records([
+            block for block in (
+                self._normalize_corpus_block(item)
+                for item in self._read_jsonl(self._raw_log_jsonl())
+            )
+            if block
+        ])
+        if not records:
+            return None
+
+        rounds = []
+        for record in records:
+            loc = record.get("loc") if isinstance(record.get("loc"), dict) else {}
+            try:
+                rounds.append(int(loc.get("round")))
+            except (TypeError, ValueError):
+                raise ValueError("raw_log record missing loc.round")
+        first_round, last_round = min(rounds), max(rounds)
+        stem = (
+            f"rhythm_{local_now().strftime('%Y-%m-%d')}_"
+            f"R{first_round:06d}-R{last_round:06d}"
+        )
+        jsonl_path = os.path.join(self._corpus_rhythms_dir(), stem + ".jsonl")
+        existing = [
+            block for block in (
+                self._normalize_corpus_block(item)
+                for item in self._read_jsonl(jsonl_path)
+            )
+            if block
+        ]
+        merged = dedupe_corpus_records(existing + records)
+        self._write_jsonl_atomic(jsonl_path, merged)
+        atomic_write_text(
+            os.path.splitext(jsonl_path)[0] + ".md",
+            self._render_corpus_md(merged),
+        )
+        self.clear_raw_log()
+        return jsonl_path
+
+    def clear_raw_log(self):
+        atomic_write_text(self._raw_log_jsonl(), "")
+        atomic_write_text(self._raw_log_md(), "<!-- 原始语料备份 -->\n")
 
     def build_lately_compression_candidates(self, current_round=None, max_blocks=None):
         """返回删后幸存段的完整 lately 语料块，供善后语义融合压缩。"""
@@ -1332,7 +1384,7 @@ class ContextStore:
         return candidates
 
     def rewrite_lately_blocks(self, decisions, current_round=None):
-        """按 cache_compact 语义重写 lately；raw_log 原文镜像不随压缩改写。"""
+        """按 cache_compact 语义重写 lately；raw_log 不随缓存压缩改写。"""
         blocks = [
             block for block in (
                 self._normalize_lately_block(item)
@@ -1419,7 +1471,7 @@ class ContextStore:
             skip_ids.update(source_ids[1:])
 
         rewritten = []
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         summary_index = 0
         for block in blocks:
             block_id = str(block.get("id", ""))
@@ -1546,9 +1598,13 @@ class ContextStore:
 
     @staticmethod
     def _render_raw_log_md(blocks):
+        return ContextStore._render_corpus_md(blocks, "原始语料备份")
+
+    @staticmethod
+    def _render_corpus_md(blocks, heading="Corpus 节归档"):
         if not blocks:
-            return "<!-- 原始语料备份 -->\n"
-        parts = ["<!-- 原始语料备份 -->"]
+            return f"<!-- {heading} -->\n"
+        parts = [f"<!-- {heading}；机器真源为同名 JSONL -->"]
         current_round = None
         for block in blocks:
             loc = block.get("loc") if isinstance(block.get("loc"), dict) else {}
@@ -1569,85 +1625,3 @@ class ContextStore:
             )
             parts.append(f"**{role} / {kind}** ({meta}): {text}")
         return "\n\n".join(parts).rstrip() + "\n"
-
-    # ==========================================================
-    # raw_log.md / raw_log.jsonl
-    # ==========================================================
-
-    def read_raw_log(self):
-        """读取 raw_log 审计渲染全文。"""
-        path = self._raw_log_md()
-        if not os.path.isfile(path):
-            return ""
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return f.read()
-        except OSError:
-            return ""
-
-    def archive_raw_log(self):
-        """
-        归档 raw_log 到 COR 语料库容器（节律轮固定职责）。
-        返回归档文件路径，或 None。
-        """
-        jsonl_content = ""
-        if os.path.isfile(self._raw_log_jsonl()):
-            try:
-                with open(self._raw_log_jsonl(), "r", encoding="utf-8") as f:
-                    jsonl_content = f.read()
-            except OSError:
-                jsonl_content = ""
-        content = self.read_raw_log()
-        if (
-            not jsonl_content.strip()
-            and (not content.strip() or content.strip() == "<!-- 原始语料备份 -->")
-        ):
-            return None
-
-        from paths import CONTAINER_CORPUS_DIR
-        archive_dir = os.path.join(CONTAINER_CORPUS_DIR, "raw_logs")
-        os.makedirs(archive_dir, exist_ok=True)
-        stamp = datetime.now(TZ_SHANGHAI).strftime("%Y%m%d_%H%M%S")
-        archive_path = None
-
-        if jsonl_content.strip():
-            archive_path = os.path.join(archive_dir, f"raw_log_{stamp}.jsonl")
-            tmp = archive_path + ".tmp"
-            try:
-                with open(tmp, "w", encoding="utf-8") as f:
-                    f.write(jsonl_content)
-                os.replace(tmp, archive_path)
-            except OSError as e:
-                if os.path.isfile(tmp):
-                    os.remove(tmp)
-                raise WriteError(archive_path, cause=e)
-
-        if content.strip() and content.strip() != "<!-- 原始语料备份 -->":
-            md_archive_path = os.path.join(archive_dir, f"raw_log_{stamp}.md")
-            tmp_md = md_archive_path + ".tmp"
-            try:
-                with open(tmp_md, "w", encoding="utf-8") as f:
-                    f.write(content)
-                os.replace(tmp_md, md_archive_path)
-            except OSError:
-                if os.path.isfile(tmp_md):
-                    os.remove(tmp_md)
-            if archive_path is None:
-                archive_path = md_archive_path
-
-        self.clear_raw_log()
-        return archive_path
-
-    def clear_raw_log(self):
-        """清空 raw_log（归档后调用）。"""
-        jsonl_path = self._raw_log_jsonl()
-        if os.path.isfile(jsonl_path):
-            atomic_write_text(jsonl_path, "")
-        tmp = RAW_LOG + ".tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write("<!-- 原始语料备份 -->\n")
-            os.replace(tmp, RAW_LOG)
-        except OSError:
-            if os.path.isfile(tmp):
-                os.remove(tmp)

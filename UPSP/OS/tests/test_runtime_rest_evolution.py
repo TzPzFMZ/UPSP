@@ -31,90 +31,12 @@ class TestRuntimeRestEvolution(RuntimeTestMixin):
 
         assert rt.workbench is wb
 
-    def test_runtime_rest_cycle_clears_fatigue_after_non_sleep_round(self, tmp_path):
-        from engines.runtime import Runtime
-        from data.state_store import StateStore
-        from data.dream_store import DreamStore
-
-        sm = StateStore(str(tmp_path / "state.json"))
-        sm.init_if_missing()
-        sm.set("base.fatigue.value", 44.0)
-        sm.set("base.fatigue.awake_since", "2026-07-01T00:00:00+08:00")
-        sm.set("base.sleep_state.level", "awake")
-        rt = Runtime(state_store=sm, dream_store=DreamStore(str(tmp_path / "dreams.md")))
-
-        rt._process_rest_cycle("interactive", sm.load(), {"tokens_input": 1000}, 1)
-
-        assert sm.get("base.fatigue.value") == 0
-        assert sm.get("base.fatigue.awake_since") is None
-        assert sm.get("base.sleep_state.level") == "awake"
-
-    def test_runtime_rest_cycle_clears_fatigue_expired_without_sleep(self, tmp_path):
-        from engines.runtime import Runtime
-        from data.state_store import StateStore
-        from data.dream_store import DreamStore
-
-        sm = StateStore(str(tmp_path / "state.json"))
-        sm.init_if_missing()
-        sm.set("base.fatigue.value", 60.0)
-        state = sm.load()
-        state["base"]["heartbeat_flags"]["fatigue_expired"] = True
-        sm.save(state)
-        rt = Runtime(state_store=sm, dream_store=DreamStore(str(tmp_path / "dreams.md")))
-
-        rt._process_rest_cycle("autonomous", sm.load(), {"response": ""}, 2)
-
-        assert sm.get("base.sleep_state.level") == "awake"
-        assert sm.get("base.sleep_state.entered_at") is None
-        assert sm.get("base.fatigue.value") == 0
-        assert sm.get("base.heartbeat_flags.fatigue_expired") is False
-
-    def test_runtime_rest_cycle_does_not_write_dreams(self, tmp_path):
-        from engines.runtime import Runtime
-        from data.state_store import StateStore
-        from data.dream_store import DreamStore
-
-        sm = StateStore(str(tmp_path / "state.json"))
-        sm.init_if_missing()
-        sm.set("base.fatigue.value", 60.0)
-        state = sm.load()
-        state["base"]["heartbeat_flags"]["fatigue_expired"] = True
-        sm.save(state)
-        dreams = tmp_path / "dreams.md"
-        rt = Runtime(state_store=sm, dream_store=DreamStore(str(dreams)))
-
-        rt._process_rest_cycle(
-            "autonomous",
-            sm.load(),
-            {"response": "<!-- DREAM -->梦里有一张待整理的 WB 面单<!-- /DREAM -->"},
-            3,
-        )
-
-        assert not dreams.exists() or "梦里有一张待整理的 WB 面单" not in dreams.read_text(encoding="utf-8")
-        assert sm.get("base.sleep_state.level") == "awake"
-
-    def test_runtime_wake_if_sleeping_clears_legacy_fatigue_pressure(self, tmp_path):
-        from engines.runtime import Runtime
-        from data.state_store import StateStore
-
-        sm = StateStore(str(tmp_path / "state.json"))
-        sm.init_if_missing()
-        sm.update_many({
-            "base.sleep_state.level": "moderate",
-            "base.sleep_state.entered_at": "2026-07-01T00:00:00+08:00",
-            "base.fatigue.value": 77.0,
-            "base.fatigue.awake_since": "2026-07-01T00:00:00+08:00",
-            "base.heartbeat_flags.fatigue_expired": True,
-        })
-        rt = Runtime(state_store=sm)
-
-        rt._wake_if_sleeping()
-
-        assert sm.get("base.sleep_state.level") == "awake"
-        assert sm.get("base.sleep_state.entered_at") is None
-        assert sm.get("base.fatigue.value") == 0
-        assert sm.get("base.fatigue.awake_since") is None
-        assert sm.get("base.heartbeat_flags.fatigue_expired") is False
+    def test_runtime_fatigue_hooks_are_inert(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+        before = rt.sm.load()
+        assert rt._process_rest_cycle() is None
+        assert rt._wake_if_sleeping() is None
+        assert rt.sm.load() == before
 
     def test_chronicle_state_sample_no_longer_projects_fatigue(self):
         from engines.runtime import Runtime

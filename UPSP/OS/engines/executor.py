@@ -32,7 +32,7 @@ from datetime import datetime
 from data.config_store import ConfigStore
 from data.connectivity_store import ConnectivityStore
 from data.audit_store import AuditStore
-from constants import TZ_SHANGHAI
+from constants import local_now
 from errors import APIBridgeError, APITimeoutError, ProviderCallCancelled
 from logic.native_tool_calls import (
     build_provider_response_meta,
@@ -152,7 +152,7 @@ class CircuitBreaker:
 
     def record_failure(self):
         self.failure_count += 1
-        self.last_failure_at = datetime.now(TZ_SHANGHAI)
+        self.last_failure_at = local_now()
         if self.failure_count >= self.max_failures:
             self.state = "open"
 
@@ -166,7 +166,7 @@ class CircuitBreaker:
             return True
         if self.state == "open":
             if self.last_failure_at:
-                elapsed = (datetime.now(TZ_SHANGHAI) - self.last_failure_at).total_seconds()
+                elapsed = (local_now() - self.last_failure_at).total_seconds()
                 if elapsed >= self.cooldown:
                     self.state = "half_open"
                     return True
@@ -751,7 +751,7 @@ class APIExecutor:
         request_body = payload if isinstance(payload, dict) else {}
         return {
             "schema": "provider_request.v1",
-            "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
+            "created_at": local_now().isoformat(),
             "call": {
                 "step": getattr(channel, "step", step) or step,
                 "channel": getattr(channel, "name", step) or step,

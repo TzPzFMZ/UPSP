@@ -167,7 +167,7 @@ ABOUT_PROJECTION = {
 }
 
 SETTINGS_FILE_IDS = (
-    "system", "now", "lately", "periodic", "high_freq", "relation",
+    "system", "memory", "now", "lately", "periodic", "high_freq", "relation",
 )
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MISSING = object()
@@ -202,7 +202,6 @@ SETTINGS_FIELDS = {
         "rhythm.period": _setting("rhythm.period", "int", 1, 100000),
         "standby.idle_threshold_min": _setting("standby.idle_threshold_min", "int", 1, 10080),
         "token_usage.warning_ratio": _setting("token_usage.warning_ratio", "float", 0.01, 1.0),
-        "token_usage.critical_ratio": _setting("token_usage.critical_ratio", "float", 0.01, 1.0),
         "audit.round_snapshot_retention": _setting("audit.round_snapshot_retention", "int", 1, 4096),
         "audit.state_backup_retention": _setting("audit.state_backup_retention", "int", 1, 4096),
         "autonomous_trigger.tacit_pending_threshold": _setting("autonomous_trigger.tacit_pending_threshold", "int", 1, 1000000),
@@ -230,6 +229,21 @@ SETTINGS_FIELDS = {
     },
     "relation": {
         "relation_focus.max_slots": _setting("relation_focus.max_slots", "int", 1, 32),
+    },
+    "memory": {
+        "heat.zone_thresholds.significant": _setting("heat.zone_thresholds.significant", "int", 1, 100),
+        "heat.zone_thresholds.uncertain": _setting("heat.zone_thresholds.uncertain", "int", 0, 99),
+        "heat.decay_rates.significant": _setting("heat.decay_rates.significant", "int", -100, 0),
+        "heat.decay_rates.uncertain": _setting("heat.decay_rates.uncertain", "int", -100, 0),
+        "heat.decay_rates.decay": _setting("heat.decay_rates.decay", "int", -100, 0),
+        "heat.initial_by_weight.1": _setting("heat.initial_by_weight.1", "int", 0, 100),
+        "heat.initial_by_weight.2": _setting("heat.initial_by_weight.2", "int", 0, 100),
+        "heat.initial_by_weight.3": _setting("heat.initial_by_weight.3", "int", 0, 100),
+        "heat.initial_by_weight.4": _setting("heat.initial_by_weight.4", "int", 0, 100),
+        "heat.initial_by_weight.5": _setting("heat.initial_by_weight.5", "int", 0, 100),
+        "heat.recall_boost": _setting("heat.recall_boost", "int", 0, 100),
+        "heat.upgrade_high_rounds": _setting("heat.upgrade_high_rounds", "int", 1, 100000),
+        "heat.locked_value": _setting("heat.locked_value", "int", 0, 100),
     },
 }
 
@@ -303,13 +317,19 @@ class SettingsService:
 
     @staticmethod
     def _validate_document(file_id: str, config: dict) -> None:
-        if file_id == "system":
-            token = config.get("token_usage", {})
-            if token.get("warning_ratio") >= token.get("critical_ratio"):
-                raise SettingsValidationError("settings_token_ratio_order_invalid")
-        elif file_id in {"now", "lately"}:
+        if file_id in {"now", "lately"}:
             if config.get("trim_chars") > config.get("budget_chars"):
                 raise SettingsValidationError(f"settings_{file_id}_trim_exceeds_budget")
+        if file_id == "memory":
+            heat = config["heat"]
+            thresholds = heat["zone_thresholds"]
+            initial = list(heat["initial_by_weight"].values())
+            if (
+                thresholds["uncertain"] >= thresholds["significant"]
+                or initial != sorted(initial)
+                or not thresholds["uncertain"] <= initial[0] <= initial[-1] <= 100
+            ):
+                raise SettingsValidationError("settings_memory_heat_invalid")
 
     def _values(self, file_id: str, config: dict) -> dict:
         result = {}

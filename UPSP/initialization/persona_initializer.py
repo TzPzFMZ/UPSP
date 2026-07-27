@@ -34,6 +34,8 @@ REQUIRED_TEMPLATE_FILES = (
     "relation/relation_registry.json",
     "relation/_index/keywords.json",
     "STM/context/resident_list.json",
+    "STM/buffer/raw_log.jsonl",
+    "STM/buffer/raw_log.md",
     "LTM/container_registry.json",
 )
 REQUIRED_TEMPLATE_DIRS = (
@@ -50,7 +52,7 @@ REQUIRED_TEMPLATE_DIRS = (
     "LTM/Memory/Backup",
     "LTM/Memory/Pinned",
     "LTM/Chronicle/rhythms",
-    "LTM/Corpus/raw_logs",
+    "LTM/Corpus/public/rhythms",
     "relation/self",
     "relation/ours",
     "relation/them",

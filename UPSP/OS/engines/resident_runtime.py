@@ -8,7 +8,7 @@ from pathlib import Path
 import threading
 import uuid
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from data.atomic_write import atomic_write_json
 from logic.relay_intent_pool import settle_open_relay_intents
 from paths import ACTIVE_PID, PERSONA_DIR, UPSP_LOCAL_STATE_ROOT
@@ -557,4 +557,4 @@ class ResidentRuntimeService:
 
     @staticmethod
     def _now():
-        return datetime.now(TZ_SHANGHAI).isoformat()
+        return local_now().isoformat()

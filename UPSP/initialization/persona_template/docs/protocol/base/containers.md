@@ -127,8 +127,8 @@ Seed 不规定技能卡成熟度模板、自动采用结算或投影生命周期
 | 注册表 | 无（纯目录） |
 | 状态机 | 无 |
 | 二分区 | public/（公开语料） + private/（隐私语料） |
-| public子目录 | rounds/ daily/ weekly/ monthly/ quarterly/ yearly/ |
-| 冷备 | Attic/（3年+冷备，{年份}/attic-{年份}.md） |
+| public子目录 | rhythms/ daily/ weekly/ monthly/ quarterly/ yearly/ |
+| 冷备 | Attic/（yearly 满3年后按 `{年份}/attic-{年份}.{jsonl,md}` 成对迁入） |
 
 ### FUT- 未来
 

@@ -5,7 +5,8 @@ from datetime import datetime
 import json
 import os
 
-from constants import DYNAMIC_AXIS_KEYS, RELATION_AXIS_KEYS, TZ_SHANGHAI
+from constants import local_now
+from constants import DYNAMIC_AXIS_KEYS, RELATION_AXIS_KEYS
 from data.atomic_write import atomic_write_json
 from logic.feeling_buffer import (
     collect_receipt_effects,
@@ -230,7 +231,7 @@ def settle_state(state_store, relation_store, round_store, round_num,
                  round_type, memory_write_receipts=None, user_input_text="",
                  observed_at=None, external_interaction=None):
     """计划先行，逐卡提交，最后一次性保存 state。"""
-    observed_at = observed_at or datetime.now(TZ_SHANGHAI)
+    observed_at = observed_at or local_now()
     settlement_id = f"SS-R{int(round_num):06d}"
     try:
         local_journal = _read_local_journal(
@@ -417,7 +418,7 @@ def _local_error(settlement_id, cause, relation_receipts=None):
 def settle_due_state(state_store, relation_store, *, journal_path=None,
                      observed_at=None):
     """Settle an idle due feeling buffer without creating a Round."""
-    observed_at = observed_at or datetime.now(TZ_SHANGHAI)
+    observed_at = observed_at or local_now()
     path = _local_journal_path(state_store, journal_path)
     journal = _read_local_journal(path)
     if journal and journal.get("status") == "planned":

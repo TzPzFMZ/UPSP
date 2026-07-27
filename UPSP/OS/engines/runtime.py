@@ -2,10 +2,10 @@
 Runtime owns WHEN: phase, heartbeat, round lifecycle, and step orchestration.
 Step-specific HOW lives in setup/reaction/cleanup runners.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from collections import deque
 import traceback
-from constants import TZ_SHANGHAI
+from constants import local_now
 from engines.cleanup_pipeline import CleanupPipeline
 from engines.heartbeat import round_decision_from_heartbeat_flags, round_type_from_heartbeat_flags
 from engines.organ_runtime import OrganRuntime, organ_runtime_context
@@ -145,7 +145,7 @@ class Runtime:
         return RuntimeTrigger(
             trigger_id=f"T{self._trigger_seq:08d}",
             trigger_seq=self._trigger_seq,
-            observed_at=datetime.now(TZ_SHANGHAI).isoformat(),
+            observed_at=local_now().isoformat(),
             round_type=round_type,
             flags=dict(flags or {}),
             messages=tuple(messages),
@@ -170,7 +170,7 @@ class Runtime:
         return True
 
     def run_forever(self):
-        self.sm.init_if_missing()
+        self.sm.load()
         self.hb.start()
         try:
             while not self.control.shutdown.is_set():
@@ -286,8 +286,6 @@ class Runtime:
         try:
             if callable(self.on_round_started):
                 self.on_round_started(round_num, round_type)
-            if round_type != "autonomous":
-                self._wake_if_sleeping()
             self._update_daily_if_needed(state, round_type)
 
             last_phase = "setup"
@@ -549,7 +547,6 @@ class Runtime:
                 context_store=self.ctx_store,
                 state_store=self.sm,
                 connectivity_store=self.connectivity_store,
-                process_health_checker=getattr(self.hb, "_check_process_down", None),
             )
         except Exception:
             return None
@@ -573,19 +570,8 @@ class Runtime:
         return chronicle_state_sample(base)
 
     def _wake_if_sleeping(self):
-        if self.sm.get("base.sleep_state.level") == "awake":
-            return
-        now = datetime.now(TZ_SHANGHAI).isoformat()
-        try:
-            self.sm.update_many({
-                "base.sleep_state.level": "awake",
-                "base.sleep_state.entered_at": None,
-                "base.fatigue.awake_since": None,
-                "base.fatigue.value": 0,
-                "base.heartbeat_flags.fatigue_expired": False,
-            })
-        except Exception:
-            pass
+        """Deferred compatibility hook; Seed round startup does not call it."""
+        return None
 
     def _update_daily_if_needed(self, state, round_type):
         try:
@@ -593,7 +579,7 @@ class Runtime:
             last_update = meta.get("last_update")
             if last_update:
                 last_date = datetime.fromisoformat(last_update).date()
-                today = datetime.now(timezone(timedelta(hours=8))).date()
+                today = datetime.now().astimezone().date()
                 if today > last_date:
                     self.sm.set("base.meta.daily_round", 0)
         except Exception:

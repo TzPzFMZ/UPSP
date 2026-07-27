@@ -10,7 +10,7 @@
 
 ## §RCN-02 触发事实
 
-轮触发事实来自用户消息、`heartbeat_flags`、脚本事件、协议工具回执或审计。`api_degraded`、`process_down`、`continue_requested`、`standby_due` 等标记必须由事实源置位，不由自然语言便签制造。
+轮触发事实来自用户消息、活动 `heartbeat_flags`、脚本事件、协议工具回执或审计。`api_degraded`、`continue_requested`、`standby_due` 等标记必须由事实源置位，不由自然语言便签制造。当前进程崩溃由 Runtime supervisor 恢复，不由模型补账。
 
 旧 `runtime.next_round` 已退役。看到旧字段、旧交接或旧备份时，只能当历史材料处理，不能据此唤起下一轮、改写轮类型或清理心跳标记。
 

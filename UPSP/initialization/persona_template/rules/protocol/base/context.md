@@ -48,7 +48,7 @@
 
 `lately` 是最近缓存，保留近期语料履带。它帮助连续性，但不是长期记忆，也不是完整历史。需要精确回想时，应读记忆条目、工作容器、关系卡、round 审计或其他真源，而不是从最近缓存里脑补。
 
-语料块生命周期只按三轨决定。A 轨 `now→lately→raw` 承接 interaction、assistant_reply、dialogue_progress、tool_fact、setup_fact、relay_handoff、minimum_commitment 和 fault_note；B 轨 `now→lately` 只承接文件正文、网页正文、搜索候选、索引展开等正式 `material`，不进 raw_log 或 cache summary；C 轨只承接明确目标调用的 cleanup/final-reply 材料或推理续接，目标调用完成后立即清除。now 水位触发时 A/B 最早完整块立即滚入 lately，lately 再按完整块 FIFO 自然淘汰。当前读写声明必须看本轮真实工具结果、processor receipt 或 round audit。
+语料块生命周期只按三轨决定。A 轨 `Corpus + now→lately` 承接 interaction、assistant_reply、dialogue_progress、tool_fact、setup_fact、relay_handoff、minimum_commitment 和 fault_note；B 轨 `now→lately` 只承接文件正文、网页正文、搜索候选、索引展开等正式 `material`，不进 Corpus 或 cache summary；C 轨只承接明确目标调用的 cleanup/final-reply 材料或推理续接，目标调用完成后立即清除。now 水位触发时 A/B 最早完整块立即滚入 lately，lately 再按完整块 FIFO 自然淘汰。当前读写声明必须看本轮真实工具结果、processor receipt 或 round audit。
 
 `corpus_block` 保持精简结构：顶层用 `id`、`role`、`kind`、`text`、`loc`、`policy`、`ref` 表达来源和生命周期。不要把外部性、安全判断、POPUP 类型或关系信息重新拆成一堆顶层字段。
 
@@ -66,7 +66,7 @@ POPUP 是当步近位注意力，不是安全事件总称，也不是工具回�
 
 `native_tool_result` 是 provider-native 工具调用失败、拒绝或无效请求被投影到 POPUP 的纠错卡。它只解释失败事实、字段问题、原因和下一步建议。
 
-它不是工具 id，不是可调用工具，不是处理器回执，不进入 now/lately/raw_log，也不能证明业务成功。看见它时，只能修正下一次真实工具调用，例如改参数、删未知字段、改用当前已导出的 provider-native 工具、尊重权限门或停止重试。
+它不是工具 id，不是可调用工具，不是处理器回执，不进入 now/lately/Corpus，也不能证明业务成功。看见它时，只能修正下一次真实工具调用，例如改参数、删未知字段、改用当前已导出的 provider-native 工具、尊重权限门或停止重试。
 
 `memory_settlement_reminder` 是每次反应迭代都常驻的固定精简提醒，不依赖工具结果、EOF、材料 epoch 或记忆状态。它提示我主动识别真实主体更新并考虑 `memory_write`，但不替我写记忆：资料正文由 material/最近缓存承载，`dialogue_progress` 只用于用户可见进展，不是私有笔记或记忆替代；只沉淀稳定变化和可复用判断，不抄资料、不写工具流水。轻量更新可用 `weight=1/2`；没有主体更新或用户/任务禁止长期记忆时不写。只有 `MEM-*` 回执才算真实写入。
 

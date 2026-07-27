@@ -1,6 +1,13 @@
 {
   "_comment": "媒体质量配置（各存储层级的图片/音视频质量）",
-  "_version": "Base-0.10.0",
+  "_version": "Base-0.47.9",
+  "_deferred_fields": [
+    "media_quality.stm",
+    "media_quality.f",
+    "media_quality.s",
+    "media_quality.a",
+    "media_quality.backup"
+  ],
 
   "media_quality": {
     "stm": "original",

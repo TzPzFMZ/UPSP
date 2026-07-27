@@ -41,7 +41,6 @@ _PROBE_SUPPRESSIBLE_SCHEDULE_FLAGS = {
     "calendar_quarter_due",
     "calendar_year_due",
     "feeling_settle_due",
-    "fatigue_expired",
     "rhythm_due",
     "standby_due",
 }

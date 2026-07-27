@@ -5,9 +5,10 @@ import os
 from datetime import datetime
 
 from data.atomic_write import atomic_write_json
+from data.config_store import ConfigStore
 from paths import CONNECTIVITY_JSON
 from errors import ReadError
-from constants import TZ_SHANGHAI
+from constants import local_now
 
 
 class ConnectivityStore:
@@ -17,9 +18,10 @@ class ConnectivityStore:
     DEGRADED_STATUSES = {"error", "timeout"}
     API_ENDPOINT_TIERS = {"primary", "fallback", "emergency"}  # 旧格式兼容
 
-    def __init__(self, path=None, active_endpoint_ids=None):
+    def __init__(self, path=None, active_endpoint_ids=None, config_store=None):
         self.path = path or CONNECTIVITY_JSON
         self._active_endpoint_ids = active_endpoint_ids
+        self._config_store = config_store or ConfigStore(use_api_environment=False)
 
     def active_endpoint_ids(self):
         if callable(self._active_endpoint_ids):
@@ -53,9 +55,10 @@ class ConnectivityStore:
             "endpoint": endpoint or "unknown",
             "status": self._normalize_status(status),
             "message": str(message or "")[:200],
-            "timestamp": datetime.now(TZ_SHANGHAI).isoformat(),
+            "timestamp": local_now().isoformat(),
         })
-        data["recent_latencies"] = data["recent_latencies"][-32:]
+        limit = self._config_store.load("system")["connectivity"]["max_latency_records"]
+        data["recent_latencies"] = data["recent_latencies"][-limit:]
         self.save(data)
 
     def latest_status_by_endpoint(self, data=None):

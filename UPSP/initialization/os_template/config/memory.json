@@ -1,6 +1,43 @@
 {
-  "_comment": "记忆与休眠相关配置",
-  "_version": "Base-0.10.0",
+  "_comment": "记忆代谢与暂停系统配置",
+  "_version": "Base-0.47.9",
+  "_deferred_fields": [
+    "fatigue.seek_sleep",
+    "fatigue.warning",
+    "fatigue.sleep_window",
+    "fatigue.idle_acceleration_minutes",
+    "dreams.threshold",
+    "dreams.random_weight",
+    "dreams.wake_window_hours",
+    "privacy_declassify.manual_enabled",
+    "privacy_declassify.auto_enabled",
+    "privacy_declassify.frequency",
+    "privacy_declassify.auto_modes",
+    "privacy_declassify.max_items_per_run",
+    "privacy_declassify.requires_review_modes"
+  ],
+
+  "heat": {
+    "zone_thresholds": {
+      "significant": 70,
+      "uncertain": 40
+    },
+    "decay_rates": {
+      "significant": -5,
+      "uncertain": -10,
+      "decay": -15
+    },
+    "initial_by_weight": {
+      "1": 40,
+      "2": 50,
+      "3": 60,
+      "4": 70,
+      "5": 80
+    },
+    "recall_boost": 10,
+    "upgrade_high_rounds": 5,
+    "locked_value": 80
+  },
 
   "fatigue": {
     "seek_sleep": 50,

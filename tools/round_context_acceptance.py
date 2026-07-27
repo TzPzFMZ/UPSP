@@ -535,6 +535,7 @@ def _build_runtime(runtime_root: Path, executor: FakeAcceptanceExecutor):
     ctx_store = ContextStore(
         state_store=sm,
         cache_dir=str(runtime_root / "context_cache"),
+        corpus_rhythms_dir=str(runtime_root / "corpus" / "public" / "rhythms"),
         raw_log_jsonl=str(runtime_root / "buffer" / "raw_log.jsonl"),
         raw_log_md=str(runtime_root / "buffer" / "raw_log.md"),
     )
@@ -1312,7 +1313,6 @@ def _scenario_rhythm_agenda_full_progression(root: Path) -> dict[str, Any]:
 
     flags = {
         "api_degraded": True,
-        "process_down": True,
         "token_usage_warning": True,
         "context_pressure": True,
         "cache_compaction_due": True,
@@ -1321,27 +1321,24 @@ def _scenario_rhythm_agenda_full_progression(root: Path) -> dict[str, Any]:
         "user_message_waiting": True,
     }
     steps = [
-        (set(), "emergency_handling_guide", ["api_degraded", "process_down"]),
-        ({"api_degraded", "process_down"}, "context_pressure_rhythm_guide", [
+        (set(), "emergency_handling_guide", ["api_degraded"]),
+        ({"api_degraded"}, "context_pressure_rhythm_guide", [
             "token_usage_warning",
             "context_pressure",
         ]),
         ({
             "api_degraded",
-            "process_down",
             "token_usage_warning",
             "context_pressure",
         }, "cache_compaction_rhythm_guide", ["cache_compaction_due"]),
         ({
             "api_degraded",
-            "process_down",
             "token_usage_warning",
             "context_pressure",
             "cache_compaction_due",
         }, "calendar_rhythm_guide", ["calendar_day_due"]),
         ({
             "api_degraded",
-            "process_down",
             "token_usage_warning",
             "context_pressure",
             "cache_compaction_due",
@@ -1349,7 +1346,6 @@ def _scenario_rhythm_agenda_full_progression(root: Path) -> dict[str, Any]:
         }, "calendar_rhythm_guide", ["calendar_week_due"]),
         ({
             "api_degraded",
-            "process_down",
             "token_usage_warning",
             "context_pressure",
             "cache_compaction_due",

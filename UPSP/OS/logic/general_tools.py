@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from urllib.request import Request, urlopen
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from paths import (
     PROGRAM_UPSP_ROOT,
     PERSONA_DIR,
@@ -286,7 +286,7 @@ def _record_web_backend_hard_fail(health, tool_id, backend_id, reason="", detail
     before = _web_backend_fail_count(health, tool_id, backend_id)
     after = before + 1
     backend_health["hard_fail_count"] = after
-    backend_health["last_failed_at"] = datetime.now(TZ_SHANGHAI).isoformat()
+    backend_health["last_failed_at"] = local_now().isoformat()
     if reason:
         backend_health["last_reason"] = _clean(reason)
     if detail:
@@ -348,7 +348,7 @@ def _base_result(tool_id="file_read", status="rejected", reason=""):
         "permission_scope": meta.get("permission_scope", ""),
         "result_kind": meta.get("result_kind", "general_tool_result"),
         "protocol_tool_receipt": False,
-        "executed_at": datetime.now(TZ_SHANGHAI).isoformat(),
+        "executed_at": local_now().isoformat(),
     }
     if reason:
         result["reason"] = reason

@@ -16,7 +16,7 @@ from schemas.relation import (
     default_registry_card_entry, relation_card_label, relation_public_name,
 )
 from errors import WriteError, ReadError
-from constants import TZ_SHANGHAI
+from constants import local_now
 
 
 AXIS_NAMES = {
@@ -179,7 +179,7 @@ class RelationStore:
         card = self.read_card(card_id)
         if card is None:
             return None
-        observed_at = datetime.now(TZ_SHANGHAI).isoformat()
+        observed_at = local_now().isoformat()
         note = {"date": observed_at, "content": content}
         path = self.get_card_path(card["id"], card.get("category", "ours"))
         try:
@@ -219,7 +219,7 @@ class RelationStore:
                 "after": before,
             }
 
-        observed_at = observed_at or datetime.now(TZ_SHANGHAI).isoformat()
+        observed_at = observed_at or local_now().isoformat()
         path = self.get_card_path(card["id"], card.get("category", "ours"))
         try:
             with open(path, "r", encoding="utf-8") as handle:
@@ -264,7 +264,7 @@ class RelationStore:
         for c in reg.get("cards", []):
             if c.get("id") == card_id:
                 c["summary_resident"] = bool(enabled)
-                c["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
+                c["updated_at"] = local_now().isoformat()
                 break
         self.save_registry(reg)
         return reg
@@ -277,7 +277,7 @@ class RelationStore:
                 c["body_resident"] = bool(enabled)
                 if enabled:
                     c["summary_resident"] = True
-                c["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
+                c["updated_at"] = local_now().isoformat()
                 break
         self.save_registry(reg)
         return reg

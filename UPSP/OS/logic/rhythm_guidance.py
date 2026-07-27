@@ -5,7 +5,6 @@ from engines.heartbeat import round_decision_from_heartbeat_flags
 
 EMERGENCY_FLAGS = (
     ("api_degraded", "API 异常处理", "当前存在 API 异常。请根据可见连通性事实判断：已恢复则结算；未恢复但当前能跑则搁置；不能处理则记录故障。"),
-    ("process_down", "进程异常处理", "当前存在关键进程异常。请根据可见进程事实判断：能恢复则恢复并结算；不能恢复则记录故障或请求人工处理。"),
 )
 
 CONTEXT_PRESSURE_FLAGS = (

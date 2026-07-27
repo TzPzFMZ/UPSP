@@ -7,7 +7,7 @@ import json
 import os
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from data.atomic_write import atomic_write_jsonl
 from errors import ReadError
 from paths import STATE_BACKUPS_JSONL
@@ -44,7 +44,7 @@ class StateBackupStore:
         rows = self.read_backups()
         rows.append({
             "round": self._round_num(round_num),
-            "timestamp": datetime.now(TZ_SHANGHAI).isoformat(),
+            "timestamp": local_now().isoformat(),
             "reason": str(reason or "cleanup"),
             "state": state,
         })

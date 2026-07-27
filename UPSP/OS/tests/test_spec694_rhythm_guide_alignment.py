@@ -121,13 +121,12 @@ class TestSpec694RhythmGuideAlignment(RuntimeTestMixin):
         assert captured["active_guide"]["kind"] == "emergency_handling_guide"
         assert rt.sm.get("base.heartbeat_flags.api_degraded") is True
 
-    def test_pre_setup_recovery_clears_api_and_process_flags_atomically(
+    def test_pre_setup_recovery_clears_api_flag_before_setup(
             self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
         rt.connectivity_store.log_latency("primary", "ok", "recovered")
-        for flag in ("api_degraded", "process_down", "user_message_waiting"):
+        for flag in ("api_degraded", "user_message_waiting"):
             rt.sm.set_flag(flag, True)
-        monkeypatch.setattr(rt.hb, "_check_process_down", lambda: False)
         cleared = []
         clear_flags = rt.sm.clear_flags
 
@@ -141,7 +140,7 @@ class TestSpec694RhythmGuideAlignment(RuntimeTestMixin):
 
         rt._run_one_round("rhythm", rt.sm.load(), rt.sm.get_flags())
 
-        assert cleared == [["api_degraded", "process_down"]]
+        assert cleared == [["api_degraded"]]
         assert captured["setup"]["round_type"] == "interactive"
         assert captured["setup"]["flags"]["api_degraded"] is False
         assert captured["setup"]["flags"]["process_down"] is False

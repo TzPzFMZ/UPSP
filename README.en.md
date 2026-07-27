@@ -20,7 +20,7 @@ An agent may possess tools, plans, and loops and still be reset to zero when the
 UPSP builds a local, portable, and auditable material substrate for that question. Models may change, conversations may break, and carriers may migrate. As long as the profile, state, memories, relationships, rules, and record of practice remain, a persona does not have to be born again from nothing.
 
 > Auditable · Portable · Continuable · Extensible<br>
-> Base / Seed · Windows Alpha `0.1.0-alpha.4`
+> Base / Seed · Windows Alpha `0.1.0-alpha.5`
 
 ---
 
@@ -142,7 +142,7 @@ FMZ is the continuing practice, FMA is the first public demonstration, and Alyos
 
 ## Quick start
 
-1. Download `UPSP-Setup-0.1.0-alpha.4-win-x64.exe` and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases).
+1. Download `UPSP-Setup-0.1.0-alpha.5-win-x64.exe` and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases).
 2. Verify the installer’s SHA-256, then install and launch UPSP.
 3. Start quickly with Alyosha or create your own persona.
 4. Configure your own model service and API key, or skip model setup to inspect the local interface and persona structure first.
@@ -170,7 +170,7 @@ LocalAppData\UPSP\
 
 ## Current stage
 
-`0.1.0-alpha.4` is at **Base / Seed**:
+`0.1.0-alpha.5` is at **Base / Seed**:
 
 - one active persona;
 - one primary instance;
@@ -181,7 +181,7 @@ Multi-persona operation, branches, multiple conversation threads, and the organ 
 
 The currently verified environment is Windows 11 x64 with the system Evergreen WebView2 Runtime. OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages protocols are supported. Windows 10, enterprise-policy environments, and every third-party compatible gateway have not yet been individually verified.
 
-See the [Alpha 4 Release Notes](docs/public/releases/0.1.0-alpha.4.md) for the full change list, verification status, and known limitations.
+See the [Alpha 5 Release Notes](docs/public/releases/0.1.0-alpha.5.md) for the full change list, verification status, and known limitations.
 
 ---
 

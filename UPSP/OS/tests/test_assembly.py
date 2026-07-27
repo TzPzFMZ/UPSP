@@ -4453,8 +4453,7 @@ class TestContextAssembler:
         from assembly.context import ContextAssembler
         from data import context_store as ctxs
 
-        monkeypatch.setattr(ctxs, "RAW_LOG", str(tmp_path / "raw_log.md"))
-        monkeypatch.setattr(ctxs, "RAW_LOG_JSONL", str(tmp_path / "raw_log.jsonl"), raising=False)
+        monkeypatch.setattr(ctxs, "CONTAINER_CORPUS_DIR", str(tmp_path / "corpus"))
         monkeypatch.setattr(ctxs, "STM_CONTEXT_CACHE_DIR", str(tmp_path / "cache"), raising=False)
         monkeypatch.setattr(ctxs, "STM_CONTEXT_NOW_CACHE_JSONL", str(tmp_path / "cache" / "now_cache.jsonl"), raising=False)
         monkeypatch.setattr(ctxs, "STM_CONTEXT_LATELY_CACHE_JSONL", str(tmp_path / "cache" / "lately_cache.jsonl"), raising=False)

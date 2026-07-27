@@ -349,12 +349,21 @@ class _FileMap:
         self._set(key, value)
 
 
+class _FileHeat(_FileMap):
+    @staticmethod
+    def new_entry(weight=2):
+        from schemas.memory import default_heat_entry
+        value = default_heat_entry(weight=weight)
+        value["last_heat_at"] = "2026-07-16T00:00:00+08:00"
+        return value
+
+
 def _memory_services(root):
     return SimpleNamespace(
         sm=_State(),
         memory_store=_FileMemoryStore(root),
         memory_index=_FileMap(root, "keywords.json"),
-        heat=_FileMap(root, "heat.json"),
+        heat=_FileHeat(root, "heat.json"),
         container_store=SimpleNamespace(),
         relation_store=_Relation(),
     )
@@ -374,20 +383,13 @@ def test_fake_memory_organ_reuses_reaction_committer_receipt_and_file_result(
     organ_root.mkdir()
     monkeypatch.setattr(memory_write, "generate_mem_id", lambda: "MEM-TEST659")
     make_meta = memory_write.make_meta_template
-    make_heat = memory_write.make_heat_entry
 
     def fixed_meta(*args, **kwargs):
         value = make_meta(*args, **kwargs)
         value["created_at"] = value["last_recalled_at"] = "2026-07-16T00:00:00+08:00"
         return value
 
-    def fixed_heat(*args, **kwargs):
-        value = make_heat(*args, **kwargs)
-        value["last_heat_at"] = "2026-07-16T00:00:00+08:00"
-        return value
-
     monkeypatch.setattr(memory_write, "make_meta_template", fixed_meta)
-    monkeypatch.setattr(memory_write, "make_heat_entry", fixed_heat)
     declaration = {
         "title": "器官共用提交",
         "weight": 4,

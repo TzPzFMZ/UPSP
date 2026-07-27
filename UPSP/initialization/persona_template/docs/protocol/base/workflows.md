@@ -59,7 +59,7 @@ Spec134 之后，反应步工具入口可以由 provider-native tool calling 承
 1. provider schema：只限制导出的工具名、必填字段、枚举和参数形状，不能保证业务事实一定正确。
 2. Runtime native validation/result projection：在路由前拒绝缺字段、未知字段、枚举越界、未导出工具或 provider-native trace 缺口，并把失败投影为 POPUP 原生工具调用警告。
 3. `processor/handler/guard/receipt/audit`：仍是真实执行账本。通用工具先过 `ExecutionCapabilityGate` 再进 handler，协议工具走 native projection → processor/guard/receipt，协议链仍由 `tool_transaction_audit` 验账。
-4. POPUP/永固层：只解释失败事实、纠错动作和安全边界。`native_tool_result` 是警告层 feedback，不是 workflow slot、不是工具入口、不是 processor receipt，也不进入 now/lately/raw_log。
+4. POPUP/永固层：只解释失败事实、纠错动作和安全边界。`native_tool_result` 是警告层 feedback，不是 workflow slot、不是工具入口、不是 processor receipt，也不进入 now/lately/Corpus。
 
 `native_tool_result.next_action` 的稳定枚举为 `revise_arguments`、`remove_unknown_field`、`respect_capability_gate`、`stop_or_retry_with_valid_tool`、`inspect_failure`。若 warning 中出现 `actual/expected` 或 `arguments_json` 相关片段，命令、URL、路径、参数、正文、密钥、关系轴数值、`state.json` 数值和 live `persona/` 状态只可脱敏/截断，不得完整回显。
 
@@ -86,7 +86,7 @@ Spec134 之后，反应步工具入口可以由 provider-native tool calling 承
 
 开发与发布验收由宿主直接执行 pytest、schema、编码和一致性审计，并保存命令输出、Spec verification receipt 与已有 Runtime／persona 证据。当前不把这些外部检查包装成 Runtime 工具，也不生成独立 `validation_audit.jsonl`。
 
-它不是 protocol_tool，不进入反应步 guide，不接受 `protocol_tool_submission`，不产生 `protocol_tool_receipt`。正常审计不写 now/lately/raw_log，避免把基座审计噪声塞进语义缓存。本阶段只做事后验账和留痕，不做事中拦截、回滚、熔断或自动故障记账。
+它不是 protocol_tool，不进入反应步 guide，不接受 `protocol_tool_submission`，不产生 `protocol_tool_receipt`。正常审计不写 now/lately/Corpus，避免把基座审计噪声塞进语义缓存。本阶段只做事后验账和留痕，不做事中拦截、回滚、熔断或自动故障记账。
 
 ---
 
@@ -94,7 +94,7 @@ Spec134 之后，反应步工具入口可以由 provider-native tool calling 承
 
 善后步的“最近缓存压缩”只在本轮发生 `lately` 字符履带删除后置位维护节律。删后幸存段仍作为原语料块留在“最近缓存 lately”层；脚本只在 POPUP 提醒 Runtime 将置位 `cache_compaction_due`，不要求 LLM 在 cleanup_finalize 中给出 keep、drop 或 replace 动作。压缩不设 kind 白名单，不默认排除当前轮或 `minimum_commitment`。
 
-真正改写 `lately_cache.jsonl` 的执行器是 `cache_compact`，属于 `substrate_tool / sync_tool / context / high`。真实 source ids 留在 Runtime pending metadata；下一轮 rhythm agenda 物化 `cache_compaction_rhythm_guide` 后，模型用 `guide_submit(submit_cache_compaction_shard)` 提交分片摘要，Runtime 后台调用 `cache_compact`。它默认不作为反应步常规声明工具暴露，不注入普通 reaction guide，不产生独立前台工具入口。`raw_log` 保留原文镜像，压缩摘要以 `kind=cache_summary` 留在 lately。
+真正改写 `lately_cache.jsonl` 的执行器是 `cache_compact`，属于 `substrate_tool / sync_tool / context / high`。真实 source ids 留在 Runtime pending metadata；下一轮 rhythm agenda 物化 `cache_compaction_rhythm_guide` 后，模型用 `guide_submit(submit_cache_compaction_shard)` 提交分片摘要，Runtime 后台调用 `cache_compact`。它默认不作为反应步常规声明工具暴露，不注入普通 reaction guide，不产生独立前台工具入口。raw_log 与 Corpus 节归档保留 A 轨原文，压缩摘要以 `kind=cache_summary` 留在 lately。
 
 ---
 

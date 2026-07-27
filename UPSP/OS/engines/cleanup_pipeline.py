@@ -1,9 +1,10 @@
 """Cleanup step pipeline and slow metabolism boundary."""
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
-from constants import STANDBY_COUNTDOWN_INITIAL, TZ_SHANGHAI
+from constants import local_now, local_fromtimestamp
+from constants import STANDBY_COUNTDOWN_INITIAL
 from errors import ProviderCallCancelled
 from engines.cleanup_helpers import (
     append_ltm_index,
@@ -43,7 +44,6 @@ CALENDAR_FLAG_TO_LAYER = {
 
 ALERT_FLAG_NAMES = {
     "api_degraded",
-    "process_down",
     "token_usage_warning",
     "context_pressure",
 }
@@ -553,13 +553,6 @@ class CleanupPipeline(EngineComponent):
             except Exception as exc:
                 fatal_reasons.append(failure_reason("evolution_set", exc))
 
-        # ⑥.5 疲劳/休眠/做梦（独立——失败不阻断善后）
-        if not user_stop:
-            try:
-                self._process_rest_cycle(round_type, state, cleanup_result, round_num)
-            except Exception as exc:
-                fatal_reasons.append(failure_reason("rest_cycle", exc))
-
         # ⑦ 保存语料缓冲（独立）
         resp_text = result.get("response", "")
         if not result.get("_l3_emergency_buffer_saved"):
@@ -602,16 +595,23 @@ class CleanupPipeline(EngineComponent):
 
         # ⑨ 节律轮收尾（独立）
         if round_type == "rhythm" and not user_stop:
-            # raw_log 归档
+            heartbeat_flags = state.get("base", {}).get("heartbeat_flags", {})
+            if (
+                    heartbeat_flags.get("rhythm_due")
+                    and rhythm_chronicle_write_applied(result or {})):
+                try:
+                    archived = self.ctx_store.archive_raw_log()
+                    if archived:
+                        cleanup_result["_raw_log_archived"] = archived
+                except Exception as exc:
+                    fatal_reasons.append(failure_reason("raw_log_archive", exc))
             try:
-                archived = self.ctx_store.archive_raw_log()
-                if archived:
-                    result["_raw_log_archived"] = archived
-            except Exception as exc:
-                degraded_reasons.append(failure_reason("raw_log_archive", exc))
-            # 日历层处理：编年史写入 + 语料合并 + 保留清理
-            try:
-                self._process_calendar_cleanup(cleanup_result, round_num, state)
+                self._process_calendar_cleanup(
+                    cleanup_result,
+                    round_num,
+                    state,
+                    settlement_result=result,
+                )
             except Exception as exc:
                 fatal_reasons.append(failure_reason("calendar_cleanup", exc))
 
@@ -707,14 +707,12 @@ class CleanupPipeline(EngineComponent):
                 and self._cache_compaction_cleared_by_result(result or {})):
             flags_to_clear.append("cache_compaction_due")
         updates = {
-            "base.meta.last_round_closed_at": datetime.now(
-                TZ_SHANGHAI).isoformat(),
+            "base.meta.last_round_closed_at": local_now().isoformat(),
         }
         if "rhythm_due" in flags_to_clear:
             updates["base.meta.last_rhythm_round"] = round_num
         if completed_calendar:
-            updates["base.meta.last_calendar_check_at"] = datetime.now(
-                timezone(timedelta(hours=8))).isoformat()
+            updates["base.meta.last_calendar_check_at"] = local_now().isoformat()
         self.sm.update_many(updates)
         if flags_to_clear:
             self.sm.clear_flags(list(dict.fromkeys(flags_to_clear)))
@@ -796,16 +794,9 @@ class CleanupPipeline(EngineComponent):
             outputs.append(self.evolution_store.process_pending(block, round_num, stats))
         return outputs
 
-    def _process_rest_cycle(self, round_type, state, result, round_num):
-        """Spec598: live Runtime 退役疲劳倒计时；善后只清零残留压力。"""
-        self.sm.update_many({
-            "base.fatigue.value": 0,
-            "base.fatigue.awake_since": None,
-            "base.sleep_state.level": "awake",
-            "base.sleep_state.entered_at": None,
-            "base.heartbeat_flags.fatigue_expired": False,
-        })
-
+    def _process_rest_cycle(self, *_args, **_kwargs):
+        """Deferred compatibility hook; Seed cleanup does not call it."""
+        return None
 
     @staticmethod
     def _iter_receipts_with_backend(receipts):
@@ -913,9 +904,6 @@ class CleanupPipeline(EngineComponent):
                      "calendar_quarter_due", "calendar_year_due"]
         if round_type == "interactive":
             flags_to_clear.append("user_message_waiting")
-            hf = heartbeat_flags
-            if hf.get("identity_timeout"):
-                flags_to_clear.append("identity_timeout")
         elif round_type == "rhythm":
             if heartbeat_flags.get("rhythm_due") and rhythm_chronicle_applied:
                 flags_to_clear.append("rhythm_due")
@@ -941,17 +929,15 @@ class CleanupPipeline(EngineComponent):
             if "continue_requested" not in flags_to_clear:
                 flags_to_clear.append("continue_requested")
         elif round_type == "autonomous":
-            flags_to_clear.extend(["feeling_settle_due", "fatigue_expired", "evolution_pending"])
+            flags_to_clear.extend(["feeling_settle_due", "evolution_pending"])
 
         # checkpoint + 日历更新时间戳
         update_meta = {}
         if heartbeat_flags.get("rhythm_due") and rhythm_chronicle_applied:
             update_meta["base.meta.last_rhythm_round"] = round_num
         if any(cf in flags_to_clear for cf in cal_flags):
-            update_meta["base.meta.last_calendar_check_at"] = datetime.now(
-                timezone(timedelta(hours=8))).isoformat()
-        update_meta["base.meta.last_round_closed_at"] = datetime.now(
-            TZ_SHANGHAI).isoformat()
+            update_meta["base.meta.last_calendar_check_at"] = local_now().isoformat()
+        update_meta["base.meta.last_round_closed_at"] = local_now().isoformat()
         if round_type == "standby":
             update_meta["base.meta.last_standby_round"] = round_num
             # standby_countdown 递减
@@ -1216,14 +1202,20 @@ class CleanupPipeline(EngineComponent):
             and "continue_requested" in (receipt.get("set_flags") or [])
         )
 
-    def _process_calendar_cleanup(self, cleanup_result, round_num, state):
+    def _process_calendar_cleanup(
+            self, cleanup_result, round_num, state, settlement_result=None):
         """日历节律善后步：语料合并 + 保留清理"""
         import re as _re
         from data.chronicle_store import ChronicleStore, CorpusStore
 
         response = cleanup_result.get("response", "")
         flags = state.get("base", {}).get("heartbeat_flags", {})
-        cal_flags = [flag for flag in CALENDAR_FLAG_TO_LAYER if flags.get(flag)]
+        completed = self._calendar_flags_cleared_by_result(
+            settlement_result or {})
+        cal_flags = [
+            flag for flag in CALENDAR_FLAG_TO_LAYER
+            if flags.get(flag) and flag in completed
+        ]
 
         ch_store = ChronicleStore()
         co_store = CorpusStore()
@@ -1237,24 +1229,21 @@ class CleanupPipeline(EngineComponent):
                 pass
 
         # 语料合并（逐层）
-        try:
-            merge_chain = [
-                ("rounds", "daily"), ("daily", "weekly"),
-                ("weekly", "monthly"), ("monthly", "quarterly"),
-                ("quarterly", "yearly"),
-            ]
-            active_names = {
-                "calendar_day_due": "daily", "calendar_week_due": "weekly",
-                "calendar_month_due": "monthly", "calendar_quarter_due": "quarterly",
-                "calendar_year_due": "yearly",
-            }
-            for src, tgt in merge_chain:
+        merge_chain = [
+            ("rhythms", "daily"), ("daily", "weekly"),
+            ("weekly", "monthly"), ("monthly", "quarterly"),
+            ("quarterly", "yearly"),
+        ]
+        active_names = {
+            "calendar_day_due": "daily", "calendar_week_due": "weekly",
+            "calendar_month_due": "monthly", "calendar_quarter_due": "quarterly",
+            "calendar_year_due": "yearly",
+        }
+        for src, tgt in merge_chain:
                 # 只在目标层激活时合并（日报→日合并；周报→周合并）
-                tgt_flag = [k for k, v in active_names.items() if v == tgt]
-                if tgt_flag and tgt_flag[0] in cal_flags:
-                    co_store.merge_layer(src, tgt)
-        except Exception:
-            pass
+            tgt_flag = [k for k, v in active_names.items() if v == tgt]
+            if tgt_flag and tgt_flag[0] in cal_flags:
+                co_store.merge_layer(src, tgt)
 
         # 编年史 + 语料保留清理
         try:
@@ -1265,12 +1254,9 @@ class CleanupPipeline(EngineComponent):
             co_store.cleanup_expired()
         except Exception:
             pass
-        # Attic阁楼迁移（年节律时执行）
+        # Attic阁楼迁移（年节律真实完成后执行；失败必须阻止伪闭合）
         if "calendar_year_due" in cal_flags:
-            try:
-                co_store.move_to_attic()
-            except Exception:
-                pass
+            co_store.move_to_attic()
 
         # Trash清理（日节律时执行，衰减期1年）
         if "calendar_day_due" in cal_flags:
@@ -1286,12 +1272,12 @@ class CleanupPipeline(EngineComponent):
         from paths import TRASH_DIR
         if not _os.path.isdir(TRASH_DIR):
             return
-        cutoff = datetime.now(TZ_SHANGHAI) - timedelta(days=365)
+        cutoff = local_now() - timedelta(days=365)
         for root, dirs, files in _os.walk(TRASH_DIR, topdown=False):
             for fname in files:
                 fpath = _os.path.join(root, fname)
                 try:
-                    mtime = datetime.fromtimestamp(_os.path.getmtime(fpath), TZ_SHANGHAI)
+                    mtime = local_fromtimestamp(_os.path.getmtime(fpath))
                     if mtime < cutoff:
                         _os.remove(fpath)
                 except OSError:
@@ -1474,7 +1460,8 @@ class CleanupPipeline(EngineComponent):
                 continue
             if MEMORY_PRIVACY_ENABLED or access != "private":
                 public_entries[mem_id] = heat_entry
-        return STMHeatCalculator().process_forgetting(public_entries)
+        calculator = getattr(self.heat, "calculator", None) or STMHeatCalculator()
+        return calculator.process_forgetting(public_entries)
 
     def _remove_stm_copy(self, mem_id, ms=None):
         """删除 STM 层同编号副本：正文、meta、index、keywords、heat 同步收口。"""

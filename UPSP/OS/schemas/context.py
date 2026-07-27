@@ -5,18 +5,16 @@ DDS §19 上下文工程 + §21 过期标记 + §24 插话机制
 文件:
   STM/context/cache/now_cache.jsonl    — 当前缓存语料块主源
   STM/context/cache/lately_cache.jsonl — 最近缓存语料块主源
-  STM/buffer/raw_log.jsonl             — 原始语料备份主源
-  STM/buffer/raw_log.md                — 原始语料备份审计渲染
+  STM/buffer/raw_log.jsonl              — lately 接纳后的原始语料缓冲
+  LTM/Corpus/public/rhythms/*.jsonl     — 原始节语料机器真源
+  LTM/Corpus/public/rhythms/*.md        — 同批人类可读派生件
   STM/context/{step}/            — 审计痕迹（high_freq/step/manifest 等）
   config/context/                — 装配规则 JSON
     permanent.json / periodic.json / lately.json / high_freq.json / now.json / statusbar.json / popup.json
 """
 import hashlib
-from datetime import timezone, timedelta
 
 from utils.read_tool_material import read_tool_material_content
-
-TZ = timezone(timedelta(hours=8))
 
 READ_TOOL_PRIVATE_DIAGNOSTIC_FIELDS = frozenset({
     "window_strategy",
@@ -92,11 +90,6 @@ CORPUS_BLOCK_KINDS = {
 
 
 # ============================================================
-# raw_log.jsonl / raw_log.md（DDS §19）
-# ============================================================
-
-# raw_log 格式: 每轮追加 ## R{n} [{timestamp}] 段
-# ============================================================
 # STM/context/{step}/ 审计痕迹（DDS §19.3）
 # ============================================================
 
@@ -135,22 +128,6 @@ STEP_AUDIT_MANIFEST_FIELDS = {
     "assembled_at":("str", "ISO时间戳"),
     "layers":      ("dict","{permanent: {chars, sha256, dirty, reused}, ...}"),
     "total_chars": ("int", "总字符数"),
-}
-
-
-# ============================================================
-# 上下文频率梯度（DDS §19.3 + §21.1）
-# ============================================================
-
-# 频率层定义
-FREQUENCY_LAYERS = {
-    "permanent":     {"name": "永固层",   "refresh": "版本变更时", "modules": ["STATUSBAR(身份)", "RULES(跨步)"]},
-    "periodic":      {"name": "定期层",   "refresh": "每节律点",   "modules": ["EXPLORER(索引)", "RULES(步级)", "CONTENT(定期投影)"]},
-    "lately":        {"name": "最近缓存 lately", "refresh": "每轮FIFO", "modules": ["CONTENT(近期语料)"]},
-    "high_freq":     {"name": "高频层",   "refresh": "每轮",       "modules": ["EXPLORER(轴描述)", "CONTENT(挂载)", "STM索引"]},
-    "now":           {"name": "当前缓存 now", "refresh": "每步/每轮", "modules": ["CONTENT(当前语料块)"]},
-    "statusbar":     {"name": "状态栏层", "refresh": "每轮",       "modules": ["STATUSBAR"], "位置": "now之后、POPUP之前"},
-    "popup":         {"name": "弹窗层",   "refresh": "事件触发",    "modules": ["POPUP"], "位置": "messages末位，不参与前序层拼接"},
 }
 
 

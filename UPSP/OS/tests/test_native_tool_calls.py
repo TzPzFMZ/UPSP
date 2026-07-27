@@ -4491,6 +4491,17 @@ class TestNativeToolCallExecutorAndAudit:
             def __init__(self):
                 self.entries = {}
 
+            def new_entry(self, weight=2):
+                from schemas.config import default_memory_config
+                from schemas.memory import default_heat_entry
+                config = default_memory_config()["heat"]
+                return default_heat_entry(
+                    weight,
+                    initial_by_weight=config["initial_by_weight"],
+                    significant_threshold=config["zone_thresholds"]["significant"],
+                    uncertain_threshold=config["zone_thresholds"]["uncertain"],
+                )
+
             def set_entry(self, mem_id, entry):
                 self.entries[mem_id] = dict(entry)
 

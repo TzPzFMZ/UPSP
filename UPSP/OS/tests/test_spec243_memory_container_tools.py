@@ -63,6 +63,11 @@ class DummyHeat:
     def set_entry(self, mem_id, entry):
         self.entries.append((mem_id, dict(entry)))
 
+    @staticmethod
+    def new_entry(weight=2):
+        from schemas.memory import default_heat_entry
+        return default_heat_entry(weight=weight)
+
 
 class DummyRelationStore:
     def resolve_active_subject(self, value):

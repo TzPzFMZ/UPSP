@@ -5,19 +5,14 @@ This module is the single source for STM heat decay, recall boost,
 upgrade candidate checks, and STM forgetting split decisions. It does
 not read or write files; persistence remains in data/memory_heat.py.
 """
-from constants import (
-    DECAY_RATES,
-    HEAT_LOCKED_VALUE,
-    INITIAL_HEAT,
-    MAX_HEAT,
-    RECALL_BOOST,
-    UPGRADE_AH_HIGH_MIN,
-    ZONE_THRESHOLDS,
-)
-
-
 class STMHeatCalculator:
     """Pure STM heat calculator."""
+
+    def __init__(self, config=None):
+        if config is None:
+            from schemas.config import load_os_template_config
+            config = load_os_template_config("memory.json")["heat"]
+        self.config = config
 
     def tick_decay(self, heat, heat_locked_ids=None):
         """
@@ -33,17 +28,21 @@ class STMHeatCalculator:
             if mem_id in heat_locked or info.get("heat_locked"):
                 ah_high = info.get("AH_high", 0) + 1
                 updates[mem_id] = {
-                    "H": HEAT_LOCKED_VALUE,
+                    "H": self.config["locked_value"],
                     "zone": "显著",
                     "AH_high": ah_high,
                     "AH_low": 0,
                 }
                 continue
 
-            h = info.get("H", INITIAL_HEAT)
+            h = info.get("H", self.config["initial_by_weight"]["2"])
             zone = info.get("zone", "未定")
 
-            decay = DECAY_RATES.get(zone, -15)
+            decay = {
+                "显著": self.config["decay_rates"]["significant"],
+                "未定": self.config["decay_rates"]["uncertain"],
+                "衰减": self.config["decay_rates"]["decay"],
+            }[zone]
             new_h = max(0, h + decay)
             new_zone = self._reclassify_zone(new_h)
 
@@ -68,9 +67,10 @@ class STMHeatCalculator:
 
         return updates
 
-    def recall_boost(self, h, ah_high, boost=RECALL_BOOST):
+    def recall_boost(self, h, ah_high, boost=None):
         """Return heat after recall; AH_high is only settled by tick_decay."""
-        new_h = min(MAX_HEAT, h + boost)
+        boost = self.config["recall_boost"] if boost is None else boost
+        new_h = min(100, h + boost)
         new_zone = self._reclassify_zone(new_h)
         return (new_h, ah_high, new_zone)
 
@@ -78,7 +78,7 @@ class STMHeatCalculator:
         """Return STM entries that should upgrade to LTM Full."""
         candidates = []
         for mem_id, info in heat.items():
-            if info.get("AH_high", 0) < UPGRADE_AH_HIGH_MIN:
+            if info.get("AH_high", 0) < self.config["upgrade_high_rounds"]:
                 continue
             status = meta.get(mem_id, {}).get("ltm_status", "未归档")
             if status == "未归档" and not info.get("stored"):
@@ -120,8 +120,8 @@ class STMHeatCalculator:
         return "A"
 
     def _reclassify_zone(self, h):
-        if h >= ZONE_THRESHOLDS["显著"]:
+        if h >= self.config["zone_thresholds"]["significant"]:
             return "显著"
-        if h >= ZONE_THRESHOLDS["未定"]:
+        if h >= self.config["zone_thresholds"]["uncertain"]:
             return "未定"
         return "衰减"

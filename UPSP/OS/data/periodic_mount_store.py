@@ -10,7 +10,7 @@ import os
 from datetime import datetime
 
 from data.atomic_write import atomic_write_json
-from constants import TZ_SHANGHAI
+from constants import local_now
 from paths import STM_CONTEXT_DIR
 
 
@@ -20,7 +20,7 @@ DEFAULT_PERIODIC_MOUNTS_PATH = os.path.join(STM_CONTEXT_DIR, "periodic_mounts.js
 class PeriodicMountStore:
     def __init__(self, periodic_mounts_path=None, now_fn=None):
         self.path = periodic_mounts_path or DEFAULT_PERIODIC_MOUNTS_PATH
-        self.now_fn = now_fn or (lambda: datetime.now(TZ_SHANGHAI).isoformat())
+        self.now_fn = now_fn or (lambda: local_now().isoformat())
 
     def load(self):
         if not os.path.isfile(self.path):

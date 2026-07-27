@@ -77,6 +77,8 @@ _CONFIG_MAP = {
     "lately":        (CONTEXT_LATELY_JSON,         default_lately_config),
     "popup":         (CONTEXT_POPUP_JSON,         default_popup_config),
 }
+_GLOBAL_CONFIGS = {"interface", "models"}
+_PERSONA_TEMPLATE_CONFIGS = set(_CONFIG_MAP) - _GLOBAL_CONFIGS
 
 
 class ConfigStore:
@@ -90,7 +92,7 @@ class ConfigStore:
     # ==============================================================
 
     def load(self, name):
-        """读取指定配置文件。文件不存在返回默认模板"""
+        """读取指定配置文件；单位格配置缺失或损坏时明确失败。"""
         if name == "api":
             if self.use_api_environment:
                 override = os.environ.get(API_CONFIG_OVERRIDE_ENV, "").strip()
@@ -107,14 +109,13 @@ class ConfigStore:
             raise ValueError(
                 f"未知配置: {name}，已知: {list(_CONFIG_MAP.keys()) + ['api']}"
             )
-        path, default_fn = _CONFIG_MAP[name]
+        path, _ = _CONFIG_MAP[name]
 
         try:
             if not os.path.isfile(path):
-                loaded = default_fn()
-            else:
-                with open(path, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
+                raise FileNotFoundError(path)
+            with open(path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
             if not isinstance(loaded, dict):
                 raise ValueError("config must be a JSON object")
             self._validate(name, loaded)
@@ -139,41 +140,30 @@ class ConfigStore:
             return hashlib.sha256(payload).hexdigest()
         if name not in _CONFIG_MAP:
             raise ValueError(f"未知配置: {name}")
-        path, default_fn = _CONFIG_MAP[name]
+        path, _ = _CONFIG_MAP[name]
         try:
-            if os.path.isfile(path):
-                with open(path, "rb") as f:
-                    payload = f.read()
-            else:
-                payload = json.dumps(
-                    default_fn(), ensure_ascii=False, sort_keys=True
-                ).encode("utf-8")
+            with open(path, "rb") as f:
+                payload = f.read()
             return hashlib.sha256(payload).hexdigest()
         except OSError as e:
             raise ReadError(path, cause=e)
 
     def init_all(self):
-        """初始化缺失配置；旧 api.json 只在新模型真源缺失时读取一次。"""
+        """只初始化全局本机配置；单位格配置必须由 os_template 完整创建。"""
         created = []
         models_missing = not os.path.isfile(GLOBAL_MODELS_CONFIG)
-        routing_missing = not os.path.isfile(CONFIG_MODEL_ROUTING)
         migrated_models = None
-        migrated_routing = None
-        if (models_missing or routing_missing) and os.path.isfile(LEGACY_CONFIG_API):
+        if models_missing and os.path.isfile(LEGACY_CONFIG_API):
             legacy = self._read_json_object(LEGACY_CONFIG_API)
-            migrated_models, migrated_routing = self._migrate_legacy_api(legacy)
+            migrated_models, _ = self._migrate_legacy_api(legacy)
 
         for name, (path, default_fn) in _CONFIG_MAP.items():
             if not os.path.isfile(path):
+                if name not in _GLOBAL_CONFIGS:
+                    raise ReadError(path, cause=FileNotFoundError(path))
                 value = default_fn()
                 if name == "models" and migrated_models is not None:
                     value = migrated_models
-                elif (
-                    name == "model_routing"
-                    and migrated_routing is not None
-                    and models_missing
-                ):
-                    value = migrated_routing
                 self.save(name, value)
                 created.append(name)
             else:
@@ -195,6 +185,37 @@ class ConfigStore:
     def _validate(name, data):
         if not isinstance(data, dict):
             raise ValueError("config must be a JSON object")
+        if name in _PERSONA_TEMPLATE_CONFIGS:
+            ConfigStore._validate_template_shape(
+                data, _CONFIG_MAP[name][1](), path=name
+            )
+        if name == "memory":
+            heat = data["heat"]
+            significant = heat["zone_thresholds"]["significant"]
+            uncertain = heat["zone_thresholds"]["uncertain"]
+            if not 0 < uncertain < significant <= 100:
+                raise ValueError("memory heat thresholds must satisfy 0 < uncertain < significant <= 100")
+            if any(
+                not -100 <= value <= 0
+                for value in heat["decay_rates"].values()
+            ):
+                raise ValueError("memory heat decay rates must be between -100 and 0")
+            initial = heat["initial_by_weight"]
+            if set(initial) != {"1", "2", "3", "4", "5"} or any(
+                not 0 <= value <= 100 for value in initial.values()
+            ):
+                raise ValueError("memory heat initial_by_weight must define 1..5 in range 0..100")
+            if not 0 <= heat["recall_boost"] <= 100:
+                raise ValueError("memory heat recall_boost out of range")
+            if not 1 <= heat["upgrade_high_rounds"] <= 100000:
+                raise ValueError("memory heat upgrade_high_rounds out of range")
+            if not 0 <= heat["locked_value"] <= 100:
+                raise ValueError("memory heat locked_value out of range")
+        if (
+            name == "system"
+            and data["connectivity"]["max_latency_records"] < 1
+        ):
+            raise ValueError("connectivity.max_latency_records must be positive")
         if name == "interface":
             if data.get("locale") not in {"system", "zh-CN", "en-US"}:
                 raise ValueError("interface.locale must be system, zh-CN or en-US")
@@ -333,6 +354,41 @@ class ConfigStore:
                         raise ValueError("route slot must contain model_id")
                     if str(slot.get("reasoning_effort") or "") not in SUPPORTED_REASONING_EFFORTS:
                         raise ValueError("invalid route reasoning effort")
+
+    @staticmethod
+    def _validate_template_shape(value, template, *, path):
+        if isinstance(template, dict):
+            if not isinstance(value, dict):
+                raise ValueError(f"{path} must be an object")
+            if set(value) != set(template):
+                missing = sorted(set(template) - set(value))
+                extra = sorted(set(value) - set(template))
+                raise ValueError(
+                    f"{path} shape mismatch: missing={missing}, extra={extra}"
+                )
+            for key, child in template.items():
+                ConfigStore._validate_template_shape(
+                    value[key], child, path=f"{path}.{key}"
+                )
+            return
+        if isinstance(template, list):
+            if not isinstance(value, list):
+                raise ValueError(f"{path} must be an array")
+            return
+        if template is None:
+            return
+        expected = type(template)
+        if expected is int:
+            valid = isinstance(value, int) and not isinstance(value, bool)
+        elif expected is float:
+            valid = (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+            )
+        else:
+            valid = isinstance(value, expected)
+        if not valid:
+            raise ValueError(f"{path} has invalid type")
 
     @staticmethod
     def _contains_secret_override(value):
@@ -661,15 +717,11 @@ class ConfigStore:
 
     def get_heartbeat_interval(self):
         cfg = self.load("system")
-        return cfg.get("heartbeat", {}).get("interval", 5)
+        return cfg["heartbeat"]["interval"]
 
     def get_token_params(self):
         cfg = self.load("system")
-        token = cfg.get("token_usage") or cfg.get("token", {})
-        return {
-            "warning_ratio": token.get("warning_ratio", 0.7),
-            "urgent_ratio": token.get("urgent_ratio", token.get("critical_ratio", 0.85)),
-        }
+        return {"warning_ratio": cfg["token_usage"]["warning_ratio"]}
 
     def get_context_window_for_endpoint(self, endpoint):
         cfg = self.load("api")
@@ -828,49 +880,29 @@ class ConfigStore:
     def get_relation_params(self):
         """P1-6: 关系域参数（DDS §9 / config/relation.json）"""
         cfg = self.load("relation")
-        focus = cfg.get("relation_focus", {})
-        return {
-            "max_slots": focus.get("max_slots", 3),
-        }
+        return {"max_slots": cfg["relation_focus"]["max_slots"]}
 
     def get_relation_card_write_guard(self):
         """关系卡写入护栏配置。Base 默认关闭大改动拦截。"""
         cfg = self.load("relation")
-        guard = cfg.get("relation_card_write", {})
-        return {
-            "single_declaration": guard.get("single_declaration", True),
-            "single_target": guard.get("single_target", True),
-            "large_delta_guard": guard.get("large_delta_guard", False),
-            "max_delta_chars": guard.get("max_delta_chars", 800),
-        }
+        return dict(cfg["relation_card_write"])
 
     def get_periodic_limits(self):
         """定期层字符限额（DDS §21.1 / §19.5）"""
         cfg = self.load("periodic")
-        limits = cfg.get("limits", {})
-        return {
-            "periodic_memory_items_chars": limits.get("periodic_memory_items_chars", 65536),
-        }
+        return {"periodic_memory_items_chars": cfg["limits"]["periodic_memory_items_chars"]}
 
     def get_now_cache_params(self):
         """当前缓存字符窗口参数（DDS §19 / Spec 061）"""
-        return self._cache_params("now", 65536, 16384)
+        return self._cache_params("now")
 
     def get_lately_cache_params(self):
         """最近缓存字符窗口参数（DDS §19 / Spec 061）"""
-        return self._cache_params("lately", 262144, 65536)
+        return self._cache_params("lately")
 
-    def _cache_params(self, name, default_budget, default_trim):
+    def _cache_params(self, name):
         cfg = self.load(name)
-        try:
-            budget = max(1, int(cfg.get("budget_chars", default_budget)))
-        except (TypeError, ValueError):
-            budget = default_budget
-        try:
-            trim = max(1, int(cfg.get("trim_chars", default_trim)))
-        except (TypeError, ValueError):
-            trim = default_trim
-        return {"budget_chars": budget, "trim_chars": min(trim, budget)}
+        return {"budget_chars": cfg["budget_chars"], "trim_chars": cfg["trim_chars"]}
 
     def get_lately_compact_ratio(self):
         """最近缓存删后幸存段语义压缩比例（DDS §19 / Spec 063）"""
@@ -880,36 +912,22 @@ class ConfigStore:
         """最近缓存压缩节律参数（DDS §19 / Spec463）"""
         cfg = self.load("lately")
 
-        def ratio(key, default):
-            try:
-                value = float(cfg.get(key, default))
-            except (TypeError, ValueError):
-                value = default
-            return min(1.0, max(0.0, value))
-
-        def integer(key, default):
-            try:
-                value = int(cfg.get(key, default))
-            except (TypeError, ValueError):
-                value = default
-            return max(1, value)
-
         return {
-            "compact_ratio": ratio("compact_ratio", 0.618),
-            "compact_shard_chars": integer("compact_shard_chars", 8192),
-            "compact_shard_ratio": ratio("compact_shard_ratio", 0.314),
+            "compact_ratio": cfg["compact_ratio"],
+            "compact_shard_chars": cfg["compact_shard_chars"],
+            "compact_shard_ratio": cfg["compact_shard_ratio"],
         }
 
     def get_now_policy_by_kind(self):
         """当前缓存各 kind 的进入策略（DDS §19 / Spec 038）。"""
         cfg = self.load("now")
-        policies = cfg.get("policy_by_kind", {})
+        policies = cfg["policy_by_kind"]
         return {kind: dict(policy) for kind, policy in policies.items()}
 
     def get_context_persistent_lanes(self):
         """Spec625 持久语料轨道；C 轨由 ContextStore 专用入口承接。"""
         cfg = self.load("now")
-        source = cfg.get("persistent_lanes", {})
+        source = cfg["persistent_lanes"]
         result = {}
         for lane in ("now_lately_raw", "now_lately_no_raw"):
             kinds = source.get(lane, []) if isinstance(source, dict) else []
@@ -921,13 +939,13 @@ class ConfigStore:
     def get_lately_allowed_kinds(self):
         """最近缓存允许进入履带的语料 kind（DDS §19 / Spec 038）。"""
         cfg = self.load("lately")
-        kinds = cfg.get("allowed_kinds", [])
+        kinds = cfg["allowed_kinds"]
         return [kind for kind in kinds if isinstance(kind, str) and kind]
 
     def get_high_freq_params(self):
         """高频层参数（DDS §19.3 / §19.5）"""
         cfg = self.load("high_freq")
         return {
-            "index_display_limits": cfg.get("index_display_limits", {}),
-            "reference_window_chars": cfg.get("content_limits", {}).get("reference_window_chars", 65536),
+            "index_display_limits": cfg["index_display_limits"],
+            "reference_window_chars": cfg["content_limits"]["reference_window_chars"],
         }

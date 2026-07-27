@@ -27,6 +27,8 @@ from initialization.windows_data import ensure_active_instance  # noqa: E402
 
 TEST_LAYOUT = ensure_active_instance(UPSP_ROOT)
 TEST_PERSONA_DIR = TEST_LAYOUT.persona_dir
+from data.config_store import ConfigStore  # noqa: E402
+ConfigStore().init_all()
 
 PersonaInitializer(
     TEST_PERSONA_DIR,

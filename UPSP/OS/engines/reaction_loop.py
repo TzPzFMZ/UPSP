@@ -1,7 +1,7 @@
 """Reaction step loop runner."""
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from engines.round_context import RoundContext
 from engines.reaction_loop_main import ReactionLoopState, ReactionSession
 from engines.reaction_guide_feedback import render_active_guide_feedback
@@ -71,7 +71,6 @@ GUIDE_CALENDAR_SOURCE_LAYER = {
 }
 GUIDE_ALERT_FLAGS = {
     "api_degraded",
-    "process_down",
     "token_usage_warning",
     "context_pressure",
 }
@@ -124,7 +123,7 @@ class ReactionLoopRunner(EngineComponent):
             except Exception:
                 self.chronicle_focus = None
                 return {}
-        closed_at = datetime.now(TZ_SHANGHAI).isoformat()
+        closed_at = local_now().isoformat()
         title = str(target.get("title") or flag or layer).strip()
         source_layer = GUIDE_CALENDAR_SOURCE_LAYER.get(layer, "")
         try:
@@ -176,7 +175,6 @@ class ReactionLoopRunner(EngineComponent):
                 flags,
                 state_store=self.sm,
                 connectivity_store=self.connectivity_store,
-                process_health_checker=getattr(self.hb, "_check_process_down", None),
             )
             if isinstance(base, dict):
                 base["heartbeat_flags"] = flags
@@ -188,7 +186,6 @@ class ReactionLoopRunner(EngineComponent):
                 context_store=self.ctx_store,
                 state_store=self.sm,
                 connectivity_store=self.connectivity_store,
-                process_health_checker=getattr(self.hb, "_check_process_down", None),
             )
         except Exception:
             return None
@@ -864,7 +861,6 @@ class ReactionLoopRunner(EngineComponent):
         })
         try:
             self.sm.confirm_identity()
-            self.sm.clear_flags(["identity_timeout"])
         except Exception:
             pass
         return updated

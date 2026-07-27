@@ -897,6 +897,21 @@ export const english = {
   "模型设置、密钥和缓存在“LocalAppData\\UPSP”。": "Model settings, keys, and cache are stored in LocalAppData\\UPSP.",
   "卸载和覆盖升级不会删除这些内容。": "Uninstalling or upgrading in place does not delete this data.",
   "密钥当前使用本机忽略追踪的 JSON 或环境变量保存，未使用 Windows 加密存储。": "Keys are currently stored in locally ignored JSON or environment variables, without Windows encrypted storage.",
+  "记忆代谢": "Memory metabolism",
+  "记忆热度、召回、衰减与升格边界。": "Heat, recall, decay, and promotion boundaries for memory.",
+  "显著区阈值": "Significant-zone threshold",
+  "不确定区阈值": "Uncertain-zone threshold",
+  "显著区每轮衰减": "Significant-zone decay per round",
+  "不确定区每轮衰减": "Uncertain-zone decay per round",
+  "衰减区每轮衰减": "Decay-zone decay per round",
+  "权重一初始热度": "Initial heat for weight 1",
+  "权重二初始热度": "Initial heat for weight 2",
+  "权重三初始热度": "Initial heat for weight 3",
+  "权重四初始热度": "Initial heat for weight 4",
+  "权重五初始热度": "Initial heat for weight 5",
+  "召回增益": "Recall boost",
+  "高热升格轮数": "High-heat rounds before promotion",
+  "热度锁定值": "Locked heat value",
 } as const;
 
 export type MessageKey = keyof typeof english;

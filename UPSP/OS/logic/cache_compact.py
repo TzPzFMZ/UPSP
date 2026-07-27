@@ -1,7 +1,7 @@
 """最近缓存删后幸存段压缩执行器。
 
 cache_compact 是基座工具：cleanup LLM 只产语义摘要/合并候选，
-脚本在这里执行 lately_cache.jsonl 重写并保留 raw_log 原文镜像。
+脚本在这里执行 lately_cache.jsonl 重写；raw_log 与 Corpus 节归档原文不随压缩改写。
 """
 
 

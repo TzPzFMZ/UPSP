@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from engines.general_tool_dispatcher import SUCCESS_STATUSES
 from engines.reaction_helpers import safe_feedback_value
 from logic.interaction_meta import cache_interaction_meta
@@ -306,7 +306,7 @@ def provider_recovery_next_count(state_manager, workbench, kind):
         "task_id": task_id,
         "count": count,
         "limit": PROVIDER_INTERRUPTION_RECOVERY_LIMIT,
-        "updated_at": datetime.now(TZ_SHANGHAI).isoformat(),
+        "updated_at": local_now().isoformat(),
     }
     try:
         state_manager._set_internal(

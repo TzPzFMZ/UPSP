@@ -6,7 +6,7 @@ processed.jsonl 和本次批次备份，再原子清空 pending.jsonl。
 """
 import json
 import os
-from datetime import datetime
+from constants import local_now
 
 from data.atomic_write import atomic_write_text
 from paths import CONTAINER_ITERATION_DIR
@@ -97,7 +97,7 @@ class EvolutionStore:
 
     def _processed_batch_path(self, name, round_num):
         directory = self.tacit_dir if name == "tacit" else self.connection_dir
-        stamp = datetime.now().strftime("%Y_%m_%d")
+        stamp = local_now().strftime("%Y_%m_%d")
         return os.path.join(directory, f"processed_{stamp}_R{round_num}.jsonl")
 
     def _read_records(self, path):
@@ -116,7 +116,7 @@ class EvolutionStore:
             return [line.rstrip("\n") for line in f if line.strip()]
 
     def _format_evolution(self, evolution_text, round_num, stats):
-        now = datetime.now().isoformat()
+        now = local_now().isoformat()
         stats_json = json.dumps(stats, ensure_ascii=False, indent=2)
         return (
             f"# 进化集 R{round_num}\n\n"

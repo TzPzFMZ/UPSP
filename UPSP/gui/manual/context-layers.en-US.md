@@ -21,6 +21,6 @@ Context Review shows ten projections for the selected Frame:
 - `60_statusbar`: independent status-bar layer.
 - `99_popup`: the final GUIDE, reminder, and warning layer.
 
-Machine truth remains `step.json.messages` and the Round JSONL projection. The page can select retained FIFO rounds and their setup, reaction, and cleanup Frames. Valid call-header JSON is rendered as recursive field tables with the original JSON retained. Tool headers show a compact summary and an individual detail dialog for each real tool description and parameter schema. Other layers prefer `content_md`.
+Layered machine truth lives in `layers/*.json`; the sole request body actually sent is `step.json.request_body`, while Round JSONL retains call and settlement event projections. The page can select retained FIFO rounds and their setup, reaction, and cleanup Frames. Valid call-header JSON is rendered as recursive field tables with the original JSON retained. Tool headers show a compact summary and an individual detail dialog for each real tool description and parameter schema. Other layers prefer `content_md`.
 
 Rendering only improves reading. It never parses Markdown back into Runtime facts or rewrites source content.

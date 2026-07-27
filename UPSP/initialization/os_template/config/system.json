@@ -1,6 +1,17 @@
 {
   "_comment": "系统级基础配置",
-  "_version": "Base-0.11.1",
+  "_version": "Base-0.47.9",
+  "_deferred_fields": [
+    "identity_timeout",
+    "emergency.contact",
+    "emergency.local_fallback_model",
+    "emergency.physical_alert",
+    "health_check.on_boot",
+    "health_check.on_standby",
+    "health_check.on_rhythm",
+    "fatigue.force_sleep_hours",
+    "token_usage.critical_ratio"
+  ],
 
   "heartbeat": {
     "interval": 5

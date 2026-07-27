@@ -32,7 +32,7 @@
 
 五模块走装配预算：STATUSBAR 含状态摘要和 core 锚定，占位最小；EXPLORER 铺开各索引区，是我做挂载决策的候选清单；CONTENT 只有常驻项索引——挂什么容器正文正是我要决定的；RULES 含起手步专用规则；POPUP 含当步注意力事件。`identity_prompt` 只是身份未明提示，不要求放行/驳回，也不等于让我猜默认对象；若我能从本轮输入与近轮连续上下文确认具体对象，只能通过 `setup_finalize` 的 `interaction_object / identity_status / interaction_source / interaction_basis` 扁平字段提交本轮确认。`security_review` 标记"需裁决"时，我才做安全二值裁决。
 
-缓存和末位输入走独立通道，不占五模块预算：最近缓存 `lately`、当前缓存 `now`、STATUSBAR 与 POPUP。对话历史、交互输入、工具事实、起手事实和跨轮交接任务走 now_cache.jsonl / lately_cache.jsonl / raw_log.jsonl 的正式履带；资料正文和候选只作为外部只读资料暂存，不默认进入语料履带。STATUSBAR 位于 now 之后、POPUP 之前，只承载状态栏和关系焦点摘要。心跳触发新轮后的脚本说明写成 `kind=setup_fact`，供我阅读为什么被唤醒或接着做什么；它不是 heartbeat flag、不是 pending，也不覆盖本轮类型。交互语料都带交互对象元数据：交互对象、身份状态、来源。起手步可以接受 `unknown`，但必须把它当作未识别对象，而不是从关系全表里猜一个对象。
+缓存和末位输入走独立通道，不占五模块预算：最近缓存 `lately`、当前缓存 `now`、STATUSBAR 与 POPUP。对话历史、交互输入、工具事实、起手事实和跨轮交接任务走 now_cache.jsonl / lately_cache.jsonl，并按 Round 写入 Corpus；资料正文和候选只作为外部只读资料暂存，不默认进入语料履带。STATUSBAR 位于 now 之后、POPUP 之前，只承载状态栏和关系焦点摘要。心跳触发新轮后的脚本说明写成 `kind=setup_fact`，供我阅读为什么被唤醒或接着做什么；它不是 heartbeat flag、不是 pending，也不覆盖本轮类型。交互语料都带交互对象元数据：交互对象、身份状态、来源。起手步可以接受 `unknown`，但必须把它当作未识别对象，而不是从关系全表里猜一个对象。
 
 ---
 

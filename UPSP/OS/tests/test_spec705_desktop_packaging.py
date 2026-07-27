@@ -72,6 +72,11 @@ def test_spec705_shell_keeps_native_and_runtime_boundaries():
     assert "ArgumentList.Add" in backend
     assert "JobObjectLimitKillOnJobClose" in backend
     assert "TerminateStartedProcess" in backend
+    assert (
+        "Graceful backend shutdown timed out; terminating the managed process tree."
+        in backend
+    )
+    assert "catch (TimeoutException)" in backend
     assert "DrainOutputAsync" in backend
     assert 'Text(root, "product_version")' in backend
     assert "AssemblyInformationalVersionAttribute" in backend
@@ -176,10 +181,10 @@ def test_spec707_product_manifest_is_the_release_version_truth():
     assert product == {
         "schema_version": "upsp_product_manifest.v1",
         "name": "UPSP",
-        "version": "0.1.0-alpha.4",
-        "windows_file_version": "0.1.0.4",
+        "version": "0.1.0-alpha.5",
+        "windows_file_version": "0.1.0.5",
         "channel": "alpha",
-        "build_number": 4,
+        "build_number": 5,
         "author": {
             "zh-CN": "由 TzPzFMZ 发起、设计并与 AI 协作开发",
             "en-US": (
@@ -193,7 +198,7 @@ def test_spec707_product_manifest_is_the_release_version_truth():
         "copyright": "Copyright (c) 2026 TzPzFMZ",
     }
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "0.1.0a4"' in pyproject
+    assert 'version = "0.1.0a5"' in pyproject
     manifest = (
         DESKTOP_ROOT / "UPSP.Desktop" / "app.manifest"
     ).read_text(encoding="utf-8")

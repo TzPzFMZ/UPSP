@@ -101,11 +101,10 @@ class TestInputLayerAssembly:
 
 
 class TestToolFeedbackCorpusBlocks:
-    def test_spec407_historical_proof_blocks_promote_to_lately_and_raw(self, tmp_path, monkeypatch):
+    def test_spec407_historical_proof_blocks_promote_to_lately_and_raw_log(self, tmp_path, monkeypatch):
         from data import context_store as ctxs
 
-        monkeypatch.setattr(ctxs, "RAW_LOG", str(tmp_path / "raw_log.md"))
-        monkeypatch.setattr(ctxs, "RAW_LOG_JSONL", str(tmp_path / "raw_log.jsonl"), raising=False)
+        monkeypatch.setattr(ctxs, "CONTAINER_CORPUS_DIR", str(tmp_path / "corpus"))
         monkeypatch.setattr(ctxs, "STM_CONTEXT_CACHE_DIR", str(tmp_path / "cache"), raising=False)
         monkeypatch.setattr(ctxs, "STM_CONTEXT_NOW_CACHE_JSONL", str(tmp_path / "cache" / "now_cache.jsonl"), raising=False)
         monkeypatch.setattr(ctxs, "STM_CONTEXT_LATELY_CACHE_JSONL", str(tmp_path / "cache" / "lately_cache.jsonl"), raising=False)
@@ -132,7 +131,12 @@ class TestToolFeedbackCorpusBlocks:
                     "cache_summary",
                 ]
 
-        store = ctxs.ContextStore(config_store=CacheConfig())
+        store = ctxs.ContextStore(
+            config_store=CacheConfig(),
+            raw_log_jsonl=str(tmp_path / "buffer" / "raw_log.jsonl"),
+            raw_log_md=str(tmp_path / "buffer" / "raw_log.md"),
+            corpus_rhythms_dir=str(tmp_path / "corpus" / "public" / "rhythms"),
+        )
         store.append_to_cache(18, "user", "请继续读书。", kind="interaction")
         store.append_to_cache(18, "system", "起手安全裁决通过。", kind="setup_fact")
         store.append_to_cache(18, "tool", "已读取文件：book.md。", kind="tool_fact")
@@ -151,7 +155,9 @@ class TestToolFeedbackCorpusBlocks:
         ]
         raw_blocks = [
             json.loads(line)
-            for line in (tmp_path / "raw_log.jsonl").read_text(encoding="utf-8").splitlines()
+            for line in (tmp_path / "buffer" / "raw_log.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
             if line.strip()
         ]
 
@@ -163,6 +169,7 @@ class TestToolFeedbackCorpusBlocks:
         assert "material" not in raw_kinds
         assert {"interaction", "setup_fact", "tool_fact", "relay_handoff"} <= lately_kinds
         assert {"interaction", "setup_fact", "tool_fact", "relay_handoff"} <= raw_kinds
+        assert not (tmp_path / "corpus" / "public" / "rhythms").exists()
 
         assert not (tmp_path / "tool_call_ledger.jsonl").exists()
 

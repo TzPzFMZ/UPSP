@@ -56,7 +56,7 @@
 
 训练材料整理。先给 `connection_material_settle` 填联系材料——跨条目关键词桥接。选**词对**（非条目对），只用关键词不用感受词和交互对象。关键词来自本轮记忆写入回执、记忆正文读取回执或历史索引；每轮最多 8 条。**光锥约束**：所有被桥接的条目必须能通过图连通到本轮写入或回执中的记忆条目（脚本 BFS 校验），悬空词对会被拒绝。输入字段是 `word_a/entry_a/word_b/entry_b/note`。随后给 `tacit_material_settle` 填默契材料——逐条记录起手步预选项被反应步实际承接、明确放弃、未命中有效联系图，或反应步在实际工作前额外引入的新内容/关联，动作为 kept / dropped / added。`kept` 必须有承接证据或有效联系命中；`dropped` 可来自明确取消，也可来自没有有效联系命中；`added` 只认最终回复前的前置痕迹，如读取请求、有效回执、交接或显式新增声明，不从最终答案事后脑补。联想集不交给我裁决，由脚本基于本轮有效 `memory_write_receipt` 直接更新既有五张计数表。
 
-缓存压缩处理。最近缓存压缩——只在本轮发生 lately 字符履带删除后置位维护节律。幸存段仍作为原语料块留在“最近缓存 lately”层；善后 POPUP 只说明 Runtime 将置位 `cache_compaction_due`，不要求我在 `cleanup_finalize.lately_compression` 中选择 keep、drop 或 replace。下一轮由 rhythm agenda 物化 `cache_compaction_rhythm_guide`，再通过 `guide_submit(submit_cache_compaction_shard)` 调用后台 `cache_compact`。原文已由 raw_log 保留，缓存只负责近感，不承担不可压缩真源；精确回想应走记忆条目、工作容器、剪贴板、round JSONL 审计或 step artifact。压缩不按 kind 白名单排除，不按当前轮保护，不给最小承诺特保。
+缓存压缩处理。最近缓存压缩——只在本轮发生 lately 字符履带删除后置位维护节律。幸存段仍作为原语料块留在“最近缓存 lately”层；善后 POPUP 只说明 Runtime 将置位 `cache_compaction_due`，不要求我在 `cleanup_finalize.lately_compression` 中选择 keep、drop 或 replace。下一轮由 rhythm agenda 物化 `cache_compaction_rhythm_guide`，再通过 `guide_submit(submit_cache_compaction_shard)` 调用后台 `cache_compact`。A 轨原文由 raw_log 保留并在主轴节律轮归档为 Corpus 节，缓存只负责近感，不承担不可压缩真源；精确回想应走记忆条目、工作容器、剪贴板、round JSONL 审计或 step artifact。压缩不按 kind 白名单排除，不按当前轮保护，不给最小承诺特保。
 
 这里的 `cache_compact` 是基座执行器：Runtime 用结构化 pending metadata 记录待压缩的 lately 块集合，我只给动作、替换文本和理由。真正重写 `lately_cache.jsonl` 的执行器是基座工具 `cache_compact`（`substrate_tool / sync_tool / context / high`），由脚本调用；我不直接调用它，也不把缓存压缩当成 protocol_tool 写入 persona 真源，不产生 `protocol_tool_receipt`。
 

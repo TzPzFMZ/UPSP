@@ -260,8 +260,6 @@ def send_message_once(
 
     rt.on_round_complete = on_round_complete
     probe_enabled = single_round_probe_enabled()
-    if not probe_enabled:
-        rt.hb.start()
 
     try:
         rt.hb.enqueue_message(message)
@@ -332,7 +330,6 @@ def run_pending_once(
             result["round_file"] = f"round_{round_num}.jsonl"
 
     rt.on_round_complete = on_round_complete
-    rt.hb.start()
 
     try:
         flags = rt.sm.get_flags()

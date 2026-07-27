@@ -110,7 +110,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         ("runtime", "_process_forgetting_result", "forgetting_persist"),
         ("runtime", "_process_memory_lifecycle", "memory_lifecycle"),
         ("runtime", "_process_evolution_set", "evolution_set"),
-        ("runtime", "_process_rest_cycle", "rest_cycle"),
         ("context", "save_round_to_cache", "round_cache_save"),
     ])
     def test_cleanup_required_obligation_failure_is_unsettled(
@@ -169,11 +168,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 RuntimeError("calendar unavailable")),
         )
-        monkeypatch.setattr(
-            rt.ctx_store,
-            "archive_raw_log",
-            lambda: (_ for _ in ()).throw(OSError("archive unavailable")),
-        )
         rt.on_round_complete = lambda *_args: (_ for _ in ()).throw(
             RuntimeError("callback unavailable"))
 
@@ -190,7 +184,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         assert {
             reason.split(":", 1)[0]
             for reason in outcome["degraded_reasons"]
-        } == {"raw_log_archive", "round_complete_callback"}
+        } == {"round_complete_callback"}
 
     def test_rhythm_calendar_cleanup_happy_path_clears_applied_flags(
             self, tmp_path, monkeypatch):
@@ -255,11 +249,148 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         assert ("chronicle_cleanup",) in calls
         assert ("corpus_cleanup",) in calls
         assert [call for call in calls if call[0] == "merge"] == [
-            ("merge", "rounds", "daily"),
+            ("merge", "rhythms", "daily"),
             ("merge", "daily", "weekly"),
             ("merge", "weekly", "monthly"),
             ("merge", "monthly", "quarterly"),
         ]
+
+    @pytest.mark.parametrize("flag", ["calendar_day_due", "rhythm_due"])
+    def test_rhythm_without_applied_main_axis_does_not_archive_raw_log(
+            self, tmp_path, monkeypatch, flag):
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+        rt.sm.set_flag(flag, True)
+        archive_calls = []
+        monkeypatch.setattr(
+            rt.ctx_store,
+            "archive_raw_log",
+            lambda: archive_calls.append(True),
+        )
+        monkeypatch.setattr(
+            rt.cleanup_pipeline, "_process_calendar_cleanup",
+            lambda *_args, **_kwargs: None,
+        )
+
+        rt.cleanup_pipeline.run(
+            self._round_context(rt, round_type="rhythm"),
+            {"response": "done"},
+        )
+
+        assert archive_calls == []
+
+    def test_main_axis_applied_receipt_archives_raw_log(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+        rt.sm.set_flag("rhythm_due", True)
+        archive_calls = []
+        monkeypatch.setattr(
+            rt.ctx_store,
+            "archive_raw_log",
+            lambda: archive_calls.append(True) or "rhythm.jsonl",
+        )
+        monkeypatch.setattr(
+            rt.cleanup_pipeline, "_process_calendar_cleanup",
+            lambda *_args, **_kwargs: None,
+        )
+
+        rt.cleanup_pipeline.run(
+            self._round_context(rt, round_type="rhythm"),
+            {
+                "response": "done",
+                "_chronicle_write_receipts": [{
+                    "tool_id": "chronicle_write",
+                    "status": "applied",
+                    "layer": "rhythms",
+                    "round_type": "rhythm",
+                }],
+            },
+        )
+
+        assert archive_calls == [True]
+
+    def test_calendar_merge_requires_matching_applied_receipt(
+            self, tmp_path, monkeypatch):
+        import data.chronicle_store as chronicle_module
+
+        rt = self._make_runtime(tmp_path)
+        calls = []
+
+        class FakeChronicleStore:
+            def cleanup_expired(self):
+                calls.append(("chronicle_cleanup",))
+
+        class FakeCorpusStore:
+            def merge_layer(self, source, target):
+                calls.append(("merge", source, target))
+
+            def cleanup_expired(self):
+                calls.append(("corpus_cleanup",))
+
+        monkeypatch.setattr(
+            chronicle_module, "ChronicleStore", FakeChronicleStore)
+        monkeypatch.setattr(
+            chronicle_module, "CorpusStore", FakeCorpusStore)
+        monkeypatch.setattr(
+            rt.cleanup_pipeline,
+            "_cleanup_trash",
+            lambda: calls.append(("trash_cleanup",)),
+        )
+        state = rt.sm.load()
+        state["base"]["heartbeat_flags"]["calendar_day_due"] = True
+
+        rt.cleanup_pipeline._process_calendar_cleanup(
+            {"response": ""},
+            1,
+            state,
+            settlement_result={},
+        )
+
+        assert ("merge", "rhythms", "daily") not in calls
+        assert ("trash_cleanup",) not in calls
+
+    def test_completed_year_attic_failure_propagates(
+            self, tmp_path, monkeypatch):
+        import data.chronicle_store as chronicle_module
+
+        rt = self._make_runtime(tmp_path)
+
+        class FakeChronicleStore:
+            def cleanup_expired(self):
+                return []
+
+        class FakeCorpusStore:
+            def merge_layer(self, _source, _target):
+                return None
+
+            def cleanup_expired(self):
+                return []
+
+            def move_to_attic(self):
+                raise OSError("attic unavailable")
+
+        monkeypatch.setattr(
+            chronicle_module, "ChronicleStore", FakeChronicleStore)
+        monkeypatch.setattr(
+            chronicle_module, "CorpusStore", FakeCorpusStore)
+        state = rt.sm.load()
+        state["base"]["heartbeat_flags"]["calendar_year_due"] = True
+
+        with pytest.raises(OSError, match="attic unavailable"):
+            rt.cleanup_pipeline._process_calendar_cleanup(
+                {"response": ""},
+                1,
+                state,
+                settlement_result={
+                    "_chronicle_write_receipts": [{
+                        "tool_id": "chronicle_write",
+                        "status": "applied",
+                        "layer": "yearly",
+                        "round_type": "rhythm",
+                    }],
+                },
+            )
 
     def test_cleanup_natural_noop_remains_settled(self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
@@ -431,10 +562,9 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         flags = rt.sm.get_flags()
         assert flags["calendar_day_due"] is False
 
-    def test_finalize_flags_clears_rhythm_standby_shelve_but_not_unsettled_health_flags(self, tmp_path):
+    def test_finalize_flags_clears_standby_but_not_active_health_flags(self, tmp_path):
         rt = self._make_runtime(tmp_path)
         rt.sm.set_flag("api_degraded", True)
-        rt.sm.set_flag("process_down", True)
         rt.sm.set_flag("token_usage_warning", True)
 
         rt._finalize_flags(
@@ -453,7 +583,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
 
         flags = rt.sm.get_flags()
         assert flags["api_degraded"] is True
-        assert flags["process_down"] is True
+        assert flags["process_down"] is False
         assert flags["token_usage_warning"] is True
 
         rt.sm.set_flag("standby_due", True)

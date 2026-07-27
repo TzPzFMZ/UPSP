@@ -303,7 +303,7 @@ def test_spec472_context_pressure_guide_submit_settles_alert_flag(tmp_path):
     assert store.get("base.active_guides.rhythm") is None
 
 
-def test_spec472_multi_item_rhythm_guide_stays_active_until_all_items_done(tmp_path):
+def test_reserved_process_flag_is_not_materialized_as_guide_item(tmp_path):
     from data.workbench import WorkbenchStore
     from logic.guide_submit import apply_guide_submit
     from logic.rhythm_guide_materializer import materialize_current_rhythm_guide
@@ -340,31 +340,6 @@ def test_spec472_multi_item_rhythm_guide_stays_active_until_all_items_done(tmp_p
 
     assert first["status"] == "applied"
     assert first["completed_flags"] == ["api_degraded"]
-    assert store.current_active_guide_id() == guide_id
-
-    second = apply_guide_submit(
-        store,
-        {
-            "guide_id": guide_id,
-            "submissions": [{
-                "item_id": "process_down",
-                "option_id": "settle_alert",
-                "fields": {
-                    "status": "recovered",
-                    "summary": "process restored",
-                },
-            }],
-        },
-        evidence_context={
-            "round_num": 472,
-            "state_store": _StateStoreStub(),
-            "alert_store": _AlertStoreStub(),
-            "completed_flags": ["api_degraded"],
-        },
-    )
-
-    assert second["status"] == "applied"
-    assert second["completed_flags"] == ["process_down"]
     assert store.current_active_guide_id() is None
     guide_dir = guide_id.replace(":", "__colon__")
     guide_path = (
@@ -376,6 +351,7 @@ def test_spec472_multi_item_rhythm_guide_stays_active_until_all_items_done(tmp_p
     )
     guide_doc = json.loads(guide_path.read_text(encoding="utf-8"))
     assert guide_doc["status"] == "completed"
+    assert [item["item_id"] for item in guide_doc["items"]] == ["api_degraded"]
     ledger_text = (
         tmp_path
         / "workbench"

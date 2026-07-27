@@ -99,7 +99,7 @@ def test_spec366_current_guide_skips_completed_calendar_to_interaction():
     assert "主轴节律指南" not in popup
 
 
-def test_spec366_current_guide_filters_completed_emergency_items():
+def test_current_guide_ignores_reserved_process_flag():
     from logic.rhythm_guidance import render_current_guide_popup
 
     popup = render_current_guide_popup(
@@ -111,10 +111,10 @@ def test_spec366_current_guide_filters_completed_emergency_items():
         completed_flags={"api_degraded"},
     )
 
-    assert popup.count("GUIDE｜") == 1
-    assert "进程异常处理" in popup
+    assert "process_down" not in popup
+    assert "进程异常处理" not in popup
     assert "API 异常处理" not in popup
-    assert "主轴节律指南" not in popup
+    assert "主轴节律指南" in popup
 
 
 def test_spec366_runtime_guide_popup_reads_transient_completed_flags():

@@ -7,7 +7,7 @@ data 层独占 dreams.md 文件 I/O。
 import os
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from errors import WriteError
 from paths import DREAMS_MD
 
@@ -23,7 +23,7 @@ class DreamStore:
         if not text:
             return False
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         title = f"## R{round_num} {now}" if round_num is not None else f"## {now}"
         entry = f"\n{title}\n{text}\n"
         try:

@@ -24,10 +24,10 @@ class TestRuntimeRoundType(RuntimeTestMixin):
         flags = {"continue_requested": True}
         assert rt._determine_round_type(flags) == "relay"
 
-    def test_determine_round_type_autonomous(self, tmp_path):
+    def test_reserved_fatigue_flag_does_not_trigger_a_round(self, tmp_path):
         rt = self._make_runtime(tmp_path)
         flags = {"fatigue_expired": True}
-        assert rt._determine_round_type(flags) == "autonomous"
+        assert rt._determine_round_type(flags) is None
 
     def test_determine_round_type_autonomous_when_evolution_pending(self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
@@ -49,7 +49,8 @@ class TestRuntimeRoundType(RuntimeTestMixin):
         )
         from schemas.state import default_state
 
-        state_flags = set(default_state()["base"]["heartbeat_flags"])
+        reserved = {"fatigue_expired", "identity_timeout", "process_down"}
+        state_flags = set(default_state()["base"]["heartbeat_flags"]) - reserved
         grouped = set()
         for flags in HEARTBEAT_TRIGGER_GROUPS.values():
             grouped.update(flags)
@@ -76,7 +77,7 @@ class TestRuntimeRoundType(RuntimeTestMixin):
         rt = self._make_runtime(tmp_path)
 
         assert rt._determine_round_type({"api_degraded": True}) == "rhythm"
-        assert rt._determine_round_type({"process_down": True}) == "rhythm"
+        assert rt._determine_round_type({"process_down": True}) is None
         assert rt._determine_round_type({"token_usage_warning": True}) == "rhythm"
         assert rt._determine_round_type({"context_pressure": True}) == "rhythm"
         assert rt._determine_round_type({"cache_compaction_due": True}) == "rhythm"
@@ -126,7 +127,7 @@ class TestRuntimeRoundType(RuntimeTestMixin):
             [{"alert_type": "api_degraded", "status": "applied"}],
         )
 
-    def test_spec443_fault_record_settles_current_emergency_guide_flag(self):
+    def test_fault_record_does_not_settle_reserved_process_flag(self):
         from engines.reaction_loop import ReactionLoopRunner
 
         state = {
@@ -149,7 +150,7 @@ class TestRuntimeRoundType(RuntimeTestMixin):
             round_type="rhythm",
         )
 
-        assert completed == {"process_down"}
+        assert completed == set()
 
     def test_warning_rhythm_does_not_update_main_axis_counter(self, tmp_path):
         rt = self._make_runtime(tmp_path)
@@ -255,7 +256,7 @@ class TestRuntimeRoundType(RuntimeTestMixin):
             "calendar_week",
             "interaction",
         ]
-        assert decision["guide_queue"][0]["flags"] == ["api_degraded", "process_down"]
+        assert decision["guide_queue"][0]["flags"] == ["api_degraded"]
         assert decision["guide_queue"][1]["flags"] == [
             "token_usage_warning",
             "context_pressure",
@@ -425,4 +426,4 @@ class TestRuntimeRoundType(RuntimeTestMixin):
         assert "中继执行反应步" in ctx.entries[0]["content"]
         assert "先执行交接里的第一动作" in ctx.entries[0]["content"]
         assert "continue_requested" in ctx.entries[0]["content"]
-        assert "identity_timeout" in ctx.entries[0]["content"]
+        assert "identity_timeout" not in ctx.entries[0]["content"]

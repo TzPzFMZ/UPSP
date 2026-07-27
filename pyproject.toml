@@ -1,6 +1,6 @@
 [project]
 name = "upsp-base"
-version = "0.1.0a4"
+version = "0.1.0a5"
 description = "UPSP Base implementation — deterministic AI persona disaster-recovery substrate"
 requires-python = ">=3.10"
 

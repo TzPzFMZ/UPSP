@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 
 
 CACHE_COMPACTION_ITEM_ID = "compress_lately_cache"
@@ -157,7 +157,7 @@ def materialize_cache_compaction_rhythm_guide(
         "guide_slot": "rhythm",
         "title": "最近缓存压缩节律",
         "status": "open",
-        "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
+        "created_at": local_now().isoformat(),
         "reason": "lately cache watermark trim triggered semantic compaction rhythm",
         "source_refs": (
             ["cache_compaction_debt"]

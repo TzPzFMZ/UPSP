@@ -312,7 +312,6 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
         monkeypatch.setattr(rt, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
-        monkeypatch.setattr(rt.ctx_store, "archive_raw_log", lambda *a, **kw: None)
 
         rt._run_cleanup("rhythm", rt.sm.load(), {
             "response": "反应步最终回复",

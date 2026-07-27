@@ -2730,6 +2730,7 @@ class TestAPIExecutor:
         from engines.runtime_services import RuntimeServices
 
         state = StateStore(path=str(tmp_path / "state.json"))
+        state.init_if_missing()
         ctx = ContextStore(
             state_store=state,
             cache_dir=str(tmp_path / "cache"),
@@ -2773,6 +2774,7 @@ class TestAPIExecutor:
         from engines.runtime_services import RuntimeServices
 
         state = StateStore(path=str(tmp_path / "state.json"))
+        state.init_if_missing()
         runner = ReactionLoopRunner(
             RuntimeServices.create(
                 state_store=state,
@@ -2802,6 +2804,7 @@ class TestAPIExecutor:
         from engines.runtime_services import RuntimeServices
 
         state = StateStore(path=str(tmp_path / "state.json"))
+        state.init_if_missing()
         state._set_internal("base.runtime.provider_interruption_recovery", {
             "kind": "provider_native_tool_empty_output",
             "task_id": "",

@@ -6,7 +6,8 @@
 
 from datetime import datetime, timedelta
 
-from constants import DYNAMIC_AXIS_KEYS, RELATION_AXIS_KEYS, TZ_SHANGHAI
+from constants import local_now
+from constants import DYNAMIC_AXIS_KEYS, RELATION_AXIS_KEYS
 from logic.feeling_lookup import FeelingWordTable
 
 
@@ -58,7 +59,7 @@ def collect_receipt_effects(receipts, observed_at=None):
 
     同一个 ``mem_id`` 即使被投影多次也只消费一次。
     """
-    observed_at = observed_at or datetime.now(TZ_SHANGHAI)
+    observed_at = observed_at or local_now()
     table = FeelingWordTable()
     dynamic = {}
     relations = {}
@@ -112,7 +113,7 @@ def collect_receipt_effects(receipts, observed_at=None):
 
 def settle_pending(entries, interactive_round=False, observed_at=None):
     """结算到期脉冲；时间或两个真实交互轮任一先到即生效。"""
-    observed_at = observed_at or datetime.now(TZ_SHANGHAI)
+    observed_at = observed_at or local_now()
     dynamic = {}
     relations = {}
     remaining = []

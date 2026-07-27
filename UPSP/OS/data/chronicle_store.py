@@ -11,7 +11,7 @@ DDS §28 编年史 + §31 语料库
   Chronicle/yearly/   年志（不删）
 
 语料库内部结构（COR- 无注册表，纯目录）：
-  Corpus/public/rounds/    轮备份（近5日）
+  Corpus/public/rhythms/   节级原始语料（近5日）
   Corpus/public/daily/     日合并（近10日）
   Corpus/public/weekly/    周合并（近5周）
   Corpus/public/monthly/   月合并（近5月）
@@ -21,10 +21,12 @@ DDS §28 编年史 + §31 语料库
 
 所有清理由日历节律轮脚本执行，不调 LLM。
 """
-import os, shutil
+import json
+import os
 from datetime import datetime, timedelta
 from paths import LTM_DIR
-from constants import TZ_SHANGHAI
+from constants import local_now, local_fromtimestamp
+from errors import ReadError
 
 
 # ============================================================
@@ -41,7 +43,7 @@ CHRONICLE_RETENTION = {
 }
 
 CORPUS_RETENTION = {
-    "rounds":     timedelta(days=5),
+    "rhythms":    timedelta(days=5),
     "daily":      timedelta(days=10),
     "weekly":     timedelta(weeks=5),
     "monthly":    timedelta(days=150),    # ≈5月
@@ -49,7 +51,44 @@ CORPUS_RETENTION = {
     "yearly":     None,
 }
 
-ATTIC_AGE = timedelta(days=1095)  # 3年
+def dedupe_corpus_records(records):
+    by_key = {}
+    ordered = []
+    for record in records:
+        ref = record.get("ref") if isinstance(record.get("ref"), dict) else {}
+        key = str(ref.get("raw_log_key") or "").strip()
+        if not key:
+            raise ValueError("Corpus record missing ref.raw_log_key")
+        loc = record.get("loc") if isinstance(record.get("loc"), dict) else {}
+        comparable_ref = dict(ref)
+        comparable_ref.pop("raw_log_key", None)
+        comparable_ref.pop("source_block_id", None)
+        comparable = {
+            "role": record.get("role"),
+            "kind": record.get("kind"),
+            "text": record.get("text"),
+            "loc": {
+                "round": loc.get("round"),
+                "step": loc.get("step"),
+                "iter": loc.get("iter"),
+            },
+            "policy": record.get("policy"),
+            "ref": comparable_ref,
+        }
+        canonical = json.dumps(
+            comparable,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        previous = by_key.get(key)
+        if previous is not None:
+            if previous != canonical:
+                raise ValueError(f"Corpus raw_log_key conflict: {key}")
+            continue
+        by_key[key] = canonical
+        ordered.append(record)
+    return ordered
 
 
 class ChronicleStore:
@@ -67,7 +106,7 @@ class ChronicleStore:
         layer_dir = os.path.join(self.chronicle_dir, layer)
         os.makedirs(layer_dir, exist_ok=True)
 
-        now = datetime.now(TZ_SHANGHAI)
+        now = local_now()
         if layer == "rhythms":
             filename = f"R-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}.md"
         elif layer == "daily":
@@ -227,7 +266,7 @@ class ChronicleStore:
 
     def cleanup_expired(self):
         """清理过期编年史条目（日历节律轮脚本执行）"""
-        now = datetime.now(TZ_SHANGHAI)
+        now = local_now()
         cleaned = []
 
         for layer, retention in CHRONICLE_RETENTION.items():
@@ -241,7 +280,7 @@ class ChronicleStore:
                 fpath = os.path.join(layer_dir, fname)
                 if not os.path.isfile(fpath):
                     continue
-                mtime = datetime.fromtimestamp(os.path.getmtime(fpath), TZ_SHANGHAI)
+                mtime = local_fromtimestamp(os.path.getmtime(fpath))
                 if mtime < cutoff:
                     try:
                         os.remove(fpath)
@@ -272,63 +311,81 @@ class CorpusStore:
     def __init__(self):
         self.corpus_dir = os.path.join(LTM_DIR, "Corpus")
 
-    # ==============================================================
-    # 写入
-    # ==============================================================
-
-    def archive_raw_log(self, raw_log_path):
-        """将 raw_log.md 归档到 COR/public/rounds/"""
-        if not os.path.isfile(raw_log_path):
-            return None
-        with open(raw_log_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        if not content.strip() or content.strip() == "<!-- 原始语料备份 -->":
-            return None
-
-        rounds_dir = os.path.join(self.corpus_dir, "public", "rounds")
-        os.makedirs(rounds_dir, exist_ok=True)
-        now = datetime.now(TZ_SHANGHAI)
-        fname = f"rounds_{now.strftime('%Y%m%d_%H%M%S')}.md"
-        fpath = os.path.join(rounds_dir, fname)
-        with open(fpath, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        # 清空源文件
-        with open(raw_log_path, "w", encoding="utf-8") as f:
-            f.write("<!-- 原始语料备份 -->\n")
-        return fpath
-
     def merge_layer(self, source_layer, target_layer):
-        """将 source 层内容合并到 target 层（同级合并，非压缩）"""
+        """按 raw_log_key 合并 JSONL，并由同批记录派生 Markdown。"""
         source_dir = os.path.join(self.corpus_dir, "public", source_layer)
         target_dir = os.path.join(self.corpus_dir, "public", target_layer)
         if not os.path.isdir(source_dir):
-            return
+            return None
 
         os.makedirs(target_dir, exist_ok=True)
-        now = datetime.now(TZ_SHANGHAI)
-        merged_content = []
+        now = local_now()
+        sources = [
+            os.path.join(source_dir, name)
+            for name in sorted(os.listdir(source_dir))
+            if name.endswith(".jsonl")
+        ]
+        records = dedupe_corpus_records(
+            record
+            for path in sources
+            for record in self._read_jsonl(path)
+        )
+        if not records:
+            return None
+        target = os.path.join(
+            target_dir,
+            f"merged_{now.strftime('%Y%m%d_%H%M%S_%f')}.jsonl",
+        )
+        self._write_pair(target, records)
+        for path in sources:
+            for item in (path, os.path.splitext(path)[0] + ".md"):
+                if os.path.isfile(item):
+                    os.remove(item)
+        return target
 
-        for fname in sorted(os.listdir(source_dir)):
-            fpath = os.path.join(source_dir, fname)
-            if not os.path.isfile(fpath):
-                continue
-            with open(fpath, "r", encoding="utf-8") as f:
-                merged_content.append(f.read())
+    @staticmethod
+    def _read_jsonl(path):
+        records = []
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for line_number, line in enumerate(handle, 1):
+                    if not line.strip():
+                        continue
+                    value = json.loads(line)
+                    if not isinstance(value, dict):
+                        raise ValueError(f"{path}:{line_number} must be an object")
+                    records.append(value)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ReadError(path, cause=exc)
+        return records
 
-        if merged_content:
-            tname = f"merged_{now.strftime('%Y%m%d_%H%M%S')}.md"
-            tpath = os.path.join(target_dir, tname)
-            with open(tpath, "w", encoding="utf-8") as f:
-                f.write("\n\n---\n\n".join(merged_content))
-            # 合并后删除源文件，防止下次重复合并
-            for fname in sorted(os.listdir(source_dir)):
-                fpath = os.path.join(source_dir, fname)
-                if os.path.isfile(fpath):
-                    try:
-                        os.remove(fpath)
-                    except OSError:
-                        pass
+    @staticmethod
+    def _dedupe_records(records):
+        return dedupe_corpus_records(records)
+
+    @staticmethod
+    def _render_md(records):
+        parts = ["<!-- Corpus Markdown view; JSONL is the machine truth. -->"]
+        for record in records:
+            loc = record.get("loc") if isinstance(record.get("loc"), dict) else {}
+            parts.extend([
+                "",
+                f"## R{loc.get('round', '?')} / {loc.get('step', '?')} / {loc.get('iter', 0)}",
+                "",
+                f"**{record.get('role', 'system')} / {record.get('kind', 'unknown')}**",
+                "",
+                str(record.get("text") or ""),
+            ])
+        return "\n".join(parts).rstrip() + "\n"
+
+    @classmethod
+    def _write_pair(cls, jsonl_path, records):
+        from data.atomic_write import atomic_write_jsonl, atomic_write_text
+        atomic_write_jsonl(jsonl_path, records)
+        atomic_write_text(
+            os.path.splitext(jsonl_path)[0] + ".md",
+            cls._render_md(records),
+        )
 
     # ==============================================================
     # 保留清理
@@ -336,7 +393,7 @@ class CorpusStore:
 
     def cleanup_expired(self):
         """清理过期语料（日历节律轮脚本执行）"""
-        now = datetime.now(TZ_SHANGHAI)
+        now = local_now()
         cleaned = []
 
         for layer, retention in CORPUS_RETENTION.items():
@@ -350,7 +407,7 @@ class CorpusStore:
                 fpath = os.path.join(layer_dir, fname)
                 if not os.path.isfile(fpath):
                     continue
-                mtime = datetime.fromtimestamp(os.path.getmtime(fpath), TZ_SHANGHAI)
+                mtime = local_fromtimestamp(os.path.getmtime(fpath))
                 if mtime < cutoff:
                     try:
                         os.remove(fpath)
@@ -361,28 +418,55 @@ class CorpusStore:
         return cleaned
 
     def move_to_attic(self):
-        """将 3 年以上的语料搬到 Attic"""
-        now = datetime.now(TZ_SHANGHAI)
-        cutoff = now - ATTIC_AGE
+        """将满 3 年的 yearly 机器真源成对迁入 Attic。"""
+        now = local_now()
+        try:
+            cutoff = now.replace(year=now.year - 3)
+        except ValueError:
+            cutoff = now.replace(year=now.year - 3, day=28)
         attic_dir = os.path.join(self.corpus_dir, "Attic")
-        os.makedirs(attic_dir, exist_ok=True)
         moved = []
+        yearly_dir = os.path.join(self.corpus_dir, "public", "yearly")
+        if not os.path.isdir(yearly_dir):
+            return moved
 
-        for layer_dir_name in ["rounds", "daily", "weekly", "monthly", "quarterly"]:
-            layer_dir = os.path.join(self.corpus_dir, "public", layer_dir_name)
-            if not os.path.isdir(layer_dir):
+        eligible = {}
+        for name in sorted(os.listdir(yearly_dir)):
+            if not name.endswith(".jsonl"):
                 continue
-            for fname in os.listdir(layer_dir):
-                fpath = os.path.join(layer_dir, fname)
-                if not os.path.isfile(fpath):
-                    continue
-                mtime = datetime.fromtimestamp(os.path.getmtime(fpath), TZ_SHANGHAI)
-                if mtime < cutoff:
-                    try:
-                        dest = os.path.join(attic_dir, f"{layer_dir_name}_{fname}")
-                        shutil.move(fpath, dest)
-                        moved.append(dest)
-                    except OSError:
-                        pass
+            if not name.startswith("merged_") or len(name) < len("merged_YYYYMMDD"):
+                raise ValueError(f"unrecognized yearly corpus filename: {name}")
+            stamp = name[len("merged_"):len("merged_") + 8]
+            try:
+                created = datetime.strptime(stamp, "%Y%m%d").replace(
+                    tzinfo=now.tzinfo)
+            except ValueError as exc:
+                raise ValueError(
+                    f"unrecognized yearly corpus filename: {name}") from exc
+            if created > cutoff:
+                continue
+            eligible.setdefault(created.year, []).append(
+                os.path.join(yearly_dir, name))
 
+        for year, sources in sorted(eligible.items()):
+            year_dir = os.path.join(attic_dir, str(year))
+            target = os.path.join(year_dir, f"attic-{year}.jsonl")
+            records = []
+            if os.path.isfile(target):
+                records.extend(self._read_jsonl(target))
+            for source in sources:
+                records.extend(self._read_jsonl(source))
+            merged = dedupe_corpus_records(records)
+            self._write_pair(target, merged)
+            if dedupe_corpus_records(self._read_jsonl(target)) != merged:
+                raise ValueError(f"Attic verification failed: {target}")
+            md_target = os.path.splitext(target)[0] + ".md"
+            with open(md_target, "r", encoding="utf-8") as handle:
+                if handle.read() != self._render_md(merged):
+                    raise ValueError(f"Attic Markdown verification failed: {md_target}")
+            for source in sources:
+                for item in (source, os.path.splitext(source)[0] + ".md"):
+                    if os.path.isfile(item):
+                        os.remove(item)
+            moved.append(target)
         return moved

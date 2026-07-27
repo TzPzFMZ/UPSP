@@ -2561,7 +2561,22 @@
     "\u4F4D\u683C\u3001\u8BB0\u5FC6\u548C\u8F6E\u6B21\u4FDD\u5B58\u5728\u201C\u6587\u6863\\UPSP\u201D\u3002": "Personas, memories, and rounds are stored in Documents\\UPSP.",
     "\u6A21\u578B\u8BBE\u7F6E\u3001\u5BC6\u94A5\u548C\u7F13\u5B58\u5728\u201CLocalAppData\\UPSP\u201D\u3002": "Model settings, keys, and cache are stored in LocalAppData\\UPSP.",
     "\u5378\u8F7D\u548C\u8986\u76D6\u5347\u7EA7\u4E0D\u4F1A\u5220\u9664\u8FD9\u4E9B\u5185\u5BB9\u3002": "Uninstalling or upgrading in place does not delete this data.",
-    "\u5BC6\u94A5\u5F53\u524D\u4F7F\u7528\u672C\u673A\u5FFD\u7565\u8FFD\u8E2A\u7684 JSON \u6216\u73AF\u5883\u53D8\u91CF\u4FDD\u5B58\uFF0C\u672A\u4F7F\u7528 Windows \u52A0\u5BC6\u5B58\u50A8\u3002": "Keys are currently stored in locally ignored JSON or environment variables, without Windows encrypted storage."
+    "\u5BC6\u94A5\u5F53\u524D\u4F7F\u7528\u672C\u673A\u5FFD\u7565\u8FFD\u8E2A\u7684 JSON \u6216\u73AF\u5883\u53D8\u91CF\u4FDD\u5B58\uFF0C\u672A\u4F7F\u7528 Windows \u52A0\u5BC6\u5B58\u50A8\u3002": "Keys are currently stored in locally ignored JSON or environment variables, without Windows encrypted storage.",
+    "\u8BB0\u5FC6\u4EE3\u8C22": "Memory metabolism",
+    "\u8BB0\u5FC6\u70ED\u5EA6\u3001\u53EC\u56DE\u3001\u8870\u51CF\u4E0E\u5347\u683C\u8FB9\u754C\u3002": "Heat, recall, decay, and promotion boundaries for memory.",
+    "\u663E\u8457\u533A\u9608\u503C": "Significant-zone threshold",
+    "\u4E0D\u786E\u5B9A\u533A\u9608\u503C": "Uncertain-zone threshold",
+    "\u663E\u8457\u533A\u6BCF\u8F6E\u8870\u51CF": "Significant-zone decay per round",
+    "\u4E0D\u786E\u5B9A\u533A\u6BCF\u8F6E\u8870\u51CF": "Uncertain-zone decay per round",
+    "\u8870\u51CF\u533A\u6BCF\u8F6E\u8870\u51CF": "Decay-zone decay per round",
+    "\u6743\u91CD\u4E00\u521D\u59CB\u70ED\u5EA6": "Initial heat for weight 1",
+    "\u6743\u91CD\u4E8C\u521D\u59CB\u70ED\u5EA6": "Initial heat for weight 2",
+    "\u6743\u91CD\u4E09\u521D\u59CB\u70ED\u5EA6": "Initial heat for weight 3",
+    "\u6743\u91CD\u56DB\u521D\u59CB\u70ED\u5EA6": "Initial heat for weight 4",
+    "\u6743\u91CD\u4E94\u521D\u59CB\u70ED\u5EA6": "Initial heat for weight 5",
+    "\u53EC\u56DE\u589E\u76CA": "Recall boost",
+    "\u9AD8\u70ED\u5347\u683C\u8F6E\u6570": "High-heat rounds before promotion",
+    "\u70ED\u5EA6\u9501\u5B9A\u503C": "Locked heat value"
   };
   function systemLocale(languages = typeof navigator === "undefined" ? [] : navigator.languages) {
     for (const language2 of languages) {
@@ -46629,11 +46644,9 @@
     relay_intents: "\u4E2D\u7EE7\u610F\u56FE",
     relay_intent_seq: "\u4E2D\u7EE7\u610F\u56FE\u5E8F\u53F7",
     work_intent_debt: "\u5DE5\u4F5C\u610F\u56FE\u503A\u52A1",
-    fatigue_expired: "\u75B2\u52B3\u8FC7\u671F",
     feeling_settle_due: "\u611F\u53D7\u5F85\u7ED3\u7B97",
     api_degraded: "API \u964D\u7EA7",
     stm_degrade_pending: "\u77ED\u65F6\u8BB0\u5FC6\u5F85\u964D\u7EA7",
-    process_down: "\u8FDB\u7A0B\u79BB\u7EBF",
     user_message_waiting: "\u7528\u6237\u6D88\u606F\u7B49\u5F85",
     rhythm_due: "\u8282\u5F8B\u5230\u671F",
     standby_due: "\u5F85\u547D\u5230\u671F",
@@ -46642,7 +46655,6 @@
     token_usage_warning: "\u4EE4\u724C\u7528\u91CF\u8B66\u544A",
     context_pressure: "\u4E0A\u4E0B\u6587\u538B\u529B",
     cache_compaction_due: "\u7F13\u5B58\u538B\u7F29\u5230\u671F",
-    identity_timeout: "\u8EAB\u4EFD\u8D85\u65F6\u5230\u671F",
     calendar_day_due: "\u65E5\u8282\u5F8B\u5230\u671F",
     calendar_week_due: "\u5468\u8282\u5F8B\u5230\u671F",
     calendar_month_due: "\u6708\u8282\u5F8B\u5230\u671F",
@@ -47616,6 +47628,21 @@
     { key: "general_tools.web_search_window_results", label: "\u641C\u7D22\u7ED3\u679C\u7A97\u53E3", kind: "int", min: 1, max: 1e3 }
   ];
   var contextSettingFields = {
+    memory: [
+      { key: "heat.zone_thresholds.significant", label: "\u663E\u8457\u533A\u9608\u503C", kind: "int", min: 1, max: 100 },
+      { key: "heat.zone_thresholds.uncertain", label: "\u4E0D\u786E\u5B9A\u533A\u9608\u503C", kind: "int", min: 0, max: 99 },
+      { key: "heat.decay_rates.significant", label: "\u663E\u8457\u533A\u6BCF\u8F6E\u8870\u51CF", kind: "int", min: -100, max: 0 },
+      { key: "heat.decay_rates.uncertain", label: "\u4E0D\u786E\u5B9A\u533A\u6BCF\u8F6E\u8870\u51CF", kind: "int", min: -100, max: 0 },
+      { key: "heat.decay_rates.decay", label: "\u8870\u51CF\u533A\u6BCF\u8F6E\u8870\u51CF", kind: "int", min: -100, max: 0 },
+      { key: "heat.initial_by_weight.1", label: "\u6743\u91CD\u4E00\u521D\u59CB\u70ED\u5EA6", kind: "int", min: 0, max: 100 },
+      { key: "heat.initial_by_weight.2", label: "\u6743\u91CD\u4E8C\u521D\u59CB\u70ED\u5EA6", kind: "int", min: 0, max: 100 },
+      { key: "heat.initial_by_weight.3", label: "\u6743\u91CD\u4E09\u521D\u59CB\u70ED\u5EA6", kind: "int", min: 0, max: 100 },
+      { key: "heat.initial_by_weight.4", label: "\u6743\u91CD\u56DB\u521D\u59CB\u70ED\u5EA6", kind: "int", min: 0, max: 100 },
+      { key: "heat.initial_by_weight.5", label: "\u6743\u91CD\u4E94\u521D\u59CB\u70ED\u5EA6", kind: "int", min: 0, max: 100 },
+      { key: "heat.recall_boost", label: "\u53EC\u56DE\u589E\u76CA", kind: "int", min: 0, max: 100 },
+      { key: "heat.upgrade_high_rounds", label: "\u9AD8\u70ED\u5347\u683C\u8F6E\u6570", kind: "int", min: 1, max: 1e5 },
+      { key: "heat.locked_value", label: "\u70ED\u5EA6\u9501\u5B9A\u503C", kind: "int", min: 0, max: 100 }
+    ],
     now: [
       { key: "budget_chars", label: "\u5F53\u524D\u7F13\u5B58\u9884\u7B97", kind: "int", min: 1, max: 16777216 },
       { key: "trim_chars", label: "\u5F53\u524D\u7F13\u5B58\u88C1\u526A\u91CF", kind: "int", min: 1, max: 16777216 }
@@ -47690,7 +47717,7 @@
       ["high_freq", "\u9AD8\u9891\u5C42", "\u9AD8\u9891\u7D22\u5F15\u4E0E\u5F15\u7528\u7A97\u53E3\u7684\u663E\u793A\u8FB9\u754C\u3002"],
       ["relation", "\u5173\u7CFB\u7126\u70B9", "\u6BCF\u8F6E\u53EF\u88C5\u914D\u7684\u5173\u7CFB\u7126\u70B9\u69FD\u4F4D\u3002"]
     ];
-    return '<form class="settings-context-form" data-context-settings-form>\n    '.concat(groups.map(([fileId, title, description]) => '<section class="ledger-panel settings-panel settings-context-panel" data-settings-file="'.concat(fileId, '">\n      <header class="ledger-title"><h2>').concat(t(title), "</h2><p>").concat(t(description), '</p></header>\n      <div class="settings-grid">').concat(contextSettingFields[fileId].map((field) => renderSettingField(field, files[fileId].values[field.key])).join(""), "</div>\n    </section>")).join(""), "\n    ").concat(settingsActions(), "\n  </form>").concat(settingsFeedback());
+    return '<form class="settings-context-form" data-context-settings-form>\n    '.concat(groups.map(([fileId, title, description]) => '<section class="ledger-panel settings-panel settings-context-panel" data-settings-file="'.concat(fileId, '">\n      <header class="ledger-title"><h2>').concat(t(title), "</h2><p>").concat(t(description), '</p></header>\n      <div class="settings-grid">').concat(contextSettingFields[fileId].map((field) => renderSettingField(field, files[fileId].values[field.key])).join(""), "</div>\n    </section>")).join(""), '\n    <details class="settings-advanced ledger-panel settings-panel settings-context-panel" data-settings-file="memory">\n      <summary>').concat(t("\u8BB0\u5FC6\u4EE3\u8C22"), "</summary>\n      <p>").concat(t("\u8BB0\u5FC6\u70ED\u5EA6\u3001\u53EC\u56DE\u3001\u8870\u51CF\u4E0E\u5347\u683C\u8FB9\u754C\u3002"), '</p>\n      <div class="settings-grid">').concat(contextSettingFields.memory.map((field) => renderSettingField(field, files.memory.values[field.key])).join(""), "</div>\n    </details>\n    ").concat(settingsActions(), "\n  </form>").concat(settingsFeedback());
   }
   var routePhases = ["setup", "reaction", "cleanup"];
   var routeSlots = ["primary", "backup_1", "backup_2"];

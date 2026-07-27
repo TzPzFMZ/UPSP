@@ -16,6 +16,7 @@ export type GlobalSettingsTab = "models" | "interface" | "about";
 export type JsonObject = Record<string, unknown>;
 export type SettingsFileId =
   | "system"
+  | "memory"
   | "now"
   | "lately"
   | "periodic"

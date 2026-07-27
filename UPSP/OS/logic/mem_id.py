@@ -11,12 +11,12 @@ DDS §9.2 记忆编号
 import random
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 
 
 def generate_mem_id():
     """生成新的 MEM-TTTTTNNN 编号"""
-    now = datetime.now(TZ_SHANGHAI)
+    now = local_now()
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     seconds = int((now - midnight).total_seconds())
     ttttt = format(seconds, '05X')
@@ -33,7 +33,7 @@ def validate_mem_id(mem_id):
 # 元数据模板生成 —— 保留到 logic/ 因为它是纯计算（不需要读文件）
 def make_meta_template(mem_id, title="", weight=2, subject=None, model=""):
     """创建 20 字段元数据 dict"""
-    now = datetime.now(TZ_SHANGHAI).isoformat()
+    now = local_now().isoformat()
     return {
         "id": mem_id,
         "type": "F" if weight >= 5 else "S" if weight >= 3 else "A",
@@ -55,21 +55,4 @@ def make_meta_template(mem_id, title="", weight=2, subject=None, model=""):
         "decay_period_days": 30,
         "decay_countdown_days": 30,
         "media": [],
-    }
-
-
-def make_heat_entry(weight=2):
-    """创建 heat.json 条目（含遗忘分流三元数据）"""
-    now = datetime.now(TZ_SHANGHAI).isoformat()
-    return {
-        "H": 50,
-        "zone": "未定",
-        "AH_high": 0,
-        "AH_low": 0,
-        "last_heat_at": now,
-        "last_high_at": None,
-        "degrade": False,
-        "compression": weight >= 3,
-        "stored": False,
-        "heat_locked": False,
     }

@@ -893,50 +893,6 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
         assert guide_id == "rhythm:emergency:R000473"
         assert rt.workbench.load_active_guide()["kind"] == "emergency_handling_guide"
 
-    def test_spec473_materialize_clears_stale_process_down_and_continues_agenda(
-            self, tmp_path):
-        from engines.round_context import RoundContext
-
-        rt = self._make_runtime(tmp_path)
-        rt.sm.set_flag("process_down", True)
-        rt.sm.set_flag("context_pressure", True)
-        state = rt.sm.load()
-        context = RoundContext(
-            round_num=473,
-            round_type="rhythm",
-            state=state,
-            flags=state["base"]["heartbeat_flags"],
-        )
-
-        guide_id = rt._materialize_runtime_rhythm_guide(context)
-
-        assert rt.sm.get("base.heartbeat_flags.process_down") is False
-        assert guide_id == "rhythm:context_pressure:R000473"
-        assert rt.workbench.load_active_guide()["kind"] == "context_pressure_rhythm_guide"
-
-    def test_spec473_materialize_clears_all_stale_emergency_then_next_guide(
-            self, tmp_path):
-        from engines.round_context import RoundContext
-
-        rt = self._make_runtime(tmp_path)
-        rt.connectivity_store.log_latency("primary", "ok", "recovered")
-        rt.sm.set_flag("api_degraded", True)
-        rt.sm.set_flag("process_down", True)
-        rt.sm.set_flag("context_pressure", True)
-        state = rt.sm.load()
-        context = RoundContext(
-            round_num=473,
-            round_type="rhythm",
-            state=state,
-            flags=state["base"]["heartbeat_flags"],
-        )
-
-        guide_id = rt._materialize_runtime_rhythm_guide(context)
-
-        assert rt.sm.get("base.heartbeat_flags.api_degraded") is False
-        assert rt.sm.get("base.heartbeat_flags.process_down") is False
-        assert guide_id == "rhythm:context_pressure:R000473"
-
     def test_spec464_runtime_materializes_current_rhythm_guide(
             self, tmp_path, monkeypatch):
         from engines.round_context import SetupResult

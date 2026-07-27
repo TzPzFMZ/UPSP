@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -229,19 +230,13 @@ class TestHeartbeat:
         assert sm.get("base.identity.confirmed") is True
         assert sm.get("base.identity.confirmed_at") == expired.isoformat()
 
-    def test_tick_clears_stale_identity_timeout_flag(
-            self, tmp_path, monkeypatch):
-        from engines.heartbeat import HeartbeatManager
+    def test_reserved_identity_timeout_cannot_be_written(
+            self, tmp_path):
         from data.state_store import StateStore
-        monkeypatch.setattr(HeartbeatManager, "_load_interval", lambda s: 2)
         sm = StateStore(str(tmp_path / "state.json"))
         sm.init_if_missing()
-        sm.set("base.heartbeat_flags.identity_timeout", True)
-        hb = HeartbeatManager(sm, interval=0.1)
-
-        hb._do_tick()
-
-        assert sm.get_flags()["identity_timeout"] is False
+        with pytest.raises(ValueError, match="reserved Seed flag"):
+            sm.set("base.heartbeat_flags.identity_timeout", True)
 
     def test_enqueue_keeps_identity_confirmed_across_external_input_gap(
             self, tmp_path, monkeypatch):
@@ -287,7 +282,6 @@ class TestHeartbeat:
 
         sm = StateStore(str(tmp_path / "state.json"))
         sm.init_if_missing()
-        sm.set_flag("fatigue_expired", True)
         sm.set_flag("standby_due", True)
         hb = HeartbeatManager(
             sm,
@@ -431,13 +425,12 @@ class TestHeartbeat:
         }
         sm.save(state)
         monkeypatch.setattr(HeartbeatManager, "_check_api_degraded", lambda s: False)
-        monkeypatch.setattr(HeartbeatManager, "_check_process_down", lambda s: False)
         hb = HeartbeatManager(sm, interval=0.1)
 
         assert hb._do_tick() is False
 
         assert sm.get("base.heartbeat_flags.continue_requested") is False
-        assert "next_round" not in sm.load()["base"]["runtime"]
+        assert sm.load()["base"]["runtime"]["next_round"]["type"] == "relay"
 
     def test_tick_ignores_legacy_next_round_rhythm_hint(self, tmp_path, monkeypatch):
         from engines.heartbeat import HeartbeatManager
@@ -453,13 +446,12 @@ class TestHeartbeat:
         }
         sm.save(state)
         monkeypatch.setattr(HeartbeatManager, "_check_api_degraded", lambda s: False)
-        monkeypatch.setattr(HeartbeatManager, "_check_process_down", lambda s: False)
         hb = HeartbeatManager(sm, interval=0.1)
 
         assert hb._do_tick() is False
 
         assert sm.get("base.heartbeat_flags.rhythm_due") is False
-        assert "next_round" not in sm.load()["base"]["runtime"]
+        assert sm.load()["base"]["runtime"]["next_round"]["type"] == "rhythm"
 
     def test_tick_ignores_legacy_next_round_interactive_hint(self, tmp_path, monkeypatch):
         from engines.heartbeat import HeartbeatManager
@@ -474,10 +466,9 @@ class TestHeartbeat:
         }
         sm.save(state)
         monkeypatch.setattr(HeartbeatManager, "_check_api_degraded", lambda s: False)
-        monkeypatch.setattr(HeartbeatManager, "_check_process_down", lambda s: False)
         hb = HeartbeatManager(sm, interval=0.1)
 
         assert hb._do_tick() is False
 
-        assert "next_round" not in sm.load()["base"]["runtime"]
+        assert sm.load()["base"]["runtime"]["next_round"]["type"] == "interactive"
         assert not any(sm.get_flags().values())

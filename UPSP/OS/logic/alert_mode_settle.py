@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from logic.heartbeat_flags import KNOWN_HEARTBEAT_FLAGS
 from logic.interaction_meta import cache_interaction_meta
 
@@ -11,8 +11,6 @@ VALID_ALERT_TYPES = frozenset({
     "api_degraded",
     "token_usage_warning",
     "context_pressure",
-    "process_down",
-    "fatigue_expired",
     "standby_due",
 })
 
@@ -26,8 +24,6 @@ ALERT_CLEAR_FLAGS = frozenset({
     "api_degraded",
     "token_usage_warning",
     "context_pressure",
-    "process_down",
-    "fatigue_expired",
     "standby_due",
 })
 
@@ -114,7 +110,7 @@ def _write_alert_settlement(item, round_num, stores, interaction_meta):
     if clear_flags:
         state_store.clear_flags(clear_flags)
     if item["status"] == "deferred":
-        now = datetime.now(TZ_SHANGHAI)
+        now = local_now()
         defer_until = now + timedelta(seconds=DEFAULT_DEFER_SECONDS)
         data = state_store.load()
         base = data.setdefault("base", {})

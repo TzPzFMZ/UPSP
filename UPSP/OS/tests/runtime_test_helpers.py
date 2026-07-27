@@ -13,6 +13,7 @@ from data.config_store import ConfigStore
 from schemas.config import (
     legacy_default_api_config as default_api_config,
     default_lately_config,
+    default_memory_config,
     default_now_config,
     default_system_config,
 )
@@ -83,6 +84,7 @@ class RuntimeTestMixin:
         ctx_store = ContextStore(
             state_store=sm,
             cache_dir=str(tmp_path / "context_cache"),
+            corpus_rhythms_dir=str(tmp_path / "corpus" / "public" / "rhythms"),
             raw_log_jsonl=str(tmp_path / "buffer" / "raw_log.jsonl"),
             raw_log_md=str(tmp_path / "buffer" / "raw_log.md"),
         )
@@ -95,10 +97,22 @@ class RuntimeTestMixin:
 
         class InMemoryHeat:
             def __init__(self):
+                from data.stm_heat_calculator import STMHeatCalculator
                 self.entries = {}
                 self.boosted = []
                 self.decayed = False
                 self.last_decay_round_num = None
+                self.config = default_memory_config()["heat"]
+                self.calculator = STMHeatCalculator(self.config)
+
+            def new_entry(self, weight=2):
+                from schemas.memory import default_heat_entry
+                return default_heat_entry(
+                    weight,
+                    initial_by_weight=self.config["initial_by_weight"],
+                    significant_threshold=self.config["zone_thresholds"]["significant"],
+                    uncertain_threshold=self.config["zone_thresholds"]["uncertain"],
+                )
 
             def set_entry(self, mem_id, entry):
                 self.entries[mem_id] = dict(entry)

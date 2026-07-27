@@ -5,51 +5,31 @@ UPSP Base V2 — 全局常量（无依赖，可被任何模块 import）
   - 不 import 其他业务模块（paths/schemas/data/logic/engines 都不碰）
   - 只放数值常量和枚举，不放路径
 """
-from datetime import timezone, timedelta
+from datetime import datetime
 
 # ============================================================
 # 时区
 # ============================================================
 
-TZ_SHANGHAI = timezone(timedelta(hours=8))
+def local_now():
+    """返回带当前 Windows 本地偏移的时间，不缓存夏令时偏移。"""
+    return datetime.now().astimezone()
+
+
+def local_fromtimestamp(timestamp):
+    """按时间戳发生时的 Windows 本地偏移返回时间。"""
+    return datetime.fromtimestamp(timestamp).astimezone()
+
+
+# 仅保留给历史外部 import；生产时间戳必须调用 local_now/local_fromtimestamp。
+TZ_SHANGHAI = local_now().tzinfo
 
 # ============================================================
 # 心跳（DDS §23.5）
 # ============================================================
 
 HEARTBEAT_DEFAULT_INTERVAL = 5         # 秒
-FATIGUE_EXPIRED_HOURS = 20             # 连续清醒超时
-
-# ============================================================
-# 记忆衰减（DDS §8-9）
-# ============================================================
-
-DECAY_RATES = {
-    "显著": -5,
-    "未定": -10,
-    "衰减": -15,
-}
-
-ZONE_THRESHOLDS = {
-    "显著": 70,
-    "未定": 40,
-}
-
-# 升格条件
-UPGRADE_AH_HIGH_MIN = 5               # AH_high ≥ 5 → LTM Full
-
-# 热度
-INITIAL_HEAT = 50
-MAX_HEAT = 100
-HEAT_LOCKED_VALUE = 80
-RECALL_BOOST = 10
-
-# LTM 降格 token 上限
-LTM_LIMITS = {
-    "Full": 2048,
-    "Summary": 512,
-    "Abstract": 128,
-}
+MAX_HEAT = 100                         # 协议固定范围 0..100
 
 # 权重→形态映射（DDS §9.2）
 WEIGHT_TO_TYPE = {5: "F", 4: "S", 3: "S", 2: "A", 1: "A", 0: "A"}
@@ -83,23 +63,12 @@ LATELY_TRIM_ROUNDS = 8             # 达限后删除最旧轮数
 # ============================================================
 
 TOKEN_WARNING_RATIO = 0.7             # ≥0.7 预警
-TOKEN_URGENT_RATIO = 0.85             # ≥0.85 紧急节律点
 TOKEN_WINDOW_SIZE = 200000            # 默认窗口
 
 # ============================================================
 # 身份确认（DDS §23）
 # ============================================================
 
-IDENTITY_TIMEOUT_SECONDS = 3600       # 1 小时
-
-# ============================================================
-# 休眠（DDS §3）
-# ============================================================
-
-SLEEP_LEVELS = ("awake", "light", "moderate", "deep")
-SLEEP_LIGHT_AFTER_MIN = 15
-SLEEP_MODERATE_AFTER_MIN = 45
-SLEEP_DEEP_AFTER_MIN = 120
 
 # ============================================================
 # 上下文工程（DDS §19）
@@ -185,17 +154,7 @@ CONTAINER_PREFIXES = ("DC", "EC", "PRJ", "SKL", "IMM", "CHR", "COR", "FUT", "ITR
 ALL_CONSTANTS = {
     # 心跳
     "HEARTBEAT_INTERVAL": HEARTBEAT_DEFAULT_INTERVAL,
-    "FATIGUE_EXPIRED_HOURS": FATIGUE_EXPIRED_HOURS,
-    # 衰减
-    "DECAY_RATES": DECAY_RATES,
-    "ZONE_THRESHOLDS": ZONE_THRESHOLDS,
-    "UPGRADE_AH_HIGH_MIN": UPGRADE_AH_HIGH_MIN,
-    "INITIAL_HEAT": INITIAL_HEAT,
     "MAX_HEAT": MAX_HEAT,
-    "HEAT_LOCKED_VALUE": HEAT_LOCKED_VALUE,
-    "RECALL_BOOST": RECALL_BOOST,
-    # LTM
-    "LTM_LIMITS": LTM_LIMITS,
     # 节律
     "RHYTHM_INTERVAL_ROUNDS": RHYTHM_INTERVAL_ROUNDS,
     "STANDBY_IDLE_MINUTES": STANDBY_IDLE_MINUTES,
@@ -208,10 +167,7 @@ ALL_CONSTANTS = {
     "LATELY_TRIM_ROUNDS": LATELY_TRIM_ROUNDS,
     # Token
     "TOKEN_WARNING_RATIO": TOKEN_WARNING_RATIO,
-    "TOKEN_URGENT_RATIO": TOKEN_URGENT_RATIO,
     "TOKEN_WINDOW_SIZE": TOKEN_WINDOW_SIZE,
-    # 身份
-    "IDENTITY_TIMEOUT_SECONDS": IDENTITY_TIMEOUT_SECONDS,
     # 上下文
     "STM_INDEX_DISPLAY_LIMIT": STM_INDEX_DISPLAY_LIMIT,
     "DREAMS_DISPLAY_LIMIT": DREAMS_DISPLAY_LIMIT,

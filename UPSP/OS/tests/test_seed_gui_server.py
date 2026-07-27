@@ -45,6 +45,7 @@ class IsolatedConfigStore:
         "periodic": template_root / "context" / "periodic.json",
         "high_freq": template_root / "context" / "high_freq.json",
         "relation": template_root / "relation.json",
+        "memory": template_root / "memory.json",
     }
 
     def __init__(self, root, canonical_cls):
@@ -108,7 +109,7 @@ class IsolatedConfigStore:
         return json.loads(self.paths[name].read_text(encoding="utf-8"))
 
     def save(self, name, payload):
-        if name in {"interface", "models", "model_routing"}:
+        if name in {"interface", "models", "model_routing", "memory"}:
             self.canonical_cls._validate(name, payload)
         self.paths[name].write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -398,7 +399,7 @@ def test_spec683_static_whitelist_polling_and_runtime_status(tmp_path):
         status, about = _request(server, "GET", "/api/about")
         assert status == 200
         assert about["schema_version"] == "seed_gui_about.v1"
-        assert about["product"]["version"] == "0.1.0-alpha.4"
+        assert about["product"]["version"] == "0.1.0-alpha.5"
         assert about["product"]["author"]["zh-CN"] == (
             "由 TzPzFMZ 发起、设计并与 AI 协作开发"
         )
@@ -767,7 +768,7 @@ def test_spec700_settings_v3_projects_global_and_persona_truth(tmp_path):
         assert status == 200
         assert initial["schema_version"] == "seed_gui_settings.v3"
         assert set(initial["files"]) == {
-            "system", "now", "lately", "periodic", "high_freq", "relation",
+            "system", "now", "lately", "periodic", "high_freq", "relation", "memory",
         }
         assert "api_key" not in _nested_keys(initial)
         assert initial["interface"]["values"]["locale"] == "system"
@@ -960,17 +961,17 @@ def test_spec700_settings_validation_revision_and_lock_fail_closed(tmp_path):
             "POST",
             "/api/settings",
             body=json.dumps({
-                "revision": initial["files"]["system"]["revision"],
-                "file": "system",
+                "revision": initial["files"]["memory"]["revision"],
+                "file": "memory",
                 "changes": {
-                    "token_usage.warning_ratio": 0.9,
-                    "token_usage.critical_ratio": 0.8,
+                    "heat.zone_thresholds.significant": 30,
+                    "heat.zone_thresholds.uncertain": 40,
                 },
             }),
             headers=_json_headers(server),
         )
         assert status == 400
-        assert invalid["error"] == "settings_token_ratio_order_invalid"
+        assert invalid["error"] == "settings_memory_heat_invalid"
 
         status, secret = _request(
             server,
@@ -2175,7 +2176,7 @@ def test_spec705_desktop_environment_and_ready_record(tmp_path, monkeypatch):
             "process_id": os.getpid(),
             "session_id": "b" * 32,
             "origin": f"http://127.0.0.1:{server.server_address[1]}",
-            "product_version": "0.1.0-alpha.4",
+            "product_version": "0.1.0-alpha.5",
         }
     finally:
         _close(server, thread)
@@ -3052,7 +3053,7 @@ def test_spec701_persona_projection_frontend_contract():
     assert 'path == "/api/persona/state"' in host_source
     assert "MAX_PERSONA_CORE_BYTES = 1024 * 1024" in host_source
     assert "def read_snapshot(self):" in store_source
-    read_snapshot = store_source.split("def read_snapshot(self):", 1)[1].split("def _backfill_defaults", 1)[0]
+    read_snapshot = store_source.split("def read_snapshot(self):", 1)[1].split("def save(self", 1)[0]
     assert "self.save" not in read_snapshot
     assert ".persona-id-card" in styles
     assert ".persona-id-fields" in styles

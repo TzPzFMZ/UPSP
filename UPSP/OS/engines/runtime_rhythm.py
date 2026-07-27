@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from logic.rhythm_guide_materializer import reconcile_recovered_emergency_flags
 from logic.single_round_probe_policy import validate_single_round_probe_round
 
@@ -15,7 +15,6 @@ def prepare_round_before_setup(runtime, round_type, state, flags):
             flags,
             state_store=runtime.sm,
             connectivity_store=getattr(runtime.services, "connectivity_store", None),
-            process_health_checker=getattr(runtime.hb, "_check_process_down", None),
         )
         effective_round_type = runtime._determine_round_type(flags, state)
         if not effective_round_type:
@@ -57,14 +56,13 @@ def refresh_round_alert_recovery(runtime, context):
         for name, active in persisted.items():
             if active:
                 flags[name] = True
-        for name in ("api_degraded", "process_down"):
+        for name in ("api_degraded",):
             if name in persisted:
                 flags[name] = bool(persisted[name])
     effective, cleared = reconcile_recovered_emergency_flags(
         flags,
         state_store=runtime.sm,
         connectivity_store=getattr(runtime.services, "connectivity_store", None),
-        process_health_checker=getattr(runtime.hb, "_check_process_down", None),
     )
     context.flags = effective
     context.state = runtime.sm.load()
@@ -100,7 +98,7 @@ def prepare_chronicle_focus_for_active_guide(runtime, round_type, state, round_n
     state = state or {}
     base = state.get("base", {}) if isinstance(state, dict) else {}
     meta = base.get("meta", {}) if isinstance(base, dict) else {}
-    closed_at = datetime.now(TZ_SHANGHAI).isoformat()
+    closed_at = local_now().isoformat()
     state_sample = chronicle_state_sample(base)
     memory_stats = chronicle_memory_stats(runtime.memory_store, round_num)
     try:

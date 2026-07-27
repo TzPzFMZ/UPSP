@@ -232,7 +232,10 @@ internal sealed class DesktopBackend : IDisposable
         }
         catch (TimeoutException)
         {
-            return false;
+            DesktopLog.Write(
+                "Graceful backend shutdown timed out; terminating the managed process tree.");
+            TerminateStartedProcess();
+            return HasExited;
         }
     }
 

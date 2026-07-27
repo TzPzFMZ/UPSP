@@ -92,9 +92,9 @@ def test_every_round_type_settles_without_memory(tmp_path, round_type):
 
     assert receipt["status"] == "applied"
     base = state.load()["base"]
-    assert base["dynamic_axes"]["focus"]["value"] == 1
-    assert base["dynamic_axes"]["safety"]["value"] == 1
-    assert base["dynamic_axes"]["arousal"]["value"] == -1
+    assert base["dynamic_axes"]["focus"]["value"] == 0
+    assert base["dynamic_axes"]["safety"]["value"] == 0
+    assert base["dynamic_axes"]["arousal"]["value"] == 0
     assert base["workhood_index"]["value"] > 0
     assert base["meta"]["last_state_settlement_id"] == "SS-R000001"
 
@@ -116,7 +116,7 @@ def test_memory_round_closes_dynamic_relation_buffer_and_audit(tmp_path):
 
     base = state.load()["base"]
     assert result["source_memory_ids"] == ["MEM-01"]
-    assert base["dynamic_axes"]["arousal"]["value"] == 2
+    assert base["dynamic_axes"]["arousal"]["value"] == 3
     assert base["feeling_buffer"]
     assert relations.cards["REL-A"]["axes"]["trust"] == 3
     event_types = [event["event_type"] for event in rounds.read_events(1)]
@@ -142,7 +142,7 @@ def test_duplicate_receipt_and_cleanup_do_not_accumulate(tmp_path):
 
     assert first == second
     assert state.load() == after_first
-    assert after_first["base"]["dynamic_axes"]["focus"]["value"] == 3.5
+    assert after_first["base"]["dynamic_axes"]["focus"]["value"] == 2
     events = rounds.read_events(1)
     assert sum(e["event_type"] == "state_settle_plan" for e in events) == 1
     assert sum(e["event_type"] == "state_settle_receipt" for e in events) == 1
@@ -172,7 +172,7 @@ def test_noninteractive_round_does_not_advance_buffer_but_time_does(tmp_path):
         observed_at=start + timedelta(minutes=5),
     )
     base = state.load()["base"]
-    assert base["dynamic_axes"]["arousal"]["value"] == 3
+    assert base["dynamic_axes"]["arousal"]["value"] == 5
     assert base["feeling_buffer"] == []
 
 

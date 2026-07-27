@@ -2,7 +2,7 @@
 心跳闹钟 — UPSP 的时间感知器
 DDS §23.5 心跳机制
 
-硬约束（18 项布尔检查，V6 训练材料阈值）：
+硬约束：
   1. 不计轮数（轮数由 runtime.py 管）
   2. 不调 API（零网络请求）
   3. 不注入 LLM（不碰上下文）
@@ -10,18 +10,10 @@ DDS §23.5 心跳机制
   5. 不回滚（只置位，不消费）
   6. 轮内暂停（runtime 调 pause()，善后步调 resume()）
 
-18 个布尔标记（V6: 17→18，新增进化集材料阈值置位）：
-  1-10: fatigue_expired(退役残留清理)/feeling_settle_due/api_degraded/stm_degrade_pending/
-        process_down/user_message_waiting/rhythm_due/standby_due/
-        continue_requested/shelve_timer_expired
-  11: token_usage_warning   ← V2 新增
-  12: identity_timeout      ← V2 新增；Spec598 后退役为残留清理
-  13: calendar_day_due      ← V5 新增（日历日：日志+语料备份）
-  14: calendar_week_due     ← V5 新增（日历周：周志+语料备份）
-  15: calendar_month_due    ← V5 新增（日历月：月志+语料备份）
-  16: calendar_quarter_due  ← V5 新增（日历季：季志+语料备份）
-  17: calendar_year_due     ← V5 新增（日历年：年志+语料备份）
-  18: evolution_pending     ← V6 新增（Raw/Tacit 或 Raw/Connection 达阈值）
+活动标记按 HEARTBEAT_TRIGGER_GROUPS、HEARTBEAT_QUALIFIER_FLAGS 与
+HEARTBEAT_LOCAL_MAINTENANCE_FLAGS 分组。fatigue_expired、identity_timeout
+和 process_down 只保留在 state schema 中，Seed 固定为 false，心跳不读取、
+不置位，也不据此创建 Round。
 
 engines/ vs scripts/ 边界：
   心跳只管 WHEN（到了该检查的时间）→ 置位 flag
@@ -35,10 +27,11 @@ from data.config_store import ConfigStore
 from data.connectivity_store import ConnectivityStore
 from data.memory_heat import MemoryHeat
 from data.evolution_store import EvolutionStore
+from constants import local_now
 from constants import (
-    TZ_SHANGHAI, HEARTBEAT_DEFAULT_INTERVAL,
+    HEARTBEAT_DEFAULT_INTERVAL,
     RHYTHM_INTERVAL_ROUNDS,
-    STANDBY_IDLE_MINUTES, IDENTITY_TIMEOUT_SECONDS,
+    STANDBY_IDLE_MINUTES,
     TOKEN_WARNING_RATIO,
 )
 
@@ -55,7 +48,6 @@ HEARTBEAT_TRIGGER_GROUPS = {
         "calendar_quarter_due",
         "calendar_year_due",
         "api_degraded",
-        "process_down",
         "token_usage_warning",
         "context_pressure",
         "cache_compaction_due",
@@ -64,7 +56,6 @@ HEARTBEAT_TRIGGER_GROUPS = {
         "continue_requested",
     ),
     "autonomous": (
-        "fatigue_expired",
         "stm_degrade_pending",
         "evolution_pending",
     ),
@@ -90,9 +81,7 @@ HEARTBEAT_GROUP_ROUND_TYPES = {
     "standby": "standby",
 }
 
-HEARTBEAT_QUALIFIER_FLAGS = (
-    "identity_timeout",
-)
+HEARTBEAT_QUALIFIER_FLAGS = ()
 
 HEARTBEAT_HEALTH_ONLY_FLAGS = ()
 
@@ -103,7 +92,6 @@ HEARTBEAT_LOCAL_MAINTENANCE_FLAGS = (
 
 EMERGENCY_GUIDE_FLAGS = (
     "api_degraded",
-    "process_down",
 )
 
 CONTEXT_PRESSURE_GUIDE_FLAGS = (
@@ -328,7 +316,7 @@ class HeartbeatManager:
         with self._msg_lock:
             self._msg_queue.append(message)
         # P1-1: 外部输入到达时写时间戳→起手步读此字段判断是否加载 relation 场景规则
-        now = datetime.now(TZ_SHANGHAI)
+        now = local_now()
         try:
             self.sm.update_many({"base.meta.last_external_input_at": now.isoformat()})
         except Exception:
@@ -367,7 +355,7 @@ class HeartbeatManager:
             # 更新最后心跳时间
             try:
                 self.sm.set("base.meta.last_heartbeat_at",
-                            datetime.now(TZ_SHANGHAI).isoformat())
+                            local_now().isoformat())
             except Exception:
                 pass
 
@@ -394,12 +382,7 @@ class HeartbeatManager:
         new_flags = {}
         clear_flags = []
         tick_errors = []
-        now = datetime.now(TZ_SHANGHAI)
-
-        # --- 1. fatigue_expired（退役）---
-        # Spec598: live Runtime 不再维护疲劳倒计时；历史残留 flag 只清理。
-        if flags.get("fatigue_expired"):
-            clear_flags.append("fatigue_expired")
+        now = local_now()
 
         # --- 2. feeling_settle_due ---
         next_settle = meta.get("next_settle_at")
@@ -436,14 +419,6 @@ class HeartbeatManager:
                     new_flags["evolution_pending"] = True
             except Exception as e:
                 tick_errors.append(f"evolution_pending: {e}")
-
-        # --- 5. process_down ---
-        if self._alert_deferred(alert_deferrals, "process_down", now):
-            if flags.get("process_down"):
-                clear_flags.append("process_down")
-        elif not flags.get("process_down"):
-            if self._check_process_down():
-                new_flags["process_down"] = True
 
         # --- 6. user_message_waiting ---
         if not flags.get("user_message_waiting"):
@@ -528,12 +503,6 @@ class HeartbeatManager:
         elif flags.get("token_usage_warning"):
             clear_flags.append("token_usage_warning")
 
-        # --- 13. identity_timeout（退役）---
-        # Spec598: 身份超时倒计时不再从 confirmed_at / external input 间隔派生。
-        # 历史状态文件可能残留该 flag；心跳只负责清掉，不再清 confirmed_at。
-        if flags.get("identity_timeout"):
-            clear_flags.append("identity_timeout")
-
         # 批量置位
         updates = {}
         if new_flags:
@@ -600,10 +569,6 @@ class HeartbeatManager:
         except Exception:
             return False
         return now < until
-
-    def _check_process_down(self):
-        """Base 单进程模型：tick 能执行即主进程存活。无守护锁机制时返回 False。"""
-        return False
 
 
 # ============================================================

@@ -28,7 +28,7 @@ from schemas.memory import (
     MEMORY_ENTRY_TEMPLATE, INDEX_HEADER, INDEX_SEPARATOR,
 )
 from errors import EntryNotFoundError, WriteError, ReadError
-from constants import TZ_SHANGHAI
+from constants import local_now
 
 
 def _overview_text(value):
@@ -191,7 +191,7 @@ class MemoryStore:
         """追加一条新记忆条目到 memory.md（原子写）
         F(5): 正文 ≤2048字 / S(4,3): 摘要 ≤512字 / A(2,1): 正文 ≤128字。
         超过当前权重上限时拒绝写入，不静默截断。"""
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         clean_id = mem_id[4:] if mem_id.startswith("MEM-") else mem_id
         # morph 不带括号，模板自己包
         morph = {5: "F", 4: "S", 3: "S", 2: "A", 1: "A"}.get(weight, "A")

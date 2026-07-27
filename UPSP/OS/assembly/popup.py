@@ -9,7 +9,7 @@ from datetime import datetime
 import os
 
 from paths import CONTEXT_POPUP, DOCS_POPUP_TEMPLATE
-from constants import TZ_SHANGHAI
+from constants import local_now
 from data.popup_store import PopupStore
 
 POPUP_TEMPLATE_MD = DOCS_POPUP_TEMPLATE
@@ -104,15 +104,15 @@ class PopupManager:
             pass
 
     def emit_warning(self, message):
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         self.write_popup(f"[! 警告 {now}]\n{message}")
 
     def emit_urgent(self, message):
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         self.write_popup(f"[!! 紧急 {now}]\n{message}")
 
     def emit_secure(self, message):
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         self.write_popup(f"[!!! 安全 {now}]\n{message}")
 
     @staticmethod

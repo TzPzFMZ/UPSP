@@ -173,11 +173,9 @@ const personaFieldLabels: Record<string, MessageKey> = {
   relay_intents: "中继意图",
   relay_intent_seq: "中继意图序号",
   work_intent_debt: "工作意图债务",
-  fatigue_expired: "疲劳过期",
   feeling_settle_due: "感受待结算",
   api_degraded: "API 降级",
   stm_degrade_pending: "短时记忆待降级",
-  process_down: "进程离线",
   user_message_waiting: "用户消息等待",
   rhythm_due: "节律到期",
   standby_due: "待命到期",
@@ -186,7 +184,6 @@ const personaFieldLabels: Record<string, MessageKey> = {
   token_usage_warning: "令牌用量警告",
   context_pressure: "上下文压力",
   cache_compaction_due: "缓存压缩到期",
-  identity_timeout: "身份超时到期",
   calendar_day_due: "日节律到期",
   calendar_week_due: "周节律到期",
   calendar_month_due: "月节律到期",
@@ -1788,9 +1785,24 @@ const runtimeSettingFields: SettingFieldSpec[] = [
   { key: "general_tools.web_search_window_results", label: "搜索结果窗口", kind: "int", min: 1, max: 1000 },
 ];
 
-type ContextSettingsFileId = "now" | "lately" | "periodic" | "high_freq" | "relation";
+type ContextSettingsFileId = "memory" | "now" | "lately" | "periodic" | "high_freq" | "relation";
 
 const contextSettingFields: Record<ContextSettingsFileId, SettingFieldSpec[]> = {
+  memory: [
+    { key: "heat.zone_thresholds.significant", label: "显著区阈值", kind: "int", min: 1, max: 100 },
+    { key: "heat.zone_thresholds.uncertain", label: "不确定区阈值", kind: "int", min: 0, max: 99 },
+    { key: "heat.decay_rates.significant", label: "显著区每轮衰减", kind: "int", min: -100, max: 0 },
+    { key: "heat.decay_rates.uncertain", label: "不确定区每轮衰减", kind: "int", min: -100, max: 0 },
+    { key: "heat.decay_rates.decay", label: "衰减区每轮衰减", kind: "int", min: -100, max: 0 },
+    { key: "heat.initial_by_weight.1", label: "权重一初始热度", kind: "int", min: 0, max: 100 },
+    { key: "heat.initial_by_weight.2", label: "权重二初始热度", kind: "int", min: 0, max: 100 },
+    { key: "heat.initial_by_weight.3", label: "权重三初始热度", kind: "int", min: 0, max: 100 },
+    { key: "heat.initial_by_weight.4", label: "权重四初始热度", kind: "int", min: 0, max: 100 },
+    { key: "heat.initial_by_weight.5", label: "权重五初始热度", kind: "int", min: 0, max: 100 },
+    { key: "heat.recall_boost", label: "召回增益", kind: "int", min: 0, max: 100 },
+    { key: "heat.upgrade_high_rounds", label: "高热升格轮数", kind: "int", min: 1, max: 100000 },
+    { key: "heat.locked_value", label: "热度锁定值", kind: "int", min: 0, max: 100 },
+  ],
   now: [
     { key: "budget_chars", label: "当前缓存预算", kind: "int", min: 1, max: 16777216 },
     { key: "trim_chars", label: "当前缓存裁剪量", kind: "int", min: 1, max: 16777216 },
@@ -1885,6 +1897,11 @@ function renderContextSettings(files: SettingsPayload["files"]): string {
       <header class="ledger-title"><h2>${t(title)}</h2><p>${t(description)}</p></header>
       <div class="settings-grid">${contextSettingFields[fileId].map((field) => renderSettingField(field, files[fileId].values[field.key])).join("")}</div>
     </section>`).join("")}
+    <details class="settings-advanced ledger-panel settings-panel settings-context-panel" data-settings-file="memory">
+      <summary>${t("记忆代谢")}</summary>
+      <p>${t("记忆热度、召回、衰减与升格边界。")}</p>
+      <div class="settings-grid">${contextSettingFields.memory.map((field) => renderSettingField(field, files.memory.values[field.key])).join("")}</div>
+    </details>
     ${settingsActions()}
   </form>${settingsFeedback()}`;
 }

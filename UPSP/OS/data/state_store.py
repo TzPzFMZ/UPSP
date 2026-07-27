@@ -19,10 +19,10 @@ import threading
 import tempfile
 from copy import deepcopy
 
-from paths import CORE_MD, STATE_JSON
+from paths import STATE_JSON
 from schemas.state import FIELDS, default_state
 from errors import WriteError, ReadError
-from constants import TZ_SHANGHAI
+from constants import local_now
 
 INTERACTION_ANCHOR_SOURCES = frozenset({
     "unbound", "local_default", "instance_selection",
@@ -46,21 +46,18 @@ class StateStore:
     # ==============================================================
 
     def load(self):
-        """读取 state.json 全量。文件不存在返回默认模板。命中内存缓存则跳过读盘"""
+        """严格读取完整 state.json；缺失或坏值均不得由 Runtime 回填。"""
         if self._cache is not None:
             return deepcopy(self._cache)
         if not os.path.isfile(self.path):
-            self._cache = deepcopy(default_state())
-            return deepcopy(self._cache)
+            raise ReadError(self.path, message=f"状态真源不存在: {self.path}")
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-            before = deepcopy(loaded)
-            self._cache = self._backfill_defaults(loaded)
-            if self._cache != before:
-                self.save(self._cache)
+            self._validate(loaded)
+            self._cache = deepcopy(loaded)
             return deepcopy(self._cache)
-        except (json.JSONDecodeError, OSError) as e:
+        except (json.JSONDecodeError, OSError, ValueError) as e:
             raise ReadError(self.path, cause=e)
 
     def read_snapshot(self):
@@ -70,84 +67,55 @@ class StateStore:
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
+            self._validate(loaded)
+        except (json.JSONDecodeError, OSError, ValueError) as e:
             raise ReadError(self.path, cause=e)
-        if not isinstance(loaded, dict):
-            raise ReadError(self.path, message=f"状态真源不是对象: {self.path}")
         return deepcopy(loaded)
 
-    def _backfill_defaults(self, data):
-        """读取旧 state.json 时补齐新增的轻量字段，不覆盖已有值。"""
+    @staticmethod
+    def _validate(data):
         if not isinstance(data, dict):
-            return data
-        defaults = default_state()
-        data.pop("state", None)
-        data.pop("flags", None)
-        base = data.setdefault("base", {})
-        for retired_key in ("state", "relation_focus", "daily_round"):
-            base.pop(retired_key, None)
-        meta = base.setdefault("meta", {})
-        meta.setdefault(
-            "last_state_settlement_id",
-            defaults["base"]["meta"]["last_state_settlement_id"],
-        )
-        core_axes = base.setdefault("core_axes", {})
-        for axis, default_value in defaults["base"]["core_axes"].items():
-            value = core_axes.get(axis)
-            if (
-                not isinstance(value, (int, float))
-                or isinstance(value, bool)
-                or not 0 <= value <= 100
-            ):
-                core_axes[axis] = default_value
-        axes = base.setdefault("dynamic_axes", {})
-        for axis, default_axis in defaults["base"]["dynamic_axes"].items():
-            slot = axes.setdefault(axis, {})
-            if not isinstance(slot, dict):
-                slot = {}
-                axes[axis] = slot
-            value = slot.get("value")
-            if (not isinstance(value, (int, float))
-                    or isinstance(value, bool)
-                    or not -100 <= value <= 100):
-                slot["value"] = default_axis["value"]
-        comfort = base.setdefault("comfort_zone", {})
-        for axis, default_value in defaults["base"]["comfort_zone"].items():
-            value = comfort.get(axis)
-            if (
-                not isinstance(value, (int, float))
-                or isinstance(value, bool)
-                or not -40 <= value <= 40
-            ):
-                comfort[axis] = default_value
-        workhood = base.setdefault("workhood_index", {})
-        for name, default_value in defaults["base"]["workhood_index"].items():
-            workhood.setdefault(name, default_value)
-        wheel = base.setdefault("core_speed_wheel", {})
-        for name, default_value in defaults["base"]["core_speed_wheel"].items():
-            wheel.setdefault(name, default_value)
-        runtime = base.setdefault("runtime", {})
-        runtime.pop("next_round", None)
-        for name, value in defaults["base"]["runtime"].items():
-            runtime.setdefault(name, value)
-        identity = base.setdefault("identity", {})
-        for name, value in defaults["base"]["identity"].items():
-            identity.setdefault(name, value)
-        flags = base.setdefault("heartbeat_flags", {})
-        for name, value in defaults["base"]["heartbeat_flags"].items():
-            flags.setdefault(name, value)
-        if not isinstance(base.get("alert_deferrals"), dict):
-            base["alert_deferrals"] = {}
-        context_cache = base.setdefault("context_cache", {})
-        context_cache.pop("near_cache_expired", None)
-        context_cache.pop("remote_cache_expired", None)
-        for name, value in defaults["base"]["context_cache"].items():
-            context_cache.setdefault(name, value)
-        base.setdefault("focus", defaults["base"]["focus"])
-        base.setdefault("old_focus", defaults["base"]["old_focus"])
-        if not isinstance(base.get("feeling_buffer"), list):
-            base["feeling_buffer"] = []
-        return data
+            raise ValueError("state must be an object")
+        for dotpath, (type_spec, _, _) in FIELDS.items():
+            cur = data
+            for key in dotpath.split("."):
+                if not isinstance(cur, dict) or key not in cur:
+                    raise ValueError(f"missing state field: {dotpath}")
+                cur = cur[key]
+            allowed = type_spec.split("|")
+            valid = (
+                ("None" in allowed and cur is None)
+                or ("bool" in allowed and isinstance(cur, bool))
+                or (
+                    "int" in allowed
+                    and isinstance(cur, int)
+                    and not isinstance(cur, bool)
+                )
+                or (
+                    "float" in allowed
+                    and isinstance(cur, (int, float))
+                    and not isinstance(cur, bool)
+                )
+                or ("str" in allowed and isinstance(cur, str))
+                or ("dict" in allowed and isinstance(cur, dict))
+                or ("list" in allowed and isinstance(cur, list))
+            )
+            if not valid:
+                raise ValueError(f"invalid state field: {dotpath}")
+        base = data["base"]
+        for value in base["core_axes"].values():
+            if not 0 <= value <= 100:
+                raise ValueError("core axis out of range")
+        for slot in base["dynamic_axes"].values():
+            if not -100 <= slot["value"] <= 100:
+                raise ValueError("dynamic axis out of range")
+        for value in base["comfort_zone"].values():
+            if not -40 <= value <= 40:
+                raise ValueError("comfort value out of range")
+        flags = base["heartbeat_flags"]
+        for name in ("fatigue_expired", "identity_timeout", "process_down"):
+            if flags[name] is not False:
+                raise ValueError(f"reserved Seed flag must be false: {name}")
 
 
     def get(self, dotpath, default=None):
@@ -168,7 +136,7 @@ class StateStore:
 
     def save(self, data):
         """全量写入 state.json（原子 + 线程安全 + 重试）。同步更新内存缓存"""
-        data = self._backfill_defaults(data)
+        self._validate(data)
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
 
         with _LOCK:
@@ -257,7 +225,7 @@ class StateStore:
 
     def increment_round(self):
         from datetime import datetime
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         data = self.load()
         meta = data["base"]["meta"]
         meta["total_round"] = meta.get("total_round", 0) + 1
@@ -267,12 +235,9 @@ class StateStore:
         return meta["total_round"]
 
     def init_if_missing(self):
-        """初始化显式测试路径；默认活体路径必须由 PersonaInitializer 创建。"""
+        """显式测试辅助；正式活动 state 只能由 PersonaInitializer 创建。"""
         if not os.path.isfile(self.path):
-            if (
-                os.path.abspath(self.path) == os.path.abspath(STATE_JSON)
-                and not os.path.isfile(CORE_MD)
-            ):
+            if os.path.abspath(self.path) == os.path.abspath(STATE_JSON):
                 raise WriteError(
                     self.path,
                     message="persona_initialization_required",
@@ -280,7 +245,7 @@ class StateStore:
             from datetime import datetime
             state = default_state()
             state["base"]["meta"]["last_update"] = \
-                datetime.now(TZ_SHANGHAI).isoformat()
+                local_now().isoformat()
             self.save(state)
             return True
         return False
@@ -299,11 +264,10 @@ class StateStore:
     def confirm_identity(self):
         """标记身份已确认"""
         from datetime import datetime
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         self.update_many({
             "base.identity.confirmed": True,
             "base.identity.confirmed_at": now,
-            "base.heartbeat_flags.identity_timeout": False,
         })
 
     def set_interaction_anchor(self, relation_id=None, declared_name=None,

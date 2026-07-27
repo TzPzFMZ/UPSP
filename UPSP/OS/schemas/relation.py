@@ -9,9 +9,7 @@ DDS §11 关系系统
   relation/relation_registry.json — 关系卡注册表
   relation/{category}/{id}.md    — 单张关系卡
 """
-from datetime import datetime, timezone, timedelta
-
-TZ = timezone(timedelta(hours=8))
+from constants import local_now
 
 # ============================================================
 # 关系六轴定义（DDS §11）
@@ -72,7 +70,7 @@ def relation_card_label(card_or_id):
 
 def default_relation_card(card_id, name, category="ours"):
     """返回全新的关系卡"""
-    now = datetime.now(TZ).isoformat()
+    now = local_now().isoformat()
     return {
         "id": card_id,
         "name": name,
@@ -110,7 +108,7 @@ def default_relation_registry():
 
 def default_registry_card_entry(card_id, name, category, path):
     """注册表中的一条关系卡记录。"""
-    now = datetime.now(TZ).isoformat()
+    now = local_now().isoformat()
     return {
         "id": card_id,
         "name": name,

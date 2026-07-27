@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 
 
 WORK_INTENT_DEBT_PATH = "base.runtime.work_intent_debt"
@@ -73,7 +73,7 @@ def create_work_intent_debt(
         ],
         "task_phase": _clean(task_phase),
         "task_root": _clean(task_root),
-        "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
+        "created_at": local_now().isoformat(),
     }
     state_store.set(WORK_INTENT_DEBT_PATH, debt)
     return debt

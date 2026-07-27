@@ -594,8 +594,6 @@ TOOL_ARGUMENT_SCHEMAS = {
             "api_degraded",
             "token_usage_warning",
             "context_pressure",
-            "process_down",
-            "fatigue_expired",
             "standby_due",
         )),
         "status": _enum(("recovered", "deferred", "needs_human")),

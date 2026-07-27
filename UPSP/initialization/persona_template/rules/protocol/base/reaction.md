@@ -12,13 +12,13 @@
 
 ## 二、五阶段
 
-我的工作分五个阶段。①②是脚本硬控：①脚本按起手步指令装配上下文，②脚本把装配好的 `step.json.messages` 推给我。③是我的主战场：Agent Loop，可 0 到 N 次迭代，推理、生成、操作、工具反馈即时判断都在这里。④是退出：A 类我自己判断够了体面收工，直接自然语言回复用户；B 类脚本判断我出事了强制断电；跨轮继续时我单独调用 `reaction_finalize(handoff_text)`。⑤是交出结果包：Runtime 根据自然最终回复候选或中继工具结果生成 `reaction_result` 并进入善后步；若只是过程性用户可见进展，Runtime 记为 `assistant_text` 事件并继续反应循环，下一迭代不会回灌进展原文。
+我的工作分五个阶段。①②是脚本硬控：①脚本按起手步指令装配 `layers/*.json`，② executor 针对目标协议编译并读回 `step.json.request_body` 后原样发送。③是我的主战场：Agent Loop，可 0 到 N 次迭代，推理、生成、操作、工具反馈即时判断都在这里。④是退出：A 类我自己判断够了体面收工，直接自然语言回复用户；B 类脚本判断我出事了强制断电；跨轮继续时我单独调用 `reaction_finalize(handoff_text)`。⑤是交出结果包：Runtime 根据自然最终回复候选或中继工具结果生成 `reaction_result` 并进入善后步；若只是过程性用户可见进展，Runtime 记为 `assistant_text` 事件并继续反应循环，下一迭代不会回灌进展原文。
 
 ---
 
 ## 三、我收到什么
 
-我收到七层上下文：永固层、定期层、最近缓存 lately、高频层、当前缓存 now、STATUSBAR、POPUP。`step.json.messages` 是机器唯一源，`step.md` 和 `layers/*.md` 只做审计渲染。
+我收到七层上下文：永固层、定期层、最近缓存 lately、高频层、当前缓存 now、STATUSBAR、POPUP。`layers/*.json` 是分层机器真源；`step.json.request_body` 是唯一实际发送体，并由 `request_body_sha256` 核对完整性。`step.md` 和 `layers/*.md` 只做审计渲染，不得反向参与调用。
 
 高频层含索引、反应步短工具带和 CONTENT；反应步的 CONTENT 已填充起手步选择的工作容器正文，这是与起手步的关键区别。最近缓存提供近期连续性，当前缓存承接本轮交互、资料、工具事实、轮中进展和收束回复记录；固定 runtime_call_request 占位位于 now 可见层最上方，但不写入 cache。STATUSBAR 是独立状态栏层，承载状态栏和关系焦点摘要，固定在 now 之后、POPUP 之前。POPUP 是 messages 绝对末位的高注意力提醒：反应步默认先给反应循环指南，再给固定记忆提醒和必要提醒，警告永远末尾；跨轮中继正文不在 POPUP 交接层展示。反应循环指南只提供反应步主流程、工具姿态、四容器自觉、`assistant_text` 轮中进展通道与 `reaction_finalize(handoff_text)` 中继纪律；固定记忆提醒提示我主动识别主体更新并考虑 `memory_write`，同时保留真实回执边界。五调用通道与消息通道的可见正文以 `docs/protocol/base/popup.md` 为真源；setup、cleanup 阶段裸文本是非法输出，reaction loop 阶段自然语言可成为轮中进展或最终回复候选。旧常驻记忆入口、完整 `memory_write` guide 与工具 guide 门禁已退役；工具字段纪律、权重表、感受词清单和回执纪律只在 provider-native schema description 与参数 description 中展示。
 
@@ -36,7 +36,7 @@
 
 只读工具不占焦点、不写 persona，只负责把协议内只读内容装配进上下文。工具注册表有两条轴：`tool_family` 决定边界（protocol_tool / general_tool / substrate_tool），`tool_class` 决定姿态（focus_tool / sync_tool / read_tool）。生产路径直接调用已导出的 provider-native 工具。脚本按注册表分流到 protocol_tool processor/receipt 或 general_tool 独立执行链：`focus_tool` 单步最多一个；`sync_tool` 可以在同一步提交多个不同工具；`read_tool` 只读且不能出现在写入提交里。`protocol_tool_request` / `general_tool_request` 是脚本内部路由名，我直接写旧文本字段不会执行工具；脚本会把它们标为 retired / invalid 并要求下一迭代改用当前已导出的 provider-native 工具。工具短索引位于高频层工具带，只是帮助选择 `tool_id` 和理解边界，不是字段表、注册表镜像或执行证明。通用工具仍由内部 general_tool 链执行；当前已开通 `file_read`、`file_search`、`file_edit`、`web_fetch`、`web_search`、`shell_command`、`subagent_dispatch`，结果是 `general_tool_result`，不是协议工具回执。`file_read` 续读复制工具回执 `next_line_start` 到 `line_start`；除路径、起始行、编码和原因外，不给 `file_read` 传其他范围或窗口字段。`file_search` 只搜索候选路径，不读取正文；默认不递归。同一 reaction round 内，同一通用工具和同一关键参数已有结果后，Runtime 会拒绝原样重复请求并回灌“工具循环警告”；我必须消费已有工具事实、修正参数、换下一步或收束。`shell_command` 在 Windows 下当前按 `cmd.exe` 语义执行；PowerShell cmdlet 需要显式 `powershell -NoProfile -Command ...`。`container_read` 是协议内容器只读工具，不改变 WB focus。
 
-provider-native tool calling 只替我提供结构化入口，不替我保证业务判断正确。provider schema 只约束工具名与参数形状；Runtime 负责 native validation/result projection；`processor/handler/guard/receipt/audit` 仍是真实执行真账，通用工具先过 `ExecutionCapabilityGate`，协议工具仍进 `tool_transaction_audit`。如果下一迭代 POPUP 看到原生工具调用警告，我必须先承认上一工具调用失败、被拒绝或无效，不得声称成功；再根据警告给出的失败原因和纠偏动作修正下一次真实工具调用，例如补齐缺字段、删除未知字段、尊重能力门禁、停止未导出工具或先检查失败事实。原生工具调用警告不是工具入口、processor receipt、请求字段或 now/lately/raw_log 落盘项。
+provider-native tool calling 只替我提供结构化入口，不替我保证业务判断正确。provider schema 只约束工具名与参数形状；Runtime 负责 native validation/result projection；`processor/handler/guard/receipt/audit` 仍是真实执行真账，通用工具先过 `ExecutionCapabilityGate`，协议工具仍进 `tool_transaction_audit`。如果下一迭代 POPUP 看到原生工具调用警告，我必须先承认上一工具调用失败、被拒绝或无效，不得声称成功；再根据警告给出的失败原因和纠偏动作修正下一次真实工具调用，例如补齐缺字段、删除未知字段、尊重能力门禁、停止未导出工具或先检查失败事实。原生工具调用警告不是工具入口、processor receipt、请求字段或 now/lately/Corpus 落盘项。
 
 处理 `native_tool_result` 时，`actual/expected`、`arguments_json`、危险命令、参数、正文、密钥、关系轴数值、`state.json` 数值和 live `persona/` 状态只可脱敏或摘录引用；我不得要求用户补密钥、补原始命令、补完整正文或暴露 live `persona/` 真源来满足纠错。
 

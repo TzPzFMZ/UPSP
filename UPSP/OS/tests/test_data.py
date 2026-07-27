@@ -12,6 +12,7 @@ import os
 import sys
 import inspect
 import threading
+from pathlib import Path
 from datetime import datetime as RealDatetime
 from pathlib import Path
 from urllib.request import urlopen
@@ -86,7 +87,9 @@ class TestAtomicWriteHelpers:
             "system",
             (str(config_path), config_store._CONFIG_MAP["system"][1]),
         )
-        config_store.ConfigStore().save("system", sample)
+        system = config_store.default_system_config()
+        system["heartbeat"]["interval"] = 9
+        config_store.ConfigStore().save("system", system)
 
         connectivity_path = tmp_path / "connectivity.json"
         connectivity_store.ConnectivityStore(str(connectivity_path)).save(sample)
@@ -118,20 +121,19 @@ class TestAtomicWriteHelpers:
         registry = {"cards": [], "sample": sample}
         relation_store.RelationStore().save_registry(registry)
 
-        class FixedDatetime:
-            @classmethod
-            def now(cls, tz):
-                return RealDatetime(2026, 7, 18, 23, 45, 0, tzinfo=tz)
-
         backup_path = tmp_path / "state_backups.jsonl"
-        monkeypatch.setattr(state_backup_store, "datetime", FixedDatetime)
+        local_tz = RealDatetime.now().astimezone().tzinfo
+        monkeypatch.setattr(
+            state_backup_store,
+            "local_now",
+            lambda: RealDatetime(2026, 7, 18, 23, 45, 0, tzinfo=local_tz),
+        )
         state_backup_store.StateBackupStore(str(backup_path)).append_backup(
             676,
             sample,
         )
 
         for path in (
-                config_path,
                 connectivity_path,
                 heat_path,
                 stm_path,
@@ -139,6 +141,7 @@ class TestAtomicWriteHelpers:
                 relation_index_path,
                 meta_path):
             assert path.read_bytes() == expected
+        assert json.loads(config_path.read_text(encoding="utf-8"))["heartbeat"]["interval"] == 9
         assert registry_path.read_bytes() == encoded(json.dumps(
             registry,
             ensure_ascii=False,
@@ -396,17 +399,15 @@ class TestAuditStore:
 class TestStateStore:
     def test_default_when_no_file(self, tmp_path):
         from data.state_store import StateStore
+        from errors import ReadError
         path = tmp_path / "state.json"
         store = StateStore(str(path))
-        state = store.load()
-        assert state["base"]["meta"]["total_round"] == 0
-        flags = state["base"]["heartbeat_flags"]
-        assert len(flags) == 20
-        assert flags["context_pressure"] is False
-        assert flags["cache_compaction_due"] is False
+        with pytest.raises(ReadError):
+            store.load()
 
-    def test_read_snapshot_is_strict_and_never_backfills(self, tmp_path):
+    def test_read_snapshot_rejects_incomplete_state_without_backfill(self, tmp_path):
         from data.state_store import StateStore
+        from errors import ReadError
         from schemas.state import default_state
 
         path = tmp_path / "state.json"
@@ -415,9 +416,8 @@ class TestStateStore:
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         before = path.read_bytes()
 
-        snapshot = StateStore(str(path)).read_snapshot()
-
-        assert "evolution_pending" not in snapshot["base"]["heartbeat_flags"]
+        with pytest.raises(ReadError):
+            StateStore(str(path)).read_snapshot()
         assert path.read_bytes() == before
 
     def test_read_snapshot_rejects_missing_malformed_and_non_object(self, tmp_path):
@@ -439,6 +439,7 @@ class TestStateStore:
         from data.state_store import StateStore
         path = tmp_path / "state.json"
         store = StateStore(str(path))
+        store.init_if_missing()
         state = store.load()
         state["base"]["meta"]["total_round"] = 5
         store.save(state)
@@ -447,18 +448,19 @@ class TestStateStore:
 
     def test_load_backfills_missing_heartbeat_flags(self, tmp_path):
         from data.state_store import StateStore
+        from errors import ReadError
         from schemas.state import default_state
         path = tmp_path / "state.json"
         state = default_state()
         state["base"]["heartbeat_flags"].pop("evolution_pending")
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
-        loaded = StateStore(str(path)).load()
-
-        assert loaded["base"]["heartbeat_flags"]["evolution_pending"] is False
+        with pytest.raises(ReadError):
+            StateStore(str(path)).load()
 
     def test_load_backfills_unbound_interaction_anchor_without_guessing(self, tmp_path):
         from data.state_store import StateStore
+        from errors import ReadError
         from schemas.state import default_state
         path = tmp_path / "state.json"
         state = default_state()
@@ -468,16 +470,8 @@ class TestStateStore:
             state["base"]["identity"].pop(key)
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
-        loaded = StateStore(str(path)).load()
-
-        identity = loaded["base"]["identity"]
-        assert identity["local_default_relation_id"] is None
-        assert identity["current_relation_id"] is None
-        assert identity["current_declared_name"] is None
-        assert identity["current_source"] == "unbound"
-
-        with pytest.raises(ValueError, match="invalid_interaction_anchor_source"):
-            StateStore(str(path)).set_interaction_anchor(source="guessed")
+        with pytest.raises(ReadError):
+            StateStore(str(path)).load()
 
     def test_load_removes_legacy_next_round_from_runtime(self, tmp_path):
         from data.state_store import StateStore
@@ -491,14 +485,14 @@ class TestStateStore:
         }
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
+        before = path.read_bytes()
         loaded = StateStore(str(path)).load()
-
-        assert "next_round" not in loaded["base"]["runtime"]
-        saved = json.loads(path.read_text(encoding="utf-8"))
-        assert "next_round" not in saved["base"]["runtime"]
+        assert loaded["base"]["runtime"]["next_round"]["type"] == "relay"
+        assert path.read_bytes() == before
 
     def test_load_removes_retired_base_state_and_context_flags(self, tmp_path):
         from data.state_store import StateStore
+        from errors import ReadError
         from schemas.state import default_state
 
         path = tmp_path / "state.json"
@@ -513,18 +507,8 @@ class TestStateStore:
         state["base"].pop("feeling_buffer")
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
-        loaded = StateStore(str(path)).load()
-
-        assert "state" not in loaded["base"]
-        assert "relation_focus" not in loaded["base"]
-        assert "daily_round" not in loaded["base"]
-        assert "near_cache_expired" not in loaded["base"]["context_cache"]
-        assert "remote_cache_expired" not in loaded["base"]["context_cache"]
-        assert loaded["base"]["focus"] is None
-        assert loaded["base"]["old_focus"] is None
-        assert loaded["base"]["feeling_buffer"] == []
-        saved = json.loads(path.read_text(encoding="utf-8"))
-        assert "near_cache_expired" not in saved["base"]["context_cache"]
+        with pytest.raises(ReadError):
+            StateStore(str(path)).load()
 
     def test_get_by_dotpath(self, tmp_path):
         from data.state_store import StateStore
@@ -603,6 +587,7 @@ class TestStateStore:
 
     def test_load_repairs_legacy_dynamic_axes_and_top_level_pollution(self, tmp_path):
         from data.state_store import StateStore
+        from errors import ReadError
 
         path = tmp_path / "state.json"
         path.write_text(json.dumps({
@@ -619,22 +604,12 @@ class TestStateStore:
             "flags": {"unknown": True},
         }, ensure_ascii=False), encoding="utf-8")
 
-        store = StateStore(str(path))
-        state = store.load()
-
-        axes = state["base"]["dynamic_axes"]
-        assert set(axes) == {"valence", "arousal", "focus", "mood", "humor", "safety"}
-        assert all(axis["value"] == 0 for axis in axes.values())
-        assert "next_round" not in state["base"]["runtime"]
-        assert "state" not in state
-        assert "flags" not in state
-
-        persisted = json.loads(path.read_text(encoding="utf-8"))
-        assert "state" not in persisted
-        assert "flags" not in persisted
+        with pytest.raises(ReadError):
+            StateStore(str(path)).load()
 
     def test_load_repairs_bool_dynamic_axis_value(self, tmp_path):
         from data.state_store import StateStore
+        from errors import ReadError
 
         path = tmp_path / "state.json"
         path.write_text(json.dumps({
@@ -652,14 +627,8 @@ class TestStateStore:
             },
         }, ensure_ascii=False), encoding="utf-8")
 
-        axes = StateStore(str(path)).load()["base"]["dynamic_axes"]
-
-        assert axes["valence"]["value"] == 0
-        assert axes["arousal"]["value"] == -100
-        assert axes["focus"]["value"] == 100
-        assert axes["mood"]["value"] == 0
-        assert axes["humor"]["value"] == 0
-        assert axes["safety"]["value"] == 0
+        with pytest.raises(ReadError):
+            StateStore(str(path)).load()
 
 
 class TestStateBackupStore:
@@ -806,7 +775,6 @@ class TestStateStoreContinued:
         path = tmp_path / "state.json"
         store = StateStore(str(path))
         store.init_if_missing()
-        store.set("base.heartbeat_flags.identity_timeout", True)
         store.confirm_identity()
         assert store.get("base.identity.confirmed") is True
         assert store.get("base.identity.confirmed_at")
@@ -814,15 +782,15 @@ class TestStateStoreContinued:
 
     def test_identity_timeout_uses_confirmed_at_before_external_input(
             self, tmp_path, monkeypatch):
-        from datetime import datetime, timedelta
+        from datetime import timedelta
+        from constants import local_now
         from data.state_store import StateStore
         from engines.heartbeat import HeartbeatManager
-        import engines.heartbeat as heartbeat
 
         path = tmp_path / "state.json"
         store = StateStore(str(path))
         store.init_if_missing()
-        now = datetime.now(heartbeat.TZ_SHANGHAI)
+        now = local_now()
         old_input = (now - timedelta(hours=2)).isoformat()
         fresh_confirm = now.isoformat()
         store.update_many({
@@ -837,11 +805,6 @@ class TestStateStoreContinued:
             "_check_api_degraded",
             lambda self: False,
         )
-        monkeypatch.setattr(
-            HeartbeatManager,
-            "_check_process_down",
-            lambda self: False,
-        )
 
         manager = HeartbeatManager(state_store=store)
 
@@ -851,15 +814,15 @@ class TestStateStoreContinued:
 
     def test_identity_timeout_does_not_reflag_after_confirmed_at_expires(
             self, tmp_path, monkeypatch):
-        from datetime import datetime, timedelta
+        from datetime import timedelta
+        from constants import local_now
         from data.state_store import StateStore
         from engines.heartbeat import HeartbeatManager
-        import engines.heartbeat as heartbeat
 
         path = tmp_path / "state.json"
         store = StateStore(str(path))
         store.init_if_missing()
-        now = datetime.now(heartbeat.TZ_SHANGHAI)
+        now = local_now()
         old_confirm = (now - timedelta(hours=2)).isoformat()
         store.update_many({
             "base.meta.last_external_input_at": now.isoformat(),
@@ -871,11 +834,6 @@ class TestStateStoreContinued:
         monkeypatch.setattr(
             HeartbeatManager,
             "_check_api_degraded",
-            lambda self: False,
-        )
-        monkeypatch.setattr(
-            HeartbeatManager,
-            "_check_process_down",
             lambda self: False,
         )
 
@@ -2117,6 +2075,7 @@ class TestMemoryHeat:
         meta_json.write_text(json.dumps({
             "MEM-CREATED1": {"created_round": 9, "last_recalled_round": 9},
             "MEM-RECALL01": {"created_round": 3, "last_recalled_round": 9},
+            "MEM-HOT00001": {"created_round": 3, "last_recalled_round": 9},
             "MEM-OLD0001": {"created_round": 3, "last_recalled_round": 4},
         }, ensure_ascii=False), encoding="utf-8")
         store = mh.MemoryHeat()
@@ -2130,6 +2089,9 @@ class TestMemoryHeat:
         store.save_heat({"entries": {
             "MEM-CREATED1": dict(base),
             "MEM-RECALL01": dict(base),
+            "MEM-HOT00001": {
+                **base, "H": 80, "zone": "显著", "AH_high": 2,
+            },
             "MEM-OLD0001": dict(base),
         }})
 
@@ -2138,6 +2100,8 @@ class TestMemoryHeat:
         entries = store.load_heat()["entries"]
         assert entries["MEM-CREATED1"]["H"] == 50
         assert entries["MEM-RECALL01"]["H"] == 50
+        assert entries["MEM-HOT00001"]["H"] == 80
+        assert entries["MEM-HOT00001"]["AH_high"] == 3
         assert entries["MEM-OLD0001"]["H"] == 40
 
     def test_tick_decay_marks_stored_low_heat_for_delete(self, tmp_path, monkeypatch):
@@ -2871,6 +2835,7 @@ class TestRelationStore:
 class TestConfigStore:
     def test_load_default_when_no_file(self, tmp_path, monkeypatch):
         from data import config_store as cfs
+        from errors import ReadError
         for name in (
             "system", "memory", "media", "relation",
             "interface", "models", "model_routing",
@@ -2879,12 +2844,10 @@ class TestConfigStore:
                                (str(tmp_path / f"{name}.json"), cfs._CONFIG_MAP[name][1]))
 
         store = cfs.ConfigStore()
-        cfg = store.load("system")
-        assert "heartbeat" in cfg
-        assert cfg["heartbeat"]["interval"] == 5
-        assert store.load("interface")["locale"] == "system"
-        assert store.load("models")["models"] == []
-        assert store.load("model_routing")["routes"]["setup"]["primary"] is None
+        with pytest.raises(ReadError):
+            store.load("system")
+        with pytest.raises(ReadError):
+            store.load("interface")
 
     def test_save_and_load(self, tmp_path, monkeypatch):
         from data import config_store as cfs
@@ -2892,7 +2855,8 @@ class TestConfigStore:
                            (str(tmp_path / "system.json"), cfs._CONFIG_MAP["system"][1]))
 
         store = cfs.ConfigStore()
-        cfg = store.load("system")
+        cfg = cfs.default_system_config()
+        store.save("system", cfg)
         cfg["heartbeat"]["interval"] = 10
         store.save("system", cfg)
         loaded = store.load("system")
@@ -2903,10 +2867,16 @@ class TestConfigStore:
         for name in cfs._CONFIG_MAP:
             monkeypatch.setitem(cfs._CONFIG_MAP, name,
                                (str(tmp_path / f"{name}.json"), cfs._CONFIG_MAP[name][1]))
+        for name, (path, default_fn) in cfs._CONFIG_MAP.items():
+            if name not in cfs._GLOBAL_CONFIGS:
+                Path(path).write_text(
+                    json.dumps(default_fn(), ensure_ascii=False),
+                    encoding="utf-8",
+                )
 
         store = cfs.ConfigStore()
         created = store.init_all()
-        assert len(created) == len(cfs._CONFIG_MAP)  # 全部创建
+        assert set(created) == {"interface", "models"}
 
     def test_convenience_methods(self, tmp_path, monkeypatch):
         from data import config_store as cfs
@@ -2914,7 +2884,7 @@ class TestConfigStore:
                            (str(tmp_path / "system.json"), cfs._CONFIG_MAP["system"][1]))
 
         store = cfs.ConfigStore()
-        store.init_all()
+        store.save("system", cfs.default_system_config())
         assert store.get_heartbeat_interval() == 5
         assert store.get_rhythm_interval() == 32
         assert store.get_round_time_limit() == 600
@@ -2926,7 +2896,7 @@ class TestConfigStore:
                            (str(tmp_path / "system.json"), cfs._CONFIG_MAP["system"][1]))
 
         store = cfs.ConfigStore()
-        store.init_all()
+        store.save("system", cfs.default_system_config())
         data = store.load("system")
 
         assert store.get_round_time_limit() == 600
@@ -3021,14 +2991,9 @@ class TestConfigStore:
         from data import config_store as cfs
 
         periodic_path = tmp_path / "periodic.json"
-        periodic_path.write_text(
-            json.dumps({
-                "limits": {
-                    "periodic_memory_items_chars": 12,
-                }
-            }, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        periodic = cfs.default_periodic_config()
+        periodic["limits"]["periodic_memory_items_chars"] = 12
+        periodic_path.write_text(json.dumps(periodic, ensure_ascii=False), encoding="utf-8")
         monkeypatch.setitem(
             cfs._CONFIG_MAP,
             "periodic",
@@ -3099,12 +3064,11 @@ class TestWorkbenchStore:
         assert store.get("base.active_task") == "T-20260627-01"
 
     def test_spec448_next_task_id_counts_stale_task_guide_dirs(self, tmp_path):
-        from datetime import datetime
-
-        from data.workbench import TZ_SHANGHAI, WorkbenchStore
+        from constants import local_now
+        from data.workbench import WorkbenchStore
 
         root = tmp_path / "workbench"
-        today = datetime.now(TZ_SHANGHAI).strftime("%Y%m%d")
+        today = local_now().strftime("%Y%m%d")
         stale_guide = root / "guides" / f"task__colon__T-{today}-01"
         stale_guide.mkdir(parents=True)
         (stale_guide / "ledger.jsonl").write_text("{}", encoding="utf-8")
@@ -3142,15 +3106,22 @@ class TestDreamStore:
 class TestContextStore:
     def _patch_track_paths(self, tmp_path, monkeypatch):
         from data import context_store as ctxs
-        monkeypatch.setattr(ctxs, "RAW_LOG", str(tmp_path / "raw_log.md"))
-        monkeypatch.setattr(ctxs, "RAW_LOG_JSONL", str(tmp_path / "raw_log.jsonl"), raising=False)
+        monkeypatch.setattr(ctxs, "CONTAINER_CORPUS_DIR", str(tmp_path / "corpus"))
         monkeypatch.setattr(ctxs, "STM_CONTEXT_CACHE_DIR", str(tmp_path / "cache"), raising=False)
         monkeypatch.setattr(ctxs, "STM_CONTEXT_NOW_CACHE_JSONL", str(tmp_path / "cache" / "now_cache.jsonl"), raising=False)
         monkeypatch.setattr(ctxs, "STM_CONTEXT_LATELY_CACHE_JSONL", str(tmp_path / "cache" / "lately_cache.jsonl"), raising=False)
+        raw_jsonl = str(tmp_path / "buffer" / "raw_log.jsonl")
+        raw_md = str(tmp_path / "buffer" / "raw_log.md")
+        monkeypatch.setattr(ctxs, "RAW_LOG_JSONL", raw_jsonl)
+        monkeypatch.setattr(ctxs, "RAW_LOG", raw_md)
+        monkeypatch.setattr(ctxs, "_DEFAULT_RAW_LOG_JSONL", raw_jsonl)
+        monkeypatch.setattr(ctxs, "_DEFAULT_RAW_LOG", raw_md)
         return ctxs
 
     @staticmethod
     def _read_jsonl(path):
+        if not path.exists():
+            return []
         return [
             json.loads(line)
             for line in path.read_text(encoding="utf-8").splitlines()
@@ -3254,15 +3225,15 @@ class TestContextStore:
         assert lately["compact_shard_chars"] == 8192
         assert lately["compact_shard_ratio"] == 0.314
 
-    def test_context_store_drops_legacy_ttl_when_normalizing_raw_log(self):
+    def test_context_store_drops_legacy_ttl_when_normalizing_corpus(self):
         from data.context_store import ContextStore
 
         store = ContextStore()
-        block = store._normalize_raw_log_block({
+        block = store._normalize_corpus_block({
             "id": "R000001-user-0000",
             "role": "user",
             "kind": "interaction",
-            "text": "历史 raw_log",
+            "text": "历史语料",
             "loc": {"round": 1, "step": "round", "iter": 0},
             "policy": {"now": False, "lately": False, "ttl": "lately"},
             "ref": {"interaction": {
@@ -3315,8 +3286,7 @@ class TestContextStore:
             "identity_status": "known",
             "interaction_source": "relation_registry",
         }
-        raw_blocks = self._read_jsonl(tmp_path / "raw_log.jsonl")
-        assert raw_blocks == []
+        assert self._read_jsonl(tmp_path / "buffer" / "raw_log.jsonl") == []
 
     def test_context_cache_preserves_stable_interaction_object_id(
             self, tmp_path, monkeypatch):
@@ -3381,7 +3351,7 @@ class TestContextStore:
         ]
         assert len(interactions) == 1
 
-    def test_tool_fact_and_minimum_enter_lately_and_raw_as_historical_proof(self, tmp_path, monkeypatch):
+    def test_tool_fact_and_minimum_stay_now_until_lately_admission(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore()
 
@@ -3392,7 +3362,7 @@ class TestContextStore:
 
         now_blocks = self._read_jsonl(tmp_path / "cache" / "now_cache.jsonl")
         lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        raw_blocks = self._read_jsonl(tmp_path / "raw_log.jsonl")
+        raw_blocks = self._read_jsonl(tmp_path / "buffer" / "raw_log.jsonl")
 
         assert {block["kind"] for block in now_blocks} == {
             "tool_fact",
@@ -3419,13 +3389,13 @@ class TestContextStore:
 
         now_blocks = self._read_jsonl(tmp_path / "cache" / "now_cache.jsonl")
         lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        raw_blocks = self._read_jsonl(tmp_path / "raw_log.jsonl")
+        raw_blocks = self._read_jsonl(tmp_path / "buffer" / "raw_log.jsonl")
 
         assert now_blocks == []
         assert [block["text"] for block in lately_blocks] == ["X" * 50]
         assert [block["text"] for block in raw_blocks] == ["X" * 50]
 
-    def test_lately_character_budget_trims_oldest_blocks_and_preserves_raw_log(self, tmp_path, monkeypatch):
+    def test_lately_character_budget_trims_oldest_blocks_and_preserves_corpus(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore(config_store=self._CacheConfig(
             now_budget=20,
@@ -3440,7 +3410,7 @@ class TestContextStore:
         store.append_to_cache(4, "assistant", "D" * 12, kind="assistant_reply", iter=4)
 
         lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        raw_blocks = self._read_jsonl(tmp_path / "raw_log.jsonl")
+        raw_blocks = self._read_jsonl(tmp_path / "buffer" / "raw_log.jsonl")
         stats = store.get_last_cache_stats()
 
         assert [block["text"] for block in lately_blocks] == ["D" * 12]
@@ -3551,7 +3521,7 @@ class TestContextStore:
 
         assert not (tmp_path / "cache" / "now_cache.jsonl").exists()
         assert not (tmp_path / "cache" / "lately_cache.jsonl").exists()
-        assert not (tmp_path / "raw_log.jsonl").exists()
+        assert not (tmp_path / "corpus" / "public" / "rounds").exists()
 
     def test_spec265_transient_display_blocks_do_not_enter_cache_tracks(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
@@ -3576,7 +3546,7 @@ class TestContextStore:
 
         assert not (tmp_path / "cache" / "now_cache.jsonl").exists()
         assert not (tmp_path / "cache" / "lately_cache.jsonl").exists()
-        assert not (tmp_path / "raw_log.jsonl").exists()
+        assert not (tmp_path / "corpus" / "public" / "rounds").exists()
 
     def test_spec265_legacy_transient_display_blocks_are_not_loaded(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
@@ -3616,7 +3586,7 @@ class TestContextStore:
 
         assert not (tmp_path / "cache" / "now_cache.jsonl").exists()
         assert not (tmp_path / "cache" / "lately_cache.jsonl").exists()
-        assert not (tmp_path / "raw_log.jsonl").exists()
+        assert not (tmp_path / "corpus" / "public" / "rounds").exists()
 
     def test_template_placeholders_do_not_enter_context_tracks(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
@@ -3627,7 +3597,7 @@ class TestContextStore:
 
         assert self._read_jsonl(tmp_path / "cache" / "now_cache.jsonl") == []
         assert self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl") == []
-        assert self._read_jsonl(tmp_path / "raw_log.jsonl") == []
+        assert self._read_jsonl(tmp_path / "corpus" / "public" / "rounds" / "round_000006.jsonl") == []
 
         bad_lately_block = {
             "id": "R000218-assistant-0001",
@@ -3683,7 +3653,7 @@ class TestContextStore:
         }
         assert sum(item["chars"] for item in candidates) > 0
 
-    def test_cache_compact_merges_survivor_blocks_and_preserves_raw_log_original(self, tmp_path, monkeypatch):
+    def test_cache_compact_merges_survivor_blocks_and_preserves_corpus_original(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         from logic.cache_compact import execute_cache_compact
 
@@ -3697,7 +3667,8 @@ class TestContextStore:
         store.append_to_cache(2, "assistant", "pytest 输出很长，需要压缩保留重点", kind="assistant_reply")
         store.append_to_cache(2, "assistant", "第一段回复也很长，需要一起融合", kind="assistant_reply")
         store.append_to_cache(2, "system", "flush marker " * 4, kind="fault_note")
-        raw_before = self._read_jsonl(tmp_path / "raw_log.jsonl")
+        raw_path = tmp_path / "buffer" / "raw_log.jsonl"
+        raw_before = self._read_jsonl(raw_path)
         source_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
         source_ids = [block["id"] for block in source_blocks]
 
@@ -3716,7 +3687,7 @@ class TestContextStore:
         )
 
         lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        raw_after = self._read_jsonl(tmp_path / "raw_log.jsonl")
+        raw_after = self._read_jsonl(raw_path)
         summary = lately_blocks[0]
         assert report["status"] == "applied"
         assert summary["kind"] == "cache_summary"
@@ -3784,7 +3755,8 @@ class TestContextStore:
         store.append_to_cache(7, "assistant", "A" * 24, kind="assistant_reply")
         store.append_to_cache(7, "assistant", "B" * 24, kind="assistant_reply")
         before = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        raw_before = self._read_jsonl(tmp_path / "raw_log.jsonl")
+        raw_path = tmp_path / "buffer" / "raw_log.jsonl"
+        raw_before = self._read_jsonl(raw_path)
 
         keep_report = execute_cache_compact(
             store,
@@ -3799,9 +3771,9 @@ class TestContextStore:
         )
         assert clear_report["status"] == "cleared"
         assert self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl") == []
-        assert self._read_jsonl(tmp_path / "raw_log.jsonl") == raw_before
+        assert self._read_jsonl(raw_path) == raw_before
 
-    def test_lately_compression_rewrites_lately_but_preserves_raw_log_original(self, tmp_path, monkeypatch):
+    def test_lately_compression_rewrites_lately_but_preserves_corpus_original(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore(config_store=self._CacheConfig(
             now_budget=32,
@@ -3812,7 +3784,8 @@ class TestContextStore:
 
         store.append_to_cache(2, "assistant", "pytest 输出很长，需要压缩保留重点", kind="assistant_reply")
         store.append_to_cache(2, "assistant", "flush marker " * 4, kind="assistant_reply")
-        raw_before = self._read_jsonl(tmp_path / "raw_log.jsonl")
+        raw_path = tmp_path / "buffer" / "raw_log.jsonl"
+        raw_before = self._read_jsonl(raw_path)
         candidates = store.build_lately_compression_candidates(current_round=3)
 
         assert candidates
@@ -3825,7 +3798,7 @@ class TestContextStore:
         ], current_round=3)
 
         lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        raw_after = self._read_jsonl(tmp_path / "raw_log.jsonl")
+        raw_after = self._read_jsonl(raw_path)
         assert "pytest 已通过" in lately_blocks[0]["text"]
         assert "pytest 输出很长" in raw_before[0]["text"]
         assert raw_after == raw_before
@@ -3869,8 +3842,7 @@ class TestContextStore:
 
     def test_save_round(self, tmp_path, monkeypatch):
         from data import context_store as ctxs
-        monkeypatch.setattr(ctxs, "RAW_LOG", str(tmp_path / "raw_log.md"))
-        monkeypatch.setattr(ctxs, "RAW_LOG_JSONL", str(tmp_path / "raw_log.jsonl"), raising=False)
+        monkeypatch.setattr(ctxs, "CONTAINER_CORPUS_DIR", str(tmp_path / "corpus"))
         monkeypatch.setattr(ctxs, "STM_CONTEXT_CACHE_DIR", str(tmp_path / "cache"), raising=False)
         monkeypatch.setattr(ctxs, "STM_CONTEXT_NOW_CACHE_JSONL", str(tmp_path / "cache" / "now_cache.jsonl"), raising=False)
         monkeypatch.setattr(ctxs, "STM_CONTEXT_LATELY_CACHE_JSONL", str(tmp_path / "cache" / "lately_cache.jsonl"), raising=False)
@@ -3903,7 +3875,7 @@ class TestContextStore:
         store.append_to_cache(9, "system", "B" * 18, kind="material")
         assert store.get_now_entries() == []
         assert [entry["content"] for entry in store.get_lately_entries()] == ["A" * 18, "B" * 18]
-        assert self._read_jsonl(tmp_path / "raw_log.jsonl") == []
+        assert self._read_jsonl(tmp_path / "corpus" / "public" / "rounds" / "round_000009.jsonl") == []
 
     def test_spec288_cleanup_round_material_is_transient_now_only(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
@@ -3942,7 +3914,7 @@ class TestContextStore:
             store.append_to_cache(2, "system", value * 18, kind="material")
         assert [entry["content"] for entry in store.get_now_entries()] == ["C" * 18]
         assert [entry["content"] for entry in store.get_lately_entries()] == ["A" * 18, "B" * 18]
-        assert self._read_jsonl(tmp_path / "raw_log.jsonl") == []
+        assert self._read_jsonl(tmp_path / "corpus" / "public" / "rounds" / "round_000002.jsonl") == []
         assert store.get_last_cache_stats()["now_moved_blocks"] == 2
 
     def test_spec623_seven_16k_material_windows_survive_one_round(self, tmp_path, monkeypatch):
@@ -3956,7 +3928,7 @@ class TestContextStore:
         visible = store.get_lately_entries() + store.get_now_entries()
         assert [entry["content"] for entry in visible] == windows
         assert store.get_round_material_chars(623) == sum(map(len, windows))
-        assert self._read_jsonl(tmp_path / "raw_log.jsonl") == []
+        assert self._read_jsonl(tmp_path / "corpus" / "public" / "rounds" / "round_000623.jsonl") == []
 
     def test_spec623_material_is_not_a_lately_compaction_candidate(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)

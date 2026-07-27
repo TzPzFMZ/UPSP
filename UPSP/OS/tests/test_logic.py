@@ -18,6 +18,18 @@ def _cleanup_projection(**arguments):
     return project_step_finalize("cleanup", arguments)
 
 
+def _dummy_heat_entry(weight=2):
+    from schemas.memory import default_heat_entry
+    from schemas.config import default_memory_config
+    config = default_memory_config()["heat"]
+    return default_heat_entry(
+        weight,
+        initial_by_weight=config["initial_by_weight"],
+        significant_threshold=config["zone_thresholds"]["significant"],
+        uncertain_threshold=config["zone_thresholds"]["uncertain"],
+    )
+
+
 # ============================================================
 # mem_id 测试
 # ============================================================
@@ -51,12 +63,12 @@ class TestMemID:
         assert "recalled" in meta
         assert {"abstract", "locked", "source_rounds", "mode", "merged_from"}.isdisjoint(meta)
 
-    def test_make_heat_entry(self):
-        from logic.mem_id import make_heat_entry
-        entry = make_heat_entry(weight=5)
-        assert entry["H"] == 50
+    def test_make_heat_entry_uses_memory_config(self):
+        entry = _dummy_heat_entry(weight=5)
+        assert entry["H"] == 80
         assert entry["compression"] is True
-        entry2 = make_heat_entry(weight=1)
+        entry2 = _dummy_heat_entry(weight=1)
+        assert entry2["H"] == 40
         assert entry2["compression"] is False
 
 
@@ -1246,6 +1258,9 @@ class TestMemoryWriteProtocol:
             def __init__(self):
                 self.entries = []
 
+            def new_entry(self, weight=2):
+                return _dummy_heat_entry(weight)
+
             def set_entry(self, *args, **kwargs):
                 self.entries.append((args, kwargs))
 
@@ -1331,6 +1346,9 @@ class TestMemoryWriteProtocol:
         class DummyMemoryHeat:
             def __init__(self):
                 self.entries = []
+
+            def new_entry(self, weight=2):
+                return _dummy_heat_entry(weight)
 
             def set_entry(self, *args, **kwargs):
                 self.entries.append((args, kwargs))
@@ -1425,6 +1443,9 @@ class TestMemoryWriteProtocol:
             def __init__(self):
                 self.entries = []
 
+            def new_entry(self, weight=2):
+                return _dummy_heat_entry(weight)
+
             def set_entry(self, *args, **kwargs):
                 self.entries.append((args, kwargs))
 
@@ -1496,6 +1517,9 @@ class TestMemoryWriteProtocol:
         class DummyMemoryHeat:
             def __init__(self):
                 self.entries = []
+
+            def new_entry(self, weight=2):
+                return _dummy_heat_entry(weight)
 
             def set_entry(self, *args, **kwargs):
                 self.entries.append((args, kwargs))
@@ -1569,6 +1593,9 @@ class TestMemoryWriteProtocol:
         class DummyMemoryHeat:
             def __init__(self):
                 self.entries = []
+
+            def new_entry(self, weight=2):
+                return _dummy_heat_entry(weight)
 
             def set_entry(self, *args, **kwargs):
                 self.entries.append((args, kwargs))
@@ -1656,6 +1683,9 @@ class TestMemoryWriteProtocol:
         class DummyMemoryHeat:
             def __init__(self):
                 self.entries = []
+
+            def new_entry(self, weight=2):
+                return _dummy_heat_entry(weight)
 
             def set_entry(self, *args, **kwargs):
                 self.entries.append((args, kwargs))
@@ -1776,6 +1806,9 @@ class TestMemoryWriteProtocol:
                 pass
 
         class DummyMemoryHeat:
+            def new_entry(self, weight=2):
+                return _dummy_heat_entry(weight)
+
             def set_entry(self, *args, **kwargs):
                 pass
 

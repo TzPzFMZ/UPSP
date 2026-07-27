@@ -35,7 +35,7 @@ from schemas.container import (
     default_registry_entry, validate_container_meta,
 )
 from errors import ContainerNotFoundError, WriteError, ReadError
-from constants import TZ_SHANGHAI
+from constants import local_now
 
 # 前缀→目录映射
 PREFIX_TO_DIR = {
@@ -218,7 +218,7 @@ class ContainerStore:
         meta_path = os.path.join(cdir, "meta.json")
         if "watched" in (meta or {}):
             raise WriteError(meta_path, message="容器 meta 含退役字段 watched，请先运行迁移脚本")
-        meta["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
+        meta["updated_at"] = local_now().isoformat()
         ok, errors = validate_container_meta(meta)
         if not ok:
             raise WriteError(meta_path, message="；".join(errors))
@@ -255,7 +255,7 @@ class ContainerStore:
         path = _safe_child(cdir, file_name)
         os.makedirs(cdir, exist_ok=True)
 
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         entry_text = f"\n## {title}\n创建时间：{now}\n\n{content}\n"
 
         if os.path.isfile(path):
@@ -564,7 +564,7 @@ class ContainerStore:
             raise ReadError(path, cause=e)
 
     def _append_markdown_block(self, path, title, content):
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         block = f"\n## {title}\n创建时间：{now}\n\n{content}\n"
         existing = self._read_text_if_exists(path)
         _atomic_write_text(path, (existing.rstrip() + "\n" + block).strip() + "\n")
@@ -581,7 +581,7 @@ class ContainerStore:
             "round": round_value,
             "target_file": str(target_file or "").strip(),
             "status": str(status or "applied").strip() or "applied",
-            "updated_at": datetime.now(TZ_SHANGHAI).isoformat(),
+            "updated_at": local_now().isoformat(),
         }
 
     def _record_container_write_ledger(self, container_id, entry):
@@ -634,7 +634,7 @@ class ContainerStore:
         return f"{prefix}-{(max(numbers) if numbers else 0) + 1}"
 
     def _next_project_id(self):
-        date = datetime.now(TZ_SHANGHAI).strftime("%Y%m%d")
+        date = local_now().strftime("%Y%m%d")
         numbers = []
         pattern = re.compile(rf"^PRJ-{date}-(\d+)$")
         root = PREFIX_TO_DIR["PRJ"]
@@ -669,8 +669,8 @@ class ContainerStore:
             "entries": [],
             "tags": [],
             "focus": False,
-            "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
-            "updated_at": datetime.now(TZ_SHANGHAI).isoformat(),
+            "created_at": local_now().isoformat(),
+            "updated_at": local_now().isoformat(),
             "source_round": round_num,
             "path": f"LTM/{CONTAINER_TYPES[prefix]['dir']}/{container_id}/",
         }
@@ -696,7 +696,7 @@ class ContainerStore:
         _atomic_write_text(os.path.join(cdir, "phases", "_index.md"), "")
         meta = default_container_meta(container_id, "PRJ", title)
         self.save_meta(container_id, meta)
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         registry = {
             "id": container_id,
             "type": "project",
@@ -741,7 +741,7 @@ class ContainerStore:
         os.makedirs(cdir, exist_ok=False)
         _atomic_write_text(os.path.join(cdir, "card.md"), "")
         _atomic_write_text(os.path.join(cdir, "changelog.md"), "")
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         entry = {
             "id": container_id,
             "type": "skill",
@@ -770,7 +770,7 @@ class ContainerStore:
             if not os.path.isfile(path):
                 _atomic_write_text(path, "")
         registry = self._load_future_registry()
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         entry = {
             "id": container_id,
             "type": "future",
@@ -853,7 +853,7 @@ class ContainerStore:
     def _update_future_entry(self, container_id, focus=None, increment_entries=False,
                              entry=None):
         registry = self._load_future_registry()
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         changed = False
         for item in registry.get("items", []):
             if item.get("id") != container_id:
@@ -880,7 +880,7 @@ class ContainerStore:
     def _sync_instance_registry_entry(self, container_id, focus=None,
                                       increment_entries=False, entry=None):
         prefix = self.resolve_container_type(container_id)
-        now = datetime.now(TZ_SHANGHAI).isoformat()
+        now = local_now().isoformat()
         if prefix in {"DC", "EC"}:
             self._sync_chain_registry_entry(
                 container_id, focus, increment_entries, now, entry=entry)

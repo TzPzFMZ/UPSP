@@ -130,9 +130,7 @@ def test_spec702_state_store_cannot_create_default_half_persona(tmp_path, monkey
     from data import state_store as module
 
     state_path = tmp_path / "persona" / "state.json"
-    core_path = tmp_path / "persona" / "core.md"
     monkeypatch.setattr(module, "STATE_JSON", str(state_path))
-    monkeypatch.setattr(module, "CORE_MD", str(core_path))
     store = module.StateStore()
 
     with pytest.raises(Exception, match="persona_initialization_required"):

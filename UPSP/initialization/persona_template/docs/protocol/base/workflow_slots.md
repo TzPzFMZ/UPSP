@@ -37,7 +37,7 @@ L3 若被反复采用，可整理为 `procedures/subtype=workflow`；未整理�
 | setup | mode_suggestion | L1 | 装配反应步前 | 模式建议程序 | 模式建议、POPUP reminder |
 | setup | mount_selection | L1 | 装配反应步前 | 记忆/关系/容器/技能挂载选择 | 挂载声明 |
 | setup | setup_finalize | L1 | 装配反应步前 | 起手安全裁决、挂载请求、轮型确认、身份入口 | provider-native `setup_finalize` |
-| setup | setup_fact_projection | L1 | 有效 setup_finalize 后 | Runtime 自然语言事实投影 | `kind=setup_fact`，可随 now 水位进入 lately/raw_log |
+| setup | setup_fact_projection | L1 | 有效 setup_finalize 后 | Runtime 自然语言事实投影 | `kind=setup_fact`，可随 now 水位进入 lately/Corpus |
 | setup | stance_consistency_check | L2 | 对象已知、话题切换或前提冲突疑似出现时 | 程序能力、认知范式调制 | mode suggestion、POPUP reminder、候选工具请求 |
 | reaction | provider_native_tool_call | L1 | 每次反应步迭代内 | LLM-facing 工具入口；直接调用当前已导出的 provider-native tool schema | Runtime 按注册表分流到 protocol/general/substrate 内部链路 |
 | reaction | protocol_tool_request | internal | provider-native 协议工具投影后 | 内部路由字段；LLM 直接写旧文本字段会被 Runtime 记为 retired / invalid，不执行并回灌纠错 | processor / receipt |
@@ -68,7 +68,7 @@ L3 若被反复采用，可整理为 `procedures/subtype=workflow`；未整理�
 - L2/L3 不能改写 L0 硬点。
 - 协议工具不能绕开 provider-native schema、processor/guard/receipt/audit。旧 guide + submission 闸门已退役，不再作为开通条件。
 - LLM-facing 工具入口只能是当前已导出的 provider-native tool call；`protocol_tool_request` / `general_tool_request` 只作为 Runtime 内部路由字段保留，旧文本字段出现时按 retired / invalid 审计。
-- `native_tool_result` 是 provider-native 工具失败 POPUP 警告层 feedback，不是 workflow slot、不是工具入口、不是 `protocol_tool_submission`、不是 processor receipt、不是 `tool_id` 或请求字段，也不进入 now/lately/raw_log；它的结构字段留给 Runtime、step.json 和 audit 判读，可见 POPUP 只说明失败事实、失败原因和纠偏动作。
+- `native_tool_result` 是 provider-native 工具失败 POPUP 警告层 feedback，不是 workflow slot、不是工具入口、不是 `protocol_tool_submission`、不是 processor receipt、不是 `tool_id` 或请求字段，也不进入 now/lately/Corpus；它的结构字段留给 Runtime、step.json 和 audit 判读，可见 POPUP 只说明失败事实、失败原因和纠偏动作。
 - `native_tool_result` 中的 `actual/expected`、`arguments_json`、命令、参数、正文、密钥、关系轴数值、`state.json` 数值和 live `persona/` 状态只可脱敏/截断，不得完整回显。
 - 通用工具不能伪装成协议提交；`file_read`、`file_search`、`file_edit`、`web_fetch`、`web_search`、`shell_command`、`subagent_dispatch` 经 provider-native 调用投影到内部 `general_tool_request`，并通过 `general_tool_result` 独立闭环。
 - `backend_type` / `active_backend` 只描述通用工具的执行后端，不改变 workflow slot 或 `tool_family`。

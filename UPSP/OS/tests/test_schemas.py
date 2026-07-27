@@ -243,7 +243,7 @@ class TestConfigSchema:
         memory = default_memory_config()
         assert system["autonomous_trigger"]["tacit_pending_threshold"] == 512
         assert system["autonomous_trigger"]["connection_pending_threshold"] == 512
-        assert system["audit"]["round_snapshot_retention"] == 8
+        assert system["audit"]["round_snapshot_retention"] == 64
         assert system["audit"]["state_backup_retention"] == 8
         assert default_interface_config()["locale"] == "system"
         assert default_models_config()["connections"] == []
@@ -258,7 +258,6 @@ class TestContextSchema:
     def test_context_layer_tables_match_audit_contract(self):
         from schemas.context import (
             CONTEXT_MODULES,
-            FREQUENCY_LAYERS,
             STEP_AUDIT_FILES,
         )
 
@@ -284,16 +283,6 @@ class TestContextSchema:
             "layers/99_popup.json",
             "layers/99_popup.md",
         ]
-        assert tuple(FREQUENCY_LAYERS) == (
-            "permanent",
-            "periodic",
-            "lately",
-            "high_freq",
-            "now",
-            "statusbar",
-            "popup",
-        )
-        assert FREQUENCY_LAYERS["statusbar"]["modules"] == ["STATUSBAR"]
         assert len(CONTEXT_MODULES) == 5
 
 
@@ -329,14 +318,12 @@ class TestPaths:
             CONTEXT_LATELY_JSON,
             CONTEXT_NOW_JSON,
             CONTEXT_STATUSBAR_JSON,
-            RAW_LOG_JSONL,
             STATE_BACKUPS_JSONL,
             STM_CONTEXT_LATELY_CACHE_JSONL,
             STM_CONTEXT_NOW_CACHE_JSONL,
         )
 
         expected = {
-            RAW_LOG_JSONL: "STM/buffer/raw_log.jsonl",
             STM_CONTEXT_NOW_CACHE_JSONL: "STM/context/cache/now_cache.jsonl",
             STM_CONTEXT_LATELY_CACHE_JSONL: "STM/context/cache/lately_cache.jsonl",
             CONTEXT_NOW_JSON: "config/context/now.json",
@@ -351,19 +338,15 @@ class TestPaths:
 class TestConstants:
     def test_current_constant_tables_and_ranges(self):
         import constants
+        from schemas.config import default_memory_config
 
-        assert constants.DECAY_RATES["显著"] < 0
-        assert {"显著", "未定", "衰减"} <= constants.DECAY_RATES.keys()
-        assert constants.ZONE_THRESHOLDS["显著"] > constants.ZONE_THRESHOLDS["未定"]
-        assert (
-            constants.LTM_LIMITS["Full"]
-            > constants.LTM_LIMITS["Summary"]
-            > constants.LTM_LIMITS["Abstract"]
-        )
+        heat = default_memory_config()["heat"]
+        assert heat["decay_rates"]["significant"] < 0
+        assert heat["zone_thresholds"]["significant"] > heat["zone_thresholds"]["uncertain"]
         assert constants.HEARTBEAT_DEFAULT_INTERVAL > 0
         assert len(constants.ROUND_TYPES) == 5 and "interactive" in constants.ROUND_TYPES
         assert len(constants.PHASES) == 4 and "idle" in constants.PHASES
-        assert 0 < constants.TOKEN_WARNING_RATIO < constants.TOKEN_URGENT_RATIO <= 1
+        assert 0 < constants.TOKEN_WARNING_RATIO <= 1
         assert constants.DYNAMIC_AXIS_RANGE[0] < constants.DYNAMIC_AXIS_RANGE[1]
         assert len(constants.CONTAINER_PREFIXES) == 9
         assert "WB" not in constants.CONTAINER_PREFIXES

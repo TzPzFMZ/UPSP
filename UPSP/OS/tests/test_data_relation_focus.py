@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import pytest
@@ -173,9 +174,16 @@ class TestRelationFocusManager:
         """P1-6: get_relation_params 读取 max_slots"""
         from data import config_store as cfs
         # 只替换relation配置路径
-        monkeypatch.setitem(cfs._CONFIG_MAP, "relation",
-                           (str(tmp_path / "relation.json"), cfs._CONFIG_MAP["relation"][1]))
+        path = tmp_path / "relation.json"
+        default_fn = cfs._CONFIG_MAP["relation"][1]
+        path.write_text(
+            json.dumps(default_fn(), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP, "relation", (str(path), default_fn)
+        )
         store = cfs.ConfigStore()
         params = store.get_relation_params()
         assert "max_slots" in params
-        assert params["max_slots"] == 3  # 默认值
+        assert params["max_slots"] == 3  # tracked 模板值

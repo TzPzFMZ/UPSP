@@ -6,7 +6,7 @@ data 层独占文件 I/O，logic 层不碰磁盘。
 """
 import json
 import os
-from datetime import datetime
+from constants import local_now
 
 
 def ensure_dir(path):
@@ -18,7 +18,7 @@ def write_tacit_set(pending_path, processed_path, round_num, associations):
     if not associations:
         return 0
     ensure_dir(os.path.dirname(pending_path))
-    now = datetime.now().isoformat()
+    now = local_now().isoformat()
     items = []
     by_action = {
         "kept": [],
@@ -66,7 +66,7 @@ def write_connection_set(pending_path, processed_path, round_num, bridges):
     if not bridges:
         return 0
     ensure_dir(os.path.dirname(pending_path))
-    now = datetime.now().isoformat()
+    now = local_now().isoformat()
     count = 0
     with open(pending_path, "a", encoding="utf-8") as f:
         for b in bridges[:8]:

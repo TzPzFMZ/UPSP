@@ -11,7 +11,7 @@ import re
 import shutil
 from datetime import datetime
 
-from constants import TZ_SHANGHAI
+from constants import local_now
 from data.atomic_write import atomic_write_json, atomic_write_text
 from errors import ReadError, WriteError
 from paths import WB_DIR
@@ -276,7 +276,7 @@ class WorkbenchStore:
         os.makedirs(guide_dir, exist_ok=True)
         ledger_path = os.path.join(guide_dir, "ledger.jsonl")
         payload = dict(entry or {})
-        payload.setdefault("created_at", datetime.now(TZ_SHANGHAI).isoformat())
+        payload.setdefault("created_at", local_now().isoformat())
         try:
             with open(ledger_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -299,7 +299,7 @@ class WorkbenchStore:
             "keywords": [],
             "target": None,
             "source": "guide_submit",
-            "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
+            "created_at": local_now().isoformat(),
             "status": "process",
             "progress": 0,
         }
@@ -354,7 +354,7 @@ class WorkbenchStore:
         task_dir = self._find_task_dir(task_id, zone="process")
         ledger_path = os.path.join(task_dir, "acceptance_ledger.jsonl")
         payload = dict(entry or {})
-        payload.setdefault("created_at", datetime.now(TZ_SHANGHAI).isoformat())
+        payload.setdefault("created_at", local_now().isoformat())
         try:
             with open(ledger_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -433,7 +433,7 @@ class WorkbenchStore:
         return manifest
 
     def _next_task_id(self):
-        today = datetime.now(TZ_SHANGHAI).strftime("%Y%m%d")
+        today = local_now().strftime("%Y%m%d")
         prefix = f"T-{today}-"
         max_seq = 0
         for zone in ZONES:
@@ -548,7 +548,7 @@ class WorkbenchStore:
             "tool_id": tool_id,
             "status": status,
             "source_ref": source_ref,
-            "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
+            "created_at": local_now().isoformat(),
         }
         if path:
             payload["path"] = path

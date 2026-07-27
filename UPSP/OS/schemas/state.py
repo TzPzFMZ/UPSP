@@ -11,9 +11,8 @@ DDS §3 state.json + §23.5 heartbeat_flags
 写端追踪（数据管线断裂防治）：
   字段 → 谁在什么时候写入
 """
-from datetime import datetime, timezone, timedelta
-
-TZ = timezone(timedelta(hours=8))
+import json
+from pathlib import Path
 
 # ============================================================
 # 字段清单（名称 + 类型 + DDS出处 + 写端）
@@ -110,11 +109,11 @@ FIELDS = {
     "base.old_focus":     ("str|None", "§25", "data/container_store.py unmount_focus"),
 
     # --- heartbeat_flags（DDS §23.5）---
-    "base.heartbeat_flags.fatigue_expired":       ("bool", "§23.5", "engines/heartbeat.py tick"),
+    "base.heartbeat_flags.fatigue_expired":       ("bool", "§23.5", "暂停系统预留；Seed 固定 false"),
     "base.heartbeat_flags.feeling_settle_due":    ("bool", "§23.5", "heartbeat 置位，Runtime 本地结算或 Round cleanup 消费"),
     "base.heartbeat_flags.api_degraded":          ("bool", "§23.5", "engines/heartbeat.py tick"),
     "base.heartbeat_flags.stm_degrade_pending":   ("bool", "§23.5", "engines/heartbeat.py tick"),
-    "base.heartbeat_flags.process_down":          ("bool", "§23.5", "engines/heartbeat.py tick"),
+    "base.heartbeat_flags.process_down":          ("bool", "§23.5", "Arbor 外部器官健康预留；Seed 固定 false"),
     "base.heartbeat_flags.user_message_waiting":  ("bool", "§23.5", "engines/heartbeat.py tick"),
     "base.heartbeat_flags.rhythm_due":            ("bool", "§23.5", "engines/heartbeat.py tick"),
     "base.heartbeat_flags.standby_due":           ("bool", "§23.5", "engines/heartbeat.py tick"),
@@ -124,7 +123,7 @@ FIELDS = {
     "base.heartbeat_flags.token_usage_warning":   ("bool", "§3",   "engines/heartbeat.py tick"),
     "base.heartbeat_flags.context_pressure":      ("bool", "§3",   "logic/Runtime 维护节律置位"),
     "base.heartbeat_flags.cache_compaction_due":  ("bool", "§21",  "engines/runtime.py lately 水位删除后置位"),
-    "base.heartbeat_flags.identity_timeout":      ("bool", "§23",  "engines/heartbeat.py tick"),
+    "base.heartbeat_flags.identity_timeout":      ("bool", "§23",  "暂停系统预留；Seed 固定 false"),
     # V3 新增
     "base.heartbeat_flags.calendar_day_due":      ("bool", "§3",   "engines/heartbeat.py 日历日检测"),
     "base.heartbeat_flags.calendar_week_due":     ("bool", "§3",   "engines/heartbeat.py 日历周检测"),
@@ -183,120 +182,15 @@ CLEANUP_WRITABLE_FIELDS = frozenset({
 # ============================================================
 
 def default_state():
-    """返回全新的 state.json 默认模板"""
-    now = datetime.now(TZ).isoformat()
-    return {
-        "base": {
-            "meta": {
-                "total_round": 0,
-                "daily_round": 0,
-                "last_calendar_check_at": None,
-                "last_rhythm_round": 0,
-                "last_heartbeat_at": None,
-                "last_standby_round": 0,
-                "last_round_closed_at": None,
-                "last_external_input_at": None,
-                "last_update": now,
-                "version": "official-base-v2",
-                "next_settle_at": None,
-                "last_state_settlement_id": None,
-                "shelve_timer_at": None,
-            },
-            "core_axes": {
-                "S": 85, "C": 70, "V": 60,
-                "A": 75, "R": 55, "B": 80,
-            },
-            "dynamic_axes": {
-                "valence":  {"value": 0},
-                "arousal":  {"value": 0},
-                "focus":    {"value": 0},
-                "mood":     {"value": 0},
-                "humor":    {"value": 0},
-                "safety":   {"value": 0},
-            },
-            "comfort_zone": {
-                "valence": 0, "arousal": -20, "focus": 30,
-                "mood": 0, "humor": 0, "safety": 10,
-            },
-            "core_speed_wheel": {
-                "current": 0,
-                "max": 256,
-            },
-            "workhood_index": {
-                "value": 57.2,
-                "self_reference": 66.1,
-                "self_reflection": 40.0,
-                "autonomy": 70.6,
-            },
-            "activity_mode": "理论",
-            "fatigue": {
-                "value": 0.0,
-                "awake_since": now,
-            },
-            "token_usage": {
-                "current_tokens": 0,
-                "window_size": 200000,
-                "usage_ratio": 0.0,
-                "last_round_input": 0,
-                "last_round_output": 0,
-            },
-            "identity": {
-                "confirmed": False,
-                "confirmed_at": None,
-                "timeout_seconds": 3600,
-                "local_default_relation_id": None,
-                "current_relation_id": None,
-                "current_declared_name": None,
-                "current_source": "unbound",
-            },
-            "sleep_state": {
-                "level": "awake",
-                "entered_at": None,
-            },
-            "focus": None,        # WB 当前焦点容器 ID
-            "old_focus": None,    # WB 上一焦点容器 ID
-            "runtime": {
-                "phase": "idle",
-                "standby_countdown": 0,
-                "pending_relay_target": {},
-                "relay_intents": [],
-                "relay_intent_seq": 0,
-                "work_intent_debt": {},
-            },
-            "heartbeat_flags": {
-                "fatigue_expired": False,
-                "feeling_settle_due": False,
-                "api_degraded": False,
-                "stm_degrade_pending": False,
-                "process_down": False,
-                "user_message_waiting": False,
-                "rhythm_due": False,
-                "standby_due": False,
-                "continue_requested": False,
-                "shelve_timer_expired": False,
-                "token_usage_warning": False,     # V2 新增
-                "context_pressure": False,         # Spec471: 上下文压力维护节律
-                "cache_compaction_due": False,     # Spec471: 最近缓存压缩维护节律
-                "identity_timeout": False,         # V2 新增
-                "calendar_day_due": False,         # V5 新增
-                "calendar_week_due": False,        # V5 新增
-                "calendar_month_due": False,       # V5 新增
-                "calendar_quarter_due": False,     # V5 新增
-                "calendar_year_due": False,        # V5 新增
-                "evolution_pending": False,        # V6 新增
-            },
-            "alert_deferrals": {},
-            "feeling_buffer": [],  # V2: 并入 state.json
-            # 上下文装配缓存（DDS §21.1）
-            # 高频层、lately 与 now 无过期标记（每轮/每步重算）
-            "context_cache": {
-                "permanent_expired": True,
-                "periodic_expired": True,
-                "popup_active": False,
-            },
-        },
-        "plus": {},
-        "pro": {},
-        "dlc": {},
-        "mod": {},
-    }
+    """从 tracked 中性模板返回一份全新的 state 文档。"""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "initialization"
+        / "persona_template"
+        / "state.json"
+    )
+    with path.open("r", encoding="utf-8") as handle:
+        value = json.load(handle)
+    if not isinstance(value, dict):
+        raise ValueError(f"state 模板必须是 JSON object: {path}")
+    return value

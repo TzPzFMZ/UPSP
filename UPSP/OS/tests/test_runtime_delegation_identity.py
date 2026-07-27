@@ -209,21 +209,8 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
             "interaction_source": "instance_selection",
         }
 
-    def test_runtime_resolve_interaction_meta_ignores_retired_timeout_without_identity(self, tmp_path):
+    def test_setup_reuses_recent_identity_without_timeout_flag(self, tmp_path):
         rt = self._make_runtime(tmp_path)
-        rt.sm.set_flag("identity_timeout", True)
-
-        meta = rt._resolve_interaction_meta(state=rt.sm.load())
-
-        assert meta == {
-            "interaction_object": "unknown",
-            "identity_status": "unknown",
-            "interaction_source": "unresolved",
-        }
-
-    def test_setup_reuses_recent_identity_when_identity_timeout_fires(self, tmp_path):
-        rt = self._make_runtime(tmp_path)
-        rt.sm.set_flag("identity_timeout", True)
 
         class RecentContext:
             def get_now_entries(self):
