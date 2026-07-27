@@ -1933,12 +1933,12 @@
     "\u5173\u7CFB\u7126\u70B9\u69FD\u4F4D": "Relation focus slots",
     "\u5BB9\u5668\u7D22\u5F15\u663E\u793A\u91CF": "Container index display limit",
     "\u957F\u671F\u8BB0\u5FC6\u70ED\u5EA6\u663E\u793A\u91CF": "LTM heat display limit",
-    "\u77ED\u65F6\u8BB0\u5FC6\u70ED\u5EA6\u663E\u793A\u91CF": "STM heat display limit",
+    "\u77ED\u671F\u8BB0\u5FC6\u70ED\u5EA6\u663E\u793A\u91CF": "STM heat display limit",
     "\u6280\u80FD\u5012\u6392\u663E\u793A\u91CF": "Skill inverted-index display limit",
     "\u5173\u7CFB\u5012\u6392\u663E\u793A\u91CF": "Relation inverted-index display limit",
     "\u5173\u7CFB\u57DF\u663E\u793A\u91CF": "Relation-domain display limit",
     "\u957F\u671F\u8BB0\u5FC6\u5012\u6392\u663E\u793A\u91CF": "LTM inverted-index display limit",
-    "\u77ED\u65F6\u8BB0\u5FC6\u5012\u6392\u663E\u793A\u91CF": "STM inverted-index display limit",
+    "\u77ED\u671F\u8BB0\u5FC6\u5012\u6392\u663E\u793A\u91CF": "STM inverted-index display limit",
     "\u8054\u60F3\u7D22\u5F15\u663E\u793A\u91CF": "Association-index display limit",
     "\u542F\u7528": "Enabled",
     "\u8FDB\u7A0B\u73AF\u5883\u8986\u76D6": "Process environment override",
@@ -1965,8 +1965,10 @@
     "\u5BC6\u94A5\u53EA\u5199\u5165\u5F53\u524D Windows \u7528\u6237\u7684\u7CFB\u7EDF\u5B89\u5168\u5B58\u50A8\uFF1B\u540C\u540D\u7AEF\u70B9\u5171\u4EAB\uFF0C\u4FDD\u5B58\u540E\u4E0D\u56DE\u663E\u3002": "The key is written only to the current Windows user's system secure store, shared by endpoints using the same key name, and never shown again.",
     "\u5BC6\u94A5\u5199\u5165\u73B0\u6709 API \u914D\u7F6E\u6587\u4EF6\u4E14\u4E0D\u4F1A\u5728\u9875\u9762\u56DE\u663E\uFF1B\u540C\u540D\u73AF\u5883\u53D8\u91CF\u7684\u7AEF\u70B9\u5171\u4EAB\u4FDD\u5B58\u503C\uFF0C\u8FDB\u7A0B\u73AF\u5883\u53D8\u91CF\u4ECD\u7136\u4F18\u5148\u3002": "The key is written to the existing API configuration and is never shown by the page. Endpoints using the same environment-variable name share the saved value, while the process environment still takes precedence.",
     "\u8F93\u5165\u65B0\u5BC6\u94A5": "Enter a new key",
+    "\u8F93\u5165\u65B0\u5BC6\u94A5\u4EE5\u66F4\u6362": "Enter a new key to replace the saved key",
     "{tier}\u6A21\u578B\u670D\u52A1\u5BC6\u94A5": "{tier} model-service key",
     "\u4FDD\u5B58\u5BC6\u94A5": "Save key",
+    "\u66F4\u6362\u5BC6\u94A5": "Replace key",
     "\u5220\u9664\u5BC6\u94A5": "Delete key",
     "\u5F53\u524D\u7CFB\u7EDF\u5B89\u5168\u5B58\u50A8\u4E0D\u53EF\u7528\uFF1B\u4ECD\u53EF\u67E5\u770B\u548C\u7F16\u8F91\u975E\u79D8\u5BC6\u8BBE\u7F6E\uFF0C\u4F46\u4E0D\u80FD\u4FDD\u5B58\u5BC6\u94A5\u3002": "The system secure store is unavailable. Non-secret settings remain viewable and editable, but keys cannot be saved.",
     "\u5F53\u524D\u7531 persona \u672C\u673A\u8BBE\u7F6E\u8986\u76D6\u4ED3\u5E93\u9ED8\u8BA4\u914D\u7F6E\u3002": "Persona-local settings currently override the repository defaults.",
@@ -2092,7 +2094,7 @@
     "\u75B2\u52B3\u8FC7\u671F": "Fatigue expired",
     "\u611F\u53D7\u5F85\u7ED3\u7B97": "Feeling settlement due",
     "API \u964D\u7EA7": "API degraded",
-    "\u77ED\u65F6\u8BB0\u5FC6\u5F85\u964D\u7EA7": "STM degradation pending",
+    "\u77ED\u671F\u8BB0\u5FC6\u5F85\u964D\u7EA7": "STM degradation pending",
     "\u8FDB\u7A0B\u79BB\u7EBF": "Process down",
     "\u7528\u6237\u6D88\u606F\u7B49\u5F85": "User message waiting",
     "\u8282\u5F8B\u5230\u671F": "Rhythm due",
@@ -2123,7 +2125,7 @@
     "\u5173\u7CFB\u5361\u521B\u5EFA": "Relation card created",
     "\u8BB0\u5FC6\u56FE\u8C31": "Memory map",
     "\u8BB0\u5FC6\u68C0\u7D22": "Memory search",
-    "\u77ED\u65F6\u8BB0\u5FC6": "Short-term memory",
+    "\u77ED\u671F\u8BB0\u5FC6": "Short-term memory",
     "\u957F\u671F\u8BB0\u5FC6": "Long-term memory",
     "STM": "STM",
     "LTM": "LTM",
@@ -2153,8 +2155,6 @@
     "\u6A21\u578B\u670D\u52A1": "Model service",
     "\u5DE5\u5177\u6865\u63A5": "Tool bridges",
     "\u754C\u9762\u4E0E\u8BED\u8A00": "Interface and language",
-    "\u8FA9\u8BC1\u5BB9\u5668": "Dialectic container",
-    "\u4E8B\u4EF6\u5BB9\u5668": "Event container",
     "\u6253\u5F00\u5F53\u524D\u9875\u8BF4\u660E": "Open page manual",
     "\u5173\u95ED\u5F53\u524D\u7CFB\u7EDF\u7A97": "Close system window",
     "\u7A97\u53E3\u63A7\u5236": "Window controls",
@@ -2175,10 +2175,10 @@
     "\u65E0\u53EF\u5C55\u793A\u7684\u7ED3\u6784\u5316\u5185\u5BB9\u3002": "No structured content to display.",
     "\u786E\u8BA4\u8BB0\u5FC6\u5199\u5165\u7ED3\u679C": "Review memory write result",
     "\u67E5\u770B\u5DE5\u5177\u6267\u884C\u7ED3\u679C": "Review tool result",
-    "\u5B8C\u6210\u672C\u8F6E\u521D\u59CB\u5316": "Complete round setup",
+    "\u5B8C\u6210\u672C\u8F6E\u8D77\u624B": "Complete round setup",
     "\u5199\u5165\u8BB0\u5FC6": "Write memory",
     "\u521B\u5EFA\u8BB0\u5FC6\u5BB9\u5668": "Create memory container",
-    "\u5B8C\u6210\u672C\u8F6E\u6E05\u7406": "Complete round cleanup",
+    "\u5B8C\u6210\u672C\u8F6E\u5584\u540E": "Complete round cleanup",
     "\u6B63\u5728\u51C6\u5907\u5DE5\u5177\u8C03\u7528": "Preparing tool call",
     "\u6267\u884C\u5DE5\u5177\u8C03\u7528": "Execute tool call",
     "\u8F93\u51FA\u4E2D\u65AD": "Output interrupted",
@@ -2186,7 +2186,7 @@
     "\u91CD\u65B0\u8FDE\u63A5": "Reconnect",
     "\u91CD\u65B0\u8BFB\u53D6": "Reload",
     "\u6B63\u5728\u8BFB\u53D6\u6C89\u6DC0\u771F\u6E90": "Loading source stores",
-    "\u4ECE\u672C\u5730\u5BBF\u4E3B\u8BFB\u53D6\u516C\u5171\u8BB0\u5FC6\u3001\u5DF2\u767B\u8BB0\u5BB9\u5668\u4E0E\u6D3B\u52A8\u5173\u7CFB\u5361\u3002\u4E0D\u5B58\u5728\u9759\u6001\u56DE\u9000\u6570\u636E\u3002": "Reading public memories, registered containers, and active relation cards from the local host. No static fallback data is used.",
+    "\u4ECE\u672C\u5730\u5BBF\u4E3B\u8BFB\u53D6\u8BB0\u5FC6\u6761\u76EE\u3001\u5DF2\u767B\u8BB0\u5BB9\u5668\u4E0E\u6D3B\u52A8\u5173\u7CFB\u5361\u3002\u4E0D\u5B58\u5728\u9759\u6001\u56DE\u9000\u6570\u636E\u3002": "Reading memory entries, registered containers, and active relation cards from the local host. No static fallback data is used.",
     "\u6C89\u6DC0\u771F\u6E90\u4E0D\u53EF\u7528": "Source stores unavailable",
     "\u672C\u5730\u5BBF\u4E3B\u6CA1\u6709\u8FD4\u56DE\u53EF\u7528\u7684\u6C89\u6DC0\u7D22\u5F15\u3002": "The local host did not return a usable deposition index.",
     "\u5F53\u524D\u6295\u5F71\u6CA1\u6709\u5339\u914D\u4E8B\u4EF6\u3002": "No matching events in the current projection.",
@@ -2274,7 +2274,7 @@
     "\u6700\u7EC8\u56DE\u590D": "Final reply",
     "\u53CD\u5E94": "Reaction",
     "\u5584\u540E": "Cleanup",
-    "\u6B63\u5728\u8BFB\u53D6\u516C\u5171\u8BB0\u5FC6\u6B63\u6587\u2026": "Loading public memory\u2026",
+    "\u6B63\u5728\u8BFB\u53D6\u8BB0\u5FC6\u6761\u76EE\u6B63\u6587\u2026": "Loading memory entry\u2026",
     "\u6B63\u5728\u8BFB\u53D6\u6B63\u6587\u2026": "Loading content\u2026",
     "\u6B63\u5728\u8BFB\u53D6\u672C\u5730\u540C\u6E90\u624B\u518C\u2026": "Loading local manual\u2026",
     "\u6B63\u5728\u8BFB\u53D6\u767B\u8BB0\u6B63\u6587\u2026": "Loading registered document\u2026",
@@ -2422,12 +2422,12 @@
     "\u6761": "items",
     "\u5F20": "cards",
     "\u4E2A": "items",
-    "\u641C\u7D22\u516C\u5171\u8BB0\u5FC6": "Search public memory",
+    "\u641C\u7D22\u8BB0\u5FC6\u6761\u76EE": "Search memory entries",
     "ID\u3001\u6807\u9898\u3001\u6807\u7B7E\u6216\u5BB9\u5668": "ID, title, tag, or container",
-    "\u516C\u5171\u8BB0\u5FC6\u5217\u8868": "Public memory list",
-    "\u6CA1\u6709\u516C\u5171\u8BB0\u5FC6": "No public memory",
+    "\u8BB0\u5FC6\u6761\u76EE\u5217\u8868": "Memory entry list",
+    "\u6CA1\u6709\u8BB0\u5FC6\u6761\u76EE": "No memory entries",
     "\u5F53\u524D\u67E5\u8BE2\u6CA1\u6709\u5339\u914D\u6761\u76EE\u3002": "No entries match the current query.",
-    "\u8BE5\u5C42\u5F53\u524D\u6CA1\u6709\u53EF\u6295\u5F71\u7684\u516C\u5171\u8BB0\u5FC6\uFF1B\u79C1\u5BC6\u6761\u76EE\u4E0D\u4F1A\u663E\u793A\u3002": "No public memories are projected in this layer; private entries are never shown.",
+    "\u8BE5\u5C42\u5F53\u524D\u6CA1\u6709\u53EF\u6295\u5F71\u7684\u8BB0\u5FC6\u6761\u76EE\uFF1B\u9690\u79C1\u6761\u76EE\u4E0D\u4F1A\u663E\u793A\u3002": "No memory entries are projected in this layer; private entries are never shown.",
     "\u6D3B\u52A8\u5173\u7CFB\u5361\u5217\u8868": "Active relation cards",
     "\u6CA1\u6709\u6D3B\u52A8\u5173\u7CFB\u5361": "No active relation cards",
     "\u5F53\u524D\u5173\u7CFB\u767B\u8BB0\u8868\u6CA1\u6709\u6D3B\u52A8\u5361\u7247\u3002": "The relation registry has no active cards.",
@@ -2718,10 +2718,10 @@
     ]
   };
   var shortcuts = [
-    { id: "stm", label: "STM", name: "\u77ED\u65F6\u8BB0\u5FC6", target: "mem", tab: "stm", icon: "M5 7h14M7 4h10M6 12h12v7H6z" },
+    { id: "stm", label: "STM", name: "\u77ED\u671F\u8BB0\u5FC6", target: "mem", tab: "stm", icon: "M5 7h14M7 4h10M6 12h12v7H6z" },
     { id: "ltm", label: "LTM", name: "\u957F\u671F\u8BB0\u5FC6", target: "mem", tab: "ltm", icon: "M4 6h16v4H4zM6 10h12v10H6z" },
-    { id: "dc", label: "DC", name: "\u8FA9\u8BC1\u5BB9\u5668", target: "containers", tab: "dc", icon: "M5 7h6v6H5zM13 11h6v6h-6zM11 10l2 2M11 14l2-2" },
-    { id: "ec", label: "EC", name: "\u4E8B\u4EF6\u5BB9\u5668", target: "containers", tab: "ec", icon: "M5 5h14M7 9h10M9 13h8M11 17h4" },
+    { id: "dc", label: "DC", name: "\u8FA9\u8BC1\u94FE", target: "containers", tab: "dc", icon: "M5 7h6v6H5zM13 11h6v6h-6zM11 10l2 2M11 14l2-2" },
+    { id: "ec", label: "EC", name: "\u4E8B\u4EF6\u94FE", target: "containers", tab: "ec", icon: "M5 5h14M7 9h10M9 13h8M11 17h4" },
     { id: "prj", label: "PRJ", name: "\u9879\u76EE\u5BB9\u5668", target: "containers", tab: "project", icon: "M4 6h16M6 10h12M5 15h6M13 15h6" },
     { id: "skl", label: "SKL", name: "\u6280\u80FD\u5BB9\u5668", target: "containers", tab: "skl", icon: "M12 4l7 4v8l-7 4-7-4V8zM12 4v16M5 8l7 4 7-4" }
   ];
@@ -46646,7 +46646,7 @@
     work_intent_debt: "\u5DE5\u4F5C\u610F\u56FE\u503A\u52A1",
     feeling_settle_due: "\u611F\u53D7\u5F85\u7ED3\u7B97",
     api_degraded: "API \u964D\u7EA7",
-    stm_degrade_pending: "\u77ED\u65F6\u8BB0\u5FC6\u5F85\u964D\u7EA7",
+    stm_degrade_pending: "\u77ED\u671F\u8BB0\u5FC6\u5F85\u964D\u7EA7",
     user_message_waiting: "\u7528\u6237\u6D88\u606F\u7B49\u5F85",
     rhythm_due: "\u8282\u5F8B\u5230\u671F",
     standby_due: "\u5F85\u547D\u5230\u671F",
@@ -46815,7 +46815,7 @@
       title: t(item.name),
       quick: true
     })).join("");
-    els.surfaceNav.innerHTML = '\n    <div class="nav-primary">'.concat(pages, '</div>\n    <div class="nav-divider"><span>').concat(state.locale === "zh-CN" ? "\u7F6E\u9876" : "Pinned", '</span></div>\n    <div class="quick-grid">').concat(quicks, "</div>\n  ");
+    els.surfaceNav.innerHTML = '\n    <div class="nav-primary">'.concat(pages, '</div>\n    <div class="nav-divider"><span>').concat(t("\u5DE5\u4F5C\u5BB9\u5668"), '</span></div>\n    <div class="quick-grid">').concat(quicks, "</div>\n  ");
     syncNavPointer();
   }
   function syncNavPointer() {
@@ -46877,10 +46877,10 @@
     const toolId = String(toolCard?.title || "").split("\uFF5C").at(-1) || "";
     if (toolCard?.type === "tool-result") return t(toolId === "memory_write" ? "\u786E\u8BA4\u8BB0\u5FC6\u5199\u5165\u7ED3\u679C" : "\u67E5\u770B\u5DE5\u5177\u6267\u884C\u7ED3\u679C");
     const summary = {
-      setup_finalize: "\u5B8C\u6210\u672C\u8F6E\u521D\u59CB\u5316",
+      setup_finalize: "\u5B8C\u6210\u672C\u8F6E\u8D77\u624B",
       memory_write: "\u5199\u5165\u8BB0\u5FC6",
       memory_container_create: "\u521B\u5EFA\u8BB0\u5FC6\u5BB9\u5668",
-      cleanup_finalize: "\u5B8C\u6210\u672C\u8F6E\u6E05\u7406"
+      cleanup_finalize: "\u5B8C\u6210\u672C\u8F6E\u5584\u540E"
     }[toolId] || (cards.some((card) => card.type === "assistant-streaming") ? "\u6B63\u5728\u51C6\u5907\u5DE5\u5177\u8C03\u7528" : "\u6267\u884C\u5DE5\u5177\u8C03\u7528");
     return t(summary);
   }
@@ -47059,7 +47059,7 @@
   }
   function renderDepositionUnavailable(label) {
     if (depositionProjection.loading && !depositionProjection.index) {
-      return renderRuntimeEmpty(label, "\u6B63\u5728\u8BFB\u53D6\u6C89\u6DC0\u771F\u6E90", "\u4ECE\u672C\u5730\u5BBF\u4E3B\u8BFB\u53D6\u516C\u5171\u8BB0\u5FC6\u3001\u5DF2\u767B\u8BB0\u5BB9\u5668\u4E0E\u6D3B\u52A8\u5173\u7CFB\u5361\u3002\u4E0D\u5B58\u5728\u9759\u6001\u56DE\u9000\u6570\u636E\u3002");
+      return renderRuntimeEmpty(label, "\u6B63\u5728\u8BFB\u53D6\u6C89\u6DC0\u771F\u6E90", "\u4ECE\u672C\u5730\u5BBF\u4E3B\u8BFB\u53D6\u8BB0\u5FC6\u6761\u76EE\u3001\u5DF2\u767B\u8BB0\u5BB9\u5668\u4E0E\u6D3B\u52A8\u5173\u7CFB\u5361\u3002\u4E0D\u5B58\u5728\u9759\u6001\u56DE\u9000\u6570\u636E\u3002");
     }
     if (depositionProjection.error || !depositionProjection.index) {
       return renderRuntimeEmpty(label, "\u6C89\u6DC0\u771F\u6E90\u4E0D\u53EF\u7528", depositionProjection.error || "\u672C\u5730\u5BBF\u4E3B\u6CA1\u6709\u8FD4\u56DE\u53EF\u7528\u7684\u6C89\u6DC0\u7D22\u5F15\u3002", "deposition");
@@ -47569,14 +47569,14 @@
       }
     }
     const emptyLabel = tab2 === "stm" ? "STM" : tab2 === "ltm" ? "LTM" : tab2 === "mounts" ? "MOUNT" : "MEMORY";
-    const search3 = tab2 === "search" ? '\n    <label class="deposition-search"><span>'.concat(t("\u641C\u7D22\u516C\u5171\u8BB0\u5FC6"), '</span><input data-memory-search type="search" value="').concat(escapeHtml2(state.memoryQuery), '" placeholder="').concat(t("ID\u3001\u6807\u9898\u3001\u6807\u7B7E\u6216\u5BB9\u5668"), '" autocomplete="off"></label>\n  ') : "";
-    return '\n    <div class="deposition-workspace memory-index-only" aria-busy="'.concat(depositionProjection.loading ? "true" : "false", '">\n      <nav class="deposition-master" aria-label="').concat(t("\u516C\u5171\u8BB0\u5FC6\u5217\u8868"), '">\n        <header><span class="hud-label">').concat(escapeHtml2(emptyLabel), "</span><strong>").concat(items.length, " ").concat(t("\u6761"), "</strong></header>\n        ").concat(search3, '\n        <div class="deposition-list">').concat(items.length ? items.map((item) => depositionRow(
+    const search3 = tab2 === "search" ? '\n    <label class="deposition-search"><span>'.concat(t("\u641C\u7D22\u8BB0\u5FC6\u6761\u76EE"), '</span><input data-memory-search type="search" value="').concat(escapeHtml2(state.memoryQuery), '" placeholder="').concat(t("ID\u3001\u6807\u9898\u3001\u6807\u7B7E\u6216\u5BB9\u5668"), '" autocomplete="off"></label>\n  ') : "";
+    return '\n    <div class="deposition-workspace memory-index-only" aria-busy="'.concat(depositionProjection.loading ? "true" : "false", '">\n      <nav class="deposition-master" aria-label="').concat(t("\u8BB0\u5FC6\u6761\u76EE\u5217\u8868"), '">\n        <header><span class="hud-label">').concat(escapeHtml2(emptyLabel), "</span><strong>").concat(items.length, " ").concat(t("\u6761"), "</strong></header>\n        ").concat(search3, '\n        <div class="deposition-list">').concat(items.length ? items.map((item) => depositionRow(
       "memory",
       item,
       false,
       item.current_overview || (item.tags || []).join(" / ") || item.id,
       "W".concat(item.weight ?? "?")
-    )).join("") : renderDepositionEmpty(emptyLabel, t("\u6CA1\u6709\u516C\u5171\u8BB0\u5FC6"), tab2 === "search" && state.memoryQuery ? t("\u5F53\u524D\u67E5\u8BE2\u6CA1\u6709\u5339\u914D\u6761\u76EE\u3002") : t("\u8BE5\u5C42\u5F53\u524D\u6CA1\u6709\u53EF\u6295\u5F71\u7684\u516C\u5171\u8BB0\u5FC6\uFF1B\u79C1\u5BC6\u6761\u76EE\u4E0D\u4F1A\u663E\u793A\u3002")), "</div>\n      </nav>\n    </div>\n  ");
+    )).join("") : renderDepositionEmpty(emptyLabel, t("\u6CA1\u6709\u8BB0\u5FC6\u6761\u76EE"), tab2 === "search" && state.memoryQuery ? t("\u5F53\u524D\u67E5\u8BE2\u6CA1\u6709\u5339\u914D\u6761\u76EE\u3002") : t("\u8BE5\u5C42\u5F53\u524D\u6CA1\u6709\u53EF\u6295\u5F71\u7684\u8BB0\u5FC6\u6761\u76EE\uFF1B\u9690\u79C1\u6761\u76EE\u4E0D\u4F1A\u663E\u793A\u3002")), "</div>\n      </nav>\n    </div>\n  ");
   }
   function renderRelationsPage() {
     const unavailable = renderDepositionUnavailable("RELATION / READONLY");
@@ -47661,12 +47661,12 @@
       { key: "content_limits.reference_window_chars", label: "\u9AD8\u9891\u5F15\u7528\u7A97\u53E3", kind: "int", min: 1, max: 16777216 },
       { key: "index_display_limits.container_index", label: "\u5BB9\u5668\u7D22\u5F15\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 },
       { key: "index_display_limits.ltm_heat_index", label: "\u957F\u671F\u8BB0\u5FC6\u70ED\u5EA6\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 },
-      { key: "index_display_limits.stm_heat_index", label: "\u77ED\u65F6\u8BB0\u5FC6\u70ED\u5EA6\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 },
+      { key: "index_display_limits.stm_heat_index", label: "\u77ED\u671F\u8BB0\u5FC6\u70ED\u5EA6\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 },
       { key: "index_display_limits.skills_inverted", label: "\u6280\u80FD\u5012\u6392\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 },
       { key: "index_display_limits.relation_inverted", label: "\u5173\u7CFB\u5012\u6392\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 },
       { key: "index_display_limits.relation_domain", label: "\u5173\u7CFB\u57DF\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 },
       { key: "index_display_limits.ltm_inverted", label: "\u957F\u671F\u8BB0\u5FC6\u5012\u6392\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 },
-      { key: "index_display_limits.stm_inverted", label: "\u77ED\u65F6\u8BB0\u5FC6\u5012\u6392\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 },
+      { key: "index_display_limits.stm_inverted", label: "\u77ED\u671F\u8BB0\u5FC6\u5012\u6392\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 },
       { key: "index_display_limits.association_index", label: "\u8054\u60F3\u7D22\u5F15\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 }
     ],
     relation: [
@@ -47774,19 +47774,39 @@
     const configured = settingsProjection.data?.interface.values.locale || "system";
     return '<section class="global-setting-section">\n    <header><h3>'.concat(t("\u754C\u9762\u4E0E\u8BED\u8A00"), "</h3><p>").concat(t("\u8BED\u8A00\u662F UPSP \u5168\u5C40\u8BBE\u7F6E\uFF1B\u8DDF\u968F\u7CFB\u7EDF\u65F6\uFF0C\u6BCF\u6B21\u6309\u6D4F\u89C8\u5668\u8BED\u8A00\u88C1\u51B3\u3002"), '</p></header>\n    <form data-interface-settings-form>\n      <label class="locale-setting"><span><b>').concat(t("\u754C\u9762\u8BED\u8A00"), "</b><small>").concat(t("\u4FDD\u5B58\u540E\u7ACB\u5373\u5E94\u7528\u5230\u5F53\u524D\u754C\u9762\u3002"), '</small></span>\n        <select data-interface-locale aria-label="').concat(t("\u754C\u9762\u8BED\u8A00"), '">\n          <option value="system" ').concat(configured === "system" ? "selected" : "", ">").concat(t("\u8DDF\u968F\u7CFB\u7EDF"), '</option>\n          <option value="zh-CN" ').concat(configured === "zh-CN" ? "selected" : "", '>\u7B80\u4F53\u4E2D\u6587</option>\n          <option value="en-US" ').concat(configured === "en-US" ? "selected" : "", ">English</option>\n        </select>\n      </label>\n      ").concat(settingsActions(), "\n    </form>\n  </section>");
   }
+  var providerUrlSuffixes = {
+    openai_chat: "/v1/chat/completions",
+    openai_responses: "/v1/responses",
+    anthropic_messages: "/v1/messages"
+  };
+  function providerUrlSuffix(protocol) {
+    return providerUrlSuffixes[protocol] || "";
+  }
+  function providerBaseUrl(url) {
+    const normalized = url.trim().replace(/\/+$/, "");
+    const suffix = Object.values(providerUrlSuffixes).find((candidate) => normalized.endsWith(candidate));
+    if (suffix) return normalized.slice(0, -suffix.length);
+    return normalized.endsWith("/v1") ? normalized.slice(0, -3) : normalized;
+  }
+  function providerRequestUrl(baseUrl, protocol) {
+    return "".concat(baseUrl.trim().replace(/\/+$/, "")).concat(providerUrlSuffix(protocol));
+  }
   function connectionEditor(connection) {
     const id = connection?.id || "";
-    return '<form class="catalog-editor" data-model-catalog-form="connection" data-model-catalog-id="'.concat(escapeHtml2(id), '">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(connection?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u534F\u8BAE"), '</span><select name="protocol"><option value="openai_chat" ').concat(connection?.protocol === "openai_chat" ? "selected" : "", '>OpenAI Chat</option><option value="openai_responses" ').concat(connection?.protocol === "openai_responses" ? "selected" : "", '>OpenAI Responses</option><option value="anthropic_messages" ').concat(connection?.protocol === "anthropic_messages" ? "selected" : "", '>Anthropic Messages</option></select></label>\n    <label class="wide"><span>').concat(t("\u63A5\u53E3\u5730\u5740"), '</span><input name="url" type="url" value="').concat(escapeHtml2(connection?.url || ""), '" required></label>\n    <label class="wide"><span>').concat(t("\u5BC6\u94A5\u73AF\u5883\u53D8\u91CF"), '</span><input name="api_key_env" value="').concat(escapeHtml2(connection?.api_key_env || ""), '" pattern="[A-Za-z_][A-Za-z0-9_]*"></label>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
+    const protocol = connection?.protocol || "openai_chat";
+    return '<form class="catalog-editor" data-model-catalog-form="connection" data-model-catalog-id="'.concat(escapeHtml2(id), '">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(connection?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u534F\u8BAE"), '</span><select name="protocol" data-provider-protocol><option value="openai_chat" ').concat(protocol === "openai_chat" ? "selected" : "", '>OpenAI Chat</option><option value="openai_responses" ').concat(protocol === "openai_responses" ? "selected" : "", '>OpenAI Responses</option><option value="anthropic_messages" ').concat(protocol === "anthropic_messages" ? "selected" : "", '>Anthropic Messages</option></select></label>\n    <label class="wide"><span>').concat(t("\u63A5\u53E3\u5730\u5740"), '</span><div class="provider-url-editor"><input name="url_base" type="url" value="').concat(escapeHtml2(providerBaseUrl(connection?.url || "")), '" required><span data-provider-url-suffix>').concat(providerUrlSuffix(protocol), '</span></div></label>\n    <label class="wide"><span>').concat(t("\u5BC6\u94A5\u73AF\u5883\u53D8\u91CF"), '</span><input name="api_key_env" value="').concat(escapeHtml2(connection?.api_key_env || ""), '" pattern="[A-Za-z_][A-Za-z0-9_]*"></label>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
   }
   function modelEditor(model) {
     const data = settingsProjection.data;
     if (!data) return "";
     const supported = (model?.reasoning.supported || []).join(", ");
-    return '<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="'.concat(escapeHtml2(model?.id || ""), '">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(model?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u670D\u52A1\u8FDE\u63A5"), '</span><select name="connection_id" required><option value="">').concat(t("\u8BF7\u9009\u62E9"), "</option>").concat(data.model_catalog.connections.map((item) => '<option value="'.concat(escapeHtml2(item.id), '" ').concat(model?.connection_id === item.id ? "selected" : "", ">").concat(escapeHtml2(item.alias), "</option>")).join(""), "</select></label>\n    <label><span>").concat(t("\u6A21\u578B ID"), '</span><input name="model" value="').concat(escapeHtml2(model?.model || ""), '" required></label>\n    <label><span>').concat(t("\u4E0A\u4E0B\u6587\u7A97\u53E3"), '</span><input name="context_window" type="number" min="0" max="100000000" value="').concat(escapeHtml2(model?.context_window ?? 0), '" required></label>\n    <label><span>').concat(t("\u652F\u6301\u7684\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_supported" value="').concat(escapeHtml2(supported), '" placeholder="low, medium, high"></label>\n    <label><span>').concat(t("\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_default" value="').concat(escapeHtml2(model?.reasoning.default || ""), '"></label>\n    <label class="settings-switch"><input name="streaming_enabled" type="checkbox" ').concat(model?.streaming.enabled !== false ? "checked" : "", "><span>").concat(t("\u6D41\u5F0F\u8F93\u51FA"), '</span></label>\n    <label class="settings-switch"><input name="streaming_include_usage" type="checkbox" ').concat(model?.streaming.include_usage !== false ? "checked" : "", "><span>").concat(t("\u8FD4\u56DE\u7528\u91CF"), "</span></label>\n    <label><span>").concat(t("\u63D0\u793A\u7F13\u5B58\u7B56\u7565"), '</span><select name="prompt_cache_profile">\n      <option value="off" ').concat(model?.prompt_cache.profile === "off" || !model ? "selected" : "", ">").concat(t("\u5173\u95ED"), '</option>\n      <option value="key_only" ').concat(model?.prompt_cache.profile === "key_only" ? "selected" : "", ">").concat(t("\u4EC5\u7F13\u5B58\u952E"), '</option>\n      <option value="gpt56_explicit_permanent" ').concat(model?.prompt_cache.profile === "gpt56_explicit_permanent" ? "selected" : "", ">").concat(t("\u6C38\u4E45\u5C42\u663E\u5F0F\u7F13\u5B58"), '</option>\n      <option value="gpt56_explicit_tiered" ').concat(model?.prompt_cache.profile === "gpt56_explicit_tiered" ? "selected" : "", ">").concat(t("\u5206\u5C42\u663E\u5F0F\u7F13\u5B58"), '</option>\n    </select></label>\n    <details class="wide"><summary>').concat(t("\u517C\u5BB9\u8BF7\u6C42\u53C2\u6570"), '</summary><label><span>JSON</span><textarea name="request_overrides" rows="6">').concat(escapeHtml2(JSON.stringify(model?.request_overrides || {}, null, 2)), '</textarea></label></details>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
+    return '<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="'.concat(escapeHtml2(model?.id || ""), '">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(model?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u670D\u52A1\u8FDE\u63A5"), '</span><select name="connection_id" required><option value="">').concat(t("\u8BF7\u9009\u62E9"), "</option>").concat(data.model_catalog.connections.map((item) => '<option value="'.concat(escapeHtml2(item.id), '" ').concat(model?.connection_id === item.id ? "selected" : "", ">").concat(escapeHtml2(item.alias), "</option>")).join(""), "</select></label>\n    <label><span>").concat(t("\u6A21\u578B ID"), '</span><input name="model" value="').concat(escapeHtml2(model?.model || ""), '" required></label>\n    <label><span>').concat(t("\u4E0A\u4E0B\u6587\u7A97\u53E3"), '</span><input name="context_window" type="number" min="0" max="100000000" value="').concat(escapeHtml2(model?.context_window ?? 0), '" required></label>\n    <label><span>').concat(t("\u652F\u6301\u7684\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_supported" value="').concat(escapeHtml2(supported), '" placeholder="low, medium, high"></label>\n    <label><span>').concat(t("\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_default" value="').concat(escapeHtml2(model?.reasoning.default || ""), '"></label>\n    <div class="settings-switch"><span>').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '</span><input name="streaming_enabled" type="checkbox" aria-label="').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '" ').concat(model?.streaming.enabled !== false ? "checked" : "", '></div>\n    <div class="settings-switch"><span>').concat(t("\u8FD4\u56DE\u7528\u91CF"), '</span><input name="streaming_include_usage" type="checkbox" aria-label="').concat(t("\u8FD4\u56DE\u7528\u91CF"), '" ').concat(model?.streaming.include_usage !== false ? "checked" : "", "></div>\n    <label><span>").concat(t("\u63D0\u793A\u7F13\u5B58\u7B56\u7565"), '</span><select name="prompt_cache_profile">\n      <option value="off" ').concat(model?.prompt_cache.profile === "off" || !model ? "selected" : "", ">").concat(t("\u5173\u95ED"), '</option>\n      <option value="key_only" ').concat(model?.prompt_cache.profile === "key_only" ? "selected" : "", ">").concat(t("\u4EC5\u7F13\u5B58\u952E"), '</option>\n      <option value="gpt56_explicit_permanent" ').concat(model?.prompt_cache.profile === "gpt56_explicit_permanent" ? "selected" : "", ">").concat(t("\u6C38\u4E45\u5C42\u663E\u5F0F\u7F13\u5B58"), '</option>\n      <option value="gpt56_explicit_tiered" ').concat(model?.prompt_cache.profile === "gpt56_explicit_tiered" ? "selected" : "", ">").concat(t("\u5206\u5C42\u663E\u5F0F\u7F13\u5B58"), '</option>\n    </select></label>\n    <details class="wide"><summary>').concat(t("\u517C\u5BB9\u8BF7\u6C42\u53C2\u6570"), '</summary><label><span>JSON</span><textarea name="request_overrides" rows="6">').concat(escapeHtml2(JSON.stringify(model?.request_overrides || {}, null, 2)), '</textarea></label></details>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
   }
   function renderConnectionCard(connection) {
     const disabled = settingsProjection.pending ? "disabled" : "";
-    return '<article class="catalog-item">\n    <header><div><strong>'.concat(escapeHtml2(connection.alias), "</strong><span>").concat(escapeHtml2(connection.protocol), " \xB7 ").concat(escapeHtml2(connection.url), '</span></div><div><button type="button" data-edit-catalog="connection" data-catalog-id="').concat(escapeHtml2(connection.id), '">').concat(t("\u7F16\u8F91"), '</button><button type="button" data-delete-catalog="connection" data-catalog-id="').concat(escapeHtml2(connection.id), '">').concat(t("\u5220\u9664"), '</button></div></header>\n    <div class="connection-key"><span>').concat(t("\u5BC6\u94A5\u72B6\u6001\uFF1A{status}", { status: keySourceLabel(connection.key_source) }), '</span><input type="password" data-provider-key-input="').concat(escapeHtml2(connection.id), '" autocomplete="new-password" placeholder="').concat(t("\u8F93\u5165\u65B0\u5BC6\u94A5"), '" ').concat(disabled, '><button type="button" data-provider-key-action="set" data-provider-key-connection="').concat(escapeHtml2(connection.id), '" ').concat(disabled, ">").concat(t("\u4FDD\u5B58\u5BC6\u94A5"), '</button><button type="button" data-provider-key-action="delete" data-provider-key-connection="').concat(escapeHtml2(connection.id), '" ').concat(disabled, ">").concat(t("\u5220\u9664\u5BC6\u94A5"), "</button></div>\n    ").concat(state.editingConnectionId === connection.id ? connectionEditor(connection) : "", "\n  </article>");
+    const keyActionLabel = connection.key_present ? t("\u66F4\u6362\u5BC6\u94A5") : t("\u4FDD\u5B58\u5BC6\u94A5");
+    const keyInputPlaceholder = connection.key_present ? t("\u8F93\u5165\u65B0\u5BC6\u94A5\u4EE5\u66F4\u6362") : t("\u8F93\u5165\u65B0\u5BC6\u94A5");
+    return '<article class="catalog-item">\n    <header><div><strong>'.concat(escapeHtml2(connection.alias), "</strong><span>").concat(escapeHtml2(connection.protocol), " \xB7 ").concat(escapeHtml2(connection.url), '</span></div><div><button type="button" data-edit-catalog="connection" data-catalog-id="').concat(escapeHtml2(connection.id), '">').concat(t("\u7F16\u8F91"), '</button><button type="button" data-delete-catalog="connection" data-catalog-id="').concat(escapeHtml2(connection.id), '">').concat(t("\u5220\u9664"), '</button></div></header>\n    <div class="connection-key"><span>').concat(t("\u5BC6\u94A5\u72B6\u6001\uFF1A{status}", { status: keySourceLabel(connection.key_source) }), '</span><input type="password" data-provider-key-input="').concat(escapeHtml2(connection.id), '" autocomplete="new-password" placeholder="').concat(keyInputPlaceholder, '" aria-label="').concat(keyInputPlaceholder, '" ').concat(disabled, '><button type="button" data-provider-key-action="set" data-provider-key-connection="').concat(escapeHtml2(connection.id), '" ').concat(disabled, ">").concat(keyActionLabel, '</button><button type="button" data-provider-key-action="delete" data-provider-key-connection="').concat(escapeHtml2(connection.id), '" ').concat(disabled, ">").concat(t("\u5220\u9664\u5BC6\u94A5"), "</button></div>\n    ").concat(state.editingConnectionId === connection.id ? connectionEditor(connection) : "", "\n  </article>");
   }
   function renderModelCard(model) {
     const connection = settingsProjection.data?.model_catalog.connections.find((item) => item.id === model.connection_id);
@@ -47959,7 +47979,7 @@
       } else {
         els.manualPageLabel.textContent = "MEMORY";
         els.manualTitle.textContent = item.title || itemId;
-        els.manualSummary.textContent = t("\u6B63\u5728\u8BFB\u53D6\u516C\u5171\u8BB0\u5FC6\u6B63\u6587\u2026");
+        els.manualSummary.textContent = t("\u6B63\u5728\u8BFB\u53D6\u8BB0\u5FC6\u6761\u76EE\u6B63\u6587\u2026");
         els.manualSources.textContent = sourceRef;
         els.manualBody.innerHTML = '<p class="runtime-empty-copy">'.concat(t("\u6B63\u5728\u8BFB\u53D6\u6B63\u6587\u2026"), "</p>");
         els.manualOverlay.hidden = false;
@@ -49753,7 +49773,7 @@
           values = {
             alias: text10("alias"),
             protocol: text10("protocol"),
-            url: text10("url"),
+            url: providerRequestUrl(text10("url_base"), text10("protocol")),
             api_key_env: text10("api_key_env")
           };
         } else {
@@ -49826,6 +49846,12 @@
       runtimeProjection.sendFeedback = els.permissionLevel.value === "unlimited" ? t("\u5B8C\u6574\u6743\u9650\u5C06\u5728\u63D0\u4EA4\u65F6\u8981\u6C42\u660E\u786E\u786E\u8BA4\u3002") : "";
       refreshRuntimeUi();
       if (state.activePage === "run" && getActivePageTab("run") === "tools") renderStage("run");
+    });
+    document.addEventListener("change", (event) => {
+      const selector = eventElement(event)?.closest("[data-provider-protocol]");
+      if (!selector) return;
+      const suffix = selector.closest("[data-model-catalog-form]")?.querySelector("[data-provider-url-suffix]");
+      if (suffix) suffix.textContent = providerUrlSuffix(selector.value);
     });
     document.addEventListener("change", (event) => {
       const selector = eventElement(event)?.closest("[data-route-model]");

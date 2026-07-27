@@ -187,6 +187,22 @@ LocalAppData\UPSP\
 
 ---
 
+## 支持这项长期工作
+
+UPSP 是一项仍在持续生长的开源工程。
+
+如果它的思想、代码或文档曾对你有所帮助，或者你愿意支持“主体化工程”继续向前，可以通过微信打赏支持。每一份支持都会成为我继续开发、测试、维护和公开 UPSP 的现实动力。
+
+<p align="center">
+  <img src="docs/public/assets/wechat-support.png" alt="UPSP 微信赞赏码" width="360">
+</p>
+
+## 参与与交流
+
+也希望有更多对此感兴趣的同志能够一同参与到这个项目之中。无论是理论讨论、协议设计、代码实现、测试验证，还是实际使用中的意见与反馈，都欢迎随时联系我进行交流与探讨。
+
+---
+
 ## 源码、历史与许可
 
 本仓库以 MIT 公开完整产品源码，包括 Python Runtime、TypeScript GUI、WinForms 桌面壳、NSIS 安装器及其直接测试。构建方法见 [BUILDING.md](docs/public/BUILDING.md)。

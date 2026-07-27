@@ -1653,6 +1653,11 @@ pre { font-family: var(--font-mono); font-weight: 500; line-height: 1.4; }
 .catalog-editor input,
 .catalog-editor select { height: 34px; }
 .catalog-editor textarea { resize: vertical; }
+.provider-url-editor { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+.provider-url-editor input { min-width: 0; border-right: 0; }
+.provider-url-editor [data-provider-url-suffix] { min-width: max-content; height: 34px; display: flex; align-items: center; padding: 0 9px; border: 1px solid var(--line-soft); color: var(--dim); background: rgba(7, 20, 17, 0.82); font-family: var(--font-data); }
+.catalog-editor > .settings-switch { min-height: 34px; justify-content: space-between; }
+.catalog-editor > .settings-switch input[type="checkbox"] { flex: 0 0 17px; width: 17px; height: 17px; margin: 0; }
 .catalog-editor .wide,
 .catalog-editor > details,
 .catalog-editor > footer { grid-column: 1 / -1; }

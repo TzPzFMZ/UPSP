@@ -12,4 +12,4 @@ MEM is not another folder. It is the bus and storage layer for memory entries.
 
 One entry may be referenced by several work containers. Its significance is better described by its mounts, recent context assembly, receipt and audit trail, and whether it is producing new work or long-term deposits than by a self-counted recall number.
 
-The memory page exposes entries, mounts, lifecycle, context visibility, and audit pointers. Its main surface stays a lightweight index; selecting a public memory opens the shared detail dialog with complete metadata. Structured fields use a two-column table, long summaries wrap, and remaining content uses Markdown. Runtime truth remains read-only.
+The memory page exposes entries, mounts, lifecycle, context visibility, and audit pointers. Its main surface stays a lightweight index; selecting a memory entry opens the shared detail dialog with complete metadata. Structured fields use a two-column table, long summaries wrap, and remaining content uses Markdown. Runtime truth remains read-only.

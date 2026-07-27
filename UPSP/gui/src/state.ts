@@ -73,10 +73,10 @@ export const pageTabs: Record<PageId, PageTab[]> = {
 };
 
 export const shortcuts: Shortcut[] = [
-  { id: "stm", label: "STM", name: "短时记忆", target: "mem", tab: "stm", icon: "M5 7h14M7 4h10M6 12h12v7H6z" },
+  { id: "stm", label: "STM", name: "短期记忆", target: "mem", tab: "stm", icon: "M5 7h14M7 4h10M6 12h12v7H6z" },
   { id: "ltm", label: "LTM", name: "长期记忆", target: "mem", tab: "ltm", icon: "M4 6h16v4H4zM6 10h12v10H6z" },
-  { id: "dc", label: "DC", name: "辩证容器", target: "containers", tab: "dc", icon: "M5 7h6v6H5zM13 11h6v6h-6zM11 10l2 2M11 14l2-2" },
-  { id: "ec", label: "EC", name: "事件容器", target: "containers", tab: "ec", icon: "M5 5h14M7 9h10M9 13h8M11 17h4" },
+  { id: "dc", label: "DC", name: "辩证链", target: "containers", tab: "dc", icon: "M5 7h6v6H5zM13 11h6v6h-6zM11 10l2 2M11 14l2-2" },
+  { id: "ec", label: "EC", name: "事件链", target: "containers", tab: "ec", icon: "M5 5h14M7 9h10M9 13h8M11 17h4" },
   { id: "prj", label: "PRJ", name: "项目容器", target: "containers", tab: "project", icon: "M4 6h16M6 10h12M5 15h6M13 15h6" },
   { id: "skl", label: "SKL", name: "技能容器", target: "containers", tab: "skl", icon: "M12 4l7 4v8l-7 4-7-4V8zM12 4v16M5 8l7 4 7-4" },
 ];

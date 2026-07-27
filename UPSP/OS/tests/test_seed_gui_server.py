@@ -3062,3 +3062,61 @@ def test_spec701_persona_projection_frontend_contract():
     assert ".persona-core-axis-track" in styles
     assert ".persona-core-source" in styles
     assert ".persona-state-table" in styles
+
+
+def test_seed_gui_memory_surface_uses_entry_terminology():
+    view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+    i18n_source = (GUI_ROOT / "src" / "i18n.ts").read_text(encoding="utf-8")
+    manual_zh = (GUI_ROOT / "manual" / "memory-bus.md").read_text(encoding="utf-8")
+    manual_en = (GUI_ROOT / "manual" / "memory-bus.en-US.md").read_text(encoding="utf-8")
+    product_copy = "\n".join((view_source, i18n_source, manual_zh))
+
+    assert "记忆条目列表" in product_copy
+    assert "隐私条目不会显示" in product_copy
+    assert "selecting a memory entry" in manual_en
+    assert all(term not in product_copy for term in ("公共记忆", "隐私记忆", "私密条目"))
+
+
+def test_seed_gui_work_container_shortcuts_use_product_names():
+    state_source = (GUI_ROOT / "src" / "state.ts").read_text(encoding="utf-8")
+    view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+
+    for label in ("短期记忆", "长期记忆", "辩证链", "事件链", "项目容器", "技能容器"):
+        assert f'name: "{label}"' in state_source
+    assert 't("工作容器")' in view_source
+    assert all(term not in state_source for term in ("短时记忆", "辩证容器", "事件容器"))
+    assert "短时记忆" not in view_source
+    assert '"置顶"' not in view_source
+
+
+def test_seed_gui_saved_provider_key_has_explicit_replace_action():
+    view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+
+    assert 'connection.key_present ? t("更换密钥") : t("保存密钥")' in view_source
+    assert 'connection.key_present ? t("输入新密钥以更换") : t("输入新密钥")' in view_source
+    assert 'data-provider-key-action="set"' in view_source
+
+
+def test_seed_gui_model_capability_switches_are_aligned():
+    view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+    styles = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
+
+    assert '<div class="settings-switch"><span>${t("流式输出")}</span><input name="streaming_enabled"' in view_source
+    assert '<div class="settings-switch"><span>${t("返回用量")}</span><input name="streaming_include_usage"' in view_source
+    assert ".catalog-editor > .settings-switch { min-height: 34px; justify-content: space-between; }" in styles
+    assert '.catalog-editor > .settings-switch input[type="checkbox"]' in styles
+
+
+def test_seed_gui_provider_url_editor_owns_protocol_suffix():
+    view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+    events_source = (GUI_ROOT / "src" / "events.ts").read_text(encoding="utf-8")
+    styles = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
+
+    assert 'openai_chat: "/v1/chat/completions"' in view_source
+    assert 'openai_responses: "/v1/responses"' in view_source
+    assert 'anthropic_messages: "/v1/messages"' in view_source
+    assert 'name="url_base"' in view_source
+    assert "providerBaseUrl(connection?.url || \"\")" in view_source
+    assert 'url: providerRequestUrl(text("url_base"), text("protocol"))' in events_source
+    assert '"[data-provider-protocol]"' in events_source
+    assert ".provider-url-editor" in styles

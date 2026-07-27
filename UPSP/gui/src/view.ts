@@ -175,7 +175,7 @@ const personaFieldLabels: Record<string, MessageKey> = {
   work_intent_debt: "工作意图债务",
   feeling_settle_due: "感受待结算",
   api_degraded: "API 降级",
-  stm_degrade_pending: "短时记忆待降级",
+  stm_degrade_pending: "短期记忆待降级",
   user_message_waiting: "用户消息等待",
   rhythm_due: "节律到期",
   standby_due: "待命到期",
@@ -386,7 +386,7 @@ export function renderNavigation(): void {
 
   els.surfaceNav.innerHTML = `
     <div class="nav-primary">${pages}</div>
-    <div class="nav-divider"><span>${state.locale === "zh-CN" ? "置顶" : "Pinned"}</span></div>
+    <div class="nav-divider"><span>${t("工作容器")}</span></div>
     <div class="quick-grid">${quicks}</div>
   `;
   syncNavPointer();
@@ -493,10 +493,10 @@ function chatTraceSummary(cards: ConversationCard[]): string {
   if (toolCard?.type === "tool-result") return t(toolId === "memory_write" ? "确认记忆写入结果" : "查看工具执行结果");
   // ponytail: 未知工具保持通用中文；它真正进入 GUI 后再补一条产品文案。
   const summary = ({
-    setup_finalize: "完成本轮初始化",
+    setup_finalize: "完成本轮起手",
     memory_write: "写入记忆",
     memory_container_create: "创建记忆容器",
-    cleanup_finalize: "完成本轮清理",
+    cleanup_finalize: "完成本轮善后",
   } as Record<string, MessageKey>)[toolId] || (cards.some((card) => card.type === "assistant-streaming")
     ? "正在准备工具调用"
     : "执行工具调用");
@@ -801,7 +801,7 @@ function renderRuntimeEmpty(label: string, title: string, desc: string, retryTar
 
 function renderDepositionUnavailable(label: string): string {
   if (depositionProjection.loading && !depositionProjection.index) {
-    return renderRuntimeEmpty(label, "正在读取沉淀真源", "从本地宿主读取公共记忆、已登记容器与活动关系卡。不存在静态回退数据。");
+    return renderRuntimeEmpty(label, "正在读取沉淀真源", "从本地宿主读取记忆条目、已登记容器与活动关系卡。不存在静态回退数据。");
   }
   if (depositionProjection.error || !depositionProjection.index) {
     return renderRuntimeEmpty(label, "沉淀真源不可用", depositionProjection.error || "本地宿主没有返回可用的沉淀索引。", "deposition");
@@ -1645,11 +1645,11 @@ function renderMemoryPage(): string {
   }
   const emptyLabel = tab === "stm" ? "STM" : tab === "ltm" ? "LTM" : tab === "mounts" ? "MOUNT" : "MEMORY";
   const search = tab === "search" ? `
-    <label class="deposition-search"><span>${t("搜索公共记忆")}</span><input data-memory-search type="search" value="${escapeHtml(state.memoryQuery)}" placeholder="${t("ID、标题、标签或容器")}" autocomplete="off"></label>
+    <label class="deposition-search"><span>${t("搜索记忆条目")}</span><input data-memory-search type="search" value="${escapeHtml(state.memoryQuery)}" placeholder="${t("ID、标题、标签或容器")}" autocomplete="off"></label>
   ` : "";
   return `
     <div class="deposition-workspace memory-index-only" aria-busy="${depositionProjection.loading ? "true" : "false"}">
-      <nav class="deposition-master" aria-label="${t("公共记忆列表")}">
+      <nav class="deposition-master" aria-label="${t("记忆条目列表")}">
         <header><span class="hud-label">${escapeHtml(emptyLabel)}</span><strong>${items.length} ${t("条")}</strong></header>
         ${search}
         <div class="deposition-list">${items.length ? items.map((item) => depositionRow(
@@ -1658,7 +1658,7 @@ function renderMemoryPage(): string {
           false,
           item.current_overview || (item.tags || []).join(" / ") || item.id,
           `W${item.weight ?? "?"}`,
-        )).join("") : renderDepositionEmpty(emptyLabel, t("没有公共记忆"), tab === "search" && state.memoryQuery ? t("当前查询没有匹配条目。") : t("该层当前没有可投影的公共记忆；私密条目不会显示。"))}</div>
+        )).join("") : renderDepositionEmpty(emptyLabel, t("没有记忆条目"), tab === "search" && state.memoryQuery ? t("当前查询没有匹配条目。") : t("该层当前没有可投影的记忆条目；隐私条目不会显示。"))}</div>
       </nav>
     </div>
   `;
@@ -1821,12 +1821,12 @@ const contextSettingFields: Record<ContextSettingsFileId, SettingFieldSpec[]> = 
     { key: "content_limits.reference_window_chars", label: "高频引用窗口", kind: "int", min: 1, max: 16777216 },
     { key: "index_display_limits.container_index", label: "容器索引显示量", kind: "int", min: 1, max: 1000 },
     { key: "index_display_limits.ltm_heat_index", label: "长期记忆热度显示量", kind: "int", min: 1, max: 1000 },
-    { key: "index_display_limits.stm_heat_index", label: "短时记忆热度显示量", kind: "int", min: 1, max: 1000 },
+    { key: "index_display_limits.stm_heat_index", label: "短期记忆热度显示量", kind: "int", min: 1, max: 1000 },
     { key: "index_display_limits.skills_inverted", label: "技能倒排显示量", kind: "int", min: 1, max: 1000 },
     { key: "index_display_limits.relation_inverted", label: "关系倒排显示量", kind: "int", min: 1, max: 1000 },
     { key: "index_display_limits.relation_domain", label: "关系域显示量", kind: "int", min: 1, max: 1000 },
     { key: "index_display_limits.ltm_inverted", label: "长期记忆倒排显示量", kind: "int", min: 1, max: 1000 },
-    { key: "index_display_limits.stm_inverted", label: "短时记忆倒排显示量", kind: "int", min: 1, max: 1000 },
+    { key: "index_display_limits.stm_inverted", label: "短期记忆倒排显示量", kind: "int", min: 1, max: 1000 },
     { key: "index_display_limits.association_index", label: "联想索引显示量", kind: "int", min: 1, max: 1000 },
   ],
   relation: [
@@ -2017,12 +2017,34 @@ function renderInterfaceSettings(): string {
   </section>`;
 }
 
+const providerUrlSuffixes: Record<ModelConnection["protocol"], string> = {
+  openai_chat: "/v1/chat/completions",
+  openai_responses: "/v1/responses",
+  anthropic_messages: "/v1/messages",
+};
+
+export function providerUrlSuffix(protocol: string): string {
+  return providerUrlSuffixes[protocol as ModelConnection["protocol"]] || "";
+}
+
+export function providerBaseUrl(url: string): string {
+  const normalized = url.trim().replace(/\/+$/, "");
+  const suffix = Object.values(providerUrlSuffixes).find((candidate) => normalized.endsWith(candidate));
+  if (suffix) return normalized.slice(0, -suffix.length);
+  return normalized.endsWith("/v1") ? normalized.slice(0, -3) : normalized;
+}
+
+export function providerRequestUrl(baseUrl: string, protocol: string): string {
+  return `${baseUrl.trim().replace(/\/+$/, "")}${providerUrlSuffix(protocol)}`;
+}
+
 function connectionEditor(connection?: ModelConnection): string {
   const id = connection?.id || "";
+  const protocol = connection?.protocol || "openai_chat";
   return `<form class="catalog-editor" data-model-catalog-form="connection" data-model-catalog-id="${escapeHtml(id)}">
     <label><span>${t("备注名")}</span><input name="alias" value="${escapeHtml(connection?.alias || "")}" required maxlength="80"></label>
-    <label><span>${t("协议")}</span><select name="protocol"><option value="openai_chat" ${connection?.protocol === "openai_chat" ? "selected" : ""}>OpenAI Chat</option><option value="openai_responses" ${connection?.protocol === "openai_responses" ? "selected" : ""}>OpenAI Responses</option><option value="anthropic_messages" ${connection?.protocol === "anthropic_messages" ? "selected" : ""}>Anthropic Messages</option></select></label>
-    <label class="wide"><span>${t("接口地址")}</span><input name="url" type="url" value="${escapeHtml(connection?.url || "")}" required></label>
+    <label><span>${t("协议")}</span><select name="protocol" data-provider-protocol><option value="openai_chat" ${protocol === "openai_chat" ? "selected" : ""}>OpenAI Chat</option><option value="openai_responses" ${protocol === "openai_responses" ? "selected" : ""}>OpenAI Responses</option><option value="anthropic_messages" ${protocol === "anthropic_messages" ? "selected" : ""}>Anthropic Messages</option></select></label>
+    <label class="wide"><span>${t("接口地址")}</span><div class="provider-url-editor"><input name="url_base" type="url" value="${escapeHtml(providerBaseUrl(connection?.url || ""))}" required><span data-provider-url-suffix>${providerUrlSuffix(protocol)}</span></div></label>
     <label class="wide"><span>${t("密钥环境变量")}</span><input name="api_key_env" value="${escapeHtml(connection?.api_key_env || "")}" pattern="[A-Za-z_][A-Za-z0-9_]*"></label>
     <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>${t("取消")}</button><button type="submit" class="primary-action">${t("保存")}</button></footer>
   </form>`;
@@ -2039,8 +2061,8 @@ function modelEditor(model?: ModelProfile): string {
     <label><span>${t("上下文窗口")}</span><input name="context_window" type="number" min="0" max="100000000" value="${escapeHtml(model?.context_window ?? 0)}" required></label>
     <label><span>${t("支持的推理强度")}</span><input name="reasoning_supported" value="${escapeHtml(supported)}" placeholder="low, medium, high"></label>
     <label><span>${t("默认推理强度")}</span><input name="reasoning_default" value="${escapeHtml(model?.reasoning.default || "")}"></label>
-    <label class="settings-switch"><input name="streaming_enabled" type="checkbox" ${model?.streaming.enabled !== false ? "checked" : ""}><span>${t("流式输出")}</span></label>
-    <label class="settings-switch"><input name="streaming_include_usage" type="checkbox" ${model?.streaming.include_usage !== false ? "checked" : ""}><span>${t("返回用量")}</span></label>
+    <div class="settings-switch"><span>${t("流式输出")}</span><input name="streaming_enabled" type="checkbox" aria-label="${t("流式输出")}" ${model?.streaming.enabled !== false ? "checked" : ""}></div>
+    <div class="settings-switch"><span>${t("返回用量")}</span><input name="streaming_include_usage" type="checkbox" aria-label="${t("返回用量")}" ${model?.streaming.include_usage !== false ? "checked" : ""}></div>
     <label><span>${t("提示缓存策略")}</span><select name="prompt_cache_profile">
       <option value="off" ${model?.prompt_cache.profile === "off" || !model ? "selected" : ""}>${t("关闭")}</option>
       <option value="key_only" ${model?.prompt_cache.profile === "key_only" ? "selected" : ""}>${t("仅缓存键")}</option>
@@ -2054,9 +2076,11 @@ function modelEditor(model?: ModelProfile): string {
 
 function renderConnectionCard(connection: ModelConnection): string {
   const disabled = settingsProjection.pending ? "disabled" : "";
+  const keyActionLabel = connection.key_present ? t("更换密钥") : t("保存密钥");
+  const keyInputPlaceholder = connection.key_present ? t("输入新密钥以更换") : t("输入新密钥");
   return `<article class="catalog-item">
     <header><div><strong>${escapeHtml(connection.alias)}</strong><span>${escapeHtml(connection.protocol)} · ${escapeHtml(connection.url)}</span></div><div><button type="button" data-edit-catalog="connection" data-catalog-id="${escapeHtml(connection.id)}">${t("编辑")}</button><button type="button" data-delete-catalog="connection" data-catalog-id="${escapeHtml(connection.id)}">${t("删除")}</button></div></header>
-    <div class="connection-key"><span>${t("密钥状态：{status}", { status: keySourceLabel(connection.key_source) })}</span><input type="password" data-provider-key-input="${escapeHtml(connection.id)}" autocomplete="new-password" placeholder="${t("输入新密钥")}" ${disabled}><button type="button" data-provider-key-action="set" data-provider-key-connection="${escapeHtml(connection.id)}" ${disabled}>${t("保存密钥")}</button><button type="button" data-provider-key-action="delete" data-provider-key-connection="${escapeHtml(connection.id)}" ${disabled}>${t("删除密钥")}</button></div>
+    <div class="connection-key"><span>${t("密钥状态：{status}", { status: keySourceLabel(connection.key_source) })}</span><input type="password" data-provider-key-input="${escapeHtml(connection.id)}" autocomplete="new-password" placeholder="${keyInputPlaceholder}" aria-label="${keyInputPlaceholder}" ${disabled}><button type="button" data-provider-key-action="set" data-provider-key-connection="${escapeHtml(connection.id)}" ${disabled}>${keyActionLabel}</button><button type="button" data-provider-key-action="delete" data-provider-key-connection="${escapeHtml(connection.id)}" ${disabled}>${t("删除密钥")}</button></div>
     ${state.editingConnectionId === connection.id ? connectionEditor(connection) : ""}
   </article>`;
 }
@@ -2359,7 +2383,7 @@ export function openMemoryDetail(itemId: string, { retry = false }: { retry?: bo
     } else {
       els.manualPageLabel.textContent = "MEMORY";
       els.manualTitle.textContent = item.title || itemId;
-      els.manualSummary.textContent = t("正在读取公共记忆正文…");
+      els.manualSummary.textContent = t("正在读取记忆条目正文…");
       els.manualSources.textContent = sourceRef;
       els.manualBody.innerHTML = `<p class="runtime-empty-copy">${t("正在读取正文…")}</p>`;
       els.manualOverlay.hidden = false;

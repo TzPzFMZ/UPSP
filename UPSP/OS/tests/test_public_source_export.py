@@ -80,8 +80,13 @@ def test_public_readmes_preserve_subjectivation_narrative() -> None:
     assert 'href="README.md"' in english
     assert "docs/public/assets/onboarding.png" in chinese
     assert "docs/public/assets/main-interface.png" in english
-    assert chinese.count("docs/public/assets/") == 2
-    assert english.count("docs/public/assets/") == 2
+    assert chinese.count("docs/public/assets/") == 3
+    assert english.count("docs/public/assets/") == 3
+    assert "## 支持这项长期工作" in chinese
+    assert "## 参与与交流" in chinese
+    assert "docs/public/assets/wechat-support.png" in chinese
+    assert "## Support This Long-Term Work" in english
+    assert "## Participation and Exchange" in english
     assert len(chinese.splitlines()) <= 230
 
 

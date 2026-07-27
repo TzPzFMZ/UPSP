@@ -54,6 +54,8 @@ import {
   renderIdentity,
   renderStage,
   renderStageAndFocus,
+  providerRequestUrl,
+  providerUrlSuffix,
   scheduleNavCollapse,
   setActivePageTab,
   setPage,
@@ -488,7 +490,7 @@ export function initEvents(): void {
         values = {
           alias: text("alias"),
           protocol: text("protocol"),
-          url: text("url"),
+          url: providerRequestUrl(text("url_base"), text("protocol")),
           api_key_env: text("api_key_env"),
         };
       } else {
@@ -565,6 +567,12 @@ export function initEvents(): void {
       : "";
     refreshRuntimeUi();
     if (state.activePage === "run" && getActivePageTab("run") === "tools") renderStage("run");
+  });
+  document.addEventListener("change", (event) => {
+    const selector = eventElement(event)?.closest<HTMLSelectElement>("[data-provider-protocol]");
+    if (!selector) return;
+    const suffix = selector.closest<HTMLFormElement>("[data-model-catalog-form]")?.querySelector<HTMLElement>("[data-provider-url-suffix]");
+    if (suffix) suffix.textContent = providerUrlSuffix(selector.value);
   });
   document.addEventListener("change", (event) => {
     const selector = eventElement(event)?.closest<HTMLSelectElement>("[data-route-model]");

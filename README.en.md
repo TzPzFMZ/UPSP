@@ -185,6 +185,22 @@ See the [Alpha 5 Release Notes](docs/public/releases/0.1.0-alpha.5.md) for the f
 
 ---
 
+## Support This Long-Term Work
+
+UPSP is an open-source project that is still growing.
+
+If its ideas, software, or documentation have been useful to you, or if you would like to support Subjectivation Engineering as it moves forward, you can support the project through WeChat Pay. Every contribution becomes practical support for the continued development, testing, maintenance, and public release of UPSP.
+
+<p align="center">
+  <img src="docs/public/assets/wechat-support.png" alt="UPSP WeChat appreciation code" width="360">
+</p>
+
+## Participation and Exchange
+
+I also hope that more comrades who are interested in this work will join the project. Whether through theoretical discussion, protocol design, implementation, testing, or feedback from actual use, you are always welcome to reach out for exchange and discussion.
+
+---
+
 ## Source, history, and license
 
 This repository publishes the complete product source under MIT, including the Python Runtime, TypeScript GUI, WinForms desktop shell, NSIS installer, and direct tests. See [BUILDING.md](docs/public/BUILDING.md) for build instructions.
