@@ -1,9 +1,9 @@
 {
   "schema_version": "upsp_public_source_manifest.v1",
-  "source_commit": "5230f55907ba7fc152d0c4b69dc75d5cf865599a",
-  "source_tree_sha256": "c74aeb7ecd944dc9659e7cd2b7ed89522f10fc28368f9d430ee31c67d12d12cb",
+  "source_commit": "d545148141b13c64bd6d4622a9727ff62c61134f",
+  "source_tree_sha256": "006f838993e71c2c1f68820a200471a5e2a67a319f2e8176907a828d7a81ceb9",
   "file_count": 500,
-  "total_bytes": 14269064,
+  "total_bytes": 14269317,
   "files": [
     {
       "path": ".editorconfig",
@@ -2367,8 +2367,8 @@
     },
     {
       "path": "docs/public/releases/0.1.0-alpha.5.md",
-      "bytes": 656,
-      "sha256": "87685fc22438d3835cf684467dee33cb088918baffa1093b0438dced22cb3695"
+      "bytes": 909,
+      "sha256": "5e0e898d9939d6225db3954d55a15a049a03383aa7670c3c723d0ad7597ed1b9"
     },
     {
       "path": "pyproject.toml",
