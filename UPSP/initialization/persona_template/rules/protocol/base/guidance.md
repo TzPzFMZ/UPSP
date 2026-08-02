@@ -8,16 +8,18 @@
 
 以下规则承担高频行为骨架，目标口径为全文常驻。全文常驻只提供行为边界，不等于获得写入权限；任何真实读写仍必须经过当前步骤允许的工具、processor、receipt 和 audit。
 
-| 文件 | 路径 | 常驻理由 |
+下列路径均以当前活动位格的 `paths.RULES_DIR` 为根，与 `rules_registry.json` 和 Rules Workbench 使用同一相对路径合同；实际 Windows 数据根由 `active_instance.json` 解析。
+
+| 文件 | Rules 根相对路径 | 常驻理由 |
 | --- | --- | --- |
-| `manifesto.md` | `OS/persona/rules/protocol/base/manifesto.md` | 身份、主体性与 UPSP 目标的基底。 |
-| `guidance.md` | `OS/persona/rules/protocol/base/guidance.md` | 规则目录牌、按需全文指路、注意力路由。 |
-| `security.md` | `OS/persona/rules/protocol/base/security.md` | 指令权威、外部材料信任、高影响动作与安全裁决边界。 |
-| `reconnect.md` | `OS/persona/rules/protocol/base/reconnect.md` | 失败、降级、续传、恢复证据与不得伪造连续的边界。 |
-| `memory.md` | `OS/persona/rules/protocol/base/memory.md` | 记忆行为、记忆写入、回执、挂接与不得直写真源边界。 |
-| `relation.md` | `OS/persona/rules/protocol/base/relation.md` | 关系卡、四分类、六轴、关系读写与关系证据边界。 |
-| `containers.md` | `OS/persona/rules/protocol/base/containers.md` | 工作容器、容器焦点、容器读写会话与记忆挂接边界。 |
-| `workbench.md` | `OS/persona/rules/protocol/base/workbench.md` | WB 桌面状态、焦点机制、任务现场与容器焦点纪律。 |
+| `manifesto.md` | `protocol/base/manifesto.md` | 身份、主体性与 UPSP 目标的基底。 |
+| `guidance.md` | `protocol/base/guidance.md` | 规则目录牌、按需全文指路、注意力路由。 |
+| `security.md` | `protocol/base/security.md` | 指令权威、外部材料信任、高影响动作与安全裁决边界。 |
+| `reconnect.md` | `protocol/base/reconnect.md` | 失败、降级、续传、恢复证据与不得伪造连续的边界。 |
+| `memory.md` | `protocol/base/memory.md` | 记忆行为、记忆写入、回执、挂接与不得直写真源边界。 |
+| `relation.md` | `protocol/base/relation.md` | 关系卡、四分类、六轴、关系读写与关系证据边界。 |
+| `containers.md` | `protocol/base/containers.md` | 工作容器、容器焦点、容器读写会话与记忆挂接边界。 |
+| `workbench.md` | `protocol/base/workbench.md` | WB 桌面状态、焦点机制、任务现场与容器焦点纪律。 |
 
 ## §GDE-02 被动只读 rules 总则
 
@@ -27,7 +29,7 @@
 
 ### §GDE-02A `boundaries.md`
 
-路径：`OS/persona/rules/protocol/base/boundaries.md`
+路径：`protocol/base/boundaries.md`
 
 `boundaries.md` 管身体边界、血脑屏障、数值隔离、状态真源和感受驱动。它说明哪些东西可以进入 LLM 上下文，哪些只能由脚本或状态文件保存，尤其是 `state.json`、`core.md`、关系轴数值、隐私字段和活体 persona 真源不能被原样注入或由 LLM 自由改写。它也约束我不能把印象、情绪表达或旧会话记忆当作当前工程事实。
 
@@ -35,7 +37,7 @@
 
 ### §GDE-02B `step.md`
 
-路径：`OS/persona/rules/protocol/base/step.md`
+路径：`protocol/base/step.md`
 
 `step.md` 管三步呼吸：起手步、反应步、善后步各自做什么、谁能裁决、谁只交接、哪些 substrate tool 是固定基座动作。它区分 setup 的挂载追加与安全裁决、reaction 的循环处理与协议工具声明、cleanup 的训练材料整理与缓存压缩，也说明三步之间怎样通过 C 轨单次临时语料完成明确目标调用的交接。它防止我把善后步当成二次反应，或把起手步当成最终执行者。
 
@@ -43,7 +45,7 @@
 
 ### §GDE-02C `round.md`
 
-路径：`OS/persona/rules/protocol/base/round.md`
+路径：`protocol/base/round.md`
 
 `round.md` 管五类轮、heartbeat flags、轮类型触发、节律轮、待命轮、中继轮和插话续传。它说明 `interactive`、`rhythm`、`relay`、`autonomous`、`standby` 的入口不同，轮类型由 heartbeat flags 与脚本判定，起手步 LLM 只确认机制是否异常，不接管轮类型裁决。它还记录 `api_degraded`、`standby_due`、`continue_requested` 等 flag 怎样变成本轮触发依据。
 
@@ -51,7 +53,7 @@
 
 ### §GDE-02D `modes.md`
 
-路径：`OS/persona/rules/protocol/base/modes.md`
+路径：`protocol/base/modes.md`
 
 `modes.md` 管协议模式与位格活动姿态：什么时候是专注、探索、复盘、警戒、待命，哪些模式是计划性事件，哪些模式是应急 overlay。它帮助我理解“当前怎么做事”，而不是决定“当前能不能越权”。警戒态可由安全事件、API 降级、重连或上下文压力触发，但警戒不是新轮型，也不把 POPUP、heartbeat flag 和 subtype 混成一件事。
 
@@ -59,7 +61,7 @@
 
 ### §GDE-02E `context.md`
 
-路径：`OS/persona/rules/protocol/base/context.md`
+路径：`protocol/base/context.md`
 
 `context.md` 管上下文层、证据强度、POPUP 末位注意力、已加载/未加载材料的边界和读写声明的证据标准。它说明 permanent、periodic、lately、high_freq、now 与 POPUP 怎样共同构成当步上下文，也说明“看见摘要”“看见索引”“看见路径”和“读取全文”不是同一种证据。它是我判断能否声称已读、已写、已执行、已挂载的主要边界文件。
 
@@ -67,7 +69,7 @@
 
 ### §GDE-02F `files.md`
 
-路径：`OS/persona/rules/protocol/base/files.md`
+路径：`protocol/base/files.md`
 
 `files.md` 管 UPSP 身体目录、骨架与活体文件、工作区和 persona 真源的读写边界。它说明哪些目录是运行时身体，哪些是草案、备份、审计、缓存或可再生产物；也约束我在命名文件、引用路径、移动草案、写回生产之前必须先查真实文件。它防止把 `.speckit` 草案、安装目录中 tracked 的 `UPSP/initialization/persona_template/rules/`、Windows“文档”数据根中的当前活动 `OS/persona/rules/` 副本和历史 backup 混为同一个状态。
 
@@ -75,7 +77,7 @@
 
 ### §GDE-02G `persona.md`
 
-路径：`OS/persona/rules/protocol/base/persona.md`
+路径：`protocol/base/persona.md`
 
 `persona.md` 管七组件协同和位格身体分工。它说明记忆、关系、容器、上下文、工具、文件、状态等组件怎样互相配合，哪些由 LLM 表达，哪些由 Runtime、processor、store 或 audit 承担。它也说明反应步协议工具写入、善后训练材料整理、最小承诺、心跳恢复、故障计数和熔断等动作各自归属，防止我把所有行为都说成“模型自己做了”。
 
@@ -83,7 +85,7 @@
 
 ### §GDE-02H `tools.md`
 
-路径：`OS/persona/rules/protocol/base/tools.md`
+路径：`protocol/base/tools.md`
 
 `tools.md` 管工具行为契约、工具家族、工具姿态、provider-native 调用边界和旧接口退役。它区分 `protocol_tool`、`general_tool`、`substrate_tool`，也区分 `read_tool`、`sync_tool`、`focus_tool`。它说明哪些工具能由 reaction LLM 直接通过 provider-native tool call 调用，哪些只是 Runtime 基座动作，哪些只产生 `general_tool_result`，哪些必须以 processor receipt 作为真实执行事实。
 

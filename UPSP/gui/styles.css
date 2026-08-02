@@ -1344,6 +1344,11 @@ pre { font-family: var(--font-mono); font-weight: 500; line-height: 1.4; }
 .stream-state-active .markdown-body::after { content: ""; display: inline-block; width: 1px; height: 1em; margin-left: 3px; vertical-align: -0.12em; background: var(--cyan-hot); }
 .stream-status { display: block; margin-top: 6px; color: var(--dim); font: 600 var(--text-caption) var(--font-data); }
 .stream-state-interrupted .stream-status { color: var(--amber-hot); }
+.chat-item-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--dim); font: 500 var(--text-caption) var(--font-data); line-height: 1; }
+.chat-item-copy { padding: 0; border: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+.chat-item-copy:hover { color: var(--cyan); }
+.chat-item-copy:focus-visible { outline: 1px solid var(--amber-hot); outline-offset: 2px; }
+.chat-item-time { color: inherit; }
 .chat-tool-group { margin: 0 0 var(--space-lg); border: 0; background: transparent; }
 .chat-tool-group > summary,
 .chat-tool-step > summary { position: relative; list-style: none; cursor: pointer; }
@@ -1361,6 +1366,7 @@ pre { font-family: var(--font-mono); font-weight: 500; line-height: 1.4; }
 .chat-tool-code { max-height: min(50vh, 560px); margin: 2px 0 7px 16px; padding: var(--space-sm); overflow: auto; background: rgba(4, 16, 14, 0.42); }
 .chat-tool-code > :first-child { margin-top: 0; }
 .chat-tool-code > :last-child { margin-bottom: 0; }
+.chat-tool-group > .chat-item-meta { margin-left: 30px; }
 .chat-command {
   flex: 0 0 auto;
   min-width: 0;

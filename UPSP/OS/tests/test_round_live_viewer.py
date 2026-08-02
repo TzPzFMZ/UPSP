@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+import pytest
 
 from data.round_live_viewer import build_live_state, events_after
 from data.round_audit_viewer import latest_event_index
@@ -461,6 +464,51 @@ def test_live_projection_keeps_all_runtime_events_in_one_rolling_conversation():
     assert cards_by_type["warning-error"]["collapsible"] is True
     assert cards_by_type["warning-error"]["default_collapsed"] is False
     assert "轮次事故标记" in cards_by_type["warning-error"]["summary"]
+
+
+@pytest.mark.parametrize(("raw_error", "kind", "statuses", "target"), [
+    (
+        'HTTP 500: {"error":{"message":"[openai-compatible-chat][502]: fetch failed (cause: ECONNREFUSED: connect ECONNREFUSED 192.168.1.12:20128)"}}',
+        "connection_refused", [500, 502], "192.168.1.12:20128",
+    ),
+    ('HTTP 401: {"error":"bad credentials"}', "authentication", [401], None),
+    ("HTTP 403: forbidden", "permission_denied", [403], None),
+    ('HTTP 404: {"code":"model_not_found"}', "model_unavailable", [404], None),
+    ("HTTP 404: route missing", "endpoint_not_found", [404], None),
+    ("HTTP 413: context_length_exceeded", "context_too_long", [413], None),
+    ("HTTP 429: rate limit exceeded", "rate_limit_or_quota", [429], None),
+    ("HTTP 502: bad gateway", "upstream_unavailable", [502], None),
+    ("status_code=503, Service temporarily unavailable", "upstream_unavailable", [503], None),
+    ("HTTP 504: gateway did not answer", "upstream_unavailable", [504], None),
+    ("getaddrinfo failed for relay.invalid", "dns_error", [], None),
+    ("TLS handshake failed: CERTIFICATE_VERIFY_FAILED", "tls_error", [], None),
+    ("provider_request_timeout after 30s", "timeout", [], None),
+    ("provider_stream_first_chunk_timeout after 45s", "timeout", [], None),
+    ("provider_stream_idle_timeout after 90s", "timeout", [], None),
+    ("socket closed: ECONNRESET", "connection_interrupted", [], None),
+    ("provider_response_invalid_json: JSON decode error", "invalid_response", [], None),
+    ("invalid SSE frame: data was truncated", "invalid_response", [], None),
+    ("HTTP 400: invalid parameter", "request_rejected", [400], None),
+    ("HTTP 400: invalid JSON in request body", "request_rejected", [400], None),
+    ("HTTP 400: credits must be an integer", "request_rejected", [400], None),
+    ("HTTP 422: invalid payload", "request_rejected", [422], None),
+    ("HTTP 500: internal failure", "service_error", [500], None),
+    ("provider_call_cancelled by user", "cancelled", [], None),
+    ("opaque relay failure ref=abc", "unknown", [], None),
+])
+def test_spec717_llm_error_adds_display_hint_without_changing_raw_error(
+    raw_error, kind, statuses, target,
+):
+    state = build_live_state([_event(1, "llm_error", {"error": raw_error}, phase="cleanup")])
+    card = next(card for card in state["conversation"] if card["event_type"] == "llm_error")
+
+    assert card["provider_error_hint"] == {
+        "kind": kind,
+        "http_statuses": statuses,
+        **({"target": target} if target else {}),
+    }
+    assert card["content_md"] == raw_error
+    assert json.loads(card["content_raw"])["error"] == raw_error
 
 
 def test_spec502_live_projection_renders_stream_progress_in_streaming_card():

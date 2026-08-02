@@ -1289,6 +1289,86 @@ def _infer_call_channel(audit, event=None):
     return "reaction.loop"
 
 
+def _provider_error_hint(error):
+    raw = str(error or "")
+    lowered = raw.lower()
+    statuses = []
+    for match in re.finditer(
+        r"\bhttp\s+([45]\d{2})\b|\[([45]\d{2})\]\s*:|"
+        r"[\"']?(?:status_code|status|code)[\"']?\s*[:=]\s*[\"']?([45]\d{2})\b",
+        raw,
+        re.IGNORECASE,
+    ):
+        status = int(next(group for group in match.groups() if group))
+        if status not in statuses:
+            statuses.append(status)
+
+    target_match = re.search(
+        r"\beconnrefused(?:\s*[:=-])?(?:\s+connect)?\s+"
+        r"((?:\[[0-9a-f:]+\]|[a-z0-9._-]+):\d{1,5})\b",
+        raw,
+        re.IGNORECASE,
+    )
+
+    def has(*markers):
+        return any(marker in lowered for marker in markers)
+
+    if has("provider_call_cancelled", "request cancelled", "request canceled", "operation cancelled", "operation canceled"):
+        kind = "cancelled"
+    elif has("econnrefused", "connection refused"):
+        kind = "connection_refused"
+    elif has("getaddrinfo failed", "name or service not known", "temporary failure in name resolution", "nodename nor servname", "enotfound"):
+        kind = "dns_error"
+    elif has("certificate_verify_failed", "ssl: certificate", "tls handshake", "sslerror", "certificate verify failed"):
+        kind = "tls_error"
+    elif has("provider_request_timeout", "provider_stream_first_chunk_timeout", "provider_stream_idle_timeout", "etimedout", "timed out", "request timeout", "first chunk timeout", "stream idle timeout"):
+        kind = "timeout"
+    elif has("provider_stream_interrupted", "econnreset", "connection reset", "broken pipe", "remote end closed", "socket hang up"):
+        kind = "connection_interrupted"
+    elif has("invalid_api_key", "authentication_error", "incorrect api key", "unauthorized"):
+        kind = "authentication"
+    elif has("permission_denied", "forbidden"):
+        kind = "permission_denied"
+    elif has("model_not_found", "model_not_available", "model is not available", "no available channel", "model profile is not configured"):
+        kind = "model_unavailable"
+    elif has("insufficient_quota", "rate_limit", "rate limit", "quota exceeded", "quota exhausted", "insufficient balance", "balance insufficient", "insufficient credits", "credits exhausted"):
+        kind = "rate_limit_or_quota"
+    elif has("context_length_exceeded", "maximum context length", "context window", "too many tokens", "request too large"):
+        kind = "context_too_long"
+    elif has("provider_response_invalid_json", "invalid sse", "malformed sse", "sse parse", "json decode error", "failed to decode json", "provider returned an empty response", "provider_native_tool_empty_output", "provider_stream_incomplete_tool_call"):
+        kind = "invalid_response"
+    else:
+        kind = "unknown"
+        for status in reversed(statuses):
+            if status == 408:
+                kind = "timeout"
+            elif status == 401:
+                kind = "authentication"
+            elif status == 403:
+                kind = "permission_denied"
+            elif status == 404:
+                kind = "endpoint_not_found"
+            elif status in {402, 429}:
+                kind = "rate_limit_or_quota"
+            elif status == 413:
+                kind = "context_too_long"
+            elif status in {400, 422}:
+                kind = "request_rejected"
+            elif status in {502, 503, 504}:
+                kind = "upstream_unavailable"
+            elif 500 <= status <= 599:
+                kind = "service_error"
+            elif 400 <= status <= 499:
+                kind = "request_rejected"
+            if kind != "unknown":
+                break
+
+    hint = {"kind": kind, "http_statuses": statuses}
+    if target_match:
+        hint["target"] = target_match.group(1)
+    return hint
+
+
 def _cards_for_event(event, frame_id=""):
     event_type = event.get("event_type")
     payload = event.get("payload") or {}
@@ -1337,15 +1417,18 @@ def _cards_for_event(event, frame_id=""):
     if event_type == "step_settlement":
         return _settlement_cards(event, payload, frame_id)
     if event_type == "llm_error":
-        return [_card(
+        raw_error = str(payload.get("error") or _json_pretty(payload))
+        card = _card(
             event,
             "warning-error",
             "LLM 调用错误",
-            str(payload.get("error") or _json_pretty(payload)),
+            raw_error,
             _json_pretty(payload),
             frame_id,
             severity="error",
-        )]
+        )
+        card["provider_error_hint"] = _provider_error_hint(raw_error)
+        return [card]
     if event_type == "runtime_audit":
         card_type = "warning-error" if payload.get("issues") or payload.get("status") == "issues" else "runtime-parse"
         return [_card(event, card_type, "Runtime 审计", _runtime_audit_md(payload), _json_pretty(payload), frame_id)]

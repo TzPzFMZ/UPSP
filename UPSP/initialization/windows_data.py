@@ -45,6 +45,25 @@ REQUIRED_OS_CONFIG_FILES = frozenset(
         "context/popup.json",
     }
 )
+PERSONA_PROTOCOL_ROOTS = ("rules/protocol", "docs/protocol")
+PERSONA_PROTOCOL_FILES = ("rules/rules_registry.json", "docs/docs_registry.json")
+PERSONA_PROTOCOL_RELATIVE_PATHS = PERSONA_PROTOCOL_FILES + tuple(
+    f"rules/protocol/base/{name}.md"
+    for name in (
+        "boundaries", "cleanup", "containers", "context", "files", "guidance",
+        "manifesto", "memory", "modes", "persona", "reaction", "reconnect",
+        "relation", "round", "security", "setup", "step", "tools", "workbench",
+    )
+) + tuple(
+    f"docs/protocol/base/{name}.md"
+    for name in (
+        "containers", "context", "core", "dynamic", "files", "heat",
+        "interaction", "modes", "popup", "relation", "relational", "round",
+        "schema", "shapes", "terminology", "tools", "workbench",
+        "workflow_slots", "workflows", "workhood",
+    )
+)
+PERSONA_PROTOCOL_FILE_COUNT = len(PERSONA_PROTOCOL_RELATIVE_PATHS)
 
 KNOWN_FOLDER_DOCUMENTS = uuid.UUID("FDD39AD0-238F-46AF-ADB4-6C85480369C7")
 KNOWN_FOLDER_LOCAL_APP_DATA = uuid.UUID("F1B32785-6FBA-4FCF-9D55-7B8E7F157091")
@@ -394,6 +413,54 @@ def _create_active_layout(
     return final_layout
 
 
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _persona_protocol_sources(initialization_root: Path) -> list[Path]:
+    template = initialization_root / "persona_template"
+    discovered = [template / relative for relative in PERSONA_PROTOCOL_FILES]
+    for relative in PERSONA_PROTOCOL_ROOTS:
+        root = template / relative
+        if not root.is_dir():
+            raise DataRootError("persona_protocol_template_incomplete")
+        discovered.extend(path for path in sorted(root.rglob("*")) if path.is_file())
+    actual = {
+        path.relative_to(template).as_posix()
+        for path in discovered
+        if path.is_file()
+    }
+    if actual != set(PERSONA_PROTOCOL_RELATIVE_PATHS):
+        raise DataRootError("persona_protocol_template_incomplete")
+    return [template / relative for relative in PERSONA_PROTOCOL_RELATIVE_PATHS]
+
+
+def _sync_persona_protocol(layout: ActiveLayout, sources: list[Path]) -> int:
+    """Restore tracked common protocol files without touching persona-local data."""
+    if not layout.persona_dir.exists():
+        return 0
+
+    changed = 0
+    template = layout.initialization_root / "persona_template"
+    for source in sources:
+        relative = source.relative_to(template)
+        target = layout.persona_dir / relative
+        source_hash = _file_sha256(source)
+        if target.is_file() and _file_sha256(target) == source_hash:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.sync-{secrets.token_hex(8)}")
+        try:
+            shutil.copyfile(source, temporary)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        if _file_sha256(target) != source_hash:
+            raise DataRootError("persona_protocol_sync_failed")
+        changed += 1
+    return changed
+
+
 def ensure_active_instance(
     program_upsp_root: str | Path,
     *,
@@ -402,6 +469,7 @@ def ensure_active_instance(
 ) -> ActiveLayout:
     """Load the active instance, or atomically allocate the first draft OS."""
     program_root = Path(program_upsp_root).resolve()
+    protocol_sources = _persona_protocol_sources(program_root / "initialization")
     data_root, local_root = _resolve_layout_roots(
         program_root,
         environ=environ,
@@ -409,8 +477,11 @@ def ensure_active_instance(
     )
     manifest = data_root / ACTIVE_INSTANCE_FILENAME
     if manifest.is_file():
-        return _load_layout(program_root, data_root, local_root)
-    return _create_active_layout(program_root, data_root, local_root)
+        layout = _load_layout(program_root, data_root, local_root)
+    else:
+        layout = _create_active_layout(program_root, data_root, local_root)
+    _sync_persona_protocol(layout, protocol_sources)
+    return layout
 
 
 def _resolve_layout_roots(

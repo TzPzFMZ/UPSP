@@ -399,7 +399,7 @@ def test_spec683_static_whitelist_polling_and_runtime_status(tmp_path):
         status, about = _request(server, "GET", "/api/about")
         assert status == 200
         assert about["schema_version"] == "seed_gui_about.v1"
-        assert about["product"]["version"] == "0.1.0-alpha.5"
+        assert about["product"]["version"] == "0.1.0-alpha.6"
         assert about["product"]["author"]["zh-CN"] == (
             "由 TzPzFMZ 发起、设计并与 AI 协作开发"
         )
@@ -2176,7 +2176,7 @@ def test_spec705_desktop_environment_and_ready_record(tmp_path, monkeypatch):
             "process_id": os.getpid(),
             "session_id": "b" * 32,
             "origin": f"http://127.0.0.1:{server.server_address[1]}",
-            "product_version": "0.1.0-alpha.5",
+            "product_version": "0.1.0-alpha.6",
         }
     finally:
         _close(server, thread)
@@ -2507,6 +2507,76 @@ def test_spec692_gui_tool_trace_compaction_contract():
     assert ".chat-disclosure" not in css_source
     assert "max-height: min(50vh, 560px);" in css_source
     assert "主对话只把工具调用与工具结果按自然语言边界合并成一条两级原生折叠轨迹" in audit_manual
+
+
+def test_spec717_chat_metadata_uses_event_time_and_markdown_source():
+    app_source = _gui_ts_source()
+    markdown_source = _gui_ts_source("markdown.ts")
+    i18n_source = _gui_ts_source("i18n.ts")
+    css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
+
+    assert "function renderChatMeta(" in app_source
+    assert 'hourCycle: "h23"' in app_source
+    assert "!Number.isNaN(date.getTime())" in app_source
+    assert '.find((value) => value && !Number.isNaN(new Date(value).getTime()))' in app_source
+    assert "${renderChatMeta(recordedAt)}" in app_source
+    assert 'card.type === "assistant-final" ? renderChatMeta(card.recorded_at, true) : ""' in app_source
+    assert 'data-markdown-document-copy="true"' in app_source
+    assert 'button[data-markdown-copy], button[data-markdown-document-copy]' in markdown_source
+    assert 'htmlCache.get(documentRoot.dataset.markdownDocumentId || "")?.source' in markdown_source
+    assert '"复制最终回复": "Copy final reply"' in i18n_source
+    assert ".chat-item-meta { display: flex;" in css_source
+    assert ".chat-tool-group > .chat-item-meta { margin-left: 30px; }" in css_source
+
+
+def test_spec717_stage_refresh_preserves_primary_scroll_surfaces():
+    view_source = _gui_ts_source()
+    render_stage = view_source.split("interface StageScrollSnapshot", 1)[1].split(
+        "export function renderStageAndFocus", 1
+    )[0]
+
+    assert 'querySelectorAll<HTMLElement>("[data-stage-scroll-key]")' in render_stage
+    assert "maxTop > 0 && maxTop - element.scrollTop <= 24" in render_stage
+    assert "Math.max(0, Math.min(snapshot.top, maxTop))" in render_stage
+    capture_index = render_stage.index("const scrollSnapshots = captureStageScroll();")
+    replace_index = render_stage.index("els.stagePage.innerHTML = `")
+    context_hydrate_index = render_stage.index(
+        "hydrateMarkdownDocuments(contextScroll, contextScroll)"
+    )
+    persona_restore_index = render_stage.index(
+        "if (personaAll && priorPersonaAllOpen) personaAll.open = true;"
+    )
+    restore_index = render_stage.index("restoreStageScroll(scrollSnapshots);")
+    assert (
+        capture_index
+        < replace_index
+        < context_hydrate_index
+        < persona_restore_index
+        < restore_index
+    )
+    assert "requestAnimationFrame(() => { personaBody.scrollTop" not in render_stage
+    assert "if (personaAll && priorPersonaAllOpen) personaAll.open = true;" in render_stage
+    for scroll_key in (
+        "body:${page.id}:${activeTab",
+        "run:tools:task:",
+        "run:tools:evidence:",
+        "run:round:",
+        "context:guide:",
+        "context:content:",
+        "audit:ledger:",
+        "audit:rules",
+        "audit:docs",
+        "mem:${tab}:",
+        "relations:list",
+        "relations:detail:",
+        "containers:${tab}:list",
+        "containers:${tab}:detail:",
+    ):
+        assert scroll_key in view_source
+    assert (
+        'run:tools:evidence:${task?.id || "none"}:${runtimeProjection.round ?? "none"}'
+        in view_source
+    )
 
 
 def test_spec693_gui_retained_round_conversation_contract():
@@ -2881,6 +2951,33 @@ def test_spec698_protocol_center_uses_one_dialog_and_runtime_only_json_tables():
     assert 'self.protocol_reader.document(kind, item_id)' in host_source
 
 
+def test_spec717_provider_errors_are_localized_without_replacing_technical_detail():
+    contracts = (GUI_ROOT / "src" / "contracts.ts").read_text(encoding="utf-8")
+    i18n_source = (GUI_ROOT / "src" / "i18n.ts").read_text(encoding="utf-8")
+    view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+
+    assert "provider_error_hint?: ProviderErrorHint" in contracts
+    for kind in (
+        "cancelled", "connection_refused", "dns_error", "tls_error", "timeout",
+        "connection_interrupted", "authentication", "permission_denied",
+        "model_unavailable", "rate_limit_or_quota", "context_too_long",
+        "endpoint_not_found", "request_rejected", "upstream_unavailable",
+        "invalid_response", "service_error", "unknown",
+    ):
+        assert f'{kind}: {{ title:' in view_source
+    assert "ledgerCardTitle(card)" in view_source
+    assert "ledgerCardMarkdown(card)" in view_source
+    assert 't("发生了什么")' in view_source
+    assert 't("处理建议")' in view_source
+    assert 't("错误链")' in view_source
+    assert 't("目标地址")' in view_source
+    assert 't("技术详情")' in view_source
+    assert 'map((status) => `HTTP ${status}`).join(" → ")' in view_source
+    assert 'map((line) => `    ${line}`).join("\\n")' in view_source
+    assert '"上游节点拒绝连接": "Upstream node refused the connection"' in i18n_source
+    assert '"技术详情": "Technical details"' in i18n_source
+
+
 def test_spec700_global_settings_and_persona_routing_frontend_contract():
     contracts = (GUI_ROOT / "src" / "contracts.ts").read_text(encoding="utf-8")
     state_source = (GUI_ROOT / "src" / "state.ts").read_text(encoding="utf-8")
@@ -2926,8 +3023,8 @@ def test_spec700_global_settings_and_persona_routing_frontend_contract():
     assert 'data-route-effort' in view_source
     assert '${explicit ? "" : "disabled"} aria-label="${t(routePhaseLabel(phase))} ${t(routeSlotLabel(slot))} ${t("推理强度")}"' in view_source
     assert '${shown ? "" : "disabled"} aria-label="${t("推理强度")}"' not in view_source
-    assert 'data-model-catalog-form="connection"' in view_source
-    assert 'data-model-catalog-form="model"' in view_source
+    assert 'data-model-catalog-form="connection" data-model-catalog-id="${escapeHtml(id)}" autocomplete="off"' in view_source
+    assert 'data-model-catalog-form="model" data-model-catalog-id="${escapeHtml(model?.id || "")}" autocomplete="off"' in view_source
     assert 'data-interface-settings-form' in view_source
     assert 'value="system"' in view_source
     assert 'type="password"' in view_source
@@ -3093,7 +3190,9 @@ def test_seed_gui_saved_provider_key_has_explicit_replace_action():
     view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
 
     assert 'connection.key_present ? t("更换密钥") : t("保存密钥")' in view_source
+    assert 'connection.key_present ? "••••••••" : t("输入新密钥")' in view_source
     assert 'connection.key_present ? t("输入新密钥以更换") : t("输入新密钥")' in view_source
+    assert "密钥当前使用本机忽略追踪的 JSON" not in view_source
     assert 'data-provider-key-action="set"' in view_source
 
 

@@ -235,6 +235,10 @@ def test_incomplete_program_config_template_does_not_create_data_root(tmp_path):
         PROGRAM_ROOT / "initialization" / "os_template",
         program / "initialization" / "os_template",
     )
+    shutil.copytree(
+        PROGRAM_ROOT / "initialization" / "persona_template",
+        program / "initialization" / "persona_template",
+    )
     (program / "initialization" / "os_template" / "config" / "system.json").unlink()
     environment = {
         DATA_ROOT_ENV: str(tmp_path / "数据" / "UPSP"),
@@ -302,6 +306,10 @@ def test_draft_creation_does_not_modify_read_only_program_template(tmp_path):
         PROGRAM_ROOT / "initialization" / "os_template",
         program / "initialization" / "os_template",
     )
+    shutil.copytree(
+        PROGRAM_ROOT / "initialization" / "persona_template",
+        program / "initialization" / "persona_template",
+    )
     before = {}
     for path in sorted(item for item in program.rglob("*") if item.is_file()):
         before[path.relative_to(program).as_posix()] = hashlib.sha256(
@@ -325,3 +333,62 @@ def test_draft_creation_does_not_modify_read_only_program_template(tmp_path):
         path.chmod(stat.S_IWRITE | stat.S_IREAD)
     assert after == before
     assert layout.config_dir.is_dir()
+
+
+def test_startup_syncs_all_common_persona_protocol_without_rewriting_matches(tmp_path, monkeypatch):
+    environment = _roots(tmp_path)
+    layout = ensure_active_instance(PROGRAM_ROOT, environ=environment)
+    template = PROGRAM_ROOT / "initialization" / "persona_template"
+    shutil.copytree(template, layout.persona_dir)
+
+    local = layout.persona_dir / "docs" / "persona" / "glossary.md"
+    local.write_text("persona-local", encoding="utf-8")
+    protocol_sources = [
+        source
+        for relative in windows_data.PERSONA_PROTOCOL_ROOTS
+        for source in sorted((template / relative).rglob("*"))
+        if source.is_file()
+    ]
+    sources = [template / relative for relative in windows_data.PERSONA_PROTOCOL_FILES] + protocol_sources
+    assert len(protocol_sources) == 39
+    assert len(sources) == windows_data.PERSONA_PROTOCOL_FILE_COUNT == 41
+    for index, source in enumerate(sources):
+        target = layout.persona_dir / source.relative_to(template)
+        if index % 2:
+            target.unlink()
+        else:
+            target.write_text(f"stale-{index}", encoding="utf-8")
+
+    ensure_active_instance(PROGRAM_ROOT, environ=environment)
+
+    for source in sources:
+        target = layout.persona_dir / source.relative_to(template)
+        assert target.read_bytes() == source.read_bytes()
+    assert local.read_text(encoding="utf-8") == "persona-local"
+
+    replacements = []
+    original_replace = windows_data.os.replace
+
+    def record_replace(source, target):
+        replacements.append((source, target))
+        return original_replace(source, target)
+
+    monkeypatch.setattr(windows_data.os, "replace", record_replace)
+    ensure_active_instance(PROGRAM_ROOT, environ=environment)
+    assert replacements == []
+
+
+def test_incomplete_persona_protocol_template_fails_before_data_root_creation(tmp_path):
+    program = tmp_path / "程序" / "UPSP"
+    (program / "OS").mkdir(parents=True)
+    shutil.copytree(PROGRAM_ROOT / "initialization" / "os_template", program / "initialization" / "os_template")
+    shutil.copytree(PROGRAM_ROOT / "initialization" / "persona_template", program / "initialization" / "persona_template")
+    protocol_root = program / "initialization" / "persona_template" / "rules" / "protocol" / "base"
+    (protocol_root / "manifesto.md").unlink()
+    (protocol_root / "untracked-backup.md").write_text("not a protocol asset", encoding="utf-8")
+    environment = _roots(tmp_path / "isolated")
+
+    with pytest.raises(DataRootError, match="persona_protocol_template_incomplete"):
+        ensure_active_instance(program, environ=environment)
+
+    assert not Path(environment[DATA_ROOT_ENV]).exists()

@@ -181,10 +181,10 @@ def test_spec707_product_manifest_is_the_release_version_truth():
     assert product == {
         "schema_version": "upsp_product_manifest.v1",
         "name": "UPSP",
-        "version": "0.1.0-alpha.5",
-        "windows_file_version": "0.1.0.5",
+        "version": "0.1.0-alpha.6",
+        "windows_file_version": "0.1.0.6",
         "channel": "alpha",
-        "build_number": 5,
+        "build_number": 6,
         "author": {
             "zh-CN": "由 TzPzFMZ 发起、设计并与 AI 协作开发",
             "en-US": (

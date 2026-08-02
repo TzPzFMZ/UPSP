@@ -13,6 +13,7 @@ import type {
   PageId,
   PersonaNameVariant,
   PersonaStateField,
+  ProviderErrorKind,
   ProtocolCatalogEntry,
   ProtocolDocumentPayload,
   RelayRuntimeState,
@@ -509,6 +510,27 @@ function chatTraceCode(content: string): string {
   return start >= 0 && end > start ? content.slice(start, end + 3) : content;
 }
 
+function renderChatMeta(recordedAt: unknown, copyReply = false): string {
+  const source = String(recordedAt || "").trim();
+  const date = new Date(source);
+  const validTime = source && !Number.isNaN(date.getTime());
+  if (!copyReply && !validTime) return "";
+  const time = validTime
+    ? `<time class="chat-item-time" datetime="${escapeHtml(source)}" title="${escapeHtml(new Intl.DateTimeFormat(state.locale, {
+      dateStyle: "medium",
+      timeStyle: "medium",
+    }).format(date))}">${escapeHtml(new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(date))}</time>`
+    : "";
+  return `<div class="chat-item-meta">
+    ${copyReply ? `<button class="chat-item-copy" type="button" data-markdown-document-copy="true" aria-label="${t("复制最终回复")}">${t("复制")}</button>` : ""}
+    ${time}
+  </div>`;
+}
+
 function renderChatTraceStep(step: ChatTraceStep, groupKey: string, position: number): string {
   const key = `${groupKey}:step:${step.key}:${position}`;
   const open = state.conversationDisclosure.has(key)
@@ -536,6 +558,9 @@ function renderChatTraceGroup(cards: ConversationCard[], round: number | null): 
   const first = cards[0];
   const groupKey = `${round ?? "none"}:trace:${first?.card_id || first?.event_index || "event"}`;
   const open = state.conversationDisclosure.has(groupKey) ? state.conversationDisclosure.get(groupKey) : false;
+  const recordedAt = [...cards].reverse()
+    .map((card) => String(card.recorded_at || "").trim())
+    .find((value) => value && !Number.isNaN(new Date(value).getTime()));
   const steps: ChatTraceStep[] = [];
   cards.forEach((card, position) => {
     const key = card.frame_id || `${card.event_index || "event"}:${position}`;
@@ -550,6 +575,7 @@ function renderChatTraceGroup(cards: ConversationCard[], round: number | null): 
       <div class="chat-tool-steps">
         ${steps.map((step, position) => renderChatTraceStep(step, groupKey, position)).join("")}
       </div>
+      ${renderChatMeta(recordedAt)}
     </details>
   `;
 }
@@ -661,6 +687,7 @@ export function renderChat(): void {
             card.type === "assistant-streaming" ? card.content_raw || "" : card.content_md || card.content_raw || "",
           )}
         ${streamStatus ? `<small class="stream-status">${escapeHtml(streamStatus)}</small>` : ""}
+        ${card.type === "assistant-final" ? renderChatMeta(card.recorded_at, true) : ""}
       </div>
     `;
   }).join("") : `
@@ -682,6 +709,36 @@ export function renderChat(): void {
   }
 }
 
+interface StageScrollSnapshot {
+  top: number;
+  stickToBottom: boolean;
+}
+
+function captureStageScroll(): Map<string, StageScrollSnapshot> {
+  const snapshots = new Map<string, StageScrollSnapshot>();
+  els.stagePage.querySelectorAll<HTMLElement>("[data-stage-scroll-key]").forEach((element) => {
+    const key = element.dataset.stageScrollKey;
+    if (!key) return;
+    const maxTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    snapshots.set(key, {
+      top: element.scrollTop,
+      stickToBottom: maxTop > 0 && maxTop - element.scrollTop <= 24,
+    });
+  });
+  return snapshots;
+}
+
+function restoreStageScroll(snapshots: Map<string, StageScrollSnapshot>): void {
+  els.stagePage.querySelectorAll<HTMLElement>("[data-stage-scroll-key]").forEach((element) => {
+    const snapshot = snapshots.get(element.dataset.stageScrollKey || "");
+    if (!snapshot) return;
+    const maxTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    element.scrollTop = snapshot.stickToBottom
+      ? maxTop
+      : Math.max(0, Math.min(snapshot.top, maxTop));
+  });
+}
+
 export function renderStage(pageId: PageId): void {
   const renderers: Record<PageId, () => string> = {
     run: renderRunPage,
@@ -694,9 +751,11 @@ export function renderStage(pageId: PageId): void {
     settings: renderSettingsPage,
   };
   const page = consolePages.find((item) => item.id === pageId) || consolePages[0];
-  const activeTabId = `page-tab-${page.id}-${getActivePageTab(page.id)}`;
+  const activeTab = getActivePageTab(page.id);
+  const activeTabId = `page-tab-${page.id}-${activeTab}`;
+  const scrollSnapshots = captureStageScroll();
   const priorPersonaView = els.stagePage.querySelector<HTMLElement>("[data-persona-view]")?.dataset.personaView || "";
-  const priorPersonaScroll = els.stagePage.querySelector<HTMLElement>(".system-window-body")?.scrollTop || 0;
+  const priorPersonaAllOpen = Boolean(els.stagePage.querySelector("details.persona-state-all[open]"));
   const openPersonaGroups = new Set(
     [...els.stagePage.querySelectorAll<HTMLDetailsElement>("details[data-persona-state-group][open]")]
       .map((details) => details.dataset.personaStateGroup || "")
@@ -723,7 +782,7 @@ export function renderStage(pageId: PageId): void {
           </button>
         </div>
       </header>
-      <div class="system-window-body" id="systemWindowPanel" role="tabpanel" aria-labelledby="${escapeHtml(activeTabId)}" tabindex="0" ${page.id === "context" ? `aria-busy="${runtimeProjection.host === "connecting" ? "true" : "false"}"` : ""}>
+      <div class="system-window-body" id="systemWindowPanel" role="tabpanel" aria-labelledby="${escapeHtml(activeTabId)}" tabindex="0" data-stage-scroll-key="${escapeHtml(`body:${page.id}:${activeTab || "default"}`)}" ${page.id === "context" ? `aria-busy="${runtimeProjection.host === "connecting" ? "true" : "false"}"` : ""}>
         ${runtimePages.has(page.id) ? "" : `<p class="static-design-notice">${t("静态设计页｜尚未接入运行时")}</p>`}
         ${(renderers[pageId] || renderRunPage)()}
       </div>
@@ -740,13 +799,15 @@ export function renderStage(pageId: PageId): void {
     if (personaBody) hydrateMarkdownDocuments(personaBody, personaBody);
     const nextPersonaView = els.stagePage.querySelector<HTMLElement>("[data-persona-view]")?.dataset.personaView || "";
     if (priorPersonaView && priorPersonaView === nextPersonaView && personaBody) {
+      const personaAll = personaBody.querySelector<HTMLDetailsElement>("details.persona-state-all");
+      if (personaAll && priorPersonaAllOpen) personaAll.open = true;
       openPersonaGroups.forEach((group) => {
         const details = personaBody.querySelector<HTMLDetailsElement>(`details[data-persona-state-group="${CSS.escape(group)}"]`);
         if (details) details.open = true;
       });
-      window.requestAnimationFrame(() => { personaBody.scrollTop = priorPersonaScroll; });
     }
   }
+  restoreStageScroll(scrollSnapshots);
 }
 
 export function renderStageAndFocus(pageId: PageId, selector: string): void {
@@ -854,9 +915,9 @@ function runtimeCardText(card: ConversationCard): string {
   return String(card?.content_raw || card?.content_md || card?.content || "");
 }
 
-function renderRuntimeCards(cards: ConversationCard[], emptyText = "当前投影没有匹配事件。"): string {
+function renderRuntimeCards(cards: ConversationCard[], emptyText = "当前投影没有匹配事件。", scrollKey = ""): string {
   if (!cards.length) return `<p class="runtime-empty-copy">${escapeHtml(emptyText)}</p>`;
-  return `<div class="runtime-card-list">${cards.map((card) => `
+  return `<div class="runtime-card-list"${scrollKey ? ` data-stage-scroll-key="${escapeHtml(scrollKey)}"` : ""}>${cards.map((card) => `
     <article class="runtime-card ${card.severity === "error" ? "warn" : ""}">
       <header><strong>${escapeHtml(card.title || card.type)}</strong><span>${escapeHtml(card.summary || `#${card.event_index || 0}`)}</span></header>
       <small>${escapeHtml(card.event_type || "event")} · ${escapeHtml(card.frame_id || "round")}</small>
@@ -948,7 +1009,7 @@ function renderTaskEvidencePage(): string {
     </section>
     <div class="task-columns">
       <section class="task-pane"><header><span class="hud-label">${t("任务账本")}</span><strong>${escapeHtml(task?.id || "none")}</strong></header>
-        <div class="task-pane-scroll">
+        <div class="task-pane-scroll" data-stage-scroll-key="${escapeHtml(`run:tools:task:${task?.id || "none"}`)}">
           ${pendingInputs.length ? `<section class="task-subsection"><h3>${t("待整合输入")}</h3>${pendingInputs.map((item) => `<article class="task-pending"><b>${escapeHtml(item.id)}</b><em>${escapeHtml(item.status)}</em><p>${escapeHtml(item.summary || t("无摘要"))}</p>${(item.source_refs || []).map((ref) => `<code>${escapeHtml(ref)}</code>`).join("")}</article>`).join("")}</section>` : ""}
           <section class="task-subsection"><h3>${t("任务项")}</h3>${taskRecordRows(task?.items || [], t("当前没有任务项。"))}</section>
           <section class="task-subsection"><h3>${t("验收项")}</h3>${taskRecordRows(task?.acceptance || [], t("当前没有验收项。"))}</section>
@@ -957,7 +1018,7 @@ function renderTaskEvidencePage(): string {
         </div>
       </section>
       <section class="task-pane evidence"><header><span class="hud-label">${t("轮次证据")}</span><strong>${escapeHtml(runtimeProjection.round == null ? t("无轮次") : `R${runtimeProjection.round}`)}</strong></header>
-        ${renderRuntimeCards(evidenceCards, t("当前轮尚无结构化工具或回执证据。"))}
+        ${renderRuntimeCards(evidenceCards, t("当前轮尚无结构化工具或回执证据。"), `run:tools:evidence:${task?.id || "none"}:${runtimeProjection.round ?? "none"}`)}
       </section>
     </div>
   </section>`;
@@ -977,7 +1038,7 @@ function renderRuntimeRunPage(): string {
   }
   const cards = live.conversation || [];
   if (tab === "receipts") {
-    return renderRuntimeCards(cards.filter((card) => card.type === "settlement" || card.event_type.includes("receipt") || card.event_type.includes("settled")), t("尚无回执或结算事件。"));
+    return renderRuntimeCards(cards.filter((card) => card.type === "settlement" || card.event_type.includes("receipt") || card.event_type.includes("settled")), t("尚无回执或结算事件。"), `run:receipts:${runtimeProjection.round}`);
   }
   if (tab === "risks") {
     const lifecycle = live.round_lifecycle || {};
@@ -991,7 +1052,7 @@ function renderRuntimeRunPage(): string {
   const lifecycle = live.round_lifecycle || {};
   const indexes = lifecycle.event_indexes || {};
   return `
-    <div class="runtime-run">
+    <div class="runtime-run" data-stage-scroll-key="${escapeHtml(`run:round:${runtimeProjection.round}`)}">
       <section class="run-focus">
         <div class="focus-kicker"><span class="hud-label">${t("当前运行")}</span><em>${escapeHtml(runtimeTerm(lifecycle.state || "running"))}</em></div>
         <h2>${escapeHtml(statusbar.round?.id || `R${String(runtimeProjection.round).padStart(6, "0")}`)} · ${escapeHtml(runtimeTerm(statusbar.round?.type || t("轮型未投影")))}</h2>
@@ -1007,7 +1068,7 @@ function renderRuntimeRunPage(): string {
         <div class="status-ledger-row"><b>${t("帧次")}</b><span>${escapeHtml(live.latest_frame_id || t("尚无帧次"))}</span><em>${escapeHtml((live.call_frames || []).length)}</em></div>
         <div class="status-ledger-row ${lifecycle.state === "unsettled" ? "warn" : ""}"><b>${t("结算")}</b><span>${escapeHtml(runtimeTerm(lifecycle.settlement_status || "pending"))}</span><em>${escapeHtml(runtimeTerm(lifecycle.state || "running"))}</em></div>
       </section>
-      <section class="runtime-frames"><span class="hud-label">${t("帧次列表")}</span>${renderRuntimeFrames(live.call_frames || [])}</section>
+      <section class="runtime-frames" data-stage-scroll-key="${escapeHtml(`run:round:${runtimeProjection.round}:frames`)}"><span class="hud-label">${t("帧次列表")}</span>${renderRuntimeFrames(live.call_frames || [])}</section>
     </div>
   `;
 }
@@ -1212,7 +1273,7 @@ function renderRuntimeContextPage(): string {
   if (tab === "guide") {
     return `<div class="runtime-context-guide">
       <header class="ledger-title compact"><div><span class="hud-label">${t("上下文十层")} · ${t("轮次")} ${escapeHtml(round)}</span><h2>${escapeHtml(frame.frame_id)}</h2></div><div class="context-head-actions"><p>${escapeHtml(panes.length)} ${t("层")} · ${escapeHtml(t("来源 {source}", { source: frame.layer_source || "none" }))}</p>${contextSelectors(round, live, frame)}</div></header>
-      <div class="context-guide-scroll">
+      <div class="context-guide-scroll" data-stage-scroll-key="${escapeHtml(`context:guide:${round}:${frame.frame_id}`)}">
         <section class="context-instrument-cluster" aria-label="${t("调用头仪表")}">${panes.slice(0, 3).map(renderContextInstrument).join("")}</section>
         <div class="layer-ledger">${panes.slice(3).map((pane) => `
           <button class="layer-ledger-row" data-runtime-pane="${escapeHtml(pane.id)}" aria-label="${escapeHtml(t("查看 {title} 层真实内容", { title: contextPaneLabel(pane.id) }))}">
@@ -1225,8 +1286,8 @@ function renderRuntimeContextPage(): string {
   }
   const selected = panes.find((pane) => pane.id === state.activeRuntimePane) || panes[0];
   return `<div class="runtime-context-workspace">
-    <nav aria-label="${t("上下文十层")}">${panes.map((pane) => `<button class="${pane.id === selected?.id ? "active" : ""}" data-runtime-pane="${escapeHtml(pane.id)}"><b>${escapeHtml(contextPaneLabel(pane.id))}</b><span>${escapeHtml(pane.raw_chars ?? pane.chars ?? 0)}</span></button>`).join("")}</nav>
-    <article><header class="context-detail-head"><div><span class="hud-label">${t("内容详情")} · ${t("轮次")} ${escapeHtml(round)} · ${t("帧次")} ${escapeHtml(frame.frame_id)}</span><h2>${escapeHtml(selected ? contextPaneLabel(selected.id) : t("空层"))}</h2></div>${contextSelectors(round, live, frame)}</header>${renderContextPaneDetail(round, frame, selected)}</article>
+    <nav aria-label="${t("上下文十层")}" data-stage-scroll-key="${escapeHtml(`context:content:${round}:${frame.frame_id}:nav`)}">${panes.map((pane) => `<button class="${pane.id === selected?.id ? "active" : ""}" data-runtime-pane="${escapeHtml(pane.id)}"><b>${escapeHtml(contextPaneLabel(pane.id))}</b><span>${escapeHtml(pane.raw_chars ?? pane.chars ?? 0)}</span></button>`).join("")}</nav>
+    <article data-stage-scroll-key="${escapeHtml(`context:content:${round}:${frame.frame_id}:${selected?.id || "none"}`)}"><header class="context-detail-head"><div><span class="hud-label">${t("内容详情")} · ${t("轮次")} ${escapeHtml(round)} · ${t("帧次")} ${escapeHtml(frame.frame_id)}</span><h2>${escapeHtml(selected ? contextPaneLabel(selected.id) : t("空层"))}</h2></div>${contextSelectors(round, live, frame)}</header>${renderContextPaneDetail(round, frame, selected)}</article>
   </div>`;
 }
 
@@ -1240,6 +1301,49 @@ const protocolCategoryLabels: Record<string, MessageKey> = {
 
 function ledgerCardId(card: ConversationCard, position: number): string {
   return String(card.card_id || `event-${card.event_index ?? "unknown"}-${position}`);
+}
+
+const providerErrorCopy: Record<ProviderErrorKind, { title: MessageKey; what: MessageKey; action: MessageKey }> = {
+  cancelled: { title: "模型调用已停止", what: "本次模型调用已被取消，没有继续等待上游响应。", action: "如需继续，请重新发送；若并非主动停止，请检查宿主是否仍在运行。" },
+  connection_refused: { title: "上游节点拒绝连接", what: "UPSP 已到达目标地址，但该地址没有接受连接。", action: "请确认中转站或模型服务已启动，并核对基础地址与端口。" },
+  dns_error: { title: "模型服务地址无法解析", what: "系统无法把模型服务域名解析为可连接的地址。", action: "请检查基础地址拼写、DNS 和当前网络连接。" },
+  tls_error: { title: "模型服务安全连接失败", what: "与模型服务建立 HTTPS 安全连接时校验证书或握手失败。", action: "请检查系统时间、证书链和服务地址，避免改用不受信任的连接。" },
+  timeout: { title: "模型服务响应超时", what: "模型服务未在允许时间内建立响应、返回首字或继续流式输出。", action: "请检查网络和上游负载后重试；持续发生时再调整对应超时配置。" },
+  connection_interrupted: { title: "模型服务连接中断", what: "连接已经建立，但在响应完成前被远端或网络中断。", action: "请检查网络与中转站日志后重试。" },
+  authentication: { title: "模型服务鉴权失败", what: "模型服务没有接受当前凭据。", action: "请重新保存正确的 API Key，并确认它属于当前服务。" },
+  permission_denied: { title: "模型服务拒绝访问", what: "凭据已被识别，但没有执行这次请求所需的权限。", action: "请检查账号、项目和模型访问权限。" },
+  model_unavailable: { title: "当前模型不可用", what: "配置的模型不存在、未开放，或当前没有可用上游通道。", action: "请核对模型标识和中转站的可用模型列表。" },
+  rate_limit_or_quota: { title: "模型服务限流或额度不足", what: "模型服务因请求频率、额度或余额限制拒绝了调用。", action: "请稍后重试，或检查账号额度、余额和限流策略。" },
+  context_too_long: { title: "请求上下文过长", what: "本次请求超过了模型或上游允许的上下文大小。", action: "请缩短输入或历史上下文，或改用支持更长上下文的模型。" },
+  endpoint_not_found: { title: "模型服务接口不存在", what: "请求到达了服务，但当前接口路径不存在。", action: "请核对基础地址和协议类型；基础地址不要重复填写请求后缀。" },
+  request_rejected: { title: "模型服务拒绝了请求", what: "上游认为本次请求的参数或格式不合法。", action: "请核对模型配置；技术详情中通常会指出具体字段。" },
+  upstream_unavailable: { title: "上游模型服务暂不可用", what: "中转站或网关无法从上游模型服务取得有效响应。", action: "请稍后重试，并检查中转站和上游服务状态。" },
+  invalid_response: { title: "模型服务响应格式异常", what: "上游返回了无法解析或不完整的 JSON、SSE 或工具调用结果。", action: "请检查中转站兼容性和上游原始响应。" },
+  service_error: { title: "模型服务内部错误", what: "模型服务在处理请求时发生了内部错误。", action: "请稍后重试；持续发生时携带技术详情排查上游日志。" },
+  unknown: { title: "未识别的模型服务错误", what: "现有信息不足以可靠判断错误类别。", action: "请保留技术详情，并从上游日志和连接配置继续排查。" },
+};
+
+function ledgerCardTitle(card: ConversationCard): string {
+  const copy = card.provider_error_hint && providerErrorCopy[card.provider_error_hint.kind];
+  return copy ? t(copy.title) : String(card.title || card.type || card.event_type || "");
+}
+
+function ledgerCardMarkdown(card: ConversationCard): string {
+  const raw = typeof card.content_md === "string" && card.content_md.trim()
+    ? card.content_md
+    : `_${t("无可展示的结构化内容。")}_`;
+  const hint = card.provider_error_hint;
+  const copy = hint && providerErrorCopy[hint.kind];
+  if (!hint || !copy) return raw;
+  const lines = [
+    `**${t("发生了什么")}：** ${t(copy.what)}`,
+    `**${t("处理建议")}：** ${t(copy.action)}`,
+  ];
+  const statuses = (hint.http_statuses || []).filter((status) => Number.isInteger(status));
+  if (statuses.length) lines.push(`**${t("错误链")}：** ${statuses.map((status) => `HTTP ${status}`).join(" → ")}`);
+  if (hint.target) lines.push(`**${t("目标地址")}：** ${hint.target}`);
+  lines.push(`### ${t("技术详情")}`, raw.replace(/\r\n?/g, "\n").split("\n").map((line) => `    ${line}`).join("\n"));
+  return lines.join("\n\n");
 }
 
 function ledgerBlocking(card: ConversationCard): boolean {
@@ -1285,7 +1389,7 @@ function renderProtocolLedger(): string {
   const blockingCount = cards.filter(ledgerBlocking).length
     + (lifecycle.fatal_reasons || []).length
     + (lifecycle.degraded_reasons || []).length;
-  return `<section class="protocol-center protocol-ledger">
+  return `<section class="protocol-center protocol-ledger" data-stage-scroll-key="${escapeHtml(`audit:ledger:${round}`)}">
     <header class="protocol-center-head">
       <div><span class="hud-label">${t("运行时")} · ${t("轮次")} ${escapeHtml(round)}</span><h2>${t("动态账本")}</h2><p>${t("按运行时原投影顺序列出 {count} 个结构化事件；正文仅在详情弹窗中读取。", { count: cards.length })}</p></div>
       <div class="protocol-head-actions">${ledgerRoundSelector(round)}<button class="evidence-export" type="button" data-export-evidence>${t("导出当前证据")}</button></div>
@@ -1304,7 +1408,7 @@ function renderProtocolLedger(): string {
         const time = String(card.recorded_at || "").replace("T", " ").slice(0, 19) || t("未记录");
         return `<button class="protocol-index-row ledger-event ${warn ? "warn" : ""}" type="button" role="listitem" data-ledger-event data-ledger-round="${escapeHtml(round)}" data-ledger-card-id="${escapeHtml(cardId)}">
           <span class="protocol-index-seq">#${escapeHtml(card.event_index ?? position)}</span>
-          <span class="protocol-index-main"><b>${escapeHtml(card.title || card.type || card.event_type)}</b><small>${escapeHtml(time)} · ${escapeHtml(runtimeTerm(card.phase || "round"))} · ${escapeHtml(card.frame_id || "round")}</small></span>
+          <span class="protocol-index-main"><b>${escapeHtml(ledgerCardTitle(card))}</b><small>${escapeHtml(time)} · ${escapeHtml(runtimeTerm(card.phase || "round"))} · ${escapeHtml(card.frame_id || "round")}</small></span>
           <span class="protocol-index-tags"><em>${escapeHtml(card.type || "event")}</em>${card.severity ? `<em>${escapeHtml(card.severity)}</em>` : ""}</span>
         </button>`;
       }).join("") : `<p class="runtime-empty-copy">${t("该轮没有结构化事件。")}</p>`}
@@ -1328,12 +1432,12 @@ function renderProtocolCatalog(kind: "rules" | "docs"): string {
   }
   const catalog = protocolProjection.catalog;
   if (kind === "rules") {
-    return `<section class="protocol-center">
+    return `<section class="protocol-center" data-stage-scroll-key="audit:rules">
       <header class="protocol-center-head"><div><span class="hud-label">${t("规则")} · ${t("登记表")}</span><h2>${t("规则")}</h2><p>${t("{count} 项注册规则；分类与装载口径按登记表原序展示。", { count: catalog.rules.total })}</p></div><p class="registry-history">${t("登记表历史版本")} · ${escapeHtml(catalog.rules.registry_version || t("未标记"))}</p></header>
       <div class="protocol-index grouped">${catalog.rules.categories.map((category) => `<section class="protocol-index-group"><header><b>${escapeHtml(protocolCategoryLabels[category.id] ? t(protocolCategoryLabels[category.id]) : category.id)}</b><span>${escapeHtml(category.id)} · ${escapeHtml(category.count)} ${t("项")}</span></header>${category.entries.length ? category.entries.map((entry) => protocolEntryRow(entry, entry.trigger || entry.load || entry.source_ref, [entry.layer || category.id])).join("") : `<p class="protocol-index-empty">${t("当前分类为空。")}</p>`}</section>`).join("")}</div>
     </section>`;
   }
-  return `<section class="protocol-center">
+  return `<section class="protocol-center" data-stage-scroll-key="audit:docs">
     <header class="protocol-center-head"><div><span class="hud-label">${t("文档")} · ${t("登记表")}</span><h2>${t("文档")}</h2><p>${t("{registrations} 条用途登记，按安全相对路径合并为 {count} 份正文。", { registrations: catalog.docs.registrations, count: catalog.docs.total })}</p></div><p class="registry-history">${t("登记表历史版本")} · ${escapeHtml(catalog.docs.registry_version || t("未标记"))}</p></header>
     <div class="protocol-index">${catalog.docs.entries.map((entry) => protocolEntryRow(entry, entry.source_ref, entry.categories || [])).join("")}</div>
   </section>`;
@@ -1652,7 +1756,7 @@ function renderMemoryPage(): string {
       <nav class="deposition-master" aria-label="${t("记忆条目列表")}">
         <header><span class="hud-label">${escapeHtml(emptyLabel)}</span><strong>${items.length} ${t("条")}</strong></header>
         ${search}
-        <div class="deposition-list">${items.length ? items.map((item) => depositionRow(
+        <div class="deposition-list" data-stage-scroll-key="${escapeHtml(`mem:${tab}:${state.memoryQuery.trim()}`)}">${items.length ? items.map((item) => depositionRow(
           "memory",
           item,
           false,
@@ -1676,9 +1780,9 @@ function renderRelationsPage(): string {
     <div class="deposition-workspace">
       <nav class="deposition-master" aria-label="${t("活动关系卡列表")}">
         <header><span class="hud-label">${t("关系域")}</span><strong>${items.length} ${t("张")}</strong></header>
-        <div class="deposition-list">${items.map((item) => depositionRow("relation", item, item.id === selected?.id, item.id, item.status)).join("")}</div>
+        <div class="deposition-list" data-stage-scroll-key="relations:list">${items.map((item) => depositionRow("relation", item, item.id === selected?.id, item.id, item.status)).join("")}</div>
       </nav>
-      <section class="deposition-detail" aria-live="polite">
+      <section class="deposition-detail" aria-live="polite" data-stage-scroll-key="${escapeHtml(`relations:detail:${selected?.id || "none"}`)}">
         ${!selected ? renderDepositionEmpty(t("关系域"), t("没有活动关系卡"), t("当前关系登记表没有活动卡片。")) : `
           <header class="ledger-title compact"><div><span class="hud-label">${escapeHtml(selected.category || "REL")} / ACTIVE CARD</span><h2>${escapeHtml(detail?.name || selected.name || selected.id)}</h2></div><p>${escapeHtml(selected.id)}</p></header>
           ${detail ? `
@@ -1735,9 +1839,9 @@ function renderContainersPage(): string {
     <div class="deposition-workspace">
       <nav class="deposition-master" aria-label="${t("已登记容器列表")}">
         <header><span class="hud-label">${escapeHtml(prefix || "CAND")}</span><strong>${items.length} ${t("个")}</strong></header>
-        <div class="deposition-list">${items.map((item) => depositionRow("container", item, item.id === selected?.id, item.id, item.focus ? "FOCUS" : item.status)).join("")}</div>
+        <div class="deposition-list" data-stage-scroll-key="${escapeHtml(`containers:${tab}:list`)}">${items.map((item) => depositionRow("container", item, item.id === selected?.id, item.id, item.focus ? "FOCUS" : item.status)).join("")}</div>
       </nav>
-      <section class="deposition-detail" aria-live="polite">
+      <section class="deposition-detail" aria-live="polite" data-stage-scroll-key="${escapeHtml(`containers:${tab}:detail:${selected?.id || "none"}`)}">
         ${!selected ? renderDepositionEmpty(prefix || "CANDIDATES", tab === "candidates" ? t("候选容器未接入") : t("没有 {prefix} 容器", { prefix: prefix || "" }), tab === "candidates" ? t("只读取正式登记表实例；候选集合仍保持延期。") : t("当前登记表没有该类型实例，这是正常空态。")) : `
           <header class="ledger-title compact"><div><span class="hud-label">${escapeHtml(selected.prefix)} / REGISTERED</span><h2>${escapeHtml(selected.title || selected.id)}</h2></div><p>${escapeHtml(selected.id)}</p></header>
           <dl class="container-facts">
@@ -2041,7 +2145,7 @@ export function providerRequestUrl(baseUrl: string, protocol: string): string {
 function connectionEditor(connection?: ModelConnection): string {
   const id = connection?.id || "";
   const protocol = connection?.protocol || "openai_chat";
-  return `<form class="catalog-editor" data-model-catalog-form="connection" data-model-catalog-id="${escapeHtml(id)}">
+  return `<form class="catalog-editor" data-model-catalog-form="connection" data-model-catalog-id="${escapeHtml(id)}" autocomplete="off">
     <label><span>${t("备注名")}</span><input name="alias" value="${escapeHtml(connection?.alias || "")}" required maxlength="80"></label>
     <label><span>${t("协议")}</span><select name="protocol" data-provider-protocol><option value="openai_chat" ${protocol === "openai_chat" ? "selected" : ""}>OpenAI Chat</option><option value="openai_responses" ${protocol === "openai_responses" ? "selected" : ""}>OpenAI Responses</option><option value="anthropic_messages" ${protocol === "anthropic_messages" ? "selected" : ""}>Anthropic Messages</option></select></label>
     <label class="wide"><span>${t("接口地址")}</span><div class="provider-url-editor"><input name="url_base" type="url" value="${escapeHtml(providerBaseUrl(connection?.url || ""))}" required><span data-provider-url-suffix>${providerUrlSuffix(protocol)}</span></div></label>
@@ -2054,7 +2158,7 @@ function modelEditor(model?: ModelProfile): string {
   const data = settingsProjection.data;
   if (!data) return "";
   const supported = (model?.reasoning.supported || []).join(", ");
-  return `<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="${escapeHtml(model?.id || "")}">
+  return `<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="${escapeHtml(model?.id || "")}" autocomplete="off">
     <label><span>${t("备注名")}</span><input name="alias" value="${escapeHtml(model?.alias || "")}" required maxlength="80"></label>
     <label><span>${t("服务连接")}</span><select name="connection_id" required><option value="">${t("请选择")}</option>${data.model_catalog.connections.map((item) => `<option value="${escapeHtml(item.id)}" ${model?.connection_id === item.id ? "selected" : ""}>${escapeHtml(item.alias)}</option>`).join("")}</select></label>
     <label><span>${t("模型 ID")}</span><input name="model" value="${escapeHtml(model?.model || "")}" required></label>
@@ -2077,10 +2181,11 @@ function modelEditor(model?: ModelProfile): string {
 function renderConnectionCard(connection: ModelConnection): string {
   const disabled = settingsProjection.pending ? "disabled" : "";
   const keyActionLabel = connection.key_present ? t("更换密钥") : t("保存密钥");
-  const keyInputPlaceholder = connection.key_present ? t("输入新密钥以更换") : t("输入新密钥");
+  const keyInputPlaceholder = connection.key_present ? "••••••••" : t("输入新密钥");
+  const keyInputLabel = connection.key_present ? t("输入新密钥以更换") : t("输入新密钥");
   return `<article class="catalog-item">
     <header><div><strong>${escapeHtml(connection.alias)}</strong><span>${escapeHtml(connection.protocol)} · ${escapeHtml(connection.url)}</span></div><div><button type="button" data-edit-catalog="connection" data-catalog-id="${escapeHtml(connection.id)}">${t("编辑")}</button><button type="button" data-delete-catalog="connection" data-catalog-id="${escapeHtml(connection.id)}">${t("删除")}</button></div></header>
-    <div class="connection-key"><span>${t("密钥状态：{status}", { status: keySourceLabel(connection.key_source) })}</span><input type="password" data-provider-key-input="${escapeHtml(connection.id)}" autocomplete="new-password" placeholder="${keyInputPlaceholder}" aria-label="${keyInputPlaceholder}" ${disabled}><button type="button" data-provider-key-action="set" data-provider-key-connection="${escapeHtml(connection.id)}" ${disabled}>${keyActionLabel}</button><button type="button" data-provider-key-action="delete" data-provider-key-connection="${escapeHtml(connection.id)}" ${disabled}>${t("删除密钥")}</button></div>
+    <div class="connection-key"><span>${t("密钥状态：{status}", { status: keySourceLabel(connection.key_source) })}</span><input type="password" data-provider-key-input="${escapeHtml(connection.id)}" autocomplete="new-password" placeholder="${keyInputPlaceholder}" aria-label="${keyInputLabel}" ${disabled}><button type="button" data-provider-key-action="set" data-provider-key-connection="${escapeHtml(connection.id)}" ${disabled}>${keyActionLabel}</button><button type="button" data-provider-key-action="delete" data-provider-key-connection="${escapeHtml(connection.id)}" ${disabled}>${t("删除密钥")}</button></div>
     ${state.editingConnectionId === connection.id ? connectionEditor(connection) : ""}
   </article>`;
 }
@@ -2170,7 +2275,6 @@ function renderAboutSettings(): string {
       <p>${t("位格、记忆和轮次保存在“文档\\UPSP”。")}</p>
       <p>${t("模型设置、密钥和缓存在“LocalAppData\\UPSP”。")}</p>
       <p>${t("卸载和覆盖升级不会删除这些内容。")}</p>
-      <p>${t("密钥当前使用本机忽略追踪的 JSON 或环境变量保存，未使用 Windows 加密存储。")}</p>
     </section>
     <p class="about-copyright">${escapeHtml(data.product.copyright)}</p>
   </section>`;
@@ -2439,16 +2543,13 @@ export function openLedgerEvent(round: number, cardId: string): void {
   const card = position >= 0 ? cards[position] : null;
   if (!card) return;
   rememberDetailFocus();
-  const contentMd = typeof card.content_md === "string" && card.content_md.trim()
-    ? card.content_md
-    : `_${t("无可展示的结构化内容。")}_`;
   showDetail({
     sourceType: "RUNTIME",
-    title: card.title || card.type || card.event_type || `${t("运行时")} ${state.locale === "zh-CN" ? "事件" : "event"}`,
+    title: ledgerCardTitle(card) || `${t("运行时")} ${state.locale === "zh-CN" ? "事件" : "event"}`,
     summary: `${card.type || "event"} · #${card.event_index ?? position}`,
     sourceRef: `${t("当前轮")} R${round} · ${card.phase || "round"} · ${card.frame_id || "round"} · ${card.event_type || "event"}`,
     documentId: `ledger:${round}:${cardId}`,
-    contentMd,
+    contentMd: ledgerCardMarkdown(card),
     ledgerJson: true,
   });
   focusDetailClose();

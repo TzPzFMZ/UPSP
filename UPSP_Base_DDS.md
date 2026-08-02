@@ -3336,7 +3336,7 @@ DDS 定义分类语义，`rules_registry.json` 是当前实现使用的成员清
 
 ## 规则正文真源
 
-DDS 只规定分类、装配边界和跨文件不变量，不复制每份规则正文。tracked 产品条款以安装目录内 `UPSP/initialization/persona_template/rules/` 为准；初始化后它们逐字节进入当前活动实例 `<PID>/OS/persona/rules/` 的活体副本，后者只随该位格继续演化。Registry 决定当前成员分类，ContextAssembler 与 Runtime 代码决定实际装配行为。
+DDS 只规定分类、装配边界和跨文件不变量，不复制每份规则正文。tracked 产品条款以安装目录内 `UPSP/initialization/persona_template/{rules,docs}/` 为准；初始化后公共 `rules/protocol`、`docs/protocol` 与两个 Registry 逐字节进入当前活动实例，且每次宿主启动都以 SHA-256 校验并原子同步。规则导引中的 `protocol/base/...` 与 Registry、Rules Workbench 一样以 `paths.RULES_DIR` 为根。`rules/persona`、`docs/persona` 及其他位格数据不参与产品升级同步，只随该位格继续演化。Registry 决定当前成员分类，ContextAssembler 与 Runtime 代码决定实际装配行为。
 
 - `protocol/base/*.md` 的 16 份登记规则按上方 8/8 分类管理；
 - `persona/*.md` 的 4 份软规范归 `on_demand`；

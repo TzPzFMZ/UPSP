@@ -472,11 +472,16 @@ export function initMarkdownInteractions(): void {
       loadDocumentImages(documentRoot, scrollContainer);
       return;
     }
-    const copyButton = target.closest<HTMLButtonElement>("button[data-markdown-copy]");
+    const copyButton = target.closest<HTMLButtonElement>("button[data-markdown-copy], button[data-markdown-document-copy]");
     if (!copyButton) return;
-    const code = copyButton.closest("pre")?.querySelector("code");
-    if (!code) return;
-    navigator.clipboard.writeText(code.textContent || "").then(() => {
+    const documentRoot = copyButton.matches("[data-markdown-document-copy]")
+      ? copyButton.closest<HTMLElement>(".chat-bubble")?.querySelector<HTMLElement>(".md-document[data-markdown-document-id]")
+      : null;
+    const text = documentRoot
+      ? htmlCache.get(documentRoot.dataset.markdownDocumentId || "")?.source || ""
+      : copyButton.closest("pre")?.querySelector("code")?.textContent || "";
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
       copyButton.textContent = t("已复制");
       window.setTimeout(() => { copyButton.textContent = t("复制"); }, 1_200);
     }).catch(() => {

@@ -51,6 +51,31 @@ export interface Shortcut {
   icon: string;
 }
 
+export type ProviderErrorKind =
+  | "cancelled"
+  | "connection_refused"
+  | "dns_error"
+  | "tls_error"
+  | "timeout"
+  | "connection_interrupted"
+  | "authentication"
+  | "permission_denied"
+  | "model_unavailable"
+  | "rate_limit_or_quota"
+  | "context_too_long"
+  | "endpoint_not_found"
+  | "request_rejected"
+  | "upstream_unavailable"
+  | "invalid_response"
+  | "service_error"
+  | "unknown";
+
+export interface ProviderErrorHint {
+  kind: ProviderErrorKind;
+  http_statuses: number[];
+  target?: string;
+}
+
 export interface ConversationCard {
   card_id?: string;
   content?: unknown;
@@ -62,6 +87,7 @@ export interface ConversationCard {
   frame_id?: string;
   iteration?: number | null;
   phase?: string;
+  provider_error_hint?: ProviderErrorHint;
   recorded_at?: string;
   severity?: string;
   stream_id?: string;
