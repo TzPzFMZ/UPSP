@@ -1129,7 +1129,7 @@ def _scenario_tool_header_stability(root: Path) -> dict[str, Any]:
             provider="openai_responses",
             include_protocol_writes=True,
             include_standard_tools=True,
-            active_protocol_tool_guides=["guide_submit"],
+            active_protocol_tool_guides=["calendar:R-matrix"],
             execution_permission_level="unlimited",
         )
         if _schema_name(tool)
@@ -1137,11 +1137,11 @@ def _scenario_tool_header_stability(root: Path) -> dict[str, Any]:
     retired_absent = not (
         {"chronicle_write", "alert_mode_settle", "fault_record"} & with_guides
     )
-    required_present = {"guide_submit", "memory_write"} <= with_guides
+    required_present = {"guide_submit", "memory_write"} <= baseline
     passed = baseline == with_guides and retired_absent and required_present
     return {
         "passed": passed,
-        "required": "工具头不随 guide 动态收窄，旧节律前台工具退役，guide_submit/主体工具保留。",
+        "required": "guide_submit 常驻稳定 reaction 工具头，active guide 不得改变工具集合，旧节律前台工具保持退役。",
         "observed": {
             "baseline_count": len(baseline),
             "with_guides_count": len(with_guides),

@@ -29,6 +29,7 @@ import {
   submitRuntimeMessage,
   submitRuntimeRelay,
   submitRuntimeStop,
+  submitToolApproval,
   submitProviderKey,
   submitModelCatalog,
   submitSettings,
@@ -88,6 +89,15 @@ function settingValues(root: ParentNode): Record<string, SettingValue> {
 }
 
 export function initEvents(): void {
+  els.chatThread.addEventListener("click", (event) => {
+    const button = eventElement(event)?.closest<HTMLButtonElement>("[data-tool-approval-decision]");
+    if (!button) return;
+    const approvalId = button.dataset.toolApprovalId || "";
+    const decision = button.dataset.toolApprovalDecision;
+    if (decision === "allow_once" || decision === "skip") {
+      void submitToolApproval(approvalId, decision);
+    }
+  });
   initMarkdownInteractions();
   document.addEventListener("click", (event) => {
     const target = eventElement(event);
@@ -513,7 +523,6 @@ export function initEvents(): void {
           reasoning_default: text("reasoning_default"),
           streaming_enabled: fields.get("streaming_enabled") === "on",
           streaming_include_usage: fields.get("streaming_include_usage") === "on",
-          prompt_cache_profile: text("prompt_cache_profile") || "off",
           request_overrides: requestOverrides,
         };
       }
@@ -561,9 +570,9 @@ export function initEvents(): void {
     void submitSettings(updates);
   });
   els.permissionLevel.addEventListener("change", () => {
-    if (els.permissionLevel.value === "limited") runtimeProjection.unlimitedConfirmed = false;
+    if (els.permissionLevel.value !== "unlimited") runtimeProjection.unlimitedConfirmed = false;
     runtimeProjection.sendFeedback = els.permissionLevel.value === "unlimited"
-      ? t("完整权限将在提交时要求明确确认。")
+      ? t("放行权限将在提交时要求明确确认。")
       : "";
     refreshRuntimeUi();
     if (state.activePage === "run" && getActivePageTab("run") === "tools") renderStage("run");
@@ -605,6 +614,19 @@ export function initEvents(): void {
     if (!selector) return;
     state.selectedContextFrame = selector.value === "latest" ? null : selector.value;
     renderStageAndFocus("context", "[data-context-frame]");
+  });
+  document.addEventListener("change", (event) => {
+    const selector = eventElement(event)?.closest<HTMLSelectElement>("[data-task-round]");
+    if (!selector) return;
+    state.selectedTaskRound = selector.value === "latest" ? null : Number(selector.value);
+    state.selectedTaskFrame = null;
+    renderStageAndFocus("run", "[data-task-round]");
+  });
+  document.addEventListener("change", (event) => {
+    const selector = eventElement(event)?.closest<HTMLSelectElement>("[data-task-frame]");
+    if (!selector) return;
+    state.selectedTaskFrame = selector.value === "latest" ? null : selector.value;
+    renderStageAndFocus("run", "[data-task-frame]");
   });
   els.messageInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {

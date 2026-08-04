@@ -75,7 +75,8 @@ class _InstanceLock:
 class ResidentRuntimeService:
     def __init__(
             self, *, runtime_dir=None, active_pid=ACTIVE_PID,
-            persona_ready=None, environment_factory=None, runtime_factory=None):
+            persona_ready=None, environment_factory=None, runtime_factory=None,
+            default_permission_level=None):
         self.active_pid = str(active_pid)
         self.runtime_dir = Path(
             runtime_dir
@@ -91,6 +92,7 @@ class ResidentRuntimeService:
         )
         self.environment_factory = environment_factory
         self.runtime_factory = runtime_factory
+        self.default_permission_level = default_permission_level
         self.runtime = None
         self.runtime_thread = None
         self.session_id = uuid.uuid4().hex
@@ -162,6 +164,12 @@ class ResidentRuntimeService:
                 name=f"upsp-runtime-{self.active_pid}",
                 daemon=True,
             )
+            set_permission = getattr(
+                runtime, "set_execution_permission_level", None)
+            if getattr(runtime, "permission_chain", None) is not None:
+                runtime.permission_chain.apply("guarded")
+            elif callable(set_permission):
+                set_permission("guarded")
             self.runtime_thread.start()
             self._write_supervisor("running")
             return True
@@ -190,10 +198,9 @@ class ResidentRuntimeService:
     def submit_message(self, message, permission_level, *, timeout=None):
         runtime = self._require_runtime()
         operation = self._begin_operation("send", permission_level)
-        previous = os.environ.get("UPSP_EXECUTION_PERMISSION_LEVEL")
-        os.environ["UPSP_EXECUTION_PERMISSION_LEVEL"] = permission_level
         try:
-            if not runtime.submit_message(message):
+            if not runtime.submit_message(
+                    message, execution_permission_level=permission_level):
                 raise RuntimeServiceError("round_in_flight")
             if not operation["event"].wait(timeout):
                 raise RuntimeServiceError("runtime_wait_timeout")
@@ -203,10 +210,6 @@ class ResidentRuntimeService:
                     str(result.get("error") or "runtime_process_failed"))
             return result
         finally:
-            if previous is None:
-                os.environ.pop("UPSP_EXECUTION_PERMISSION_LEVEL", None)
-            else:
-                os.environ["UPSP_EXECUTION_PERMISSION_LEVEL"] = previous
             self._end_operation(operation)
 
     def submit_pending(self, kind, permission_level, *, timeout=None):
@@ -214,8 +217,6 @@ class ResidentRuntimeService:
             raise ValueError("invalid_pending_kind")
         runtime = self._require_runtime()
         operation = self._begin_operation(kind, permission_level)
-        previous = os.environ.get("UPSP_EXECUTION_PERMISSION_LEVEL")
-        os.environ["UPSP_EXECUTION_PERMISSION_LEVEL"] = permission_level
         try:
             runtime.release_stop_latch()
             flags = runtime.sm.get_flags()
@@ -225,6 +226,11 @@ class ResidentRuntimeService:
                 raise RuntimeServiceError(
                     "relay_not_pending" if kind == "relay" else "tick_not_pending"
                 )
+            authorize = getattr(runtime, "authorize_pending_execution", None)
+            if getattr(runtime, "permission_chain", None) is not None:
+                runtime.permission_chain.authorize(permission_level)
+            elif callable(authorize):
+                authorize(permission_level)
             runtime.hb.resume()
             wake = getattr(runtime.hb, "wake", None)
             if callable(wake):
@@ -237,10 +243,6 @@ class ResidentRuntimeService:
                     str(result.get("error") or "runtime_process_failed"))
             return result
         finally:
-            if previous is None:
-                os.environ.pop("UPSP_EXECUTION_PERMISSION_LEVEL", None)
-            else:
-                os.environ["UPSP_EXECUTION_PERMISSION_LEVEL"] = previous
             self._end_operation(operation)
 
     def stop_round(self):
@@ -270,6 +272,10 @@ class ResidentRuntimeService:
             })
         raise RuntimeServiceError("no_round_in_flight")
 
+    def resolve_tool_approval(self, approval_id, decision):
+        runtime = self._require_runtime()
+        return runtime.resolve_tool_approval(approval_id, decision)
+
     def status(self):
         runtime_status = (
             self.runtime.runtime_status()
@@ -282,6 +288,7 @@ class ResidentRuntimeService:
                 "stop_latched": False,
                 "can_stop": False,
                 "heartbeat_suspended": True,
+                "pending_tool_approval": None,
             }
         )
         with self._lock:

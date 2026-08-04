@@ -38,7 +38,7 @@ function startRuntimeUi(): void {
 async function start(): Promise<void> {
   initEvents();
   initBootstrapEvents();
-  els.permissionLevel.value = "limited";
+  els.permissionLevel.value = "guarded";
   render();
   renderBootstrap();
   await Promise.all([

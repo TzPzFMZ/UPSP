@@ -104,6 +104,46 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         assert outcome["fatal_reasons"] == [
             "cleanup_api:RuntimeError:provider unavailable"]
 
+    def test_spec721_provider_limit_cleanup_is_degraded_not_settled(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+
+        outcome = rt.cleanup_pipeline.run(self._round_context(rt), {
+            "aborted": True,
+            "response": "本轮已在本地阻断。",
+            "_provider_call_hard_stop": {
+                "reason": "reaction_provider_call_limit_reached",
+            },
+        })
+
+        assert outcome["status"] == "degraded"
+        assert "reaction_provider_call_limit_reached" in outcome["degraded_reasons"]
+
+    def test_spec721_relay_does_not_retain_stale_user_input(
+            self, tmp_path, monkeypatch):
+        from engines.round_context import RuntimeTrigger
+
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+        context = self._round_context(rt, round_num=721, round_type="relay")
+        context.user_input_text = "上一交互轮的用户输入"
+        context.trigger = RuntimeTrigger(
+            "T00000721", 721, "2026-08-04T00:00:00+08:00",
+            "relay", {"continue_requested": True}, (),
+        )
+
+        outcome = rt.cleanup_pipeline.run(context, {"response": "relay reply"})
+
+        assert outcome["status"] == "settled"
+        assert not [
+            entry for entry in rt.ctx_store.get_now_entries()
+            + rt.ctx_store.get_lately_entries()
+            if entry.get("role") == "user"
+        ]
+        assert rt.ctx_store._load_active_corpus_meta()[
+            "interaction_round_count"] == 0
+
     @pytest.mark.parametrize(("owner_name", "method", "scope"), [
         ("heat", "tick_decay", "heat_decay"),
         ("runtime", "_build_forgetting_context", "forgetting_context"),
@@ -785,6 +825,125 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             and event.get("payload", {}).get("status") == "continue_requested_rearmed"
             for event in audit_events
         )
+
+    def test_spec721_second_no_progress_relay_is_blocked_locally(
+            self, tmp_path, monkeypatch):
+        from logic.relay_intent_pool import open_relay_intents
+
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+        monkeypatch.setattr(
+            rt.cleanup_pipeline,
+            "_continuation_progress_evidence",
+            lambda *_args, **_kwargs: set(),
+        )
+
+        def continuation():
+            return {
+                "response": "continue",
+                "_closeout_relay_receipts": [{
+                    "tool_id": "reaction_finalize",
+                    "status": "continue_requested_set",
+                    "source": "closeout_form",
+                    "set_flags": ["continue_requested"],
+                }],
+            }
+
+        first = continuation()
+        first_outcome = rt._run_cleanup(
+            "interactive", rt.sm.load(), first, 720)
+        assert first_outcome["status"] == "settled"
+        assert rt.sm.get_flags()["continue_requested"] is True
+        assert len(open_relay_intents(rt.sm.load())) == 1
+
+        second = continuation()
+        second_outcome = rt._run_cleanup(
+            "relay", rt.sm.load(), second, 721)
+        assert second_outcome["status"] == "degraded"
+        assert second["_local_blocked_reason"] == "blocked/no_progress_relay"
+        assert second["response"]
+        assert rt.sm.get_flags()["continue_requested"] is False
+        assert open_relay_intents(rt.sm.load()) == []
+
+    def test_spec721_real_tool_progress_allows_next_relay(
+            self, tmp_path, monkeypatch):
+        from logic.relay_intent_pool import open_relay_intents
+
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+        receipt = [{
+            "tool_id": "reaction_finalize",
+            "status": "continue_requested_set",
+            "source": "closeout_form",
+            "set_flags": ["continue_requested"],
+        }]
+        rt._run_cleanup("interactive", rt.sm.load(), {
+            "response": "continue",
+            "_closeout_relay_receipts": receipt,
+        }, 720)
+
+        progressed = {
+            "response": "continue",
+            "_closeout_relay_receipts": receipt,
+            "_general_tool_results": [{
+                "tool_id": "file_read",
+                "status": "ok",
+                "path": str(tmp_path / "source.txt"),
+                "sha256": "abc",
+            }],
+        }
+        outcome = rt._run_cleanup(
+            "relay", rt.sm.load(), progressed, 721)
+
+        assert outcome["status"] == "settled"
+        assert not progressed.get("_no_progress_relay_blocked")
+        assert rt.sm.get_flags()["continue_requested"] is True
+        assert len(open_relay_intents(rt.sm.load())) == 1
+
+    def test_spec721_progress_digest_ignores_tool_audit_timestamps(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+        first = {
+            "tool_id": "file_read",
+            "status": "ok",
+            "path": str(tmp_path / "source.txt"),
+            "sha256": "abc",
+            "executed_at": "2026-08-04T01:00:00+08:00",
+            "fetched_at": "2026-08-04T01:00:00+08:00",
+            "requested_at": "2026-08-04T00:59:59+08:00",
+            "resolved_at": "2026-08-04T01:00:01+08:00",
+        }
+        second = dict(first)
+        second.update({
+            "executed_at": "2026-08-04T02:00:00+08:00",
+            "fetched_at": "2026-08-04T02:00:00+08:00",
+            "requested_at": "2026-08-04T01:59:59+08:00",
+            "resolved_at": "2026-08-04T02:00:01+08:00",
+        })
+
+        assert rt.cleanup_pipeline._progress_digest(first) == (
+            rt.cleanup_pipeline._progress_digest(second)
+        )
+
+    def test_spec721_output_hash_progress_works_without_engineering_grant(
+            self, tmp_path, monkeypatch):
+        import engines.cleanup_pipeline as cleanup_module
+
+        rt = self._make_runtime(tmp_path)
+        output = tmp_path / "output"
+        output.mkdir()
+        (output / "result.txt").write_text("真实产物", encoding="utf-8")
+        monkeypatch.setattr(cleanup_module, "load_sandbox_grant", lambda: {})
+
+        evidence = rt.cleanup_pipeline._continuation_progress_evidence({
+            "_general_tool_results": [{
+                "tool_id": "shell_command",
+                "status": "ok",
+                "cwd": str(tmp_path),
+                "exit_code": 0,
+            }],
+        }, 721)
+
+        assert any(item.startswith("output:result.txt:") for item in evidence)
 
     def test_relay_cleanup_does_not_rearm_from_invalid_relay_receipt(
             self, tmp_path, monkeypatch):

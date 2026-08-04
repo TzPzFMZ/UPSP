@@ -77,7 +77,7 @@ def legacy_default_api_config():
                     "protocol": "openai_sse",
                     "include_usage": True,
                 },
-                "prompt_cache": {"profile": "off"},
+                "prompt_cache": {"profile": "automatic_tiered"},
             },
             "fallback": {
                 "url": "",
@@ -94,7 +94,7 @@ def legacy_default_api_config():
                     "protocol": "openai_sse",
                     "include_usage": True,
                 },
-                "prompt_cache": {"profile": "off"},
+                "prompt_cache": {"profile": "automatic_tiered"},
             },
             "emergency": {
                 "url": "",
@@ -111,7 +111,7 @@ def legacy_default_api_config():
                     "protocol": "openai_sse",
                     "include_usage": True,
                 },
-                "prompt_cache": {"profile": "off"},
+                "prompt_cache": {"profile": "automatic_tiered"},
             },
         },
         "step_tiers": {

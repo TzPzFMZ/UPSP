@@ -53,7 +53,8 @@ def _next_intent_id(sm, source_round):
 
 
 def create_relay_intent(sm, *, source_round, handoff_text,
-                        reaction_finalize_id="", user_input_ref=""):
+                        reaction_finalize_id="", user_input_ref="",
+                        progress_fingerprint="", progress_evidence=None):
     pool = list(_load_pool(sm))
     now = local_now().isoformat()
     intent = {
@@ -67,6 +68,14 @@ def create_relay_intent(sm, *, source_round, handoff_text,
         "updated_at": now,
         "settlement": {},
     }
+    if _clean_text(progress_fingerprint):
+        intent["progress_fingerprint"] = _clean_text(progress_fingerprint)
+    evidence = sorted({
+        _clean_text(item) for item in (progress_evidence or [])
+        if _clean_text(item)
+    })
+    if evidence:
+        intent["progress_evidence"] = evidence
     pool.append(intent)
     _store_pool(sm, pool)
     return deepcopy(intent)

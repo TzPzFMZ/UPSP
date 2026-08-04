@@ -13,6 +13,7 @@ from logic.evidence_refs import evidence_handle_for_result, result_supports_evid
 from logic.write_pending_settlement import format_pending_cancel_tool_fact
 
 from logic.handoff_prefixes import prefix_reaction_loop_handoff
+from engines.reaction_protocol_tool_execution import model_visible_error_hint
 
 
 def reaction_identity_requires_resolution(interaction_meta):
@@ -1092,7 +1093,18 @@ def format_native_tool_failure_feedback(item, reason):
     """渲染单条 native tool 失败纠错 POPUP。"""
     tool_id = safe_feedback_value(item.get("tool_id"))
     tool_label = native_tool_visible_label(tool_id)
+    hint = model_visible_error_hint(item)
     next_action, message = native_tool_feedback_action(reason, item)
+    if hint:
+        if isinstance(item.get("details"), dict) and item["details"].get("next_action"):
+            next_action = safe_feedback_value(hint.get("next_action"), limit=500)
+        message = list(message) + [
+            f"kind={safe_feedback_value(hint.get('kind'))}",
+            f"retry={safe_feedback_value(hint.get('retry'))}",
+            f"attempted={safe_feedback_value(json.dumps(hint.get('attempted'), ensure_ascii=False))}",
+            f"current={safe_feedback_value(json.dumps(hint.get('current'), ensure_ascii=False))}",
+            f"expected={safe_feedback_value(json.dumps(hint.get('expected'), ensure_ascii=False))}",
+        ]
     duplicate_warning = reason in {
         "duplicate_tool_result_satisfied",
         "duplicate_tool_failure_repeated",

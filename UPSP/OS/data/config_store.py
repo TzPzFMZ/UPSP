@@ -52,8 +52,10 @@ SUPPORTED_PROVIDER_PROTOCOLS = {
 SUPPORTED_REASONING_EFFORTS = {
     "", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 }
+AUTOMATIC_PROMPT_CACHE = {"profile": "automatic_tiered"}
 SUPPORTED_PROMPT_CACHE_PROFILES = {
-    "off", "key_only", "gpt56_explicit_permanent", "gpt56_explicit_tiered",
+    "automatic_tiered", "off", "key_only",
+    "gpt56_explicit_permanent", "gpt56_explicit_tiered",
 }
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SECRET_OVERRIDE_FIELDS = {
@@ -118,6 +120,8 @@ class ConfigStore:
                 loaded = json.load(f)
             if not isinstance(loaded, dict):
                 raise ValueError("config must be a JSON object")
+            if name == "models":
+                loaded = self._normalise_models(loaded)
             self._validate(name, loaded)
             return loaded
         except (json.JSONDecodeError, OSError, ValueError) as e:
@@ -128,8 +132,17 @@ class ConfigStore:
         if name not in _CONFIG_MAP:
             raise ValueError(f"未知配置: {name}")
         path, _ = _CONFIG_MAP[name]
+        data = self._normalise_models(data) if name == "models" else data
         self._validate(name, data)
         atomic_write_json(path, data)
+
+    @staticmethod
+    def _normalise_models(data):
+        result = deepcopy(data)
+        for model in result.get("models") or []:
+            if isinstance(model, dict):
+                model["prompt_cache"] = deepcopy(AUTOMATIC_PROMPT_CACHE)
+        return result
 
     def revision(self, name):
         """Return the canonical file-byte SHA used by the GUI write boundary."""
@@ -449,7 +462,7 @@ class ConfigStore:
                 "context_window": int(endpoint.get("context_window") or 0),
                 "reasoning_effort": str(endpoint.get("reasoning_effort") or ""),
                 "streaming": deepcopy(endpoint.get("streaming") or {"enabled": False}),
-                "prompt_cache": deepcopy(endpoint.get("prompt_cache") or {"profile": "off"}),
+                "prompt_cache": deepcopy(AUTOMATIC_PROMPT_CACHE),
                 "request_overrides": deepcopy(endpoint.get("extra_body") or {}),
             }
             model_key = json.dumps(model_fp, ensure_ascii=False, sort_keys=True)
@@ -658,7 +671,7 @@ class ConfigStore:
             "context_window": profile.get("context_window", 0),
             "reasoning_effort": item["reasoning_effort"],
             "streaming": deepcopy(profile.get("streaming") or {"enabled": False}),
-            "prompt_cache": deepcopy(profile.get("prompt_cache") or {"profile": "off"}),
+            "prompt_cache": deepcopy(AUTOMATIC_PROMPT_CACHE),
             "extra_body": deepcopy(profile.get("request_overrides") or {}),
             "profile_id": profile["id"],
             "connection_id": connection["id"],
@@ -704,11 +717,21 @@ class ConfigStore:
         api = self.load("api")
         result = []
         for phase in MODEL_PHASES:
-            for key in (api.get("step_routes") or {}).get(phase, []):
-                endpoint = (api.get("endpoints") or {}).get(key) or {}
-                profile_id = str(endpoint.get("profile_id") or key)
-                if profile_id and profile_id not in result:
+            for profile_id in self.get_model_profile_ids_for_phase(
+                    phase, api=api):
+                if profile_id not in result:
                     result.append(profile_id)
+        return result
+
+    def get_model_profile_ids_for_phase(self, phase, *, api=None):
+        api = api if isinstance(api, dict) else self.load("api")
+        endpoints = api.get("endpoints") or {}
+        result = []
+        for key in (api.get("step_routes") or {}).get(str(phase or ""), []):
+            endpoint = endpoints.get(key) or {}
+            profile_id = str(endpoint.get("profile_id") or key).strip()
+            if profile_id and profile_id not in result:
+                result.append(profile_id)
         return result
 
     # ==============================================================
@@ -842,7 +865,7 @@ class ConfigStore:
         }
 
     def get_execution_permission_level(self):
-        """通用执行权限档位：limited=受限档，unlimited=放行档。"""
+        """通用执行权限档位：limited=只读，guarded=受限，unlimited=放行。"""
         cfg = self.load("system")
         permission = cfg.get("execution_permission", {})
         if isinstance(permission, dict):

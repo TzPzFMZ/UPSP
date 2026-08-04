@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 """Check high-risk general_tool capability gates with a fake executor."""
 import json
+import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -334,7 +336,21 @@ def _run_case(case):
 
 
 def run_matrix():
-    cases = [_run_case(case) for case in _cases()]
+    grant = json.dumps({
+        "task_root": str(REPO_ROOT),
+        "read_paths": [str(REPO_ROOT)],
+        "write_paths": [str(REPO_ROOT)],
+        "shell_cwd": str(REPO_ROOT),
+        "allowed_tools": [
+            "file_read", "file_search", "file_write", "file_edit",
+            "web_fetch", "web_search", "shell_command", "subagent_dispatch",
+        ],
+    })
+    with patch.dict(os.environ, {
+            "UPSP_ENGINEERING_SANDBOX_GRANT_JSON": grant,
+            "UPSP_EXECUTION_PERMISSION_LEVEL": "unlimited",
+    }):
+        cases = [_run_case(case) for case in _cases()]
     issues = [
         f"{case['case_id']}:{issue}"
         for case in cases

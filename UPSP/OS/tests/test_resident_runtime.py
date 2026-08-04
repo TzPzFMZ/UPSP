@@ -275,6 +275,11 @@ class FakeRuntime:
         self.on_round_started = None
         self.on_round_finished = None
         self._stopped = threading.Event()
+        self.execution_permission_level = "unlimited"
+
+    def set_execution_permission_level(self, level):
+        self.execution_permission_level = level
+        return level
 
     def run_forever(self):
         self._stopped.wait()
@@ -288,7 +293,8 @@ class FakeRuntime:
     def runtime_status(self):
         return self.control.snapshot(self.hb)
 
-    def submit_message(self, message):
+    def submit_message(self, message, execution_permission_level="guarded"):
+        self.execution_permission_level = execution_permission_level
         number = self.control.establish_round("interactive", lambda: 1)
         if number is None:
             return False
@@ -326,6 +332,17 @@ def test_spec704_resident_service_owns_one_lock_and_reports_host(tmp_path):
         assert exc.value.host == {"address": "127.0.0.1", "port": 8770}
     finally:
         first.close()
+
+
+def test_spec721_resident_restart_falls_back_to_guarded(tmp_path):
+    runtime = FakeRuntime()
+    resident = service(tmp_path / "runtime", runtime)
+
+    resident.start()
+    try:
+        assert runtime.execution_permission_level == "guarded"
+    finally:
+        resident.close()
 
 
 def test_spec704_corrupt_supervisor_is_preserved_and_fails_closed(tmp_path):

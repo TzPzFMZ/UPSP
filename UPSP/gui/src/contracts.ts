@@ -11,7 +11,7 @@ export type PageId =
   | "settings";
 
 export type DepositionKind = "memory" | "container" | "relation";
-export type PermissionLevel = "limited" | "unlimited";
+export type PermissionLevel = "limited" | "guarded" | "unlimited";
 export type GlobalSettingsTab = "models" | "interface" | "about";
 export type JsonObject = Record<string, unknown>;
 export type SettingsFileId =
@@ -77,6 +77,10 @@ export interface ProviderErrorHint {
 }
 
 export interface ConversationCard {
+  approval_id?: string;
+  decision?: "allow_once" | "skip" | "cancelled";
+  tool_id?: string;
+  tool_signature?: string;
   card_id?: string;
   content?: unknown;
   content_md?: unknown;
@@ -174,6 +178,19 @@ export interface RuntimeStatus {
   send_in_flight?: boolean;
   relay_in_flight?: boolean;
   mutation_in_flight?: boolean;
+  pending_tool_approval?: {
+    schema_version: "general_tool_approval.v1";
+    approval_id: string;
+    round?: number;
+    frame_id?: string;
+    iteration?: number;
+    tool_id: string;
+    tool_label?: string;
+    tool_signature?: string;
+    summary?: string;
+    requested_at?: string;
+    details?: JsonObject;
+  } | null;
   cli?: {
     ok?: boolean;
     command?: string;
@@ -408,6 +425,8 @@ export interface RuntimeProjection {
   awaitingProjection: boolean;
   submitBaseline: { round: number | null; eventIndex: number } | null;
   unlimitedConfirmed: boolean;
+  approvalSubmitting: string;
+  approvalFeedback: string;
   fullRefreshNeeded: boolean;
   renderKey: string;
   conversationRounds: Map<number, LiveState>;
@@ -677,6 +696,8 @@ export interface UiState {
   selectedRelationId: string;
   memoryQuery: string;
   activeRuntimePane: string;
+  selectedTaskRound: number | null;
+  selectedTaskFrame: string | null;
   selectedContextRound: number | null;
   selectedContextFrame: string | null;
   selectedLedgerRound: number | null;

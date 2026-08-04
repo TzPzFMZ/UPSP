@@ -83,10 +83,19 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     else:
         active_guide_id = str(workbench_store.get("base.active_guide") or "").strip()
     if not guide_id or guide_id != active_guide_id:
+        expected = _guide_coordinates(workbench_store, active_guide_id)
         return _reject(
             guide_id,
             "guide_not_active",
-            {"active_guide": active_guide_id},
+            {
+                "active_guide": active_guide_id,
+                "attempted": {"guide_id": guide_id},
+                "current": {"guide_id": active_guide_id},
+                "expected": expected,
+                "next_action": "只使用当前 active guide_id 及其合法 item_id/option_id 重新提交。",
+                "error_kind": "state_conflict",
+                "retry": "after_correction",
+            },
         )
 
     try:
@@ -1813,11 +1822,26 @@ def _validate_bootstrap_source_requirement_coverage(
             },
         )
     if unknown_source_refs:
+        example_ref = next(iter(sorted(source_keys)), "")
         return _validation_reject(
             "bootstrap_source_requirement_ref_unknown",
             {
                 "unknown_source_refs": unknown_source_refs,
                 "source_refs": refs_requiring_read,
+                "prior_source_refs": sorted(
+                    _prior_source_evidence_refs(evidence_context or {})
+                ),
+                "corrected_example": {
+                    "source_requirements": [{
+                        "requirement_id": "req_01",
+                        "source_ref": example_ref,
+                        "summary": "概括该已读来源中与任务有关的要求",
+                    }],
+                },
+                "next_action": (
+                    "只引用已读来源；目录声明可由其已读后代文件满足，"
+                    "然后完整重提 bootstrap。"
+                ),
             },
         )
     items = _as_sequence(fields.get("items"))
@@ -1911,6 +1935,13 @@ def _declared_source_refs_for_coverage(refs_requiring_read, evidence_context=Non
         for ref in refs_requiring_read
         if _source_ref_key(ref)
     }
+    prior_refs = _prior_source_evidence_refs(evidence_context or {})
+    for ref in refs_requiring_read or []:
+        key = _source_ref_key(ref)
+        if _source_ref_is_directory(ref, evidence_context):
+            source_keys.update(
+                prior for prior in prior_refs if _path_is_under_root(prior, key)
+            )
     for ref in refs_requiring_read or []:
         if not _source_ref_has_glob(ref):
             continue
@@ -2084,6 +2115,10 @@ def _source_ref_satisfied(ref, prior_refs, evidence_context=None):
         return True
     if str(ref or "").strip().lower().startswith(("http://", "https://")):
         return False
+    if _source_ref_is_directory(ref, evidence_context):
+        return any(_path_is_under_root(prior, key) for prior in prior_refs)
+    if os.path.isabs(key):
+        return False
     basename = os.path.basename(key)
     if not basename:
         return False
@@ -2094,6 +2129,18 @@ def _source_ref_satisfied(ref, prior_refs, evidence_context=None):
     if len(basename_matches) == 1:
         return True
     return _relative_source_path_suffix_known(key, prior_refs)
+
+
+def _source_ref_is_directory(ref, evidence_context=None):
+    key = _source_ref_key(ref)
+    if not key or str(ref or "").strip().lower().startswith(("http://", "https://")):
+        return False
+    task_root = _canonical_file_ref((evidence_context or {}).get("task_root"))
+    return (
+        key == task_root
+        or str(ref or "").rstrip().endswith(("/", "\\"))
+        or os.path.isdir(key)
+    )
 
 
 def _resolve_source_ref_alias(ref, evidence_context=None):
@@ -2333,6 +2380,24 @@ def _reject(guide_id, reason, details=None):
         "details": details or {},
     })
     return receipt
+
+
+def _guide_coordinates(workbench_store, guide_id):
+    if not guide_id:
+        return []
+    try:
+        guide = workbench_store.load_guide(guide_id)
+    except (ReadError, FileNotFoundError, ValueError):
+        return []
+    return [
+        {
+            "item_id": str(item.get("item_id") or item.get("id") or ""),
+            "option_ids": [str(option.get("option_id") or option.get("id") or "")
+                           for option in item.get("options") or []],
+        }
+        for item in guide.get("items") or []
+        if isinstance(item, dict)
+    ]
 
 
 def _validation_reject(reason, details=None):

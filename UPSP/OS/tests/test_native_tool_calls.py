@@ -45,6 +45,72 @@ def _description_chars(value):
 
 
 class TestNativeToolCallAdapter:
+    def test_spec719_only_four_stable_top_level_tool_headers(self):
+        from logic.native_tool_calls import export_provider_tool_schemas
+
+        for provider in ("openai_responses", "openai_chat", "anthropic_messages"):
+            reaction_headers = []
+            for permission in ("limited", "guarded", "unlimited"):
+                without_guide = export_provider_tool_schemas(
+                    provider=provider,
+                    include_protocol_writes=True,
+                    active_protocol_tool_guides=[],
+                    execution_permission_level=permission,
+                )
+                with_guide = export_provider_tool_schemas(
+                    provider=provider,
+                    include_protocol_writes=True,
+                    active_protocol_tool_guides=["task:T-current"],
+                    execution_permission_level=permission,
+                )
+                assert without_guide == with_guide
+                reaction_headers.append(without_guide)
+
+            setup = export_provider_tool_schemas(
+                provider=provider, include_standard_tools=False,
+                include_step_terminal_tools=["setup_finalize"],
+            )
+            cleanup = export_provider_tool_schemas(
+                provider=provider, include_standard_tools=False,
+                include_step_terminal_tools=["cleanup_finalize"],
+            )
+            assert reaction_headers[1] == reaction_headers[2]
+            headers = {json.dumps(value, ensure_ascii=False, sort_keys=True)
+                       for value in (setup, *reaction_headers, cleanup)}
+            assert len(headers) == 4
+
+            guide = next(item for item in reaction_headers[0]
+                         if (item.get("name") or item.get("function", {}).get("name")) == "guide_submit")
+            parameters = guide.get("parameters") or guide.get("input_schema") or guide["function"]["parameters"]
+            assert "enum" not in parameters["properties"]["guide_id"]
+
+    def test_spec719_failed_native_result_has_fixed_error_hint(self):
+        from engines.reaction_protocol_tool_execution import minimal_native_tool_result_content
+
+        payload = json.loads(minimal_native_tool_result_content({
+            "tool_id": "guide_submit",
+            "status": "rejected",
+            "reason": "guide_not_active",
+            "details": {
+                "attempted": {"guide_id": "old"},
+                "current": {"guide_id": "new"},
+                "expected": [{"item_id": "task_progress"}],
+                "next_action": "use new",
+            },
+        }))
+        assert set(payload["error_hint"]) == {
+            "kind", "retry", "attempted", "current", "expected", "next_action"
+        }
+        assert payload["error_hint"]["kind"] == "state_conflict"
+
+        denied = json.loads(minimal_native_tool_result_content({
+            "tool_id": "shell_command",
+            "status": "denied",
+            "reason": "permission_required",
+        }))
+        assert denied["error_hint"]["kind"] == "permission_security"
+        assert denied["error_hint"]["retry"] == "after_authorization"
+
     def test_responses_function_call_becomes_tool_call_envelope(self):
         from logic.native_tool_calls import extract_tool_call_envelopes
 
@@ -1134,7 +1200,7 @@ class TestNativeToolCallAdapter:
         )
         assert "memory_write" in guided_reaction_names
         assert "memory_link_update" in guided_reaction_names
-        assert set(guided_reaction_names) == set(reaction_names)
+        assert set(guided_reaction_names) == set(reaction_names) | {"guide_submit"}
         assert names_for("cleanup") == ["cleanup_finalize"]
 
     def test_spec458_step_terminal_tools_are_protocol_native_terminals(self):
@@ -1191,7 +1257,7 @@ class TestNativeToolCallAdapter:
             )
         }
 
-        assert rhythm_guided_names == normal_names
+        assert rhythm_guided_names == normal_names | {"guide_submit"}
         assert "memory_write" in rhythm_guided_names
         assert "relation_card_write" in rhythm_guided_names
         assert "container_focus" in rhythm_guided_names
@@ -2864,7 +2930,8 @@ class TestNativeToolCallExecutorAndAudit:
         result = ex.call("reaction", "system", [{"role": "user", "content": "read"}])
 
         assert sent["url"] == "https://api.example/v1/messages"
-        assert sent["payload"]["system"] == "system"
+        assert sent["payload"]["system"][0]["text"] == "system"
+        assert sent["payload"]["system"][0]["cache_control"] == {"type": "ephemeral"}
         assert sent["payload"]["messages"] == [{"role": "user", "content": "read"}]
         assert sent["payload"]["max_tokens"] == 4096
         assert "temperature" not in sent["payload"]
@@ -2965,7 +3032,7 @@ class TestNativeToolCallExecutorAndAudit:
             {"role": "system", "content": "popup guide"},
         ])
 
-        assert sent["payload"]["system"] == "outer-system\n\npermanent"
+        assert [block["text"] for block in sent["payload"]["system"]] == ["outer-system", "permanent"]
         assert sent["payload"]["messages"] == [
             {"role": "user", "content": "request"},
             {"role": "assistant", "content": "previous answer"},

@@ -353,6 +353,8 @@ def validate_natural_final_reply_candidate(
             "source": "natural_final_reply_candidate",
             "reason": task_acceptance.get("reason"),
             "blockers": task_acceptance.get("blockers", []),
+            "guide_id": task_acceptance.get("guide_id", ""),
+            "task_id": task_acceptance.get("task_id", ""),
             "feedback": task_acceptance_feedback(task_acceptance),
         }
 

@@ -1175,7 +1175,7 @@ class TestAPIExecutor:
         tool_names = set(tool_header["tool_names"])
 
         assert tool_header["permission_level"] == "limited"
-        assert tool_header["permission_label"] == "受限档"
+        assert tool_header["permission_label"] == "只读"
         assert "file_read" in tool_names
         assert "file_write" not in tool_names
         assert "file_edit" not in tool_names
@@ -1185,8 +1185,12 @@ class TestAPIExecutor:
             item["function"]["name"] for item in sent["payload"]["tools"]
         }
 
-    def test_spec430_reaction_tool_header_respects_unlimited_permission(
-            self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize(("permission", "label"), [
+        ("guarded", "受限"),
+        ("unlimited", "放行"),
+    ])
+    def test_spec721_reaction_tool_header_reports_actual_full_permission(
+            self, tmp_path, monkeypatch, permission, label):
         from engines.executor import APIExecutor
         import json
 
@@ -1197,7 +1201,7 @@ class TestAPIExecutor:
             context_dir=str(tmp_path / "context"),
         )
         ex._provider_call_interval_seconds = 0
-        monkeypatch.setenv("UPSP_EXECUTION_PERMISSION_LEVEL", "unlimited")
+        monkeypatch.setenv("UPSP_EXECUTION_PERMISSION_LEVEL", permission)
 
         def fake_send(url, api_key, payload):
             sent["payload"] = payload
@@ -1213,12 +1217,17 @@ class TestAPIExecutor:
         )["content"]
         tool_names = set(tool_header["tool_names"])
 
-        assert tool_header["permission_level"] == "unlimited"
-        assert tool_header["permission_label"] == "放行档"
+        assert tool_header["permission_level"] == permission
+        assert tool_header["permission_label"] == label
         assert {"file_write", "file_edit", "shell_command", "subagent_dispatch"} <= tool_names
-        assert "file_write" in {
-            item["function"]["name"] for item in sent["payload"]["tools"]
+        functions = {
+            item["function"]["name"]: item["function"]
+            for item in sent["payload"]["tools"]
         }
+        for tool_id in ("file_write", "file_edit", "shell_command", "subagent_dispatch"):
+            description = functions[tool_id]["description"]
+            assert "受限档" in description
+            assert "放行档" in description
 
     def test_spec422_legacy_list_step_json_is_rejected(self, tmp_path):
         from data.audit_store import AuditStore
@@ -1462,6 +1471,10 @@ class TestAPIExecutor:
             envelope["endpoint"]["tier"]
             for envelope in started_envelopes
         ] == ["primary", "fallback"]
+        assert [event["payload"]["route_slot"] for event in started_events] == [1, 2]
+        assert len({
+            event["payload"]["logical_call_id"] for event in started_events
+        }) == 1
         assert started_envelopes[-1]["request_body_sha256"] == (
             output_envelope["request_body_sha256"]
         )
@@ -1473,6 +1486,14 @@ class TestAPIExecutor:
         assert len(failed_attempts) == 1
         failed_envelope = failed_attempts[0]["payload"]["provider_request_envelope"]
         assert failed_envelope["endpoint"]["tier"] == "primary"
+        http_attempts = [
+            event["payload"] for event in events
+            if event["event_type"] == "llm_http_attempt"
+        ]
+        assert [item["route_slot"] for item in http_attempts] == [1, 1, 1, 2]
+        assert [item["attempt"] for item in http_attempts] == [1, 2, 3, 1]
+        assert [item["status_code"] for item in http_attempts] == [503, 503, 503, 200]
+        assert len({item["logical_call_id"] for item in http_attempts}) == 1
         assert not [
             event for event in events
             if event["event_type"] == "llm_error"
@@ -3096,7 +3117,7 @@ class TestAPIExecutor:
         assert {
             key: value
             for key, value in sent["payload"].items()
-            if key != "tools"
+            if key not in {"tools", "prompt_cache_key"}
         } == {
             "model": "unit-responses",
             "input": "user: ping",
@@ -3149,7 +3170,7 @@ class TestAPIExecutor:
 
         result = ex.call("setup", "transport", [{"role": "user", "content": "ping"}])
 
-        assert result["request_contract_audit"] == {
+        expected = {
             "step": "setup",
             "provider": "openai_responses",
             "model": "unit-responses",
@@ -3159,6 +3180,9 @@ class TestAPIExecutor:
             "tools_transmitted": True,
             "standard_tools_enabled": False,
         }
+        assert expected.items() <= result["request_contract_audit"].items()
+        assert result["request_contract_audit"]["prompt_cache_profile"] == "automatic_tiered"
+        assert result["request_contract_audit"]["prompt_cache_key_applied"] is True
 
     def test_openai_prompt_cache_config_uses_reaction_call_channel_lanes(self):
         from engines.executor import APIExecutor
@@ -3204,9 +3228,9 @@ class TestAPIExecutor:
             audit = contract["request_contract_audit"]
 
             assert audit["prompt_cache_lane"] == lane
-            assert audit["prompt_cache_key"] == f"unit-upsp:{lane}"
+            assert audit["prompt_cache_key"].endswith(f":{lane}:context-v43")
             assert audit["prompt_cache_key_applied"] is True
-            assert audit["prompt_cache_retention"] == "24h"
+            assert audit["prompt_cache_profile"] == "automatic_tiered"
 
     def test_openai_chat_nested_function_tool_names_are_audited(self):
         from engines.executor import APIExecutor
@@ -3296,7 +3320,10 @@ class TestAPIExecutor:
 
         assert "prompt_cache_key" not in payload
         assert audit["prompt_cache_lane"] == "reaction_final_reply_text"
-        assert audit["prompt_cache_key"] == "unit-upsp:reaction_final_reply_text"
+        assert audit["prompt_cache_key"].endswith(
+            ":reaction_final_reply_text:context-v43"
+        )
+        assert audit["prompt_cache_profile"] == "automatic_tiered"
         assert audit["prompt_cache_key_applied"] is False
 
     def test_native_tool_empty_output_raises_api_bridge_error(self, monkeypatch):

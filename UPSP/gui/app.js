@@ -2516,8 +2516,11 @@
     "\u8FD0\u884C\u65F6\u4E2D\u7EE7": "Runtime relay",
     "\u53EA\u5728\u7ED3\u6784\u5316\u72B6\u6001\u540C\u65F6\u7ED9\u51FA\u4E2D\u7EE7\u8F6E\u578B\u4E0E\u7EE7\u7EED\u8BF7\u6C42\u65F6\u5F00\u653E\uFF1B\u6267\u884C\u6743\u9650\u7EE7\u627F\u4E0B\u65B9\u901A\u4FE1\u5E26\u3002": "Available only when structured state declares both relay round type and a continue request; execution permission follows the conversation composer.",
     "\u4EFB\u52A1\u8D26\u672C": "Task ledger",
+    "\u8BE5\u5E27\u4EFB\u52A1\u5FEB\u7167": "Task snapshot for this frame",
+    "\u8BE5\u5E27\u672A\u88C5\u914D\u6D3B\u52A8\u4EFB\u52A1\u6E05\u5355\u3002": "No active task ledger was assembled for this frame.",
     "\u8F6E\u6B21\u8BC1\u636E": "Round evidence",
     "\u5F53\u524D\u8F6E\u5C1A\u65E0\u7ED3\u6784\u5316\u5DE5\u5177\u6216\u56DE\u6267\u8BC1\u636E\u3002": "The current round has no structured tool or receipt evidence.",
+    "\u8BE5\u5E27\u5C1A\u65E0\u7ED3\u6784\u5316\u5DE5\u5177\u8C03\u7528\u6216\u56DE\u6267\u8BC1\u636E\u3002": "This frame has no structured tool-call or receipt evidence.",
     "\u8BF7\u4ECE\u672C\u5730 GUI \u5BBF\u4E3B\u542F\u52A8\u754C\u9762\u3002": "Start the interface from the local GUI host.",
     "\u5C1A\u65E0\u56DE\u6267\u6216\u7ED3\u7B97\u4E8B\u4EF6\u3002": "No receipt or settlement events in this round.",
     "\u6CA1\u6709\u6295\u5F71\u5230\u4E8B\u6545\u539F\u56E0": "No incident reasons projected",
@@ -2632,7 +2635,22 @@
     "\u8BF7\u7A0D\u540E\u91CD\u8BD5\uFF1B\u6301\u7EED\u53D1\u751F\u65F6\u643A\u5E26\u6280\u672F\u8BE6\u60C5\u6392\u67E5\u4E0A\u6E38\u65E5\u5FD7\u3002": "Retry later. If it persists, use the technical details to investigate the upstream logs.",
     "\u672A\u8BC6\u522B\u7684\u6A21\u578B\u670D\u52A1\u9519\u8BEF": "Unrecognized model service error",
     "\u73B0\u6709\u4FE1\u606F\u4E0D\u8DB3\u4EE5\u53EF\u9760\u5224\u65AD\u9519\u8BEF\u7C7B\u522B\u3002": "The available information is not enough to classify this error reliably.",
-    "\u8BF7\u4FDD\u7559\u6280\u672F\u8BE6\u60C5\uFF0C\u5E76\u4ECE\u4E0A\u6E38\u65E5\u5FD7\u548C\u8FDE\u63A5\u914D\u7F6E\u7EE7\u7EED\u6392\u67E5\u3002": "Keep the technical details and continue from the upstream logs and connection settings."
+    "\u8BF7\u4FDD\u7559\u6280\u672F\u8BE6\u60C5\uFF0C\u5E76\u4ECE\u4E0A\u6E38\u65E5\u5FD7\u548C\u8FDE\u63A5\u914D\u7F6E\u7EE7\u7EED\u6392\u67E5\u3002": "Keep the technical details and continue from the upstream logs and connection settings.",
+    "\u653E\u884C": "Allow",
+    "\u653E\u884C\u6743\u9650\u4F1A\u5141\u8BB8\u526F\u4F5C\u7528\u5DE5\u5177\u76F4\u63A5\u6267\u884C\u3002\u4EC5\u786E\u8BA4\u5F53\u524D\u9875\u9762\u4F1A\u8BDD\u4F7F\u7528\u653E\u884C\u6743\u9650\uFF1F": "Allow mode lets side-effect tools run without per-call approval. Confirm Allow mode for this page session only?",
+    "\u6765\u6E90\u6216\u653E\u884C\u6743\u9650\u786E\u8BA4\u88AB\u62D2\u7EDD": "Origin or Allow-mode confirmation was rejected",
+    "\u653E\u884C\u6743\u9650\u5C06\u5728\u63D0\u4EA4\u65F6\u8981\u6C42\u660E\u786E\u786E\u8BA4\u3002": "Allow mode requires explicit confirmation when submitting.",
+    "\u5DE5\u5177\u6267\u884C\u5BA1\u6279": "Tool execution approval",
+    "\u5DF2\u5141\u8BB8": "Allowed",
+    "\u5DF2\u8DF3\u8FC7": "Skipped",
+    "\u5DF2\u53D6\u6D88": "Cancelled",
+    "\u6B63\u5728\u5904\u7406": "Processing",
+    "\u7B49\u5F85\u4F60\u7684\u51B3\u5B9A": "Waiting for your decision",
+    "\u8DF3\u8FC7": "Skip",
+    "\u672C\u6B21\u5141\u8BB8": "Allow once",
+    "\u5BA1\u6279\u5931\u8D25": "Approval failed",
+    "\u7B49\u5F85\u5DE5\u5177\u6267\u884C\u5BA1\u6279": "Waiting for tool execution approval",
+    "\u9ED8\u8BA4\u53D7\u9650\uFF1B\u526F\u4F5C\u7528\u5DE5\u5177\u4F1A\u5728\u5F53\u524D\u5BF9\u8BDD\u4E2D\u9010\u6B21\u8BF7\u6C42\u5BA1\u6279\u3002": "Guarded by default; side-effect tools request approval in this conversation."
   };
   function systemLocale(languages = typeof navigator === "undefined" ? [] : navigator.languages) {
     for (const language2 of languages) {
@@ -2795,6 +2813,8 @@
     awaitingProjection: false,
     submitBaseline: null,
     unlimitedConfirmed: false,
+    approvalSubmitting: "",
+    approvalFeedback: "",
     fullRefreshNeeded: true,
     renderKey: "",
     conversationRounds: /* @__PURE__ */ new Map(),
@@ -2911,6 +2931,8 @@
     selectedRelationId: "",
     memoryQuery: "",
     activeRuntimePane: "00_call_header",
+    selectedTaskRound: null,
+    selectedTaskFrame: null,
     selectedContextRound: null,
     selectedContextFrame: null,
     selectedLedgerRound: null
@@ -46988,10 +47010,11 @@
     return '\n    <details class="chat-tool-group" data-chat-anchor="'.concat(escapeHtml2(groupKey), '" data-conversation-card-key="').concat(escapeHtml2(groupKey), '" ').concat(open2 ? "open" : "", ">\n      <summary>").concat(callCount === 1 ? t("\u5DE5\u5177\u8F68\u8FF9 \xB7 1 \u6B21\u8C03\u7528") : t("\u5DE5\u5177\u8F68\u8FF9 \xB7 {count} \u6B21\u8C03\u7528", { count: callCount }), '</summary>\n      <div class="chat-tool-steps">\n        ').concat(steps.map((step, position3) => renderChatTraceStep(step, groupKey, position3)).join(""), "\n      </div>\n      ").concat(renderChatMeta(recordedAt), "\n    </details>\n  ");
   }
   function buildChatItems(conversation) {
-    let currentUserIndex = -1;
-    conversation.forEach((card, index2) => {
-      const text10 = String(card.content_raw || card.content_md || "");
-      if (card.type === "user" && text10.startsWith("\u3010\u672C\u8F6E\u4EA4\u4E92\u3011")) currentUserIndex = index2;
+    const latestApprovals = /* @__PURE__ */ new Map();
+    conversation.forEach((card) => {
+      if (card.type === "tool-approval" && card.approval_id) {
+        latestApprovals.set(card.approval_id, card);
+      }
     });
     const items = [];
     let trace = [];
@@ -46999,19 +47022,39 @@
       if (trace.length) items.push({ type: "tool-trace", cards: trace });
       trace = [];
     };
-    conversation.forEach((card, index2) => {
+    const emittedApprovals = /* @__PURE__ */ new Set();
+    conversation.forEach((card) => {
+      if (card.type === "tool-approval" && card.approval_id) {
+        if (emittedApprovals.has(card.approval_id)) return;
+        emittedApprovals.add(card.approval_id);
+        flushTrace();
+        items.push({
+          type: "tool-approval",
+          card: latestApprovals.get(card.approval_id) || card
+        });
+        return;
+      }
       const visibleStream = card.type === "assistant-streaming" && ["reaction", "final_reply"].includes(String(card.phase || "")) && Boolean(String(card.content_raw || "").trim());
       if (card.type === "assistant-streaming" && !visibleStream || isChatDisclosureCard(card)) {
         trace.push(card);
         return;
       }
-      if (card.type === "user" && index2 === currentUserIndex || visibleStream || ["assistant-progress", "assistant-final"].includes(card.type)) {
+      if (card.type === "user" || visibleStream || ["assistant-progress", "assistant-final"].includes(card.type)) {
         flushTrace();
         items.push({ type: "message", card });
       }
     });
     flushTrace();
     return items;
+  }
+  function renderToolApprovalCard(card, round) {
+    const pending = runtimeProjection.status?.pending_tool_approval;
+    const active = pending?.approval_id === card.approval_id && !card.decision;
+    const details = active ? pending?.details : null;
+    const submitting = runtimeProjection.approvalSubmitting === card.approval_id;
+    const stateText = card.decision === "allow_once" ? t("\u5DF2\u5141\u8BB8") : card.decision === "skip" ? t("\u5DF2\u8DF3\u8FC7") : card.decision === "cancelled" ? t("\u5DF2\u53D6\u6D88") : submitting ? t("\u6B63\u5728\u5904\u7406") : t("\u7B49\u5F85\u4F60\u7684\u51B3\u5B9A");
+    const summary = String(card.content_raw || card.summary || card.tool_id || "").trim();
+    return '\n    <section class="tool-approval-card '.concat(active ? "pending" : "resolved", '" data-chat-anchor="').concat(escapeHtml2("".concat(round, ":approval:").concat(card.approval_id)), '">\n      <div class="tool-approval-head"><b>').concat(t("\u5DE5\u5177\u6267\u884C\u5BA1\u6279"), "</b><span>").concat(escapeHtml2(stateText), "</span></div>\n      <p><code>").concat(escapeHtml2(card.tool_id || pending?.tool_id || ""), "</code>").concat(summary ? " \xB7 ".concat(escapeHtml2(summary)) : "", "</p>\n      ").concat(details ? '<details class="tool-approval-details"><summary>'.concat(t("\u6280\u672F\u8BE6\u60C5"), "</summary><pre>").concat(escapeHtml2(JSON.stringify(details, null, 2)), "</pre></details>") : "", "\n      ").concat(active ? '<div class="tool-approval-actions" role="group" aria-label="'.concat(t("\u5DE5\u5177\u6267\u884C\u5BA1\u6279"), '">\n        <button type="button" data-tool-approval-id="').concat(escapeHtml2(card.approval_id), '" data-tool-approval-decision="skip" ').concat(submitting ? "disabled" : "", ">").concat(submitting ? t("\u6B63\u5728\u5904\u7406") : t("\u8DF3\u8FC7"), '</button>\n        <button type="button" data-tool-approval-id="').concat(escapeHtml2(card.approval_id), '" data-tool-approval-decision="allow_once" ').concat(submitting ? "disabled" : "", ">").concat(submitting ? t("\u6B63\u5728\u5904\u7406") : t("\u672C\u6B21\u5141\u8BB8"), "</button>\n      </div>") : "", "\n      ").concat(runtimeProjection.approvalFeedback && active ? '<small role="status">'.concat(escapeHtml2(runtimeProjection.approvalFeedback), "</small>") : "", "\n      ").concat(renderChatMeta(card.recorded_at || pending?.requested_at), "\n    </section>\n  ");
   }
   function chatMessageText(card) {
     const text10 = String(card.content_raw || card.content_md || "");
@@ -47050,6 +47093,7 @@
     const historyNotice = runtimeProjection.conversationHistoryError ? '\n    <p class="chat-history-warning">\n      <span>'.concat(t("\u8F83\u65E9\u5BF9\u8BDD\u672A\u5B8C\u5168\u8F7D\u5165"), '</span>\n      <button type="button" data-retry-projection="history">').concat(t("\u91CD\u8BD5"), "</button>\n    </p>\n  ") : "";
     els.chatThread.innerHTML = items.length || historyNotice ? historyNotice + items.map((item, position3) => {
       if (item.type === "tool-trace") return renderChatTraceGroup(item.cards, item.round);
+      if (item.type === "tool-approval") return renderToolApprovalCard(item.card, item.round);
       const card = item.card;
       const kind = card.type === "user" ? "user" : "system";
       const who = card.type === "user" ? t("\u4F60") : personaAbbreviation();
@@ -47215,6 +47259,42 @@
     if (!records.length) return '<p class="runtime-empty-copy">'.concat(escapeHtml2(emptyText), "</p>");
     return '<div class="task-record-list">'.concat(records.map((record) => '\n    <article class="task-record '.concat(record.status === "blocked" ? "warn" : "", '">\n      <header><b>').concat(escapeHtml2(record.id), "</b><em>").concat(escapeHtml2(record.status || "unknown"), "</em></header>\n      <p>").concat(escapeHtml2(record.title || "\u65E0\u63CF\u8FF0"), "</p>\n      <small>").concat(record.required ? "\u5FC5\u9700" : "\u53EF\u9009").concat(record.reason ? " \xB7 ".concat(escapeHtml2(record.reason)) : "", "</small>\n      ").concat((record.evidence_refs || []).length ? '<div class="task-evidence-refs">'.concat((record.evidence_refs || []).map((ref) => "<code>".concat(escapeHtml2(ref), "</code>")).join(""), "</div>") : "", "\n    </article>\n  ")).join(""), "</div>");
   }
+  function taskEvidenceSelection() {
+    const rounds = runtimeProjection.conversationRoundOrder;
+    if (state.selectedTaskRound !== null && !runtimeProjection.conversationRounds.has(state.selectedTaskRound)) {
+      state.selectedTaskRound = null;
+      state.selectedTaskFrame = null;
+    }
+    const round = state.selectedTaskRound ?? runtimeProjection.round ?? rounds.at(-1) ?? null;
+    if (round === null) return null;
+    const live = round === runtimeProjection.round ? runtimeProjection.live : runtimeProjection.conversationRounds.get(round) || null;
+    if (!live) return null;
+    const frames = live.call_frames || [];
+    if (state.selectedTaskFrame !== null && !frames.some((frame2) => frame2.frame_id === state.selectedTaskFrame)) {
+      state.selectedTaskFrame = null;
+    }
+    const frame = state.selectedTaskFrame === null ? frames.at(-1) || null : frames.find((item) => item.frame_id === state.selectedTaskFrame) || null;
+    return { round, live, frame };
+  }
+  function taskRoundSelector(selectedRound) {
+    const rounds = runtimeProjection.conversationRoundOrder;
+    const latest = runtimeProjection.round ?? rounds.at(-1) ?? selectedRound;
+    const historical = rounds.filter((round) => round !== latest).reverse();
+    return '<label class="protocol-round-select"><span>'.concat(t("\u9009\u62E9\u8F6E\u6B21"), '</span><select data-task-round>\n    <option value="latest" ').concat(state.selectedTaskRound === null ? "selected" : "", ">").concat(t("\u6700\u65B0"), " \xB7 R").concat(escapeHtml2(latest), "</option>\n    ").concat(historical.map((round) => '<option value="'.concat(escapeHtml2(round), '" ').concat(state.selectedTaskRound === round ? "selected" : "", ">R").concat(escapeHtml2(round), "</option>")).join(""), "\n  </select></label>");
+  }
+  function taskFrameSelector(frames, selectedFrame) {
+    const historical = frames.filter((frame) => frame.frame_id !== frames.at(-1)?.frame_id).reverse();
+    const label = (frame) => "".concat(runtimeTerm(frame.phase || frame.call_channel || "frame"), " \xB7 ").concat(frame.iteration ?? 1);
+    return '<label class="protocol-round-select"><span>'.concat(t("\u9009\u62E9\u5E27\u6B21"), '</span><select data-task-frame>\n    <option value="latest" ').concat(state.selectedTaskFrame === null ? "selected" : "", ">").concat(t("\u6700\u65B0"), " \xB7 ").concat(escapeHtml2(label(frames.at(-1) || selectedFrame)), "</option>\n    ").concat(historical.map((frame) => '<option value="'.concat(escapeHtml2(frame.frame_id), '" ').concat(state.selectedTaskFrame === frame.frame_id ? "selected" : "", ">").concat(escapeHtml2(label(frame)), "</option>")).join(""), "\n  </select></label>");
+  }
+  function taskFrameSnapshot(frame) {
+    const pane = frame?.context_panes?.find((item) => item.id === "40_high_freq");
+    const source2 = String(pane?.content_raw || pane?.content_md || "");
+    const start2 = source2.indexOf("## \u5F53\u524D\u4EFB\u52A1\u6E05\u5355\u72B6\u6001");
+    if (start2 < 0) return "";
+    const end = source2.indexOf("\n<!-- [STEP_TOOLBELT:", start2);
+    return source2.slice(start2, end < 0 ? void 0 : end).trim();
+  }
   function renderTaskEvidencePage() {
     if (runtimeProjection.host !== "connected") {
       return renderRuntimeEmpty("WORKBENCH", "\u672C\u5730\u5BBF\u4E3B\u672A\u8FDE\u63A5", runtimeProjection.error || "\u65E0\u6CD5\u8BFB\u53D6\u4EFB\u52A1\u771F\u8D26\u3002", "runtime");
@@ -47231,11 +47311,15 @@
     const relay = relayRuntimeState();
     const relayDisabled = !relay.ready || relay.inFlight || relay.mutationInFlight;
     const relayLabel = relay.inFlight ? "\u4E2D\u7EE7\u6267\u884C\u4E2D" : relay.ready ? "\u53EF\u4EE5\u7EE7\u7EED" : "\u7B49\u5F85 continue_requested";
-    const evidenceCards = (runtimeProjection.live?.conversation || []).filter((card) => card.type === "tool-result" || String(card.event_type || "").includes("receipt")).slice(-8).reverse();
+    const selectedEvidence = taskEvidenceSelection();
+    const selectedFrame = selectedEvidence?.frame || null;
+    const evidenceCards = (selectedEvidence?.live.conversation || []).filter((card) => (card.type === "tool-call" || card.type === "tool-result" || String(card.event_type || "").includes("receipt")) && (!selectedFrame || card.frame_id === selectedFrame.frame_id)).slice(-8).reverse();
+    const reviewingHistory = state.selectedTaskRound !== null || state.selectedTaskFrame !== null;
+    const taskSnapshot = reviewingHistory ? taskFrameSnapshot(selectedFrame) : "";
     const pendingInputs = task?.pending_inputs || [];
     const requirements = task?.source_requirements || [];
     const risks = task?.risk_notes || [];
-    return '<section class="task-workspace">\n    <header class="task-hero">\n      <div><span class="hud-label">'.concat(t("\u4EFB\u52A1\u5DE5\u4F5C\u53F0"), " \xB7 ").concat(escapeHtml2(projection.active_guides?.work || t("\u5F53\u524D\u6CA1\u6709\u6D3B\u52A8\u4EFB\u52A1")), "</span>\n        <h2>").concat(escapeHtml2(task?.title || t("\u5F53\u524D\u6CA1\u6709\u6D3B\u52A8\u4EFB\u52A1")), "</h2>\n        <p>").concat(escapeHtml2(task?.goal || t("\u5DE5\u4F5C\u53F0\u672A\u767B\u8BB0\u6D3B\u52A8\u4EFB\u52A1\uFF1B\u4E0D\u4F1A\u4ECE\u5BF9\u8BDD\u6587\u6848\u63A8\u65AD\u4EFB\u52A1\u3002")), '</p>\n      </div>\n      <dl class="task-metrics">\n        <div><dt>').concat(t("\u9879\u76EE\u6570"), "</dt><dd>").concat(escapeHtml2(summary.open_items || 0), "</dd></div>\n        <div><dt>").concat(t("\u9A8C\u6536\u6570"), "</dt><dd>").concat(escapeHtml2(summary.pending_acceptance || 0), "</dd></div>\n        <div><dt>").concat(t("\u8F93\u5165\u6570"), "</dt><dd>").concat(escapeHtml2(summary.open_pending_inputs || 0), "</dd></div>\n        <div><dt>").concat(t("\u4EFB\u52A1\u72B6\u6001"), "</dt><dd>").concat(escapeHtml2(runtimeTerm(summary.state || "empty")), '</dd></div>\n      </dl>\n    </header>\n    <section class="relay-console ').concat(relay.ready ? "ready" : "", '">\n      <div><span class="hud-label">').concat(t("\u8FD0\u884C\u65F6\u4E2D\u7EE7"), " \xB7 ").concat(escapeHtml2(relay.roundType), "</span><strong>").concat(escapeHtml2(relayLabel), "</strong>\n        <p>").concat(t("\u53EA\u5728\u7ED3\u6784\u5316\u72B6\u6001\u540C\u65F6\u7ED9\u51FA\u4E2D\u7EE7\u8F6E\u578B\u4E0E\u7EE7\u7EED\u8BF7\u6C42\u65F6\u5F00\u653E\uFF1B\u6267\u884C\u6743\u9650\u7EE7\u627F\u4E0B\u65B9\u901A\u4FE1\u5E26\u3002"), ' <code>round_type=relay</code> \xB7 <code>continue_requested</code></p>\n      </div>\n      <button type="button" data-runtime-relay ').concat(relayDisabled ? "disabled" : "", ">").concat(t("\u6267\u884C\u4E0B\u4E00\u4E2D\u7EE7\u8F6E"), '</button>\n      <span role="status">').concat(escapeHtml2(taskProjection.relayFeedback || (relay.ready ? t("\u672A\u6267\u884C\uFF1B\u7B49\u5F85\u7528\u6237\u64CD\u4F5C\u3002") : "flags: ".concat(relay.activeFlags.join(", ") || "none"))), '</span>\n    </section>\n    <div class="task-columns">\n      <section class="task-pane"><header><span class="hud-label">').concat(t("\u4EFB\u52A1\u8D26\u672C"), "</span><strong>").concat(escapeHtml2(task?.id || "none"), '</strong></header>\n        <div class="task-pane-scroll" data-stage-scroll-key="').concat(escapeHtml2("run:tools:task:".concat(task?.id || "none")), '">\n          ').concat(pendingInputs.length ? '<section class="task-subsection"><h3>'.concat(t("\u5F85\u6574\u5408\u8F93\u5165"), "</h3>").concat(pendingInputs.map((item) => '<article class="task-pending"><b>'.concat(escapeHtml2(item.id), "</b><em>").concat(escapeHtml2(item.status), "</em><p>").concat(escapeHtml2(item.summary || t("\u65E0\u6458\u8981")), "</p>").concat((item.source_refs || []).map((ref) => "<code>".concat(escapeHtml2(ref), "</code>")).join(""), "</article>")).join(""), "</section>") : "", '\n          <section class="task-subsection"><h3>').concat(t("\u4EFB\u52A1\u9879"), "</h3>").concat(taskRecordRows(task?.items || [], t("\u5F53\u524D\u6CA1\u6709\u4EFB\u52A1\u9879\u3002")), '</section>\n          <section class="task-subsection"><h3>').concat(t("\u9A8C\u6536\u9879"), "</h3>").concat(taskRecordRows(task?.acceptance || [], t("\u5F53\u524D\u6CA1\u6709\u9A8C\u6536\u9879\u3002")), "</section>\n          ").concat(requirements.length ? '<section class="task-subsection"><h3>'.concat(t("\u6765\u6E90\u8981\u6C42"), "</h3>").concat(requirements.map((item) => "<p><b>".concat(escapeHtml2(item.id), "</b>").concat(escapeHtml2(item.summary || t("\u65E0\u6458\u8981")), "</p>")).join(""), "</section>") : "", "\n          ").concat(risks.length ? '<section class="task-subsection warn"><h3>'.concat(t("\u98CE\u9669\u5907\u6CE8"), "</h3>").concat(risks.map((note) => "<p>".concat(escapeHtml2(note), "</p>")).join(""), "</section>") : "", '\n        </div>\n      </section>\n      <section class="task-pane evidence"><header><span class="hud-label">').concat(t("\u8F6E\u6B21\u8BC1\u636E"), "</span><strong>").concat(escapeHtml2(runtimeProjection.round == null ? t("\u65E0\u8F6E\u6B21") : "R".concat(runtimeProjection.round)), "</strong></header>\n        ").concat(renderRuntimeCards(evidenceCards, t("\u5F53\u524D\u8F6E\u5C1A\u65E0\u7ED3\u6784\u5316\u5DE5\u5177\u6216\u56DE\u6267\u8BC1\u636E\u3002"), "run:tools:evidence:".concat(task?.id || "none", ":").concat(runtimeProjection.round ?? "none")), "\n      </section>\n    </div>\n  </section>");
+    return '<section class="task-workspace">\n    <header class="task-hero">\n      <div><span class="hud-label">'.concat(t("\u4EFB\u52A1\u5DE5\u4F5C\u53F0"), " \xB7 ").concat(escapeHtml2(projection.active_guides?.work || t("\u5F53\u524D\u6CA1\u6709\u6D3B\u52A8\u4EFB\u52A1")), "</span>\n        <h2>").concat(escapeHtml2(task?.title || t("\u5F53\u524D\u6CA1\u6709\u6D3B\u52A8\u4EFB\u52A1")), "</h2>\n        <p>").concat(escapeHtml2(task?.goal || t("\u5DE5\u4F5C\u53F0\u672A\u767B\u8BB0\u6D3B\u52A8\u4EFB\u52A1\uFF1B\u4E0D\u4F1A\u4ECE\u5BF9\u8BDD\u6587\u6848\u63A8\u65AD\u4EFB\u52A1\u3002")), '</p>\n      </div>\n      <dl class="task-metrics">\n        <div><dt>').concat(t("\u9879\u76EE\u6570"), "</dt><dd>").concat(escapeHtml2(summary.open_items || 0), "</dd></div>\n        <div><dt>").concat(t("\u9A8C\u6536\u6570"), "</dt><dd>").concat(escapeHtml2(summary.pending_acceptance || 0), "</dd></div>\n        <div><dt>").concat(t("\u8F93\u5165\u6570"), "</dt><dd>").concat(escapeHtml2(summary.open_pending_inputs || 0), "</dd></div>\n        <div><dt>").concat(t("\u4EFB\u52A1\u72B6\u6001"), "</dt><dd>").concat(escapeHtml2(runtimeTerm(summary.state || "empty")), '</dd></div>\n      </dl>\n    </header>\n    <section class="relay-console ').concat(relay.ready ? "ready" : "", '">\n      <div><span class="hud-label">').concat(t("\u8FD0\u884C\u65F6\u4E2D\u7EE7"), " \xB7 ").concat(escapeHtml2(relay.roundType), "</span><strong>").concat(escapeHtml2(relayLabel), "</strong>\n        <p>").concat(t("\u53EA\u5728\u7ED3\u6784\u5316\u72B6\u6001\u540C\u65F6\u7ED9\u51FA\u4E2D\u7EE7\u8F6E\u578B\u4E0E\u7EE7\u7EED\u8BF7\u6C42\u65F6\u5F00\u653E\uFF1B\u6267\u884C\u6743\u9650\u7EE7\u627F\u4E0B\u65B9\u901A\u4FE1\u5E26\u3002"), ' <code>round_type=relay</code> \xB7 <code>continue_requested</code></p>\n      </div>\n      <button type="button" data-runtime-relay ').concat(relayDisabled ? "disabled" : "", ">").concat(t("\u6267\u884C\u4E0B\u4E00\u4E2D\u7EE7\u8F6E"), '</button>\n      <span role="status">').concat(escapeHtml2(taskProjection.relayFeedback || (relay.ready ? t("\u672A\u6267\u884C\uFF1B\u7B49\u5F85\u7528\u6237\u64CD\u4F5C\u3002") : "flags: ".concat(relay.activeFlags.join(", ") || "none"))), '</span>\n    </section>\n    <div class="task-columns">\n      <section class="task-pane"><header><span class="hud-label">').concat(t(reviewingHistory ? "\u8BE5\u5E27\u4EFB\u52A1\u5FEB\u7167" : "\u4EFB\u52A1\u8D26\u672C"), "</span><strong>").concat(escapeHtml2(reviewingHistory ? selectedFrame?.frame_id || "none" : task?.id || "none"), '</strong></header>\n        <div class="task-pane-scroll ').concat(reviewingHistory ? "task-frame-snapshot" : "", '" data-stage-scroll-key="').concat(escapeHtml2(reviewingHistory ? "run:tools:task:".concat(selectedEvidence?.round || "none", ":").concat(selectedFrame?.frame_id || "none") : "run:tools:task:".concat(task?.id || "none")), '">\n          ').concat(reviewingHistory ? taskSnapshot ? renderMarkdownDocument("task-snapshot:".concat(selectedEvidence?.round, ":").concat(selectedFrame?.frame_id), taskSnapshot) : '<p class="runtime-empty-copy">'.concat(t("\u8BE5\u5E27\u672A\u88C5\u914D\u6D3B\u52A8\u4EFB\u52A1\u6E05\u5355\u3002"), "</p>") : "".concat(pendingInputs.length ? '<section class="task-subsection"><h3>'.concat(t("\u5F85\u6574\u5408\u8F93\u5165"), "</h3>").concat(pendingInputs.map((item) => '<article class="task-pending"><b>'.concat(escapeHtml2(item.id), "</b><em>").concat(escapeHtml2(item.status), "</em><p>").concat(escapeHtml2(item.summary || t("\u65E0\u6458\u8981")), "</p>").concat((item.source_refs || []).map((ref) => "<code>".concat(escapeHtml2(ref), "</code>")).join(""), "</article>")).join(""), "</section>") : "", '\n          <section class="task-subsection"><h3>').concat(t("\u4EFB\u52A1\u9879"), "</h3>").concat(taskRecordRows(task?.items || [], t("\u5F53\u524D\u6CA1\u6709\u4EFB\u52A1\u9879\u3002")), '</section>\n          <section class="task-subsection"><h3>').concat(t("\u9A8C\u6536\u9879"), "</h3>").concat(taskRecordRows(task?.acceptance || [], t("\u5F53\u524D\u6CA1\u6709\u9A8C\u6536\u9879\u3002")), "</section>\n          ").concat(requirements.length ? '<section class="task-subsection"><h3>'.concat(t("\u6765\u6E90\u8981\u6C42"), "</h3>").concat(requirements.map((item) => "<p><b>".concat(escapeHtml2(item.id), "</b>").concat(escapeHtml2(item.summary || t("\u65E0\u6458\u8981")), "</p>")).join(""), "</section>") : "", "\n          ").concat(risks.length ? '<section class="task-subsection warn"><h3>'.concat(t("\u98CE\u9669\u5907\u6CE8"), "</h3>").concat(risks.map((note) => "<p>".concat(escapeHtml2(note), "</p>")).join(""), "</section>") : ""), '\n        </div>\n      </section>\n      <section class="task-pane evidence"><header class="task-evidence-header"><div><span class="hud-label">').concat(t("\u8F6E\u6B21\u8BC1\u636E"), "</span><strong>").concat(escapeHtml2(selectedEvidence ? "".concat(t("\u672C\u5730\u5BBF\u4E3B\u5DF2\u8FDE\u63A5"), " \xB7 R").concat(selectedEvidence.round, " \xB7 ").concat(selectedFrame?.frame_id || t("\u5C1A\u65E0\u5E27\u6B21")) : t("\u65E0\u8F6E\u6B21")), "</strong></div>\n        ").concat(selectedEvidence && selectedFrame ? '<div class="context-selectors">'.concat(taskRoundSelector(selectedEvidence.round)).concat(taskFrameSelector(selectedEvidence.live.call_frames || [], selectedFrame), "</div>") : "", "</header>\n        ").concat(renderRuntimeCards(evidenceCards, t("\u8BE5\u5E27\u5C1A\u65E0\u7ED3\u6784\u5316\u5DE5\u5177\u8C03\u7528\u6216\u56DE\u6267\u8BC1\u636E\u3002"), "run:tools:evidence:".concat(selectedEvidence?.round ?? "none", ":").concat(selectedFrame?.frame_id || "none")), "\n      </section>\n    </div>\n  </section>");
   }
   function renderRuntimeRunPage() {
     if (runtimeProjection.host !== "connected") {
@@ -47323,7 +47407,7 @@
     const values = [
       [t("\u539F\u751F\u5DE5\u5177\u6A21\u5F0F"), data.native_tool_mode == null ? t("\u672A\u8BBE\u7F6E") : String(data.native_tool_mode)],
       [t("\u6743\u9650\u8BF4\u660E"), String(data.permission_label || t("\u672A\u6807\u8BB0"))],
-      [t("\u6743\u9650\u7EA7\u522B"), data.permission_level === "limited" ? t("\u53D7\u9650") : data.permission_level === "unlimited" ? t("\u5B8C\u6574") : String(data.permission_level || t("\u672A\u6807\u8BB0"))],
+      [t("\u6743\u9650\u7EA7\u522B"), data.permission_level === "limited" ? t("\u53EA\u8BFB") : data.permission_level === "guarded" ? t("\u53D7\u9650") : data.permission_level === "unlimited" ? t("\u653E\u884C") : String(data.permission_level || t("\u672A\u6807\u8BB0"))],
       [t("\u6807\u51C6\u5DE5\u5177"), enabled(data.standard_tools_enabled, "\u5DF2\u542F\u7528", "\u672A\u542F\u7528")],
       [t("\u7EC8\u7AEF\u5DE5\u5177"), data.terminal_tool === "reaction_finalize" ? t("\u53CD\u5E94\u9636\u6BB5\u6536\u675F") : String(data.terminal_tool || t("\u672A\u8BBE\u7F6E"))],
       [t("\u5DE5\u5177\u6A21\u5F0F"), data.tool_mode === "free" ? t("\u81EA\u7531") : String(data.tool_mode || t("\u672A\u6807\u8BB0"))],
@@ -47934,7 +48018,7 @@
     const data = settingsProjection.data;
     if (!data) return "";
     const supported = (model?.reasoning.supported || []).join(", ");
-    return '<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="'.concat(escapeHtml2(model?.id || ""), '" autocomplete="off">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(model?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u670D\u52A1\u8FDE\u63A5"), '</span><select name="connection_id" required><option value="">').concat(t("\u8BF7\u9009\u62E9"), "</option>").concat(data.model_catalog.connections.map((item) => '<option value="'.concat(escapeHtml2(item.id), '" ').concat(model?.connection_id === item.id ? "selected" : "", ">").concat(escapeHtml2(item.alias), "</option>")).join(""), "</select></label>\n    <label><span>").concat(t("\u6A21\u578B ID"), '</span><input name="model" value="').concat(escapeHtml2(model?.model || ""), '" required></label>\n    <label><span>').concat(t("\u4E0A\u4E0B\u6587\u7A97\u53E3"), '</span><input name="context_window" type="number" min="0" max="100000000" value="').concat(escapeHtml2(model?.context_window ?? 0), '" required></label>\n    <label><span>').concat(t("\u652F\u6301\u7684\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_supported" value="').concat(escapeHtml2(supported), '" placeholder="low, medium, high"></label>\n    <label><span>').concat(t("\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_default" value="').concat(escapeHtml2(model?.reasoning.default || ""), '"></label>\n    <div class="settings-switch"><span>').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '</span><input name="streaming_enabled" type="checkbox" aria-label="').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '" ').concat(model?.streaming.enabled !== false ? "checked" : "", '></div>\n    <div class="settings-switch"><span>').concat(t("\u8FD4\u56DE\u7528\u91CF"), '</span><input name="streaming_include_usage" type="checkbox" aria-label="').concat(t("\u8FD4\u56DE\u7528\u91CF"), '" ').concat(model?.streaming.include_usage !== false ? "checked" : "", "></div>\n    <label><span>").concat(t("\u63D0\u793A\u7F13\u5B58\u7B56\u7565"), '</span><select name="prompt_cache_profile">\n      <option value="off" ').concat(model?.prompt_cache.profile === "off" || !model ? "selected" : "", ">").concat(t("\u5173\u95ED"), '</option>\n      <option value="key_only" ').concat(model?.prompt_cache.profile === "key_only" ? "selected" : "", ">").concat(t("\u4EC5\u7F13\u5B58\u952E"), '</option>\n      <option value="gpt56_explicit_permanent" ').concat(model?.prompt_cache.profile === "gpt56_explicit_permanent" ? "selected" : "", ">").concat(t("\u6C38\u4E45\u5C42\u663E\u5F0F\u7F13\u5B58"), '</option>\n      <option value="gpt56_explicit_tiered" ').concat(model?.prompt_cache.profile === "gpt56_explicit_tiered" ? "selected" : "", ">").concat(t("\u5206\u5C42\u663E\u5F0F\u7F13\u5B58"), '</option>\n    </select></label>\n    <details class="wide"><summary>').concat(t("\u517C\u5BB9\u8BF7\u6C42\u53C2\u6570"), '</summary><label><span>JSON</span><textarea name="request_overrides" rows="6">').concat(escapeHtml2(JSON.stringify(model?.request_overrides || {}, null, 2)), '</textarea></label></details>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
+    return '<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="'.concat(escapeHtml2(model?.id || ""), '" autocomplete="off">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(model?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u670D\u52A1\u8FDE\u63A5"), '</span><select name="connection_id" required><option value="">').concat(t("\u8BF7\u9009\u62E9"), "</option>").concat(data.model_catalog.connections.map((item) => '<option value="'.concat(escapeHtml2(item.id), '" ').concat(model?.connection_id === item.id ? "selected" : "", ">").concat(escapeHtml2(item.alias), "</option>")).join(""), "</select></label>\n    <label><span>").concat(t("\u6A21\u578B ID"), '</span><input name="model" value="').concat(escapeHtml2(model?.model || ""), '" required></label>\n    <label><span>').concat(t("\u4E0A\u4E0B\u6587\u7A97\u53E3"), '</span><input name="context_window" type="number" min="0" max="100000000" value="').concat(escapeHtml2(model?.context_window ?? 0), '" required></label>\n    <label><span>').concat(t("\u652F\u6301\u7684\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_supported" value="').concat(escapeHtml2(supported), '" placeholder="low, medium, high"></label>\n    <label><span>').concat(t("\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_default" value="').concat(escapeHtml2(model?.reasoning.default || ""), '"></label>\n    <div class="settings-switch"><span>').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '</span><input name="streaming_enabled" type="checkbox" aria-label="').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '" ').concat(model?.streaming.enabled !== false ? "checked" : "", '></div>\n    <div class="settings-switch"><span>').concat(t("\u8FD4\u56DE\u7528\u91CF"), '</span><input name="streaming_include_usage" type="checkbox" aria-label="').concat(t("\u8FD4\u56DE\u7528\u91CF"), '" ').concat(model?.streaming.include_usage !== false ? "checked" : "", '></div>\n    <details class="wide"><summary>').concat(t("\u517C\u5BB9\u8BF7\u6C42\u53C2\u6570"), '</summary><label><span>JSON</span><textarea name="request_overrides" rows="6">').concat(escapeHtml2(JSON.stringify(model?.request_overrides || {}, null, 2)), '</textarea></label></details>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
   }
   function renderConnectionCard(connection) {
     const disabled = settingsProjection.pending ? "disabled" : "";
@@ -48307,6 +48391,8 @@
       els.sendFeedback.textContent = t("\u5C1A\u672A\u914D\u7F6E\u53EF\u7528\u6A21\u578B\uFF0C\u5B8C\u6210\u6A21\u578B\u670D\u52A1\u4E0E\u8D77\u624B\u8DEF\u7531\u540E\u5373\u53EF\u53D1\u9001\u3002");
     } else if (stage === "cleanup_local") {
       els.sendFeedback.textContent = t("\u6B63\u5728\u672C\u5730\u5584\u540E");
+    } else if (stage === "tool_approval") {
+      els.sendFeedback.textContent = t("\u7B49\u5F85\u5DE5\u5177\u6267\u884C\u5BA1\u6279");
     } else if (runtimeProjection.stopping || stopRequested && roundActive) {
       els.sendFeedback.textContent = t("\u6B63\u5728\u505C\u6B62\u751F\u6210");
     } else if (relayInFlight) {
@@ -48316,7 +48402,7 @@
     } else if (runtimeProjection.sendFeedback) {
       els.sendFeedback.textContent = runtimeProjection.sendFeedback;
     } else if (connected) {
-      els.sendFeedback.textContent = t("\u9ED8\u8BA4\u53D7\u9650\uFF1B\u5BF9\u8BDD\u4E0E\u8F68\u8FF9\u53EA\u663E\u793A\u771F\u5B9E\u8F6E\u6B21\u8D26\u672C\u3002");
+      els.sendFeedback.textContent = t("\u9ED8\u8BA4\u53D7\u9650\uFF1B\u526F\u4F5C\u7528\u5DE5\u5177\u4F1A\u5728\u5F53\u524D\u5BF9\u8BDD\u4E2D\u9010\u6B21\u8BF7\u6C42\u5BA1\u6279\u3002");
     } else {
       els.sendFeedback.textContent = t("\u7B49\u5F85\u672C\u5730\u5BBF\u4E3B");
     }
@@ -48793,6 +48879,10 @@
       if (state.selectedContextRound !== null && !retained.has(state.selectedContextRound)) {
         state.selectedContextRound = null;
       }
+      if (state.selectedTaskRound !== null && !retained.has(state.selectedTaskRound)) {
+        state.selectedTaskRound = null;
+        state.selectedTaskFrame = null;
+      }
       runtimeProjection.conversationHistoryError = failed.length ? t("\u8F83\u65E9\u5BF9\u8BDD\u672A\u5B8C\u5168\u8F7D\u5165") : "";
     } catch (error) {
       runtimeProjection.conversationHistoryError = t("\u8F83\u65E9\u5BF9\u8BDD\u672A\u5B8C\u5168\u8F7D\u5165");
@@ -48826,6 +48916,10 @@
       return polling.runtime;
     }
     const request = (async () => {
+      const previousRound = runtimeProjection.round;
+      const previousEventIndex = Number(
+        runtimeProjection.live?.last_event_index || 0
+      );
       try {
         const [status, livePayload] = await Promise.all([
           fetchRuntimeJson("./api/runtime/status"),
@@ -48840,7 +48934,11 @@
         runtimeProjection.round = livePayload.round;
         runtimeProjection.error = "";
         runtimeProjection.fullRefreshNeeded = false;
+        const liveAdvanced = previousRound !== livePayload.round || previousEventIndex !== Number(livePayload.state?.last_event_index || 0);
         await syncConversationHistory();
+        if (liveAdvanced) {
+          await pollTaskProjection({ force: true, ignoreVisibility: true });
+        }
         if (runtimeProjection.awaitingProjection && runtimeProjectionAdvanced()) {
           runtimeProjection.awaitingProjection = false;
           runtimeProjection.submitBaseline = null;
@@ -48868,7 +48966,7 @@
     const status = runtimeProjection.status;
     const lifecycle = runtimeProjection.live?.round_lifecycle?.state;
     return Boolean(
-      status?.send_in_flight || status?.relay_in_flight || status?.mutation_in_flight || status?.can_stop || status?.stop_requested || lifecycle && !["closed", "settled", "unsettled"].includes(lifecycle)
+      status?.send_in_flight || status?.pending_tool_approval || status?.relay_in_flight || status?.mutation_in_flight || status?.can_stop || status?.stop_requested || lifecycle && !["closed", "settled", "unsettled"].includes(lifecycle)
     );
   }
   function pollTaskProjection({ force = false, ignoreVisibility = false } = {}) {
@@ -49264,9 +49362,9 @@
   }
   function confirmUnlimitedPermission(permissionLevel) {
     if (permissionLevel !== "unlimited" || runtimeProjection.unlimitedConfirmed) return true;
-    const confirmed = window.confirm(t("\u5B8C\u6574\u6743\u9650\u4F1A\u5141\u8BB8\u8FD0\u884C\u65F6\u4F7F\u7528 unrestricted \u5DE5\u5177\u3002\u4EC5\u786E\u8BA4\u5F53\u524D\u9875\u9762\u4F1A\u8BDD\u4F7F\u7528\u5B8C\u6574\u6743\u9650\uFF1F"));
+    const confirmed = window.confirm(t("\u653E\u884C\u6743\u9650\u4F1A\u5141\u8BB8\u526F\u4F5C\u7528\u5DE5\u5177\u76F4\u63A5\u6267\u884C\u3002\u4EC5\u786E\u8BA4\u5F53\u524D\u9875\u9762\u4F1A\u8BDD\u4F7F\u7528\u653E\u884C\u6743\u9650\uFF1F"));
     if (!confirmed) {
-      els.permissionLevel.value = "limited";
+      els.permissionLevel.value = "guarded";
       runtimeProjection.unlimitedConfirmed = false;
       return false;
     }
@@ -49324,7 +49422,7 @@
       runtimeProjection.submitBaseline = null;
       const labels = {
         400: t("\u8F93\u5165\u53C2\u6570\u65E0\u6548"),
-        403: t("\u6765\u6E90\u6216\u5B8C\u6574\u6743\u9650\u786E\u8BA4\u88AB\u62D2\u7EDD"),
+        403: t("\u6765\u6E90\u6216\u653E\u884C\u6743\u9650\u786E\u8BA4\u88AB\u62D2\u7EDD"),
         409: t("\u5DF2\u6709\u8FD0\u884C\u65F6\u5199\u64CD\u4F5C\u6B63\u5728\u6267\u884C"),
         502: t("\u8FD0\u884C\u65F6\u6267\u884C\u5931\u8D25"),
         503: t("\u672C\u5730\u8FD0\u884C\u65F6\u5BBF\u4E3B\u4E0D\u53EF\u7528")
@@ -49332,6 +49430,25 @@
       runtimeProjection.sendFeedback = "".concat(labels[failure.status] || t("\u63D0\u4EA4\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
     } finally {
       runtimeProjection.sending = false;
+      await pollRuntime({ forceFull: true, ignoreVisibility: true });
+    }
+  }
+  async function submitToolApproval(approvalId, decision) {
+    if (!approvalId || runtimeProjection.approvalSubmitting) return;
+    runtimeProjection.approvalSubmitting = approvalId;
+    runtimeProjection.approvalFeedback = "";
+    renderChat();
+    try {
+      await fetchRuntimeJson("./api/runtime/tool-approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approval_id: approvalId, decision })
+      });
+    } catch (error) {
+      const failure = errorView(error);
+      runtimeProjection.approvalFeedback = "".concat(t("\u5BA1\u6279\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
+    } finally {
+      runtimeProjection.approvalSubmitting = "";
       await pollRuntime({ forceFull: true, ignoreVisibility: true });
     }
   }
@@ -49429,7 +49546,7 @@
       const failure = errorView(error);
       const labels = {
         400: t("\u4E2D\u7EE7\u53C2\u6570\u65E0\u6548"),
-        403: t("\u6765\u6E90\u6216\u5B8C\u6574\u6743\u9650\u786E\u8BA4\u88AB\u62D2\u7EDD"),
+        403: t("\u6765\u6E90\u6216\u653E\u884C\u6743\u9650\u786E\u8BA4\u88AB\u62D2\u7EDD"),
         409: t("\u4E2D\u7EE7\u72B6\u6001\u5DF2\u53D8\u5316\u6216\u5DF2\u6709\u5199\u64CD\u4F5C\u5728\u9014"),
         502: t("\u8FD0\u884C\u65F6\u4E2D\u7EE7\u6267\u884C\u5931\u8D25"),
         503: t("\u672C\u5730\u8FD0\u884C\u65F6\u5BBF\u4E3B\u4E0D\u53EF\u7528")
@@ -49555,6 +49672,15 @@
     return values;
   }
   function initEvents() {
+    els.chatThread.addEventListener("click", (event) => {
+      const button = eventElement(event)?.closest("[data-tool-approval-decision]");
+      if (!button) return;
+      const approvalId = button.dataset.toolApprovalId || "";
+      const decision = button.dataset.toolApprovalDecision;
+      if (decision === "allow_once" || decision === "skip") {
+        void submitToolApproval(approvalId, decision);
+      }
+    });
     initMarkdownInteractions();
     document.addEventListener("click", (event) => {
       const target = eventElement(event);
@@ -49930,7 +50056,6 @@
             reasoning_default: text10("reasoning_default"),
             streaming_enabled: fields.get("streaming_enabled") === "on",
             streaming_include_usage: fields.get("streaming_include_usage") === "on",
-            prompt_cache_profile: text10("prompt_cache_profile") || "off",
             request_overrides: requestOverrides
           };
         }
@@ -49976,8 +50101,8 @@
       void submitSettings(updates);
     });
     els.permissionLevel.addEventListener("change", () => {
-      if (els.permissionLevel.value === "limited") runtimeProjection.unlimitedConfirmed = false;
-      runtimeProjection.sendFeedback = els.permissionLevel.value === "unlimited" ? t("\u5B8C\u6574\u6743\u9650\u5C06\u5728\u63D0\u4EA4\u65F6\u8981\u6C42\u660E\u786E\u786E\u8BA4\u3002") : "";
+      if (els.permissionLevel.value !== "unlimited") runtimeProjection.unlimitedConfirmed = false;
+      runtimeProjection.sendFeedback = els.permissionLevel.value === "unlimited" ? t("\u653E\u884C\u6743\u9650\u5C06\u5728\u63D0\u4EA4\u65F6\u8981\u6C42\u660E\u786E\u786E\u8BA4\u3002") : "";
       refreshRuntimeUi();
       if (state.activePage === "run" && getActivePageTab("run") === "tools") renderStage("run");
     });
@@ -50018,6 +50143,19 @@
       if (!selector) return;
       state.selectedContextFrame = selector.value === "latest" ? null : selector.value;
       renderStageAndFocus("context", "[data-context-frame]");
+    });
+    document.addEventListener("change", (event) => {
+      const selector = eventElement(event)?.closest("[data-task-round]");
+      if (!selector) return;
+      state.selectedTaskRound = selector.value === "latest" ? null : Number(selector.value);
+      state.selectedTaskFrame = null;
+      renderStageAndFocus("run", "[data-task-round]");
+    });
+    document.addEventListener("change", (event) => {
+      const selector = eventElement(event)?.closest("[data-task-frame]");
+      if (!selector) return;
+      state.selectedTaskFrame = selector.value === "latest" ? null : selector.value;
+      renderStageAndFocus("run", "[data-task-frame]");
     });
     els.messageInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
@@ -50137,7 +50275,7 @@
   async function start() {
     initEvents();
     initBootstrapEvents();
-    els.permissionLevel.value = "limited";
+    els.permissionLevel.value = "guarded";
     render3();
     renderBootstrap();
     await Promise.all([

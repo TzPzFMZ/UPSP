@@ -44,6 +44,25 @@ def test_spec462_rendered_corpus_entries_get_visible_short_ids_without_mutating_
     assert "active_corpus_id" not in entries[1]
 
 
+def test_spec721_existing_short_id_advances_allocator_without_collision():
+    from assembly.context_helpers import assign_active_corpus_ids
+
+    assigned, next_index = assign_active_corpus_ids([
+        {"kind": "tool_fact", "role": "tool", "content": "新语料"},
+        {
+            "kind": "interaction",
+            "role": "user",
+            "content": "旧语料",
+            "active_corpus_id": "C-00374",
+        },
+    ])
+
+    assert [entry["active_corpus_id"] for entry in assigned] == [
+        "C-00375", "C-00374"
+    ]
+    assert next_index == 376
+
+
 def test_spec286_corpus_headers_are_kind_specific_chinese_and_hide_audit_fields():
     from assembly.context_helpers import render_corpus_entry_for_context
 

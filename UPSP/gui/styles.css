@@ -1367,6 +1367,19 @@ pre { font-family: var(--font-mono); font-weight: 500; line-height: 1.4; }
 .chat-tool-code > :first-child { margin-top: 0; }
 .chat-tool-code > :last-child { margin-bottom: 0; }
 .chat-tool-group > .chat-item-meta { margin-left: 30px; }
+.tool-approval-card { margin: 0 0 var(--space-lg); padding: 10px 12px; border: 1px solid var(--line-mid); border-left: 2px solid var(--amber); background: rgba(25, 22, 11, 0.42); }
+.tool-approval-card.resolved { border-left-color: var(--dim); background: rgba(7, 23, 20, 0.42); }
+.tool-approval-head { display: flex; justify-content: space-between; gap: var(--space-sm); color: var(--muted); font: 600 var(--text-caption) var(--font-data); }
+.tool-approval-card p { margin: 7px 0; color: var(--text); overflow-wrap: anywhere; }
+.tool-approval-card code { color: var(--cyan-hot); }
+.tool-approval-details summary { width: fit-content; color: var(--muted); cursor: pointer; font-size: var(--text-meta); }
+.tool-approval-details pre { max-height: 260px; margin: 6px 0; padding: 8px; overflow: auto; white-space: pre-wrap; background: rgba(4, 16, 14, 0.72); }
+.tool-approval-actions { display: flex; gap: var(--space-xs); margin-top: 8px; }
+.tool-approval-actions button { min-height: 32px; padding: 0 11px; border: 1px solid var(--cyan); color: var(--cyan-hot); background: rgba(100, 214, 200, 0.08); font: 600 var(--text-meta) var(--font-data); }
+.tool-approval-actions button:first-child { border-color: var(--line-mid); color: var(--muted); background: transparent; }
+.tool-approval-actions button:disabled { opacity: 0.6; }
+.tool-approval-actions button:focus-visible,
+.tool-approval-details summary:focus-visible { outline: 2px solid var(--amber-hot); outline-offset: 2px; }
 .chat-command {
   flex: 0 0 auto;
   min-width: 0;
@@ -1528,6 +1541,10 @@ pre { font-family: var(--font-mono); font-weight: 500; line-height: 1.4; }
 .task-pending em { font-family: var(--font-data); font-size: var(--text-caption); font-weight: 700; font-style: normal; color: var(--amber-hot); }
 .task-pending p { grid-column: 1 / -1; margin: 0; color: var(--muted); }
 .task-pending code { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.task-evidence-header { flex-wrap: wrap; min-height: 58px !important; padding-block: var(--space-xs) !important; }
+.task-evidence-header > div:first-child { min-width: 0; display: grid; gap: 3px; }
+.task-evidence-header .context-selectors { margin-left: auto; }
+.task-frame-snapshot { padding: var(--space-sm); }
 .task-pane.evidence .runtime-card-list { padding: var(--space-sm); }
 
 /* bottom ledger */

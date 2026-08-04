@@ -216,6 +216,8 @@ class TestSpec611SingleRoundProbeHardStop(RuntimeTestMixin):
             "source": "controlled_dogfood",
         }
         assert result["_single_round_probe_hard_stop"] == {}
+        assert result["response"]
+        assert result["_settlement_ledgers"][-1]["closeout_decision"] == "blocked"
         assert result["_reaction_iterations"][-1]["provider_call_started"] is False
 
 

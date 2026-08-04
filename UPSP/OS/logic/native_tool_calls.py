@@ -1,4 +1,5 @@
 """Provider-native tool calling helpers."""
+import copy
 import json
 
 from logic.protocol_tools import TOOL_DEFINITIONS, normalize_tool_id, tool_metadata_for
@@ -744,7 +745,9 @@ def export_provider_tool_schemas(provider=PROVIDER_OPENAI_RESPONSES,
                 active_protocol_tool_guides,
                 execution_permission_level=permission_level):
             continue
-        schemas.append(_provider_tool_schema_item(provider, _tool_schema(tool_id, meta)))
+        schemas.append(_provider_tool_schema_item(
+            provider, _tool_schema(tool_id, meta, active_protocol_tool_guides)
+        ))
     return schemas
 
 
@@ -1621,7 +1624,8 @@ REACTION_TOOL_DESCRIPTIONS = {
     "container_read": "只读工具：按真实 container_id 读取容器正文，可选目标文件与行/字符范围；不改变 WB focus。",
     "corpus_read": "只读工具：按当前可见 corpus_id 读取轮中进展语料；不写入或挂载。",
     "file_edit": (
-        "高风险文件编辑；仅放行档下发。用 unified diff patch 修改已有 tracked/allowlist 文本文件，"
+        "高风险文件编辑；受限档调用后由 Runtime 在 handler 前审批，放行档直接执行。"
+        "用 unified diff patch 修改已有 tracked/allowlist 文本文件，"
         "必填 path/patch/purpose；新建或整文件覆盖用 file_write。"
         "越权、位格真源、Git/密钥、未跟踪目标或无效 patch 由 Runtime 拒绝；仅 status=ok 证明生效。"
     ),
@@ -1664,14 +1668,15 @@ REACTION_TOOL_DESCRIPTIONS = {
         "同步工具：把既有 relay_intent_id 结算为 completed/merged/question/deferred；不创建新中继。"
     ),
     "subagent_dispatch": (
-        "高风险子 agent 派发；仅放行档下发。必填 task_goal/allowed_paths/expected_artifacts，"
+        "高风险子 agent 派发；受限档调用后由 Runtime 在 handler 前审批，放行档直接执行。"
+        "必填 task_goal/allowed_paths/expected_artifacts，"
         "只派发边界清晰且可独立执行的子任务；code_change 必填 write_scope 且不得超出 allowed_paths。"
         "缺范围、越权或 backend_unavailable 由 Runtime 拒绝；返回结果前不得声称完成。"
     ),
 }
 
 
-def _tool_schema(tool_id, meta):
+def _tool_schema(tool_id, meta, active_protocol_tool_guides=None):
     if tool_id == "memory_write":
         description = _memory_write_tool_description()
     elif tool_id == "setup_finalize":
@@ -1713,7 +1718,7 @@ def _tool_schema(tool_id, meta):
         )
     elif tool_id == "file_write":
         description = (
-            "UPSP 通用文件写入工具；仅在执行权限为放行档时下发。"
+            "UPSP 通用文件写入工具；受限档调用后由 Runtime 在 handler 前审批，放行档直接执行。"
             "可在当前工作区内创建或覆盖普通文件；必须填写 path、content 与 purpose。"
             "位格真源、Git 内部数据、密钥类路径和危险目标仍由 Runtime 硬拒绝。"
         )
@@ -1729,7 +1734,8 @@ def _tool_schema(tool_id, meta):
         )
     elif tool_id == "shell_command":
         description = (
-            "放行档 Windows shell 工具。禁止 POSIX here-doc；"
+            "Windows shell 工具；受限档调用后由 Runtime 在 handler 前审批，放行档直接执行。"
+            "禁止 POSIX here-doc；"
             "多行 Python 写临时 .py 或用 PowerShell here-string。"
             "危险命令、越权 cwd、后台服务、凭据读取和网络写由 Runtime 拒绝。"
         )
@@ -1743,8 +1749,11 @@ def _tool_schema(tool_id, meta):
             f"domain={meta.get('domain', '')}；"
             f"risk={meta.get('risk', '')}。"
         )
+    parameters = copy.deepcopy(
+        TOOL_ARGUMENT_SCHEMAS.get(tool_id, _closed_parameters({}))
+    )
     return {
         "name": tool_id,
         "description": description,
-        "parameters": TOOL_ARGUMENT_SCHEMAS.get(tool_id, _closed_parameters({})),
+        "parameters": parameters,
     }

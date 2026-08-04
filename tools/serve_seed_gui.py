@@ -50,6 +50,7 @@ from engines.resident_runtime import (  # noqa: E402
     RuntimeServiceError,
     RuntimeSupervisorCorrupt,
 )
+from engines.tool_approval import ToolApprovalConflict  # noqa: E402
 from logic.container_focus import apply_container_focus_declarations  # noqa: E402
 from errors import APIBridgeError, ReadError, WriteError  # noqa: E402
 from paths import DOCS_DIR, PERSONA_DIR, RULES_DIR  # noqa: E402
@@ -549,7 +550,7 @@ class SettingsService:
         allowed = {
             "alias", "model", "connection_id", "context_window",
             "reasoning_supported", "reasoning_default", "streaming_enabled",
-            "streaming_include_usage", "prompt_cache_profile", "request_overrides",
+            "streaming_include_usage", "request_overrides",
         }
         if not set(values).issubset(allowed):
             raise SettingsValidationError("model_catalog_fields_invalid")
@@ -588,13 +589,11 @@ class SettingsService:
                 raise SettingsValidationError("model_streaming_invalid")
             streaming["include_usage"] = values["streaming_include_usage"]
         result["streaming"] = streaming
-        if "prompt_cache_profile" in values:
-            result["prompt_cache"] = {"profile": _text(values["prompt_cache_profile"]).strip()}
         if "request_overrides" in values:
             if not isinstance(values["request_overrides"], dict):
                 raise SettingsValidationError("model_request_overrides_invalid")
             result["request_overrides"] = deepcopy(values["request_overrides"])
-        result.setdefault("prompt_cache", {"profile": "off"})
+        result["prompt_cache"] = {"profile": "automatic_tiered"}
         result.setdefault("request_overrides", {})
         if not result.get("alias") or not result.get("model") or not result.get("connection_id"):
             raise SettingsValidationError("model_profile_invalid")
@@ -1465,6 +1464,7 @@ class SeedGuiHandler(RoundLiveHandler):
             "stop_requested": runtime["stop_requested"],
             "can_stop": runtime["can_stop"],
             "heartbeat_suspended": runtime["heartbeat_suspended"],
+            "pending_tool_approval": runtime.get("pending_tool_approval"),
             "last_outcome": service["last_outcome"],
             "send_in_flight": (
                 service["send_in_flight"] or self.send_lock.locked()),
@@ -1503,7 +1503,7 @@ class SeedGuiHandler(RoundLiveHandler):
             return None
         permission = payload.get("permission_level")
         confirmed = payload.get("unlimited_confirmed")
-        if permission not in {"limited", "unlimited"} or not isinstance(confirmed, bool):
+        if permission not in {"limited", "guarded", "unlimited"} or not isinstance(confirmed, bool):
             self._error(400, "invalid_permission")
             return None
         if permission == "unlimited" and confirmed is not True:
@@ -1684,6 +1684,7 @@ class SeedGuiHandler(RoundLiveHandler):
             "/api/bootstrap/persona",
             "/api/runtime/send",
             "/api/runtime/stop",
+            "/api/runtime/tool-approval",
             "/api/runtime/relay",
             "/api/runtime/tick",
             "/api/container/focus",
@@ -1715,6 +1716,9 @@ class SeedGuiHandler(RoundLiveHandler):
         if path == "/api/runtime/stop":
             self._runtime_stop()
             return
+        if path == "/api/runtime/tool-approval":
+            self._runtime_tool_approval()
+            return
         if not self.bootstrap_service.initializer.status()["ready"]:
             self._discard_bounded_request_body()
             self._error(409, "persona_initialization_required")
@@ -1734,7 +1738,7 @@ class SeedGuiHandler(RoundLiveHandler):
         if not isinstance(message, str) or not message.strip():
             self._error(400, "message_required")
             return
-        if permission not in {"limited", "unlimited"} or not isinstance(confirmed, bool):
+        if permission not in {"limited", "guarded", "unlimited"} or not isinstance(confirmed, bool):
             self._error(400, "invalid_permission")
             return
         if permission == "unlimited" and confirmed is not True:
@@ -1868,6 +1872,33 @@ class SeedGuiHandler(RoundLiveHandler):
         })
         self.server.request_desktop_shutdown()
 
+    def _runtime_tool_approval(self) -> None:
+        payload = self._json_object({"approval_id", "decision"})
+        if payload is None:
+            return
+        approval_id = payload.get("approval_id")
+        decision = payload.get("decision")
+        if (
+                not isinstance(approval_id, str)
+                or not approval_id.strip()
+                or decision not in {"allow_once", "skip"}):
+            self._error(400, "invalid_tool_approval")
+            return
+        try:
+            receipt = self.runtime_service.resolve_tool_approval(
+                approval_id.strip(), decision
+            )
+        except ToolApprovalConflict as exc:
+            self._error(409, str(exc))
+            return
+        except (RuntimeServiceError, ValueError) as exc:
+            self._error(409, str(exc))
+            return
+        self._send_json(200, {
+            "schema_version": "general_tool_approval_receipt.v1",
+            **receipt,
+        })
+
     def _runtime_stop(self) -> None:
         payload = self._json_object(set())
         if payload is None:
@@ -1952,33 +1983,46 @@ class SeedGuiHandler(RoundLiveHandler):
         if not self.mutation_lock.acquire(blocking=False):
             self._error(409, self._mutation_conflict_code())
             return
+        response_status = 200
+        response_payload = None
+        response_error = ""
         try:
             focus = self.deposition_reader.focus_projection()
             if action == "open" and not self.deposition_reader.container_exists(container_id):
-                self._error(404, "container_not_found")
-                return
-            if action == "close":
+                response_status = 404
+                response_error = "container_not_found"
+            elif action == "close":
                 if not focus["current"]:
-                    self._error(409, "missing_focus")
-                    return
-                if focus["current"] != container_id:
-                    self._error(409, "focus_conflict")
-                    return
-            if action == "restore" and not focus["previous"]:
-                self._error(409, "missing_old_focus")
-                return
-            result = self.deposition_reader.apply_focus(action, container_id)
+                    response_status = 409
+                    response_error = "missing_focus"
+                elif focus["current"] != container_id:
+                    response_status = 409
+                    response_error = "focus_conflict"
+            elif action == "restore" and not focus["previous"]:
+                response_status = 409
+                response_error = "missing_old_focus"
+            if not response_error:
+                result = self.deposition_reader.apply_focus(action, container_id)
+                receipt = result.get("receipt") or {}
+                if receipt.get("status") == "applied":
+                    response_payload = result
+                else:
+                    response_status = (
+                        404 if receipt.get("reason") == "container_not_found" else 409
+                    )
+                    response_payload = {
+                        **result,
+                        "error": receipt.get("reason") or "container_focus_rejected",
+                    }
         except Exception:
-            self._error(503, "container_focus_failed")
-            return
+            response_status = 503
+            response_error = "container_focus_failed"
         finally:
             self.mutation_lock.release()
-        receipt = result.get("receipt") or {}
-        if receipt.get("status") == "applied":
-            self._send_json(200, result)
-            return
-        status = 404 if receipt.get("reason") == "container_not_found" else 409
-        self._send_json(status, {**result, "error": receipt.get("reason") or "container_focus_rejected"})
+        if response_payload is not None:
+            self._send_json(response_status, response_payload)
+        else:
+            self._error(response_status, response_error)
 
     def _settings_update(self) -> None:
         payload = self._json_object({"revision", "file", "changes"})
@@ -2158,6 +2202,7 @@ def make_server(
         persona_ready=lambda: bool(
             resolved_bootstrap.initializer.status().get("ready")
         ),
+        default_permission_level="guarded",
     )
     handler.runtime_service = service
     server.runtime_service = service

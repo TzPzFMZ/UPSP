@@ -4,13 +4,18 @@ import json
 import re
 
 from logic.execution_capability import check_general_tool_request
-from logic.execution_permission import load_execution_permission_level
+from logic.execution_permission import (
+    GUARDED,
+    LIMITED_BLOCKED_TOOLS,
+    load_execution_permission_level,
+)
 from logic.file_read_window import (
     FILE_READ_BATCH_BUDGET_EXHAUSTED,
     RUNTIME_CONTEXT_KEY,
     FileReadBatchBudget,
 )
 from logic.general_tools import (
+    UNRESTRICTED_ALLOWED_ROOTS,
     execute_general_tool_call,
     format_general_tool_fact,
     format_general_tool_material_entry,
@@ -81,9 +86,10 @@ SIGNATURE_FIELDS_BY_TOOL = {
 
 
 class GeneralToolDispatcher:
-    def __init__(self, load_guide_fn=None, execute_fn=None):
+    def __init__(self, load_guide_fn=None, execute_fn=None, approval_fn=None):
         self.load_guide_fn = load_guide_fn
         self.execute_fn = execute_fn or execute_general_tool_call
+        self.approval_fn = approval_fn
 
     @staticmethod
     def _base_result(tool_id, status, source="general_tool_request", reason=""):
@@ -129,11 +135,83 @@ class GeneralToolDispatcher:
     def _execute_call(self, call, sandbox_grant=None):
         if sandbox_grant:
             roots = sandbox_roots_for_tool(sandbox_grant, call.get("tool_id"))
+            if self.execute_fn is execute_general_tool_call:
+                return self.execute_fn(call, allowed_roots=roots)
             try:
                 return self.execute_fn(call, allowed_roots=roots)
             except TypeError:
                 return self.execute_fn(call)
-        return self.execute_fn(call)
+        if self.execute_fn is execute_general_tool_call:
+            return self.execute_fn(
+                call, allowed_roots=UNRESTRICTED_ALLOWED_ROOTS
+            )
+        try:
+            return self.execute_fn(call, allowed_roots=UNRESTRICTED_ALLOWED_ROOTS)
+        except TypeError:
+            return self.execute_fn(call)
+
+    @staticmethod
+    def _approval_summary(tool_id, request):
+        if tool_id in {"file_edit", "file_write"}:
+            return str(request.get("path") or "").strip()
+        if tool_id == "shell_command":
+            return str(request.get("cwd") or "").strip() or "shell"
+        return str(request.get("task_goal") or "").strip()[:240]
+
+    def _approval_payload(self, tool_id, request, signature, runtime_context):
+        context = runtime_context if isinstance(runtime_context, dict) else {}
+        details = {
+            key: request.get(key)
+            for key in (
+                "path", "cwd", "command", "patch", "content", "task_goal",
+                "allowed_paths", "write_scope", "expected_artifacts",
+                "validation_commands",
+            )
+            if request.get(key) not in (None, "", [])
+        }
+        return {
+            "round": context.get("round_num"),
+            "frame_id": context.get("frame_id"),
+            "iteration": context.get("iteration"),
+            "tool_id": tool_id,
+            "tool_label": tool_metadata_for(tool_id).get("title") or tool_id,
+            "tool_signature": signature,
+            "summary": self._approval_summary(tool_id, request),
+            "details": details,
+        }
+
+    def _guarded_approval_result(
+            self, tool_id, request, signature, runtime_context):
+        if not callable(self.approval_fn):
+            decision = "cancelled"
+        else:
+            decision = self.approval_fn(
+                self._approval_payload(
+                    tool_id, request, signature, runtime_context
+                )
+            )
+        if decision == "allow_once":
+            return None
+        reason = (
+            "user_skipped_tool_approval"
+            if decision == "skip" else "tool_approval_cancelled"
+        )
+        result = self._base_result(tool_id, "blocked", reason=reason)
+        result["error_hint"] = {
+            "kind": "permission_security",
+            "retry": "after_new_authorization",
+            "attempted": {"tool_id": tool_id},
+            "current": {},
+            "expected": {},
+            "next_action": (
+                "本次调用已被用户跳过；不要原样重试。"
+                if decision == "skip" else
+                "审批等待已取消；停止当前动作并报告。"
+            ),
+        }
+        return self._decorate_signatures(
+            self._with_trace(result, request), tool_id, request, signature
+        )
 
     @staticmethod
     def _backend_readiness_issue(tool_id):
@@ -378,7 +456,14 @@ class GeneralToolDispatcher:
         known_results = list(prior_results or [])
         file_read_batch = FileReadBatchBudget(runtime_context)
         sandbox_grant = load_sandbox_grant()
-        execution_permission_level = load_execution_permission_level()
+        execution_permission_level = (
+            (
+                (runtime_context or {}).get("execution_permission_level")
+                if isinstance(runtime_context, dict) else None
+            )
+            or getattr(self, "execution_permission_level", None)
+            or load_execution_permission_level()
+        )
         for request in requests or []:
             if isinstance(request, dict):
                 raw_tool_id = request.get("tool_id", "")
@@ -485,6 +570,19 @@ class GeneralToolDispatcher:
                 results.append(result)
                 known_results.append(results[-1])
                 continue
+            if (
+                    execution_permission_level == GUARDED
+                    and tool_id in LIMITED_BLOCKED_TOOLS):
+                approval_result = self._guarded_approval_result(
+                    tool_id, request, signature, runtime_context
+                )
+                if approval_result is not None:
+                    approval_result = self._with_path_alias_info(
+                        approval_result, path_alias_info
+                    )
+                    results.append(approval_result)
+                    known_results.append(approval_result)
+                    continue
             result = self._execute_allowed_request(
                 request,
                 tool_id,

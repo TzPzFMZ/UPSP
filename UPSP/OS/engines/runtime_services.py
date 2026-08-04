@@ -68,8 +68,14 @@ class RuntimeServices:
         heat = heat or MemoryHeat()
         cfg = config_store or ConfigStore()
         active_endpoint_ids = getattr(cfg, "get_active_model_profile_ids", None)
+        setup_endpoint_ids = getattr(cfg, "get_model_profile_ids_for_phase", None)
         connectivity_store = connectivity_store or ConnectivityStore(
             active_endpoint_ids=active_endpoint_ids,
+            recovery_endpoint_ids=(
+                (lambda: setup_endpoint_ids("setup"))
+                if callable(setup_endpoint_ids)
+                else None
+            ),
         )
         evolution_store = evolution_store or EvolutionStore()
         hb = heartbeat or HeartbeatManager(

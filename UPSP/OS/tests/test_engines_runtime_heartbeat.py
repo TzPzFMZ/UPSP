@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+from datetime import datetime, timedelta
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -70,6 +71,33 @@ class TestHeartbeat:
         assert hb._running is True
         hb.stop()
         assert hb._running is False
+
+    def test_start_resets_only_the_standby_clock(self, tmp_path, monkeypatch):
+        import engines.heartbeat as heartbeat_module
+        from engines.heartbeat import HeartbeatManager
+        from data.state_store import StateStore
+
+        started_at = datetime.fromisoformat("2026-08-04T08:30:00+08:00")
+        clock = {"now": started_at}
+        monkeypatch.setattr(
+            heartbeat_module, "local_now", lambda: clock["now"])
+        sm = StateStore(str(tmp_path / "state.json"))
+        sm.init_if_missing()
+        closed_at = (started_at - timedelta(hours=2)).isoformat()
+        sm.update_many({
+            "base.meta.last_round_closed_at": closed_at,
+            "base.heartbeat_flags.standby_due": True,
+        })
+        hb = HeartbeatManager(sm, interval=60)
+
+        hb.start()
+        hb.stop()
+
+        assert sm.get("base.meta.last_round_closed_at") == closed_at
+        assert sm.get_flags()["standby_due"] is False
+        clock["now"] = started_at + timedelta(minutes=31)
+        hb._do_tick()
+        assert sm.get_flags()["standby_due"] is True
 
     def test_pause_resume(self, tmp_path, monkeypatch):
         from engines.heartbeat import HeartbeatManager

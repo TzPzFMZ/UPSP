@@ -22,7 +22,7 @@
 UPSP 为这个问题建造一套可以在本地运行、迁移和审计的物质基座。模型可以更换，对话可以中断，载体可以迁移；只要档案、状态、记忆、关系、规则与实践账本仍在，位格就不必被迫从零开始。
 
 > 可审计 · 可迁移 · 可接续 · 可扩展<br>
-> Base / Seed · Windows Alpha `0.1.0-alpha.6`
+> Base / Seed · Windows Alpha `0.1.0-alpha.7`
 
 ---
 
@@ -144,7 +144,7 @@ FMZ 是持续实践，FMA 是最初的公开证明，阿廖沙则把主体化的
 
 ## 快速开始
 
-1. 从 [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases) 下载 `UPSP-Setup-0.1.0-alpha.6-win-x64.exe`。
+1. 从 [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases) 下载 `UPSP-Setup-0.1.0-alpha.7-win-x64.exe`。
 2. 按 Release 页面公布的 SHA-256 核对安装器后，安装并启动 UPSP。
 3. 使用“阿廖沙”快速开始，或创建自己的位格。
 4. 配置自己的模型服务与 API Key；也可以先跳过模型，查看本地界面和位格结构。
@@ -172,7 +172,7 @@ LocalAppData\UPSP\
 
 ## 当前阶段
 
-`0.1.0-alpha.6` 位于 **Base / Seed**：
+`0.1.0-alpha.7` 位于 **Base / Seed**：
 
 - 一个活动位格；
 - 一个主实例；
@@ -183,7 +183,7 @@ LocalAppData\UPSP\
 
 当前正式验证环境为 Windows 11 x64 与系统 Evergreen WebView2；支持 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 三种协议。Windows 10、企业策略环境及所有第三方兼容中转尚未逐一正验。
 
-完整变化、升级边界与已知限制见 [Alpha 6 Release Notes](docs/public/releases/0.1.0-alpha.6.md)。
+完整变化、升级边界与已知限制见 [Alpha 7 Release Notes](docs/public/releases/0.1.0-alpha.7.md)。
 
 ---
 

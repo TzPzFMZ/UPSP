@@ -161,6 +161,8 @@ class RuntimeTestMixin:
             alert_store=InMemoryAlerts(),
             relation_store=NoopRelationStore(),
         )
+        # Direct reaction-loop tests model the already-authorized full-tool path.
+        runtime.permission_chain.apply("unlimited")
         runtime.reaction_loop_runner.chronicle_store = ChronicleStore(
             str(tmp_path / "Chronicle")
         )

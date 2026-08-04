@@ -1424,7 +1424,8 @@ class ContextAssembler:
             )
             projection["supplemental_sections"].append(
                 render_execution_permission_status(
-                    load_execution_permission_level(self.config_store)))
+                    getattr(self, "execution_permission_level", None)
+                    or load_execution_permission_level(self.config_store)))
         except Exception as exc:
             raise RequiredContextError(
                 "read", "execution_permission", exc) from exc
@@ -1578,7 +1579,8 @@ class ContextAssembler:
                 render_execution_permission_guide,
             )
             parts.append(render_execution_permission_guide(
-                load_execution_permission_level(self.config_store)
+                getattr(self, "execution_permission_level", None)
+                or load_execution_permission_level(self.config_store)
             ))
         except Exception as exc:
             raise RequiredContextError(

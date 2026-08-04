@@ -5824,6 +5824,24 @@ def test_spec434_reaction_runner_exposes_active_guide_submit_popup(tmp_path):
     assert "submit_initial_guide" in feedback
 
 
+def test_spec719_declared_root_is_satisfied_by_read_child_only(tmp_path):
+    from logic.guide_submit import _source_ref_satisfied
+
+    root = tmp_path / "project"
+    child = root / "docs" / "spec.md"
+    sibling = tmp_path / "other" / "spec.md"
+    child.parent.mkdir(parents=True)
+    sibling.parent.mkdir(parents=True)
+    child.write_text("read", encoding="utf-8")
+    sibling.write_text("not read", encoding="utf-8")
+    prior = {str(child.resolve()).lower()}
+    context = {"task_root": str(root)}
+
+    assert _source_ref_satisfied(str(root), prior, context)
+    assert _source_ref_satisfied(str(child), prior, context)
+    assert not _source_ref_satisfied(str(sibling), prior, context)
+
+
 def test_spec476_reaction_resident_task_guidance_creates_bootstrap(tmp_path):
     from data.workbench import WorkbenchStore
     from logic.guide_submit import apply_guide_submit

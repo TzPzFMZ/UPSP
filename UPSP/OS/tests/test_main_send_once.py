@@ -62,6 +62,7 @@ def test_spec607_runtime_round_start_audits_actual_context_profile():
     from engines.round_context import FrameRef
     from engines.runtime import Runtime
     from engines.runtime_control import RuntimeControl
+    from logic.execution_permission import ExecutionPermissionChain
 
     seen = {}
 
@@ -112,6 +113,7 @@ def test_spec607_runtime_round_start_audits_actual_context_profile():
     ))
     object.__setattr__(runtime, "audit", FakeAudit())
     object.__setattr__(runtime, "control", RuntimeControl())
+    object.__setattr__(runtime, "permission_chain", ExecutionPermissionChain())
     object.__setattr__(runtime, "on_round_started", None)
     object.__setattr__(runtime, "on_round_finished", None)
     object.__setattr__(runtime, "_trigger_queue", deque())

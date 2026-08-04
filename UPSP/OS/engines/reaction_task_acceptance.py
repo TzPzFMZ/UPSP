@@ -68,13 +68,17 @@ def task_acceptance_feedback(result):
 
 
 def task_acceptance_block_signature(result):
-    blockers = [
+    blockers = sorted({
         str(item or "").strip()
         for item in (result or {}).get("blockers") or []
         if str(item or "").strip()
-    ]
+    })
     if not blockers:
         blockers = [str(
             (result or {}).get("reason") or "task_acceptance_blocked"
         ).strip()]
-    return "|".join(blockers)
+    return "|".join((
+        str((result or {}).get("reason") or "task_acceptance_blocked").strip(),
+        str((result or {}).get("guide_id") or (result or {}).get("task_id") or "").strip(),
+        *blockers,
+    ))

@@ -3,6 +3,8 @@
 from datetime import datetime
 
 from constants import local_now
+from errors import ProviderCallCancelled
+from engines.round_context import RuntimeTrigger
 from logic.rhythm_guide_materializer import reconcile_recovered_emergency_flags
 from logic.single_round_probe_policy import validate_single_round_probe_round
 
@@ -11,21 +13,71 @@ def prepare_round_before_setup(runtime, round_type, state, flags):
     """Pause heartbeat, reconcile recovered alerts, and freeze the effective round."""
     runtime.hb.pause()
     try:
+        had_api_degraded = bool((flags or {}).get("api_degraded"))
+        probe_result = {
+            "status": "not_needed",
+            "reason": "flag_not_set",
+            "attempted_profile_ids": [],
+            "selected_profile_id": None,
+            "elapsed_ms": 0,
+            "tokens_input": 0,
+            "tokens_output": 0,
+        }
         flags, cleared = reconcile_recovered_emergency_flags(
             flags,
             state_store=runtime.sm,
             connectivity_store=getattr(runtime.services, "connectivity_store", None),
         )
+        if had_api_degraded and not flags.get("api_degraded"):
+            probe_result["reason"] = "stored_health_recovered"
+        elif flags.get("api_degraded"):
+            probe = getattr(runtime.services.executor, "probe_setup_route_once", None)
+            if callable(probe):
+                try:
+                    probe_result = dict(probe() or {})
+                except ProviderCallCancelled:
+                    raise
+                except Exception as exc:
+                    probe_result = {
+                        "status": "failed",
+                        "reason": "probe_error",
+                        "error_kind": type(exc).__name__,
+                        "attempted_profile_ids": [],
+                        "selected_profile_id": None,
+                        "elapsed_ms": 0,
+                        "tokens_input": 0,
+                        "tokens_output": 0,
+                    }
+                if probe_result.get("status") == "recovered":
+                    flags, probe_cleared = reconcile_recovered_emergency_flags(
+                        flags,
+                        state_store=runtime.sm,
+                        connectivity_store=getattr(
+                            runtime.services, "connectivity_store", None),
+                    )
+                    cleared = list(dict.fromkeys([*cleared, *probe_cleared]))
+            else:
+                probe_result = {
+                    "status": "skipped",
+                    "reason": "executor_probe_unavailable",
+                    "attempted_profile_ids": [],
+                    "selected_profile_id": None,
+                    "elapsed_ms": 0,
+                    "tokens_input": 0,
+                    "tokens_output": 0,
+                }
+        probe_result["flag_cleared"] = "api_degraded" in cleared
         effective_round_type = runtime._determine_round_type(flags, state)
         if not effective_round_type:
             runtime.sm.set_phase("idle")
             runtime.hb.resume()
-            return None, flags, cleared, {}, {
+            return None, flags, cleared, probe_result, {}, {
                 "aborted": False,
                 "response": "",
                 "error": None,
                 "_round_skipped": "no_effective_trigger",
                 "_pre_setup_cleared_flags": list(cleared),
+                "_pre_setup_api_probe": dict(probe_result),
             }
         probe_guard = validate_single_round_probe_round(effective_round_type, flags)
         if probe_guard.get("enabled"):
@@ -34,7 +86,10 @@ def prepare_round_before_setup(runtime, round_type, state, flags):
                 runtime.sm.get_flags(),
             )
         runtime.sm.set_phase("presub")
-        return effective_round_type, flags, cleared, probe_guard, None
+        return (
+            effective_round_type, flags, cleared,
+            probe_result, probe_guard, None,
+        )
     except Exception:
         try:
             runtime.sm.set_phase("idle")
@@ -45,6 +100,43 @@ def prepare_round_before_setup(runtime, round_type, state, flags):
         except Exception:
             pass
         raise
+
+
+def park_interaction_for_api_probe(runtime, trigger, flags):
+    """Put dequeued input back before probing so cancellation cannot lose it."""
+    if not (flags.get("api_degraded") and trigger.messages):
+        return trigger, False
+    runtime.hb.prepend_messages(trigger.messages)
+    return RuntimeTrigger(
+        trigger_id=trigger.trigger_id,
+        trigger_seq=trigger.trigger_seq,
+        observed_at=trigger.observed_at,
+        round_type=trigger.round_type,
+        flags=dict(trigger.flags),
+        messages=(),
+    ), True
+
+
+def restore_interaction_after_api_probe(
+        runtime, trigger, flags, probe_result, parked):
+    """Consume parked input only after recovery; failed probes leave FIFO intact."""
+    if not parked:
+        return trigger, flags
+    status = str((probe_result or {}).get("status") or "")
+    probe_failed = status == "failed" or (
+        status == "skipped"
+        and (probe_result or {}).get("reason") != "executor_probe_unavailable"
+    )
+    messages = () if probe_failed else tuple(runtime.hb.dequeue_messages() or [])
+    flags = {**flags, "user_message_waiting": bool(messages)}
+    return RuntimeTrigger(
+        trigger_id=trigger.trigger_id,
+        trigger_seq=trigger.trigger_seq,
+        observed_at=trigger.observed_at,
+        round_type=trigger.round_type,
+        flags=dict(trigger.flags),
+        messages=messages,
+    ), flags
 
 
 def refresh_round_alert_recovery(runtime, context):

@@ -384,15 +384,23 @@ class ReactionToolSettlementDispatcher:
         interaction_meta,
     ):
         runner = self.runner
+        runtime_context = runtime_file_read_context(
+            runner.sm,
+            getattr(runner, "ctx_store", None),
+            round_num,
+        )
+        runtime_context.update({
+            "round_num": round_num,
+            "iteration": iteration,
+            "frame_id": f"R{int(round_num):06d}:reaction:{int(iteration)}",
+            "execution_permission_level": getattr(
+                runner, "execution_permission_level", "guarded"),
+        })
         iter_general_tool_results = runner.general_tool_dispatcher.handle_requests(
             iter_general_tool_requests,
             active_general_tool_guides,
             prior_results=all_general_tool_results,
-            runtime_context=runtime_file_read_context(
-                runner.sm,
-                getattr(runner, "ctx_store", None),
-                round_num,
-            ),
+            runtime_context=runtime_context,
         )
         all_general_tool_results.extend(iter_general_tool_results)
         iter_native_feedbacks.extend(

@@ -184,14 +184,14 @@ def replay_round(path: Path, *, promoted_min_chars: int = 4096) -> dict[str, Any
         contents = source["layer_contents"]
         _fixed_payload, fixed = apply_explicit_breakpoints(
             payload,
-            profile="gpt56_explicit_permanent",
+            profile="automatic_tiered",
             message_layers=layers,
             layer_contents=contents,
-            promoted_min_chars=promoted_min_chars,
+            promoted_min_chars=10 ** 12,
         )
         _tiered_payload, tiered = apply_explicit_breakpoints(
             payload,
-            profile="gpt56_explicit_tiered",
+            profile="automatic_tiered",
             message_layers=layers,
             layer_contents=contents,
             promoted_min_chars=promoted_min_chars,

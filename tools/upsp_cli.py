@@ -1028,7 +1028,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Required acknowledgement for real Runtime/provider calls.",
     )
-    send.add_argument("--permission-level", choices=("limited", "unlimited"))
+    send.add_argument("--permission-level", choices=("limited", "guarded", "unlimited"))
 
     relay = subparsers.add_parser("relay", help="Run one live pending relay round.")
     relay.add_argument(
@@ -1036,7 +1036,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Required acknowledgement for real Runtime/provider calls.",
     )
-    relay.add_argument("--permission-level", choices=("limited", "unlimited"))
+    relay.add_argument("--permission-level", choices=("limited", "guarded", "unlimited"))
 
     tick = subparsers.add_parser("tick", help="Run one live pending natural round.")
     tick.add_argument(
@@ -1044,7 +1044,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Required acknowledgement for real Runtime/provider calls.",
     )
-    tick.add_argument("--permission-level", choices=("limited", "unlimited"))
+    tick.add_argument("--permission-level", choices=("limited", "guarded", "unlimited"))
 
     rounds = subparsers.add_parser("rounds", help="Inspect round evidence.")
     rounds_sub = rounds.add_subparsers(dest="rounds_command", required=True)

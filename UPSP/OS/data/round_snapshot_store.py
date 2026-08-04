@@ -357,7 +357,9 @@ class RoundSnapshotStore:
             payload["provider_request_envelope"] = (
                 self._sanitize_provider_request_envelope(
                     contract.get("provider_request_envelope")))
-        for key in ("call_channel", "phase", "tier"):
+        for key in (
+                "call_channel", "phase", "tier",
+                "logical_call_id", "route_slot"):
             if key in contract:
                 payload[key] = contract.get(key)
         return self.append_event(
@@ -378,7 +380,9 @@ class RoundSnapshotStore:
             payload["provider_request_envelope"] = (
                 self._sanitize_provider_request_envelope(
                     contract.get("provider_request_envelope")))
-        for key in ("call_channel", "phase", "tier"):
+        for key in (
+                "call_channel", "phase", "tier",
+                "logical_call_id", "route_slot"):
             if key in contract:
                 payload[key] = contract.get(key)
         return self.append_event(
@@ -396,6 +400,7 @@ class RoundSnapshotStore:
             "llm_stream_delta",
             "llm_stream_done",
             "llm_stream_error",
+            "llm_http_attempt",
         }:
             event_type = "llm_stream_delta"
         return self.append_event(

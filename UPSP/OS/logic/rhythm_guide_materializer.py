@@ -211,7 +211,19 @@ def _api_health_recovered(connectivity_store):
     if connectivity_store is None:
         return False
     try:
+        checker = getattr(connectivity_store, "has_recovered", None)
+        if callable(checker):
+            return bool(checker())
         data = connectivity_store.load()
+        if (
+                hasattr(connectivity_store, "recovery_endpoint_ids")
+                and connectivity_store.recovery_endpoint_ids()
+                and hasattr(connectivity_store, "recovery_statuses")):
+            statuses = connectivity_store.recovery_statuses(data)
+            return (
+                any(status == "ok" for status in statuses)
+                and not bool(connectivity_store.has_degraded())
+            )
         if hasattr(connectivity_store, "active_statuses"):
             statuses = connectivity_store.active_statuses(data)
         else:

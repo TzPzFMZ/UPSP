@@ -450,6 +450,12 @@ def _run_reaction_frames(session):
             reaction_loop_guard_receipts.append(
                 dict(provider_call_hard_stop)
             )
+            all_settlement_ledgers.append({
+                "closeout_decision": "blocked",
+                "auto_blocked": True,
+                "blocked_reason": provider_call_hard_stop["reason"],
+                "source": "reaction_provider_call_limit",
+            })
             iteration_records.append({
                 "index": i,
                 "response": "",
@@ -458,6 +464,8 @@ def _run_reaction_frames(session):
                 "reason": provider_call_hard_stop["reason"],
                 "provider_call_started": False,
             })
+            reaction_finalize_validated = True
+            final_reply_pending = True
             exit_signal = "provider_call_hard_stop"
             break
         cancel_fact_visible_to_model = (
@@ -954,6 +962,45 @@ def _run_reaction_frames(session):
                     ),
                 )
                 if not candidate_check.get("allowed", True):
+                    if candidate_check.get("status") == "task_acceptance_blocked":
+                        block_signature = self._task_acceptance_block_signature(candidate_check)
+                        if block_signature == closeout_task_finish_block_signature:
+                            closeout_task_finish_block_count += 1
+                        else:
+                            closeout_task_finish_block_signature = block_signature
+                            closeout_task_finish_block_count = 1
+                        if closeout_task_finish_block_count >= 3:
+                            blockers = candidate_check.get("blockers") or []
+                            auto_blocked_ledger = {
+                                "closeout_decision": "blocked",
+                                "handoff_text": "",
+                                "auto_blocked": True,
+                                "blocked_reason": candidate_check.get("reason") or "task_acceptance_blocked",
+                                "blockers": blockers,
+                            }
+                            parsed_reaction["settlement_ledger"] = auto_blocked_ledger
+                            all_settlement_ledgers.append(auto_blocked_ledger)
+                            reaction_loop_guard_receipts.append({
+                                "tool_id": "final_reply",
+                                "tool_family": "message_channel",
+                                "tool_class": "runtime_guard",
+                                "status": "task_acceptance_auto_blocked",
+                                "source": "natural_final_reply_candidate",
+                                "reason": candidate_check.get("reason"),
+                                "blockers": blockers,
+                                "repeated_finish_count": closeout_task_finish_block_count,
+                            })
+                            reaction_finalize_validated = True
+                            final_reply_pending = True
+                            exit_signal = "final_reply_pending"
+                            iteration_records.append({
+                                "index": i,
+                                "response": "",
+                                "containers_created": [],
+                                "exit_signal": "task_acceptance_auto_blocked",
+                            })
+                            i += 1
+                            break
                     reminder_signature = str(
                         candidate_check.get("signature") or ""
                     ).strip()

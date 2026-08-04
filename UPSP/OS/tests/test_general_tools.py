@@ -1865,7 +1865,7 @@ def test_general_tool_dispatcher_rejects_missing_backend_metadata(monkeypatch):
     assert missing_permission["status"] == "rejected"
     assert missing_permission["reason"] == "permission_scope_missing"
 
-def test_spec132_execution_capability_gate_rejects_high_risk_general_tools():
+def test_spec720_capability_gate_allows_normal_external_paths_without_grant():
     from logic.execution_capability import check_general_tool_request
     from logic.general_tools import _is_foreign_windows_path_syntax
 
@@ -1891,8 +1891,7 @@ def test_spec132_execution_capability_gate_rejects_high_risk_general_tools():
         phase="reaction",
         active_guides=["file_read"],
     )
-    assert file_read_outside["allowed"] is False
-    assert file_read_outside["reason"] == "outside_allowlist"
+    assert file_read_outside["allowed"] is True
 
     file_read_persona = check_general_tool_request(
         {
@@ -2009,8 +2008,7 @@ def test_spec132_execution_capability_gate_rejects_high_risk_general_tools():
         phase="reaction",
         active_guides=["file_edit"],
     )
-    assert outside_path["allowed"] is False
-    assert outside_path["reason"] == "outside_allowlist"
+    assert outside_path["allowed"] is True
 
     file_search_outside_root = check_general_tool_request(
         {
@@ -2022,8 +2020,7 @@ def test_spec132_execution_capability_gate_rejects_high_risk_general_tools():
         phase="reaction",
         active_guides=["file_search"],
     )
-    assert file_search_outside_root["allowed"] is False
-    assert file_search_outside_root["reason"] == "outside_allowlist"
+    assert file_search_outside_root["allowed"] is True
 
     shell_outside_cwd = check_general_tool_request(
         {
@@ -2035,11 +2032,10 @@ def test_spec132_execution_capability_gate_rejects_high_risk_general_tools():
         phase="reaction",
         active_guides=["shell_command"],
     )
-    assert shell_outside_cwd["allowed"] is False
-    assert shell_outside_cwd["reason"] == "outside_allowlist"
+    assert shell_outside_cwd["allowed"] is True
 
 
-def test_spec367_extra_file_read_root_does_not_expand_shell_cwd(
+def test_spec720_no_grant_allows_shell_cwd_beyond_extra_read_root(
     tmp_path, monkeypatch
 ):
     from logic.execution_capability import check_general_tool_request
@@ -2079,8 +2075,7 @@ def test_spec367_extra_file_read_root_does_not_expand_shell_cwd(
         phase="reaction",
         active_guides=["shell_command"],
     )
-    assert shell_result["allowed"] is False
-    assert shell_result["reason"] == "outside_allowlist"
+    assert shell_result["allowed"] is True
 
     private_web = check_general_tool_request(
         {"tool_id": "web_fetch", "url": "http://127.0.0.1:8000/status"},

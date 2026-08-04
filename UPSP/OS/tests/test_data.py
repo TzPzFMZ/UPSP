@@ -3413,10 +3413,253 @@ class TestContextStore:
         raw_blocks = self._read_jsonl(tmp_path / "buffer" / "raw_log.jsonl")
         stats = store.get_last_cache_stats()
 
-        assert [block["text"] for block in lately_blocks] == ["D" * 12]
+        assert [block["text"] for block in lately_blocks] == ["A" * 12]
         assert [block["text"] for block in raw_blocks] == ["A" * 12, "B" * 12, "C" * 12, "D" * 12]
         assert stats["lately_trimmed"] is True
         assert stats["lately_deleted_blocks"] == 3
+        assert stats["lately_soft_overflow"] is False
+
+    def test_spec721_active_corpus_id_survives_promotion_and_restart(
+            self, tmp_path, monkeypatch):
+        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
+        config = self._CacheConfig(
+            now_budget=8,
+            now_trim=4,
+            lately_budget=1024,
+            lately_trim=128,
+        )
+        store = ctxs.ContextStore(config_store=config)
+        store.append_to_cache(
+            1, "user", "用户输入会滚入最近缓存", kind="interaction")
+
+        first = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")[0]
+        assert first["ref"]["active_corpus_id"] == "C-00001"
+        assert first["ref"]["interaction_round_index"] == 1
+
+        restarted = ctxs.ContextStore(config_store=config)
+        restarted.append_to_cache(
+            2, "assistant", "新语料", kind="assistant_reply")
+        blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
+        assert blocks[0]["ref"]["active_corpus_id"] == "C-00001"
+        meta = json.loads(
+            (tmp_path / "cache" / "active_corpus_meta.json").read_text(
+                encoding="utf-8"))
+        assert meta == {
+            "schema_version": "active_corpus_meta.v1",
+            "next_short_id": 3,
+            "interaction_round_count": 1,
+        }
+
+    def test_spec721_active_cache_metadata_never_enters_legacy_raw_log(
+            self, tmp_path, monkeypatch):
+        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
+        config = self._CacheConfig(
+            now_budget=1,
+            now_trim=0,
+            lately_budget=1024,
+            lately_trim=128,
+        )
+        store = ctxs.ContextStore(config_store=config)
+        legacy = {
+            "id": "R000001-user-0000",
+            "role": "user",
+            "kind": "interaction",
+            "text": "旧缓存中的用户输入",
+            "loc": {
+                "round": 1,
+                "step": "setup",
+                "iter": 0,
+                "time": "2026-08-04T00:00:00+08:00",
+            },
+            "policy": {"now": True, "lately": True},
+            "ref": {"interaction": {
+                "object": "unknown",
+                "identity_status": "unknown",
+                "interaction_source": "unresolved",
+            }},
+        }
+        legacy["ref"]["raw_log_key"] = store._raw_log_key(legacy)
+        (tmp_path / "cache").mkdir(parents=True)
+        (tmp_path / "buffer").mkdir(parents=True)
+        encoded = json.dumps(legacy, ensure_ascii=False) + "\n"
+        (tmp_path / "cache" / "lately_cache.jsonl").write_text(
+            encoded, encoding="utf-8")
+        (tmp_path / "buffer" / "raw_log.jsonl").write_text(
+            encoded, encoding="utf-8")
+
+        ctxs.ContextStore(config_store=config).append_to_cache(
+            2, "assistant", "新语料", kind="assistant_reply")
+
+        lately = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
+        raw = self._read_jsonl(tmp_path / "buffer" / "raw_log.jsonl")
+        assert [row["ref"]["active_corpus_id"] for row in lately] == [
+            "C-00001", "C-00002"
+        ]
+        assert raw[0]["text"] == legacy["text"]
+        assert all(
+            "active_corpus_id" not in row["ref"]
+            and "interaction_round_index" not in row["ref"]
+            for row in raw
+        )
+
+    def test_spec721_legacy_cache_ids_migrate_once_in_file_order(
+            self, tmp_path, monkeypatch):
+        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir(parents=True)
+        blocks = [
+            {
+                "id": f"R00000{index}-user-0000",
+                "role": "user",
+                "kind": "interaction",
+                "text": text,
+                "loc": {
+                    "round": index,
+                    "step": "setup",
+                    "iter": 0,
+                    "time": "2026-08-04T00:00:00+08:00",
+                },
+                "policy": {"now": True, "lately": True},
+                "ref": {"interaction": {}},
+            }
+            for index, text in ((1, "一"), (2, "二"))
+        ]
+        (cache_dir / "lately_cache.jsonl").write_text(
+            json.dumps(blocks[0], ensure_ascii=False) + "\n", encoding="utf-8")
+        (cache_dir / "now_cache.jsonl").write_text(
+            json.dumps(blocks[1], ensure_ascii=False) + "\n", encoding="utf-8")
+
+        interrupted = ctxs.ContextStore(config_store=self._CacheConfig())
+        monkeypatch.setattr(
+            interrupted,
+            "_write_now_cache",
+            lambda _entries: (_ for _ in ()).throw(OSError("interrupted")),
+        )
+        with pytest.raises(OSError, match="interrupted"):
+            interrupted.get_lately_entries()
+        assert not (cache_dir / "active_corpus_meta.json").exists()
+
+        store = ctxs.ContextStore(config_store=self._CacheConfig())
+        assert [entry["active_corpus_id"] for entry in store.get_lately_entries()] == [
+            "C-00001"
+        ]
+        assert [entry["active_corpus_id"] for entry in store.get_now_entries()] == [
+            "C-00002"
+        ]
+        before = (cache_dir / "now_cache.jsonl").read_bytes()
+        ctxs.ContextStore(config_store=self._CacheConfig()).get_now_entries()
+        assert (cache_dir / "now_cache.jsonl").read_bytes() == before
+
+    def test_spec721_user_inputs_are_protected_for_sixteen_interaction_rounds(
+            self, tmp_path, monkeypatch):
+        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
+        store = ctxs.ContextStore(config_store=self._CacheConfig(
+            now_budget=1,
+            now_trim=0,
+            lately_budget=12,
+            lately_trim=0,
+        ))
+        for round_num in range(1, 17):
+            store.append_to_cache(
+                round_num,
+                "user",
+                f"用户输入{round_num:02d}",
+                kind="interaction",
+            )
+        protected = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
+        assert len(protected) == 16
+        assert store.get_last_cache_stats()["lately_soft_overflow"] is True
+
+        store.append_to_cache(17, "user", "用户输入17", kind="interaction")
+        released = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
+        assert "用户输入01" not in [block["text"] for block in released]
+        assert "用户输入02" in [block["text"] for block in released]
+        assert "用户输入17" in [block["text"] for block in released]
+
+    def test_spec721_protected_user_input_ignores_explicit_drop_and_transients_get_no_id(
+            self, tmp_path, monkeypatch):
+        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
+        store = ctxs.ContextStore(config_store=self._CacheConfig(
+            now_budget=1,
+            now_trim=0,
+            lately_budget=1024,
+            lately_trim=128,
+        ))
+        store.append_to_cache(1, "user", "必须保留的用户原始输入", kind="interaction")
+        user_block = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")[0]
+
+        report = store.rewrite_lately_blocks([{
+            "source_block_ids": [user_block["id"]],
+            "action": "drop",
+        }])
+        store.append_call_transient(
+            2,
+            "system",
+            "仅供本次善后的临时资料",
+            kind="material",
+            transient_scope="cleanup_round",
+            transient_target_step="cleanup",
+        )
+        ctxs.ContextStore(config_store=self._CacheConfig()).get_now_entries()
+        transient = self._read_jsonl(tmp_path / "cache" / "now_cache.jsonl")[0]
+
+        assert report["skipped"] == 1
+        assert self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")[0]["text"] == (
+            "必须保留的用户原始输入"
+        )
+        assert "active_corpus_id" not in transient["ref"]
+
+    def test_spec721_b1_fingerprint_is_stable_when_lately_content_does_not_change(
+            self, tmp_path, monkeypatch):
+        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
+        from assembly.context_helpers import render_corpus_entries_for_context
+        from engines.prompt_cache_planner import apply_explicit_breakpoints
+
+        config = self._CacheConfig(
+            now_budget=1,
+            now_trim=0,
+            lately_budget=16384,
+            lately_trim=1024,
+        )
+        store = ctxs.ContextStore(config_store=config)
+        store.append_to_cache(
+            1,
+            "assistant",
+            "稳定最近缓存" * 900,
+            kind="assistant_reply",
+        )
+
+        def plan(current_store):
+            entries = current_store.get_lately_entries()
+            rendered = render_corpus_entries_for_context(
+                entries,
+                current_round=2,
+                cache_source="lately",
+            )
+            lately = "\n\n".join(item["content"] for item in rendered)
+            _, result = apply_explicit_breakpoints(
+                {
+                    "model": "gpt-5.6-terra",
+                    "messages": [
+                        {"role": "system", "content": "永久层"},
+                        {"role": "system", "content": lately},
+                    ],
+                    "tools": [],
+                },
+                profile="automatic_tiered",
+                message_layers=["10_permanent", "30_lately"],
+                layer_contents={"30_lately": lately},
+                promoted_min_chars=4096,
+            )
+            return rendered, result
+
+        first_entries, first = plan(store)
+        second_entries, second = plan(ctxs.ContextStore(config_store=config))
+
+        assert first["targets"] == ["10_permanent", "30_lately"]
+        assert first["prefix_fingerprint"] == second["prefix_fingerprint"]
+        assert first["lately_epoch"] == second["lately_epoch"]
+        assert first_entries[0]["active_corpus_id"] == second_entries[0]["active_corpus_id"]
 
     def test_spec463_lately_trim_stats_expose_compaction_rhythm_plan(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
@@ -3642,10 +3885,15 @@ class TestContextStore:
         )
 
         candidates = store.build_lately_compression_candidates(current_round=10, max_blocks=None)
+        migrated_blocks = self._read_jsonl(
+            tmp_path / "cache" / "lately_cache.jsonl")
 
-        assert [item["id"] for item in candidates] == [block["id"] for block in blocks]
+        assert [item["id"] for item in candidates] == [
+            block["id"]
+            for block in migrated_blocks
+            if block["kind"] != "interaction"
+        ]
         assert {item["kind"] for item in candidates} == {
-            "interaction",
             "assistant_reply",
             "minimum_commitment",
             "fault_note",
@@ -3689,8 +3937,12 @@ class TestContextStore:
         lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
         raw_after = self._read_jsonl(raw_path)
         summary = lately_blocks[0]
+        source_corpus_ids = {
+            block["ref"]["active_corpus_id"] for block in source_blocks[:2]
+        }
         assert report["status"] == "applied"
         assert summary["kind"] == "cache_summary"
+        assert summary["ref"]["active_corpus_id"] not in source_corpus_ids
         assert "两段语义融合" in summary["text"]
         assert summary["ref"]["source_block_ids"] == source_ids[:2]
         assert summary["ref"]["raw_log_keys"] == [
@@ -3945,7 +4197,7 @@ class TestContextStore:
             now_budget=35, now_trim=5, lately_budget=100, lately_trim=20,
         ))
         for content in ("A" * 30, "B" * 30, "C" * 30, "D" * 30, "E" * 30):
-            store.append_to_cache(1, "user", content, kind="interaction")
+            store.append_to_cache(1, "assistant", content, kind="interaction")
         stats = store.get_last_cache_stats()
         assert stats["lately_trimmed"] is True
         assert cache_compaction_due_receipt(store, 1)["status"] == "due"

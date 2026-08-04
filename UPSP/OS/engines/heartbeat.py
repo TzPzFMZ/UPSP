@@ -207,8 +207,15 @@ class HeartbeatManager:
         self.sm = state_store or StateStore()
         self.cfg = config_store or ConfigStore()
         active_endpoint_ids = getattr(self.cfg, "get_active_model_profile_ids", None)
+        setup_endpoint_ids = getattr(
+            self.cfg, "get_model_profile_ids_for_phase", None)
         self.conn = connectivity_store or ConnectivityStore(
             active_endpoint_ids=active_endpoint_ids,
+            recovery_endpoint_ids=(
+                (lambda: setup_endpoint_ids("setup"))
+                if callable(setup_endpoint_ids)
+                else None
+            ),
         )
         self.evolution_store = evolution_store or EvolutionStore()
         self.interval = interval or self._load_interval()
@@ -222,6 +229,7 @@ class HeartbeatManager:
         self._pause_ev = threading.Event()
         self._pause_ev.set()
         self._stop_ev = threading.Event()
+        self._standby_started_at = None
 
         # 消息队列
         self._msg_queue = []
@@ -268,6 +276,8 @@ class HeartbeatManager:
     def start(self):
         if self._running:
             return
+        self._standby_started_at = local_now()
+        self.sm.set_flag("standby_due", False)
         self._running = True
         self._stop_ev.clear()
         self._thread = threading.Thread(
@@ -328,6 +338,10 @@ class HeartbeatManager:
             self._wakeup.set()
         except Exception:
             pass
+
+    def prepend_messages(self, messages):
+        with self._msg_lock:
+            self._msg_queue[:0] = list(messages or [])
 
     def dequeue_messages(self):
         with self._msg_lock:
@@ -401,7 +415,7 @@ class HeartbeatManager:
         elif api_degraded:
             if not flags.get("api_degraded"):
                 new_flags["api_degraded"] = True
-        elif flags.get("api_degraded"):
+        elif flags.get("api_degraded") and self._check_api_recovered():
             clear_flags.append("api_degraded")
 
         # --- 4. stm_degrade_pending ---
@@ -443,9 +457,13 @@ class HeartbeatManager:
             or meta.get("last_external_input_at")
             or meta.get("last_update")
         )
-        if ref_time:
+        if ref_time or self._standby_started_at:
             try:
-                idle_min = (now - datetime.fromisoformat(ref_time)).total_seconds() / 60
+                ref_at = datetime.fromisoformat(ref_time) if ref_time else None
+                if self._standby_started_at and (
+                        ref_at is None or ref_at < self._standby_started_at):
+                    ref_at = self._standby_started_at
+                idle_min = (now - ref_at).total_seconds() / 60
                 standby_due = idle_min >= self._load_standby_threshold()
                 if standby_due:
                     if not flags.get("standby_due"):
@@ -548,6 +566,13 @@ class HeartbeatManager:
         """检查 connectivity.json 是否有 API 降级（通过 ConnectivityStore）"""
         try:
             return self.conn.has_degraded()
+        except Exception:
+            return False
+
+    def _check_api_recovered(self):
+        try:
+            checker = getattr(self.conn, "has_recovered", None)
+            return bool(checker()) if callable(checker) else not self.conn.has_degraded()
         except Exception:
             return False
 

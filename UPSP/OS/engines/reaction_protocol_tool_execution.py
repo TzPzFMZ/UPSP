@@ -399,4 +399,72 @@ def minimal_native_tool_result_content(result, fallback_tool_id=""):
         value = result.get(key)
         if value not in (None, "", []):
             payload[key] = value
+    hint = model_visible_error_hint(result)
+    if hint:
+        payload["error_hint"] = hint
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def model_visible_error_hint(result):
+    """Project one safe, actionable contract from any failed native receipt."""
+    result = result if isinstance(result, dict) else {}
+    status = str(result.get("status") or "").lower()
+    reason = str(result.get("reason") or "").lower()
+    if status in {"ok", "success", "accepted", "applied", "guide_loaded"}:
+        return {}
+    if not status and not reason:
+        return {}
+    details = result.get("details") if isinstance(result.get("details"), dict) else {}
+    existing = result.get("error_hint") if isinstance(result.get("error_hint"), dict) else {}
+    haystack = " ".join((status, reason))
+    kind = str(existing.get("kind") or details.get("error_kind") or "")
+    if kind not in {"validation", "state_conflict", "permission_security",
+                    "transient_external", "unknown_internal"}:
+        if any(word in haystack for word in ("permission", "security", "forbidden", "auth")):
+            kind = "permission_security"
+        elif any(word in haystack for word in ("timeout", "connection", "dns", "tls", "rate", "upstream", "temporar")):
+            kind = "transient_external"
+        elif any(word in haystack for word in ("not_active", "stale", "conflict", "already", "closed")):
+            kind = "state_conflict"
+        elif any(word in haystack for word in ("invalid", "missing", "required", "unknown", "not_read", "not_found", "unsupported", "schema")):
+            kind = "validation"
+        else:
+            kind = "unknown_internal"
+    defaults = {
+        "validation": ("after_correction", "按 expected 修正参数后再提交。"),
+        "state_conflict": ("after_correction", "刷新当前状态，只按 current/expected 坐标重新提交。"),
+        "permission_security": ("after_authorization", "停止当前动作，取得明确授权或降低动作范围。"),
+        "transient_external": ("later", "保留 reason，稍后重试；不要声称已成功。"),
+        "unknown_internal": ("never_without_new_evidence", "不要原样重试；保留 reason，停止当前动作并报告。"),
+    }
+    retry, next_action = defaults[kind]
+    attempted = existing.get("attempted", details.get("attempted"))
+    if attempted in (None, ""):
+        attempted = {key: result[key] for key in ("guide_id", "item_id", "option_id", "field")
+                     if result.get(key) not in (None, "")}
+    hint = {
+        "kind": kind,
+        "retry": _safe_error_hint_value(existing.get("retry") or details.get("retry") or retry),
+        "attempted": _safe_error_hint_value(attempted or {}),
+        "current": _safe_error_hint_value(existing.get("current") or details.get("current") or details.get("active_guide") or {}),
+        "expected": _safe_error_hint_value(existing.get("expected") or details.get("expected") or result.get("expected") or {}),
+        "next_action": _safe_error_hint_value(existing.get("next_action") or details.get("next_action") or result.get("repair_hint") or next_action),
+    }
+    return hint
+
+
+def _safe_error_hint_value(value):
+    allowed_keys = {
+        "guide_id", "item_id", "option_id", "option_ids", "field", "fields",
+        "allowed", "source_ref", "missing_source_refs", "unknown_source_refs",
+        "prior_source_refs", "legal_coordinates", "requirement_id",
+        "tool_id",
+    }
+    if isinstance(value, dict):
+        return {str(key): _safe_error_hint_value(child) for key, child in value.items()
+                if str(key) in allowed_keys}
+    if isinstance(value, list):
+        return [_safe_error_hint_value(child) for child in value[:20]]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value[:500] if isinstance(value, str) else value
+    return str(value)[:500]

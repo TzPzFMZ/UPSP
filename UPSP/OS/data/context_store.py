@@ -8,7 +8,7 @@ from datetime import datetime
 from constants import local_now
 from data.atomic_write import atomic_write_text
 from data.config_store import ConfigStore
-from errors import WriteError
+from errors import ReadError, WriteError
 from paths import (
     CONTAINER_CORPUS_DIR,
     RAW_LOG,
@@ -30,6 +30,8 @@ class ContextStore:
     """now/lately 语料缓存、raw_log 与 Corpus 节归档管理。"""
 
     CACHE_COMPACTION_DEBT_SCHEMA = "cache_compaction_debt.v1"
+    ACTIVE_CORPUS_META_SCHEMA = "active_corpus_meta.v1"
+    INTERACTION_RETENTION_ROUNDS = 16
 
     TEMPLATE_PLACEHOLDER_TOKENS = {
         "assistant_reply": {"assistant_reply"},
@@ -92,6 +94,7 @@ class ContextStore:
         self._raw_log_md_override = raw_log_md
         self._corpus_rhythms_dir_override = corpus_rhythms_dir
         self._last_cache_stats = self._empty_cache_stats()
+        self._active_corpus_migrated = False
 
     # ==========================================================
     # now/lately cache
@@ -355,6 +358,7 @@ class ContextStore:
 
     def _all_now_entries(self):
         """读取 now 主源，含尚未消费的 C 轨临时语料。"""
+        self._migrate_active_corpus_metadata()
         return [entry for entry in (
             self._corpus_block_to_entry(block)
             for block in self._read_jsonl(self._now_cache_jsonl())
@@ -564,6 +568,8 @@ class ContextStore:
         return self.config_store.get_lately_compaction_params()
 
     def _sync_caches(self, entries, now_entries):
+        entries, now_entries = self._assign_active_corpus_metadata(
+            entries, now_entries)
         active_now, promoted, now_stats = self._apply_now_watermark(now_entries)
         stats = dict(now_stats)
 
@@ -574,6 +580,8 @@ class ContextStore:
                 "lately_deleted_blocks",
                 "lately_deleted_chars",
                 "lately_trimmed",
+                "lately_soft_overflow",
+                "lately_soft_overflow_chars",
                 "cache_compaction_required",
                 "lately_surviving_chars",
                 "lately_compact_target_chars",
@@ -718,6 +726,7 @@ class ContextStore:
         return blocks
 
     def _load_lately_entries(self):
+        self._migrate_active_corpus_metadata()
         return [entry for entry in (
             self._corpus_block_to_entry(block)
             for block in self._read_jsonl(self._lately_cache_jsonl())
@@ -752,6 +761,8 @@ class ContextStore:
             "lately_deleted_blocks": 0,
             "lately_deleted_chars": 0,
             "lately_trimmed": False,
+            "lately_soft_overflow": False,
+            "lately_soft_overflow_chars": 0,
             "cache_compaction_required": False,
             "lately_surviving_chars": 0,
             "lately_compact_target_chars": 0,
@@ -832,8 +843,21 @@ class ContextStore:
             return active, stats
 
         target_chars = max(0, params["budget_chars"] - params["trim_chars"])
+        current_interaction_round = self._load_active_corpus_meta()[
+            "interaction_round_count"
+        ]
         while active and total > target_chars:
-            entry = active.pop(0)
+            index = next((
+                i for i, entry in enumerate(active)
+                if not self._interaction_is_protected(
+                    entry, current_interaction_round)
+            ), None)
+            if index is None:
+                stats["lately_soft_overflow"] = True
+                stats["lately_soft_overflow_chars"] = max(
+                    0, total - params["budget_chars"])
+                break
+            entry = active.pop(index)
             chars = self._entry_chars(entry)
             total -= chars
             stats["lately_deleted_blocks"] += 1
@@ -960,6 +984,13 @@ class ContextStore:
         if normalized.get("interaction_object_id"):
             interaction_ref["object_id"] = normalized["interaction_object_id"]
         ref = {"interaction": interaction_ref}
+        active_corpus_id = self._normalize_active_corpus_id(
+            normalized.get("active_corpus_id"))
+        if active_corpus_id:
+            ref["active_corpus_id"] = active_corpus_id
+        if self._sanitize_int(normalized.get("interaction_round_index"), 0) > 0:
+            ref["interaction_round_index"] = self._sanitize_int(
+                normalized.get("interaction_round_index"), 0)
         if normalized.get("raw_log_key"):
             ref["raw_log_key"] = normalized.get("raw_log_key")
         if normalized.get("source_block_id"):
@@ -1097,6 +1128,8 @@ class ContextStore:
             "protocol_receipt": ref.get("protocol_receipt"),
             "protocol_receipts": ref.get("protocol_receipts"),
             "native_replay": ref.get("native_replay"),
+            "active_corpus_id": ref.get("active_corpus_id"),
+            "interaction_round_index": ref.get("interaction_round_index"),
         }
         if "now" in policy:
             entry["now"] = policy.get("now")
@@ -1163,6 +1196,185 @@ class ContextStore:
         if self._cache_dir_override:
             return self._cache_dir_override
         return STM_CONTEXT_CACHE_DIR
+
+    def active_corpus_meta_path(self):
+        return os.path.join(self._cache_dir(), "active_corpus_meta.json")
+
+    def _load_active_corpus_meta(self):
+        path = self.active_corpus_meta_path()
+        if not os.path.isfile(path):
+            return {
+                "schema_version": self.ACTIVE_CORPUS_META_SCHEMA,
+                "next_short_id": 1,
+                "interaction_round_count": 0,
+            }
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError("active_corpus_meta_not_object")
+            if data.get("schema_version") != self.ACTIVE_CORPUS_META_SCHEMA:
+                raise ValueError("active_corpus_meta_schema_invalid")
+            next_short_id = int(data.get("next_short_id"))
+            interaction_round_count = int(data.get("interaction_round_count"))
+            if next_short_id < 1 or interaction_round_count < 0:
+                raise ValueError("active_corpus_meta_counter_invalid")
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ReadError(path, cause=exc)
+        return {
+            "schema_version": self.ACTIVE_CORPUS_META_SCHEMA,
+            "next_short_id": next_short_id,
+            "interaction_round_count": interaction_round_count,
+        }
+
+    @staticmethod
+    def _normalize_active_corpus_id(value):
+        text = str(value or "").strip().upper()
+        return text if re.fullmatch(r"C-[0-9]{5}", text) else ""
+
+    @classmethod
+    def _entry_supports_active_corpus_id(cls, entry):
+        if not isinstance(entry, dict) or not str(entry.get("content") or "").strip():
+            return False
+        if cls._is_call_transient(entry):
+            return False
+        kind = str(entry.get("kind") or "").strip()
+        return kind not in {"reasoning_context", "runtime_call_request"}
+
+    @classmethod
+    def _interaction_is_protected(cls, entry, current_interaction_round):
+        if not isinstance(entry, dict):
+            return False
+        if entry.get("role") != "user" or entry.get("kind") != "interaction":
+            return False
+        try:
+            created = int(entry.get("interaction_round_index"))
+            current = int(current_interaction_round)
+        except (TypeError, ValueError):
+            return False
+        return created > 0 and 0 <= current - created < cls.INTERACTION_RETENTION_ROUNDS
+
+    @staticmethod
+    def _interaction_batch_key(entry, fallback_index):
+        round_num = ContextStore._entry_round(entry)
+        if round_num is not None:
+            return ("round", round_num)
+        return ("entry", fallback_index, ContextStore._entry_key(entry))
+
+    def _assign_active_corpus_metadata(
+            self, lately_entries, now_entries, *, persist_meta=True):
+        meta = self._load_active_corpus_meta()
+        groups = [
+            [self._normalize_entry(entry) for entry in entries or []]
+            for entries in (lately_entries, now_entries)
+        ]
+        all_entries = groups[0] + groups[1]
+        existing_ids = [
+            self._normalize_active_corpus_id(entry.get("active_corpus_id"))
+            for entry in all_entries
+        ]
+        existing_numbers = [int(value[2:]) for value in existing_ids if value]
+        next_short_id = max(
+            meta["next_short_id"],
+            max(existing_numbers, default=0) + 1,
+        )
+        interaction_round_count = max(
+            meta["interaction_round_count"],
+            max((
+                self._sanitize_int(entry.get("interaction_round_index"), 0)
+                for entry in all_entries
+            ), default=0),
+        )
+        batch_indexes = {}
+        for index, entry in enumerate(all_entries):
+            if entry.get("role") == "user" and entry.get("kind") == "interaction":
+                interaction_index = self._sanitize_int(
+                    entry.get("interaction_round_index"), 0)
+                if interaction_index > 0:
+                    batch_indexes[self._interaction_batch_key(entry, index)] = interaction_index
+
+        changed = False
+        for index, entry in enumerate(all_entries):
+            if self._entry_supports_active_corpus_id(entry):
+                active_id = self._normalize_active_corpus_id(
+                    entry.get("active_corpus_id"))
+                if not active_id:
+                    active_id = f"C-{next_short_id:05d}"
+                    next_short_id += 1
+                    entry["active_corpus_id"] = active_id
+                    changed = True
+            if entry.get("role") != "user" or entry.get("kind") != "interaction":
+                continue
+            interaction_index = self._sanitize_int(
+                entry.get("interaction_round_index"), 0)
+            if interaction_index <= 0:
+                batch_key = self._interaction_batch_key(entry, index)
+                interaction_index = batch_indexes.get(batch_key, 0)
+                if interaction_index <= 0:
+                    interaction_round_count += 1
+                    interaction_index = interaction_round_count
+                    batch_indexes[batch_key] = interaction_index
+                entry["interaction_round_index"] = interaction_index
+                changed = True
+
+        updated_meta = {
+            "schema_version": self.ACTIVE_CORPUS_META_SCHEMA,
+            "next_short_id": next_short_id,
+            "interaction_round_count": interaction_round_count,
+        }
+        if persist_meta and (
+                changed or updated_meta != meta or not os.path.isfile(
+                    self.active_corpus_meta_path())):
+            self._write_json_atomic(self.active_corpus_meta_path(), updated_meta)
+        split = len(groups[0])
+        return all_entries[:split], all_entries[split:]
+
+    def _migrate_active_corpus_metadata(self):
+        if self._active_corpus_migrated:
+            return
+        if not (
+                os.path.isfile(self._now_cache_jsonl())
+                or os.path.isfile(self._lately_cache_jsonl())):
+            self._active_corpus_migrated = True
+            return
+        lately_blocks = self._read_jsonl(self._lately_cache_jsonl())
+        now_blocks = self._read_jsonl(self._now_cache_jsonl())
+        needs_cache_write = False
+        for block in lately_blocks + now_blocks:
+            entry = self._corpus_block_to_entry(block)
+            if not entry:
+                continue
+            ref = block.get("ref") if isinstance(block.get("ref"), dict) else {}
+            if (
+                    self._entry_supports_active_corpus_id(entry)
+                    and not self._normalize_active_corpus_id(
+                        ref.get("active_corpus_id"))):
+                needs_cache_write = True
+            if (
+                    entry.get("role") == "user"
+                    and entry.get("kind") == "interaction"
+                    and self._sanitize_int(
+                        ref.get("interaction_round_index"), 0) <= 0):
+                needs_cache_write = True
+        lately = [
+            entry for entry in (
+                self._corpus_block_to_entry(block)
+                for block in lately_blocks
+            ) if entry
+        ]
+        now = [
+            entry for entry in (
+                self._corpus_block_to_entry(block)
+                for block in now_blocks
+            ) if entry
+        ]
+        lately, now = self._assign_active_corpus_metadata(
+            lately, now, persist_meta=False)
+        if needs_cache_write:
+            self._write_lately_cache(lately)
+            self._write_now_cache(now)
+        self._assign_active_corpus_metadata(lately, now)
+        self._active_corpus_migrated = True
 
     def _now_cache_jsonl(self):
         if self._now_cache_jsonl_override:
@@ -1232,6 +1444,8 @@ class ContextStore:
         }
         if not clone["text"]:
             return None
+        clone["ref"].pop("active_corpus_id", None)
+        clone["ref"].pop("interaction_round_index", None)
         clone["ref"]["raw_log_key"] = self._raw_log_key(clone)
         return clone
 
@@ -1352,12 +1566,20 @@ class ContextStore:
 
     def build_lately_compression_candidates(self, current_round=None, max_blocks=None):
         """返回删后幸存段的完整 lately 语料块，供善后语义融合压缩。"""
+        self._migrate_active_corpus_metadata()
         candidates = []
+        interaction_round_count = self._load_active_corpus_meta()[
+            "interaction_round_count"
+        ]
         for block in self._read_jsonl(self._lately_cache_jsonl()):
             if not isinstance(block, dict):
                 continue
             kind = block.get("kind")
             if kind in self._compaction_excluded_kinds():
+                continue
+            if self._interaction_is_protected(
+                    self._corpus_block_to_entry(block),
+                    interaction_round_count):
                 continue
             loc = block.get("loc") if isinstance(block.get("loc"), dict) else {}
             round_num = loc.get("round")
@@ -1385,6 +1607,7 @@ class ContextStore:
 
     def rewrite_lately_blocks(self, decisions, current_round=None):
         """按 cache_compact 语义重写 lately；raw_log 不随缓存压缩改写。"""
+        self._migrate_active_corpus_metadata()
         blocks = [
             block for block in (
                 self._normalize_lately_block(item)
@@ -1406,9 +1629,14 @@ class ContextStore:
             }
 
         id_to_block = {str(block.get("id", "")): block for block in blocks}
+        interaction_round_count = self._load_active_corpus_meta()[
+            "interaction_round_count"
+        ]
         compactable_blocks = [
             block for block in blocks
             if block.get("kind") not in self._compaction_excluded_kinds()
+            and not self._interaction_is_protected(
+                self._corpus_block_to_entry(block), interaction_round_count)
         ]
         candidate_id_by_number = {
             str(index): str(block.get("id", ""))
@@ -1451,6 +1679,9 @@ class ContextStore:
                 if source_id in id_to_block
                 and id_to_block[source_id].get("kind")
                 not in self._compaction_excluded_kinds()
+                and not self._interaction_is_protected(
+                    self._corpus_block_to_entry(id_to_block[source_id]),
+                    interaction_round_count)
             ]
             source_ids.sort(key=lambda item: index_by_id[item])
             if not source_ids:
@@ -1515,9 +1746,33 @@ class ContextStore:
             stats["skipped"] += 1
             rewritten.extend(source_blocks)
 
+        rewritten = self._assign_active_corpus_metadata_to_blocks(rewritten)
         stats["after_chars"] = sum(len(str(block.get("text", "") or "")) for block in rewritten)
         self._write_jsonl_atomic(self._lately_cache_jsonl(), rewritten)
         return stats
+
+    def _assign_active_corpus_metadata_to_blocks(self, blocks):
+        entries = [self._corpus_block_to_entry(block) for block in blocks]
+        assigned, _ = self._assign_active_corpus_metadata(
+            [entry for entry in entries if entry], [])
+        assigned_iter = iter(assigned)
+        result = []
+        for block, entry in zip(blocks, entries):
+            copied = dict(block)
+            if entry:
+                assigned_entry = next(assigned_iter)
+                ref = dict(copied.get("ref") or {})
+                active_id = self._normalize_active_corpus_id(
+                    assigned_entry.get("active_corpus_id"))
+                if active_id:
+                    ref["active_corpus_id"] = active_id
+                interaction_index = self._sanitize_int(
+                    assigned_entry.get("interaction_round_index"), 0)
+                if interaction_index > 0:
+                    ref["interaction_round_index"] = interaction_index
+                copied["ref"] = ref
+            result.append(copied)
+        return result
 
     @staticmethod
     def _decision_source_block_ids(decision):

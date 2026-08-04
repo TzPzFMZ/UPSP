@@ -1,7 +1,10 @@
 """Cleanup step pipeline and slow metabolism boundary."""
+import hashlib
+import json
 import os
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from constants import local_now, local_fromtimestamp
 from constants import STANDBY_COUNTDOWN_INITIAL
@@ -26,6 +29,7 @@ from logic.evolution_set import (
 from logic.mem_id import make_meta_template
 from logic.state_settlement import StateSettlementError, settle_state
 from logic.relay_target import normalize_pending_target
+from logic.sandbox_grant import load_sandbox_grant
 from logic.relay_intent_pool import (
     create_relay_intent,
     open_relay_intents,
@@ -50,6 +54,24 @@ ALERT_FLAG_NAMES = {
 
 
 class CleanupPipeline(EngineComponent):
+    _PROGRESS_STATUSES = {
+        "accepted", "applied", "ok", "success", "completed", "passed",
+        "allow_once", "skip",
+    }
+    _PROGRESS_IGNORED_TOOLS = {
+        "reaction_finalize",
+        "cleanup_finalize",
+        "relay_intent_settle",
+        "cleanup_pipeline",
+    }
+    _PROGRESS_VOLATILE_KEYS = {
+        "approval_id", "call_id", "created_at", "duration_ms", "elapsed_ms",
+        "executed_at", "fetched_at", "frame_id", "iteration", "last_checkpoint",
+        "recorded_at", "requested_at", "request_id", "resolved_at",
+        "response_id", "round", "round_num", "source_round", "step_count",
+        "timestamp", "updated_at",
+    }
+
     @staticmethod
     def _cleanup_round_receipt_lines(result):
         result = result if isinstance(result, dict) else {}
@@ -286,6 +308,19 @@ class CleanupPipeline(EngineComponent):
         )
         if user_stop:
             degraded_reasons.append("user_stopped")
+        provider_hard_stop = (
+            result.get("_provider_call_hard_stop")
+            if isinstance(result, dict) else {}
+        ) or {}
+        if provider_hard_stop:
+            degraded_reasons.append(
+                str(provider_hard_stop.get("reason") or "provider_call_limit"))
+        elif (
+                not user_stop
+                and isinstance(result, dict)
+                and result.get("aborted")):
+            degraded_reasons.append(
+                str(result.get("_local_blocked_reason") or "round_aborted"))
 
         def set_stage(stage):
             callback = getattr(self, "stage_callback", None)
@@ -503,7 +538,8 @@ class CleanupPipeline(EngineComponent):
         except Exception as e:
             fatal_reasons.append(failure_reason("cleanup_api", e))
             self._run_l3_emergency_save(
-                round_type, state, result, round_num, user_input_text, e)
+                round_type, state, result, round_num, user_input_text, e,
+                external_interaction=external_interaction)
         finally:
             set_stage("cleanup_local")
             self._clear_cleanup_round_material(round_num, result)
@@ -554,12 +590,19 @@ class CleanupPipeline(EngineComponent):
                 fatal_reasons.append(failure_reason("evolution_set", exc))
 
         # ⑦ 保存语料缓冲（独立）
+        no_progress_block = self._guard_no_progress_relay(
+            round_type, result, round_num)
+        if no_progress_block and "no_progress_relay" not in degraded_reasons:
+            degraded_reasons.append("no_progress_relay")
         resp_text = result.get("response", "")
         if not result.get("_l3_emergency_buffer_saved"):
             try:
                 self.ctx_store.save_round_to_cache(
                     round_num,
-                    user_input=user_input_text,
+                    user_input=(
+                        user_input_text
+                        if external_interaction is not False else ""
+                    ),
                     response=resp_text,
                     **cache_meta,
                 )
@@ -718,7 +761,8 @@ class CleanupPipeline(EngineComponent):
             self.sm.clear_flags(list(dict.fromkeys(flags_to_clear)))
 
     def _run_l3_emergency_save(self, round_type, state, result, round_num,
-                               user_input_text, error):
+                               user_input_text, error,
+                               external_interaction=None):
         """L3 心跳急救：善后步 API 失败时只做纯文件 IO 保全。"""
         error_text = str(error)
         last_error = f"善后步API异常 R{round_num}: {error_text}"
@@ -754,7 +798,10 @@ class CleanupPipeline(EngineComponent):
         try:
             self.ctx_store.save_round_to_cache(
                 round_num,
-                user_input=user_input_text,
+                user_input=(
+                    user_input_text
+                    if external_interaction is not False else ""
+                ),
                 response=resp_text,
                 **cache_meta,
             )
@@ -890,6 +937,188 @@ class CleanupPipeline(EngineComponent):
             and result.get("_reaction_finalize_validated")
         )
 
+    @classmethod
+    def _stable_progress_value(cls, value):
+        if isinstance(value, dict):
+            return {
+                str(key): cls._stable_progress_value(item)
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+                if str(key) not in cls._PROGRESS_VOLATILE_KEYS
+            }
+        if isinstance(value, list):
+            return [cls._stable_progress_value(item) for item in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    @classmethod
+    def _progress_digest(cls, value):
+        canonical = json.dumps(
+            cls._stable_progress_value(value),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _progress_output_roots(result):
+        roots = set()
+        try:
+            grant = load_sandbox_grant()
+            raw_task_root = str((grant or {}).get("task_root") or "").strip()
+            if raw_task_root:
+                output_root = Path(raw_task_root).resolve() / "output"
+                if output_root.is_dir():
+                    roots.add(output_root)
+        except (OSError, RuntimeError, ValueError):
+            pass
+
+        for item in (result or {}).get("_general_tool_results") or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("status") or "").lower() not in CleanupPipeline._PROGRESS_STATUSES:
+                continue
+            paths = []
+            if item.get("tool_id") == "shell_command" and item.get("cwd"):
+                try:
+                    output_root = Path(str(item["cwd"])).resolve() / "output"
+                    if output_root.is_dir():
+                        roots.add(output_root)
+                except (OSError, RuntimeError, ValueError):
+                    pass
+            for key in ("path", "modified_files", "write_scope"):
+                value = item.get(key)
+                paths.extend(value if isinstance(value, list) else [value])
+            for value in paths:
+                if not value:
+                    continue
+                try:
+                    path = Path(str(value)).resolve()
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                for parent in (path, *path.parents):
+                    try:
+                        if parent.name.lower() == "output" and parent.is_dir():
+                            roots.add(parent)
+                            break
+                    except OSError:
+                        continue
+        return sorted(roots, key=lambda path: str(path).lower())
+
+    def _continuation_progress_evidence(self, result, round_num):
+        result = result if isinstance(result, dict) else {}
+        evidence = set()
+
+        def add(prefix, value):
+            evidence.add(f"{prefix}:{self._progress_digest(value)}")
+
+        for item in result.get("_general_tool_results") or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("status") or "").lower() not in self._PROGRESS_STATUSES:
+                continue
+            add("general_tool", item)
+        for item in result.get("_protocol_tool_receipts") or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("tool_id") or "") in self._PROGRESS_IGNORED_TOOLS:
+                continue
+            if str(item.get("status") or "").lower() not in self._PROGRESS_STATUSES:
+                continue
+            add("protocol_receipt", item)
+        try:
+            events = self._get_round_audit_store().read_events(round_num)
+        except Exception:
+            events = []
+        for event in events:
+            if event.get("event_type") != "general_tool_approval_resolved":
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            if str(payload.get("decision") or "") in {"allow_once", "skip"}:
+                add("approval", payload)
+        try:
+            status = self.workbench.load_status()
+            add("workbench", status)
+            active_task = str((status.get("base") or {}).get("active_task") or "").strip()
+            if active_task:
+                add("task", self.workbench.load_task_guide(active_task))
+            for guide_id in (self.workbench.active_guide_slots() or {}).values():
+                if guide_id:
+                    add("guide", self.workbench.load_guide(guide_id))
+            for source in self.workbench.load_source_read_evidence() or []:
+                add("source", source)
+        except Exception:
+            pass
+        for output_root in self._progress_output_roots(result):
+            try:
+                for root, dirs, files in os.walk(output_root):
+                    dirs.sort()
+                    for name in sorted(files):
+                        path = os.path.join(root, name)
+                        digest = hashlib.sha256()
+                        with open(path, "rb") as f:
+                            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                                digest.update(chunk)
+                        relative = os.path.relpath(path, output_root).replace("\\", "/")
+                        evidence.add(f"output:{relative}:{digest.hexdigest()}")
+            except OSError:
+                continue
+        return evidence
+
+    def _guard_no_progress_relay(self, round_type, result, round_num):
+        if not isinstance(result, dict):
+            return False
+        receipts = result.get("_closeout_relay_receipts") or []
+        if not any(self._is_continue_requested_relay_receipt(item) for item in receipts):
+            return False
+        current = self._continuation_progress_evidence(result, round_num)
+        try:
+            open_intents = open_relay_intents(self.sm.load())
+        except Exception:
+            open_intents = []
+        prior = open_intents[-1] if round_type == "relay" and open_intents else {}
+        prior_evidence = {
+            str(item) for item in prior.get("progress_evidence") or [] if str(item)
+        }
+        combined = prior_evidence | current
+        result["_continuation_progress"] = {
+            "fingerprint": self._progress_digest(sorted(combined)),
+            "evidence": sorted(combined),
+            "new_evidence": sorted(current - prior_evidence),
+        }
+        if not prior.get("progress_fingerprint") or current - prior_evidence:
+            return False
+        receipt = settle_open_relay_intents(
+            self.sm,
+            status="blocked",
+            round_num=round_num,
+            note="blocked/no_progress_relay",
+            source="cleanup.no_progress_relay",
+        )
+        result["_no_progress_relay_blocked"] = True
+        result["_exit_signal"] = "blocked"
+        result["_local_blocked_reason"] = "blocked/no_progress_relay"
+        result["response"] = (
+            "任务已停止自动续轮：上一轮中继没有产生新的工具结果、来源证据、"
+            "任务落账、输出文件或审批结果。未完成项仍保留，请检查阻塞原因后再继续。"
+        )
+        result.setdefault("_relay_intent_terminal_receipts", []).append(receipt)
+        try:
+            self._get_round_audit_store().append_event(
+                round_num,
+                "no_progress_relay_blocked",
+                {
+                    "status": "blocked",
+                    "reason": "blocked/no_progress_relay",
+                    "progress_fingerprint": result["_continuation_progress"]["fingerprint"],
+                },
+                phase="cleanup",
+            )
+        except Exception:
+            pass
+        return True
+
     def _finalize_flags(self, state, round_type, round_num, result=None):
         """善后步终态：清零本轮已消费的 flags"""
         # 通用清理：stm_degrade_pending 每轮都清（心跳下次按实际状态重新置位）
@@ -984,6 +1213,8 @@ class CleanupPipeline(EngineComponent):
         """清掉本轮入口 flag 后，按反应步 closeout_form 重臂下一轮。"""
         if not isinstance(result, dict):
             return
+        if result.get("_no_progress_relay_blocked"):
+            return
         receipts = result.get("_closeout_relay_receipts") or []
         if not any(self._is_continue_requested_relay_receipt(item) for item in receipts):
             if round_type != "relay":
@@ -1010,6 +1241,14 @@ class CleanupPipeline(EngineComponent):
         )
         relay_intent = None
         try:
+            if round_type == "relay":
+                settle_open_relay_intents(
+                    self.sm,
+                    status="merged",
+                    round_num=round_num,
+                    note="relay_progressed_and_continues",
+                    source="cleanup.progress_relay",
+                )
             source_receipt = next(
                 item for item in receipts
                 if self._is_continue_requested_relay_receipt(item)
@@ -1025,6 +1264,12 @@ class CleanupPipeline(EngineComponent):
                 ),
                 reaction_finalize_id=source_receipt.get("call_id", ""),
                 user_input_ref=source_receipt.get("user_input_ref", ""),
+                progress_fingerprint=(
+                    result.get("_continuation_progress") or {}
+                ).get("fingerprint", ""),
+                progress_evidence=(
+                    result.get("_continuation_progress") or {}
+                ).get("evidence", []),
             )
         except Exception as exc:
             relay_intent = {"status": "relay_intent_create_error", "reason": str(exc)}
@@ -1062,6 +1307,8 @@ class CleanupPipeline(EngineComponent):
     def _rearm_continue_requested_from_open_relay_intents(
             self, result, *, round_type, round_num):
         if round_type != "relay" or not isinstance(result, dict):
+            return
+        if result.get("_no_progress_relay_blocked"):
             return
         terminal_decision = self._relay_terminal_closeout_decision(result)
         if terminal_decision:

@@ -54,6 +54,7 @@ def test_public_path_contract() -> None:
     assert not is_public_path("tools/upsp_visible_dogfood.py")
     assert not is_public_path("UPSP/OS/tests/test_dds_truth_audit.py")
     assert not is_public_path("UPSP/OS/tests/test_prompt_cache_planner.py")
+    assert not is_public_path("UPSP/OS/tests/test_spec721_recovery_tool.py")
 
 
 def test_public_readmes_preserve_subjectivation_narrative() -> None:

@@ -193,6 +193,7 @@ class FakeCli:
                 "stop_latched": False,
                 "can_stop": False,
                 "heartbeat_suspended": False,
+                "pending_tool_approval": None,
             },
             "last_outcome": {},
         }
@@ -229,6 +230,10 @@ class FakeCli:
         if self.stop_receipt is not None:
             return dict(self.stop_receipt)
         raise self.runtime_error("no_round_in_flight")
+
+    def resolve_tool_approval(self, approval_id, decision):
+        self.calls.append((["resident", "tool-approval", approval_id, decision], {}))
+        return {"approval_id": approval_id, "decision": decision}
 
 
 def _gui_root(tmp_path):
@@ -399,7 +404,7 @@ def test_spec683_static_whitelist_polling_and_runtime_status(tmp_path):
         status, about = _request(server, "GET", "/api/about")
         assert status == 200
         assert about["schema_version"] == "seed_gui_about.v1"
-        assert about["product"]["version"] == "0.1.0-alpha.6"
+        assert about["product"]["version"] == "0.1.0-alpha.7"
         assert about["product"]["author"]["zh-CN"] == (
             "由 TzPzFMZ 发起、设计并与 AI 协作开发"
         )
@@ -922,7 +927,7 @@ def test_spec700_model_catalog_crud_auto_binding_and_reference_guards(tmp_path):
                     "model": "gpt-5.6-terra", "context_window": 1000000,
                     "reasoning_supported": ["medium"], "reasoning_default": "medium",
                     "streaming_enabled": True, "streaming_include_usage": True,
-                    "prompt_cache_profile": "off", "request_overrides": {},
+                    "request_overrides": {},
                 },
             }),
             headers=_json_headers(server),
@@ -1705,6 +1710,8 @@ def test_spec710_chat_consumes_visible_streams_and_polls_fast_only_when_active()
     assert "reasoning_content" not in view_source
     assert "content_raw" in view_source
     assert "export function runtimePollingActive()" in runtime_source
+    assert "const liveAdvanced = previousRound !== livePayload.round" in runtime_source
+    assert "await pollTaskProjection({ force: true, ignoreVisibility: true });" in runtime_source
     assert "if (!runtimePollingActive()) void pollRuntime();" in app_source
     assert "if (runtimePollingActive()) void pollRuntime();" in app_source
     assert "}, 500);" in app_source
@@ -1853,6 +1860,18 @@ def test_spec686_container_focus_validation_conflict_and_shared_lock(tmp_path):
     workbench = FakeWorkbenchStore(current="PRJ-001")
     reader = _deposition_reader(workbench)
     server, thread = _server(tmp_path, FakeCli(), reader)
+    handler = server.RequestHandlerClass
+    original_send_json = handler._send_json
+    lock_state_at_response = []
+
+    def send_json_after_unlock(request_handler, status, payload):
+        if isinstance(payload, dict) and payload.get("error") in {
+            "container_not_found", "missing_focus", "focus_conflict", "missing_old_focus",
+        }:
+            lock_state_at_response.append(handler.mutation_lock.locked())
+        original_send_json(request_handler, status, payload)
+
+    handler._send_json = send_json_after_unlock
     headers = _json_headers(server)
     try:
         request = lambda action, container_id: _request(
@@ -1899,6 +1918,8 @@ def test_spec686_container_focus_validation_conflict_and_shared_lock(tmp_path):
         assert rejected["receipt"]["tool_id"] == "container_focus"
         assert rejected["receipt"]["status"] == "rejected"
         assert rejected["focus"] == {"current": "PRJ-001", "previous": ""}
+        assert lock_state_at_response
+        assert not any(lock_state_at_response)
     finally:
         _close(server, thread)
 
@@ -2017,6 +2038,39 @@ def test_spec687_task_http_and_relay_contract(tmp_path):
         _close(server, thread)
 
 
+def test_spec721_live_event_cache_reads_append_and_resets_on_replacement(tmp_path):
+    server, thread = _server(tmp_path, FakeCli())
+    path = tmp_path / "round" / "round_721.jsonl"
+
+    def line(index):
+        return json.dumps({
+            "round": 721,
+            "event_index": index,
+            "event_type": "round_started" if index == 1 else "runtime_audit",
+            "payload": {},
+        }) + "\n"
+
+    try:
+        handler = server.RequestHandlerClass
+        handler._event_cache = {}
+        path.write_text(line(1), encoding="utf-8")
+        assert [event["event_index"] for event in handler._load_cached_round_events(721)] == [1]
+
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(line(2))
+        assert [event["event_index"] for event in handler._load_cached_round_events(721)] == [1, 2]
+
+        path.write_text(line(7) + line(8), encoding="utf-8")
+        assert [event["event_index"] for event in handler._load_cached_round_events(721)] == [7, 8]
+
+        replacement = path.with_suffix(".replacement")
+        replacement.write_text(line(9), encoding="utf-8")
+        replacement.replace(path)
+        assert [event["event_index"] for event in handler._load_cached_round_events(721)] == [9]
+    finally:
+        _close(server, thread)
+
+
 def test_spec704_tick_and_stop_http_contracts(tmp_path):
     fake_cli = FakeCli(stop_receipt={
         "schema_version": "seed_gui_runtime_stop_receipt.v1",
@@ -2067,6 +2121,41 @@ def test_spec704_tick_and_stop_http_contracts(tmp_path):
             body="{}",
             headers={"Content-Type": "application/json"},
         )[0] == 403
+    finally:
+        _close(server, thread)
+
+
+def test_spec720_guarded_send_and_tool_approval_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("UPSP_TEST_KEY", "test-only-key")
+    fake_cli = FakeCli()
+    server, thread = _server(tmp_path, fake_cli)
+    try:
+        headers = _json_headers(server)
+        guarded = json.dumps({
+            "message": "hello",
+            "permission_level": "guarded",
+            "unlimited_confirmed": False,
+        })
+        assert _request(
+            server, "POST", "/api/runtime/send", body=guarded, headers=headers
+        )[0] == 200
+        approval = json.dumps({
+            "approval_id": "approval-720",
+            "decision": "allow_once",
+        })
+        status, receipt = _request(
+            server,
+            "POST",
+            "/api/runtime/tool-approval",
+            body=approval,
+            headers=headers,
+        )
+        assert status == 200
+        assert receipt["schema_version"] == "general_tool_approval_receipt.v1"
+        assert fake_cli.calls == [
+            (["resident", "send", "guarded"], {}),
+            (["resident", "tool-approval", "approval-720", "allow_once"], {}),
+        ]
     finally:
         _close(server, thread)
 
@@ -2176,7 +2265,7 @@ def test_spec705_desktop_environment_and_ready_record(tmp_path, monkeypatch):
             "process_id": os.getpid(),
             "session_id": "b" * 32,
             "origin": f"http://127.0.0.1:{server.server_address[1]}",
-            "product_version": "0.1.0-alpha.6",
+            "product_version": "0.1.0-alpha.7",
         }
     finally:
         _close(server, thread)
@@ -2485,7 +2574,12 @@ def test_spec692_gui_tool_trace_compaction_contract():
     assert "settlement" not in disclosure_filter
     assert "receipt" not in disclosure_filter
     assert "function buildChatItems(" in app_source
-    assert 'card.type === "user" && text.startsWith("【本轮交互】")' in app_source
+    chat_builder = app_source.split("function buildChatItems(", 1)[1].split(
+        "function renderToolApprovalCard", 1
+    )[0]
+    assert chat_builder.index("const items: ChatItem[] = []") < chat_builder.index("flushTrace();")
+    assert 'card.type === "user"\n      || visibleStream' in app_source
+    assert "currentUserIndex" not in app_source
     assert 'text.startsWith("【本轮交互】")' in app_source
     assert 'items.push({ type: "tool-trace", cards: trace })' in app_source
     assert '<details class="chat-tool-group"' in trace_renderer
@@ -2574,7 +2668,7 @@ def test_spec717_stage_refresh_preserves_primary_scroll_surfaces():
     ):
         assert scroll_key in view_source
     assert (
-        'run:tools:evidence:${task?.id || "none"}:${runtimeProjection.round ?? "none"}'
+        'run:tools:evidence:${selectedEvidence?.round ?? "none"}:${selectedFrame?.frame_id || "none"}'
         in view_source
     )
 
@@ -2845,6 +2939,31 @@ def test_spec705_context_frame_selector_uses_embedded_frame_snapshots():
     assert ".filter((frame) => frame.frame_id !== frames.at(-1)?.frame_id).reverse()" in view_source
 
 
+def test_spec722_task_evidence_round_frame_review_uses_real_frame_snapshot():
+    gui_root = GUI_ROOT
+    contracts_source = (gui_root / "src" / "contracts.ts").read_text(encoding="utf-8")
+    state_source = (gui_root / "src" / "state.ts").read_text(encoding="utf-8")
+    events_source = (gui_root / "src" / "events.ts").read_text(encoding="utf-8")
+    runtime_source = (gui_root / "src" / "runtime.ts").read_text(encoding="utf-8")
+    view_source = (gui_root / "src" / "view.ts").read_text(encoding="utf-8")
+
+    assert "selectedTaskRound: number | null" in contracts_source
+    assert "selectedTaskFrame: string | null" in contracts_source
+    assert "selectedTaskRound: null" in state_source
+    assert "selectedTaskFrame: null" in state_source
+    assert 'closest<HTMLSelectElement>("[data-task-round]")' in events_source
+    assert 'closest<HTMLSelectElement>("[data-task-frame]")' in events_source
+    assert "state.selectedTaskRound !== null && !retained.has(state.selectedTaskRound)" in runtime_source
+    assert "data-task-round" in view_source
+    assert "data-task-frame" in view_source
+    assert 'item.id === "40_high_freq"' in view_source
+    assert 'source.indexOf("## 当前任务清单状态")' in view_source
+    assert 'source.indexOf("\\n<!-- [STEP_TOOLBELT:", start)' in view_source
+    assert "card.frame_id === selectedFrame.frame_id" in view_source
+    assert 'card.type === "tool-call"' in view_source
+    assert "renderMarkdownDocument(`task-snapshot:" in view_source
+
+
 def test_spec706_context_tools_open_individual_shared_detail_dialogs():
     view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
     events_source = (GUI_ROOT / "src" / "events.ts").read_text(encoding="utf-8")
@@ -2887,7 +3006,7 @@ def test_spec708_tool_header_uses_chinese_summary_instruments():
     assert 'class="context-tool-summary"' in view_source
     assert 'aria-label="${t("工具调用总览")}"' in view_source
     assert '[t("工具数量"), `${Array.isArray(data.tool_names) ? data.tool_names.length' in view_source
-    assert '[t("权限级别"), data.permission_level === "limited" ? t("受限")' in view_source
+    assert '[t("权限级别"), data.permission_level === "limited" ? t("只读")' in view_source
     assert '[t("终端工具"), data.terminal_tool === "reaction_finalize" ? t("反应阶段收束")' in view_source
     assert 'toolSummary ? "" : renderMarkdownDocument' in view_source
     assert ".context-tool-summary dl" in css_source

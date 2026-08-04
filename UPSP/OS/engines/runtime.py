@@ -1,7 +1,4 @@
-"""Three-step round orchestrator.
-Runtime owns WHEN: phase, heartbeat, round lifecycle, and step orchestration.
-Step-specific HOW lives in setup/reaction/cleanup runners.
-"""
+"""Three-step round orchestrator; step-specific work lives in its runners."""
 from datetime import datetime
 from collections import deque
 import traceback
@@ -14,28 +11,19 @@ from engines.reaction_loop import ReactionLoopRunner
 from engines.round_audit import RoundAuditRecorder
 from engines.round_context import RoundContext, RuntimeTrigger
 from engines.round_lifecycle import settle_round
-from engines.runtime_rhythm import (
-    chronicle_state_sample,
-    prepare_chronicle_focus_for_active_guide,
-    prepare_round_before_setup,
-    refresh_round_alert_recovery,
-)
+from engines.runtime_rhythm import chronicle_state_sample, park_interaction_for_api_probe, prepare_chronicle_focus_for_active_guide, prepare_round_before_setup, refresh_round_alert_recovery, restore_interaction_after_api_probe
 from engines.runtime_services import RuntimeServices
 from engines.runtime_control import RuntimeControl
-from engines.runtime_task_guidance import (
-    materialize_work_intent_debt_if_needed,
-    prepare_task_bootstrap_guide,
-    record_work_intent_debt_if_needed,
-)
+from engines.tool_approval import ToolApprovalCoordinator, request_runtime_tool_approval
+from engines.runtime_task_guidance import materialize_work_intent_debt_if_needed, prepare_task_bootstrap_guide, record_work_intent_debt_if_needed
 from engines.setup_runner import SetupRunner
-from errors import ProviderCallCancelled, RequiredContextError
+from errors import ProviderCallCancelled
 from logic.cache_compaction_guide import cache_compaction_due_receipt
 from logic.feeling_lookup import FeelingWordTable
 from logic.rhythm_guide_materializer import materialize_current_rhythm_guide
 from logic.sandbox_grant import load_sandbox_grant
-from logic.single_round_probe_policy import (
-    single_round_probe_enabled,
-)
+from logic.execution_permission import DEFAULT_LEVEL, ExecutionPermissionChain, execution_permission_audit
+from logic.single_round_probe_policy import single_round_probe_enabled
 from paths import ORGAN_TOPOLOGY
 class Runtime:
     _SERVICE_ATTRS = {
@@ -94,9 +82,12 @@ class Runtime:
         self._trigger_seq = 0
         self._latest_setup_trigger_seq = 0
         self.control = RuntimeControl()
+        self.tool_approval = ToolApprovalCoordinator()
+        self.general_tool_dispatcher.approval_fn = self._request_tool_approval
         self.on_round_started = None
         self.on_round_finished = None
-        self.cleanup_pipeline.stage_callback = self._set_active_stage
+        self.cleanup_pipeline.stage_callback = self.control.set_stage
+        self.permission_chain = ExecutionPermissionChain(self.executor, self.assembler, self.general_tool_dispatcher, self.setup_runner, self.reaction_loop_runner, self.cleanup_pipeline)
 
     def __setattr__(self, name, value):
         object.__setattr__(self, name, value)
@@ -142,6 +133,7 @@ class Runtime:
             dequeue = getattr(self.hb, "dequeue_messages", None)
             if callable(dequeue):
                 messages = list(dequeue() or [])
+        permission_level = self.permission_chain.consume(messages, flags)
         return RuntimeTrigger(
             trigger_id=f"T{self._trigger_seq:08d}",
             trigger_seq=self._trigger_seq,
@@ -149,6 +141,7 @@ class Runtime:
             round_type=round_type,
             flags=dict(flags or {}),
             messages=tuple(messages),
+            execution_permission_level=permission_level,
         )
 
     def enqueue_trigger(self, flags, state=None):
@@ -204,38 +197,58 @@ class Runtime:
             self.hb.stop()
 
     def request_shutdown(self):
+        self.tool_approval.cancel()
         self.control.request_shutdown(self)
 
     def release_stop_latch(self):
         return self.control.release_stop_latch(self.executor)
 
-    def submit_message(self, message):
+    def submit_message(self, message, execution_permission_level=DEFAULT_LEVEL):
         if not self.release_stop_latch():
             return False
+        self.permission_chain.queue(execution_permission_level)
         self.hb.enqueue_message(message)
         self.hb.resume()
         return True
 
     def request_stop(self):
-        return self.control.request_stop(self)
+        receipt = self.control.request_stop(self)
+        if receipt.get("accepted"):
+            self.tool_approval.cancel()
+        return receipt
 
     def cancel_pending_input(self):
+        self.permission_chain.cancel_pending()
         return self.control.cancel_pending_input(self)
 
     def runtime_status(self):
-        return self.control.snapshot(self.hb)
+        return self.tool_approval.attach_status(self.control.snapshot(self.hb))
 
-    def _set_active_stage(self, stage):
-        self.control.set_stage(stage)
+    def resolve_tool_approval(self, approval_id, decision):
+        return self.tool_approval.resolve(approval_id, decision)
+
+    def _request_tool_approval(self, payload):
+        return request_runtime_tool_approval(self, payload)
 
     def _run_one_round(
-            self, round_type, state, flags, *, probe_policy=None, trigger=None):
+        self, round_type, state, flags, *, probe_policy=None, trigger=None):
         trigger = trigger or self._new_trigger(round_type, flags or {})
-        round_type, flags, pre_setup_cleared, probe_guard, skipped = (
-            prepare_round_before_setup(self, round_type, state, flags)
-        )
+        trigger, parked_probe_input = park_interaction_for_api_probe(self, trigger, flags or {})
+        probing = bool((flags or {}).get("api_degraded"))
+        if probing and not self.control.begin_pre_setup_probe():
+            return {"status": "round_stopped", "response": "", "error": None}
+        try:
+            (
+                round_type, flags, pre_setup_cleared,
+                pre_setup_api_probe, probe_guard, skipped,
+            ) = prepare_round_before_setup(self, round_type, state, flags)
+        finally:
+            if probing:
+                self.control.end_pre_setup_probe()
         if skipped:
             return skipped
+        trigger, flags = restore_interaction_after_api_probe(
+            self, trigger, flags, pre_setup_api_probe, parked_probe_input)
         self.audit.reset()
         audit_input = {
             "flags": dict(flags or {}),
@@ -244,9 +257,12 @@ class Runtime:
                 "cleared_flags": list(pre_setup_cleared),
                 "effective_round_type": round_type,
             },
+            "pre_setup_api_probe": dict(pre_setup_api_probe or {}),
             "context_profile": str(
                 getattr(self.assembler, "context_profile", "full") or "full"
             ),
+            "execution_permission": execution_permission_audit(
+                trigger.execution_permission_level),
         }
         if probe_guard.get("enabled"):
             audit_input["single_round_probe"] = dict(
@@ -281,8 +297,10 @@ class Runtime:
             interaction_meta=interaction_meta,
             trigger=trigger,
             topology_version=self.organ_runtime.topology_version,
+            execution_permission_level=trigger.execution_permission_level,
         )
         last_phase = "presub"
+        self.permission_chain.apply(trigger.execution_permission_level)
         try:
             if callable(self.on_round_started):
                 self.on_round_started(round_num, round_type)
@@ -320,7 +338,7 @@ class Runtime:
             )
 
             last_phase = "reaction"
-            self._set_active_stage("reaction")
+            self.control.set_stage("reaction")
             if setup_result.intent.get("security_verdict") == "reject":
                 reject_reason = (
                     setup_result.intent.get("reject_reason")
@@ -394,19 +412,13 @@ class Runtime:
                     pass
             else:
                 traceback.print_exc()
-                result = {
-                    "aborted": True,
-                    "response": "",
-                    "error": f"{last_phase} step exception: {exc}",
-                    "_failed_phase": last_phase,
-                    "_required_context_failure": exc.as_dict() if isinstance(exc, RequiredContextError) else {},
-                }
+                result = self.control.step_exception_result(last_phase, exc)
         finally:
             if self.control.stop_requested.is_set():
                 result["_user_stop_requested"] = True
             try:
                 self.sm.set_phase("post")
-                self._set_active_stage("cleanup_model")
+                self.control.set_stage("cleanup_model")
                 context.state = self.sm.load()
                 if isinstance(result, dict):
                     result["_interaction_meta"] = interaction_meta
@@ -424,6 +436,7 @@ class Runtime:
                 self.sm.set_phase("idle")
             except Exception:
                 pass
+            self.permission_chain.finish(trigger.execution_permission_level, result, self.sm)
             stopped, settlement = bool(result.get("_user_stop_requested")), str((result.get("_settlement") or {}).get("status") or "")
             latch_until_explicit = stopped or settlement in {"degraded", "unsettled"}
             try:

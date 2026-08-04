@@ -119,8 +119,16 @@ def build_live_state(events, live_context_root=None, use_live_layers=False):
     frame_ids = {frame["frame_id"] for frame in frames}
     conversation = []
     stream_states = {}
+    user_sources = _canonical_user_sources(ordered)
     for event in ordered:
         frame_id = _frame_id_for_event(event, frame_ids)
+        source = user_sources.get(int(event.get("round") or 0))
+        if source and int(event.get("event_index") or 0) == source[0]:
+            conversation.extend(_user_cards_from_messages(
+                event,
+                source[1],
+                frame_id=frame_id,
+            ))
         if event.get("event_type") in STREAM_EVENT_TYPES:
             _accumulate_stream_card(stream_states, conversation, event, frame_id=frame_id)
             continue
@@ -232,7 +240,7 @@ def _dedupe_conversation_cards(cards):
         card.pop("_natural_final_reply_candidate", None)
         card.pop("_final_response_source", None)
     skipped = set()
-    seen_user_text = set()
+    seen_user_cards = set()
     parsed_assistant_text = set()
     best_final_by_text = {}
     final_priority = {
@@ -261,12 +269,13 @@ def _dedupe_conversation_cards(cards):
     for index, card in enumerate(cards or []):
         card_type = card.get("type")
         if card_type == "user":
-            key = _normalized_display_text(card.get("content_raw") or card.get("content_md") or "")
-            if key and key in seen_user_text:
+            key = str(card.get("card_id") or "").strip() or _normalized_display_text(
+                card.get("content_raw") or card.get("content_md") or "")
+            if key and key in seen_user_cards:
                 skipped.add(index)
                 continue
             if key:
-                seen_user_text.add(key)
+                seen_user_cards.add(key)
         if card_type not in {"assistant-progress", "assistant-final"}:
             continue
         if card_type == "assistant-final":
@@ -1372,10 +1381,31 @@ def _provider_error_hint(error):
 def _cards_for_event(event, frame_id=""):
     event_type = event.get("event_type")
     payload = event.get("payload") or {}
+    if event_type in {
+            "general_tool_approval_requested",
+            "general_tool_approval_resolved",
+    }:
+        decision = str(payload.get("decision") or "").strip()
+        title = "工具审批"
+        summary = str(payload.get("summary") or payload.get("tool_id") or "").strip()
+        card = _card(
+            event,
+            "tool-approval",
+            title,
+            summary,
+            summary,
+            frame_id or str(payload.get("frame_id") or ""),
+        )
+        for key in (
+                "approval_id", "tool_id", "tool_signature", "decision",
+                "requested_at", "resolved_at"):
+            if payload.get(key) not in (None, ""):
+                card[key] = payload.get(key)
+        return [card]
     if event_type == "round_started":
         return [_card(event, "settlement", "轮次开始", _round_started_md(payload), _json_pretty(payload), frame_id)]
     if event_type == "step_input_snapshot":
-        cards = [_card(
+        return [_card(
             event,
             "context-update",
             "上下文更新",
@@ -1383,8 +1413,6 @@ def _cards_for_event(event, frame_id=""):
             _context_update_summary_raw(event, payload),
             frame_id,
         )]
-        cards.extend(_user_cards_from_snapshot(event, payload, frame_id))
-        return cards
     if event_type == "llm_call_started":
         md, raw = _format_tool_header_pair(event)
         return [_card(event, "runtime-parse", "LLM 调用开始", md, raw, frame_id)]
@@ -1547,15 +1575,53 @@ def _context_update_summary_raw(event, payload):
     ])
 
 
-def _user_cards_from_snapshot(event, payload, frame_id):
+def _canonical_user_sources(events):
+    """Return one user-message source event per Round.
+
+    New ledgers use the immutable ``round_started`` trigger.  Old ledgers may
+    fall back once to their earliest input snapshot.
+    """
+    sources = {}
+    fallback = {}
+    for event in events or []:
+        round_num = int(event.get("round") or 0)
+        event_type = event.get("event_type")
+        payload = event.get("payload") or {}
+        if event_type == "round_started":
+            snapshot = payload.get("input_snapshot") or {}
+            trigger = snapshot.get("trigger") or {}
+            messages = trigger.get("messages")
+            if isinstance(messages, list):
+                sources[round_num] = (
+                    int(event.get("event_index") or 0), messages)
+        elif event_type == "step_input_snapshot" and round_num not in fallback:
+            messages = payload.get("messages")
+            if isinstance(messages, list):
+                fallback[round_num] = (
+                    int(event.get("event_index") or 0), messages)
+    for round_num, source in fallback.items():
+        sources.setdefault(round_num, source)
+    return sources
+
+
+def _user_cards_from_messages(event, messages, frame_id=""):
     cards = []
-    for message in payload.get("messages") or []:
-        if not isinstance(message, dict):
+    round_num = int(event.get("round") or 0)
+    message_index = 0
+    for message in messages or []:
+        if isinstance(message, dict):
+            if str(message.get("role") or "").strip().lower() != "user":
+                continue
+            content = str(message.get("content") or "")
+        else:
+            content = str(message or "")
+        if not content:
             continue
-        if str(message.get("role") or "").strip().lower() != "user":
-            continue
-        content = str(message.get("content") or "")
-        cards.append(_card(event, "user", "用户输入", content, content, frame_id))
+        message_index += 1
+        card = _card(event, "user", "用户输入", content, content, frame_id)
+        card["card_id"] = f"R{round_num:06d}:user:{message_index}"
+        card["message_index"] = message_index
+        cards.append(card)
     return cards
 
 

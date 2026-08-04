@@ -34,6 +34,7 @@ def reaction_loop_resident_feedback():
         "普通闲聊、单个状态查询、简单读命令或纯节律维护可以忽略。",
         "使用工具：guide_submit",
         "调用坐标：guide_id=reaction_loop_guide",
+        "该坐标 executable=true；上下文和历史账本中的其他 guide_id 均为 historical / executable=false。",
         "- item_id=task_guidance_entry",
         "  - option_id=request_task_guidance：请求 Runtime 挂出任务清单创建指南。",
     ]

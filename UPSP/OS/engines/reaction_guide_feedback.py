@@ -285,6 +285,7 @@ def render_active_guide_feedback(
         f"处理对象：{_guide_processing_label(kind, guide)}。",
         "使用工具：guide_submit",
         f"调用坐标：guide_id={guide_id}",
+        "该坐标 executable=true；上下文和历史账本中的其他 guide_id 均为 historical / executable=false。",
         "只选择下方列出的 item_id 与 option_id；不要编造不存在的清单项、动作或字段。",
         "不要把可见标题当作 guide_id；真正的调用坐标以上面的 ID 为准。",
     ])

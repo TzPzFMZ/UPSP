@@ -557,4 +557,8 @@ def test_tool_settlement_passes_state_budget_to_dispatcher():
     assert runner.general_tool_dispatcher.context == {
         "current_tokens": 55555,
         "context_window": 200000,
+        "round_num": 1,
+        "iteration": 1,
+        "frame_id": "R000001:reaction:1",
+        "execution_permission_level": "guarded",
     }

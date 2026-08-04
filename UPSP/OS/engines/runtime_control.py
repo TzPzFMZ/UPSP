@@ -1,6 +1,8 @@
 """Thread-safe stop and shutdown control for the resident Runtime."""
 import threading
 
+from errors import APIBridgeError, RequiredContextError
+
 
 class RuntimeControl:
     def __init__(self):
@@ -29,6 +31,20 @@ class RuntimeControl:
             self.stage = "setup"
         self._notify()
         return round_num
+
+    def begin_pre_setup_probe(self):
+        with self.lock:
+            if self.round_in_flight or self.stop_requested.is_set():
+                return False
+            self.stage = "pre_setup_probe"
+        self._notify()
+        return True
+
+    def end_pre_setup_probe(self):
+        with self.lock:
+            if self.stage == "pre_setup_probe":
+                self.stage = "idle"
+        self._notify()
 
     def finish_round(self, latch_until_explicit):
         with self.lock:
@@ -90,7 +106,7 @@ class RuntimeControl:
 
     def release_stop_latch(self, executor):
         with self.lock:
-            if self.round_in_flight:
+            if self.round_in_flight or self.stage == "pre_setup_probe":
                 return False
             self.stop_latched = False
             self.stop_requested.clear()
@@ -125,7 +141,7 @@ class RuntimeControl:
 
     def request_stop(self, runtime):
         with self.lock:
-            if not self.round_in_flight:
+            if not self.round_in_flight and self.stage != "pre_setup_probe":
                 return {
                     "accepted": False,
                     "reason": "no_round_in_flight",
@@ -172,10 +188,52 @@ class RuntimeControl:
                 "stop_requested": self.stop_requested.is_set(),
                 "stop_latched": self.stop_latched,
                 "can_stop": bool(
-                    self.round_in_flight
-                    and self.stage in {"setup", "reaction", "cleanup_model"}
+                    self.stage == "pre_setup_probe"
+                    or (
+                        self.round_in_flight
+                        and self.stage in {
+                            "setup", "reaction", "tool_approval", "cleanup_model"
+                        }
+                    )
                 ),
                 "heartbeat_suspended": bool(
                     getattr(heartbeat, "_paused", False)
                 ),
             }
+
+    @staticmethod
+    def step_exception_result(stage, exc):
+        reaction = stage == "reaction"
+        provider_failure = reaction and isinstance(exc, APIBridgeError)
+        required_context_failure = (
+            exc.as_dict() if isinstance(exc, RequiredContextError) else {}
+        )
+        if provider_failure:
+            response = (
+                "本轮模型调用未能在既定重试预算内完成，Runtime 已停止继续调用。"
+                "活动任务和未完成项仍保留，可在服务恢复后继续。"
+            )
+            blocked_reason = "blocked/provider_failure"
+        elif reaction and required_context_failure:
+            response = (
+                "本轮因必需上下文读取或投影失败而停止；活动任务和未完成项仍保留。"
+                "请根据 Runtime 技术详情修复本地数据或实现后再继续。"
+            )
+            blocked_reason = "blocked/required_context_failure"
+        elif reaction:
+            response = (
+                "本轮因 Runtime 内部错误而停止；活动任务和未完成项仍保留。"
+                "请保留技术详情并修复本地实现后再继续。"
+            )
+            blocked_reason = "blocked/runtime_error"
+        else:
+            response = ""
+            blocked_reason = ""
+        return {
+            "aborted": True,
+            "response": response,
+            "error": f"{stage} step exception: {exc}",
+            "_failed_phase": stage,
+            "_local_blocked_reason": blocked_reason,
+            "_required_context_failure": required_context_failure,
+        }

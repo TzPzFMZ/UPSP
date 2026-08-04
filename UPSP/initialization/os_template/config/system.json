@@ -76,6 +76,6 @@
 
   "execution_permission": {
     "level": "unlimited",
-    "_comment": "通用执行权限档位：limited=受限档，unlimited=放行档。真实狗粮应通过 CLI 显式指定档位。"
+    "_comment": "兼容默认值；GUI 宿主会显式使用 guarded。limited=只读，guarded=受限逐次审批，unlimited=放行。"
   }
 }

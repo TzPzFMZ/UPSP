@@ -17,6 +17,8 @@ internal sealed class MainForm : Form
     private bool _exitInProgress;
     private bool _backendFailureShown;
     private bool _lastActive;
+    private int _statusRefreshInFlight;
+    private int _backendStatusFailures;
 
     internal MainForm(DesktopBackend backend)
     {
@@ -174,38 +176,64 @@ internal sealed class MainForm : Form
 
     private async Task RefreshStatusAsync()
     {
+        if (Interlocked.Exchange(ref _statusRefreshInFlight, 1) != 0)
+        {
+            return;
+        }
         try
         {
             var snapshot = await _backend.GetStatusAsync();
+            if (!snapshot.Connected && _backend.HasExited)
+            {
+                _backendStatusFailures += 1;
+                _statusItem.Text = "当前状态：后端已停止";
+                ShowBackendFailure(
+                    "UPSP 本地后端进程已经退出。程序不会自动重启它，请退出后重新打开 UPSP。");
+                return;
+            }
+            if (snapshot.Connected)
+            {
+                _backendStatusFailures = 0;
+                _backendFailureShown = false;
+            }
             _statusItem.Text = $"当前状态：{snapshot.DisplayText}";
             if (_lastActive && !snapshot.HasActiveOperation)
             {
                 NotifyCompletion(snapshot);
             }
             _lastActive = snapshot.HasActiveOperation;
-            if (!snapshot.Connected && !_backendFailureShown)
-            {
-                _backendFailureShown = true;
-                MessageBox.Show(
-                    "UPSP 本地后端已经停止。程序不会自动重启它，请退出后重新打开 UPSP。",
-                    "UPSP",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-            }
         }
         catch (Exception exc)
         {
             DesktopLog.Write(exc);
-            if (!_backendFailureShown)
+            _backendStatusFailures += 1;
+            _statusItem.Text = "当前状态：后端繁忙，正在重试";
+            if (
+                !_backendFailureShown
+                && (_backend.HasExited || _backendStatusFailures >= 3))
             {
-                _backendFailureShown = true;
-                MessageBox.Show(
-                    "无法读取 UPSP 本地后端状态。程序不会自动重启它。",
-                    "UPSP",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
+                ShowBackendFailure(
+                    "连续多次无法访问 UPSP 本地后端。程序不会自动重启它，请退出后重新打开 UPSP。");
             }
         }
+        finally
+        {
+            Interlocked.Exchange(ref _statusRefreshInFlight, 0);
+        }
+    }
+
+    private void ShowBackendFailure(string message)
+    {
+        if (_backendFailureShown)
+        {
+            return;
+        }
+        _backendFailureShown = true;
+        MessageBox.Show(
+            message,
+            "UPSP",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Error);
     }
 
     private void NotifyCompletion(RuntimeSnapshot snapshot)

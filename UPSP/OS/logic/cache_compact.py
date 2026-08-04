@@ -72,11 +72,12 @@ def execute_cache_compact(context_store, plan=None):
             [{"source_block_ids": source_ids, "action": "drop"}],
             current_round=plan.get("current_round"),
         )
+        after_chars = int(rewrite_report.get("after_chars", 0) or 0)
         return {
             **base_report,
             **rewrite_report,
-            "status": "cleared",
-            "after_chars": 0,
+            "status": "cleared" if after_chars == 0 else "protected_retained",
+            "after_chars": after_chars,
         }
 
     decision = plan.get("decision")

@@ -55,6 +55,7 @@ type LedgerRow = readonly [unknown, unknown, unknown, string];
 type OverviewRow = readonly [unknown, unknown, unknown, PageId, string?, string?];
 type ChatItem =
   | { type: "tool-trace"; cards: ConversationCard[] }
+  | { type: "tool-approval"; card: ConversationCard }
   | { type: "message"; card: ConversationCard };
 type RetainedChatItem = (ChatItem & { round: number });
 interface ChatTraceStep {
@@ -581,10 +582,11 @@ function renderChatTraceGroup(cards: ConversationCard[], round: number | null): 
 }
 
 function buildChatItems(conversation: ConversationCard[]): ChatItem[] {
-  let currentUserIndex = -1;
-  conversation.forEach((card, index) => {
-    const text = String(card.content_raw || card.content_md || "");
-    if (card.type === "user" && text.startsWith("【本轮交互】")) currentUserIndex = index;
+  const latestApprovals = new Map<string, ConversationCard>();
+  conversation.forEach((card) => {
+    if (card.type === "tool-approval" && card.approval_id) {
+      latestApprovals.set(card.approval_id, card);
+    }
   });
   const items: ChatItem[] = [];
   let trace: ConversationCard[] = [];
@@ -592,7 +594,18 @@ function buildChatItems(conversation: ConversationCard[]): ChatItem[] {
     if (trace.length) items.push({ type: "tool-trace", cards: trace });
     trace = [];
   };
-  conversation.forEach((card, index) => {
+  const emittedApprovals = new Set<string>();
+  conversation.forEach((card) => {
+    if (card.type === "tool-approval" && card.approval_id) {
+      if (emittedApprovals.has(card.approval_id)) return;
+      emittedApprovals.add(card.approval_id);
+      flushTrace();
+      items.push({
+        type: "tool-approval",
+        card: latestApprovals.get(card.approval_id) || card,
+      });
+      return;
+    }
     const visibleStream = card.type === "assistant-streaming"
       && ["reaction", "final_reply"].includes(String(card.phase || ""))
       && Boolean(String(card.content_raw || "").trim());
@@ -601,7 +614,7 @@ function buildChatItems(conversation: ConversationCard[]): ChatItem[] {
       return;
     }
     if (
-      (card.type === "user" && index === currentUserIndex)
+      card.type === "user"
       || visibleStream
       || ["assistant-progress", "assistant-final"].includes(card.type)
     ) {
@@ -611,6 +624,36 @@ function buildChatItems(conversation: ConversationCard[]): ChatItem[] {
   });
   flushTrace();
   return items;
+}
+
+function renderToolApprovalCard(card: ConversationCard, round: number): string {
+  const pending = runtimeProjection.status?.pending_tool_approval;
+  const active = pending?.approval_id === card.approval_id && !card.decision;
+  const details = active ? pending?.details : null;
+  const submitting = runtimeProjection.approvalSubmitting === card.approval_id;
+  const stateText = card.decision === "allow_once"
+    ? t("已允许")
+    : card.decision === "skip"
+      ? t("已跳过")
+      : card.decision === "cancelled"
+        ? t("已取消")
+        : submitting
+          ? t("正在处理")
+          : t("等待你的决定");
+  const summary = String(card.content_raw || card.summary || card.tool_id || "").trim();
+  return `
+    <section class="tool-approval-card ${active ? "pending" : "resolved"}" data-chat-anchor="${escapeHtml(`${round}:approval:${card.approval_id}`)}">
+      <div class="tool-approval-head"><b>${t("工具执行审批")}</b><span>${escapeHtml(stateText)}</span></div>
+      <p><code>${escapeHtml(card.tool_id || pending?.tool_id || "")}</code>${summary ? ` · ${escapeHtml(summary)}` : ""}</p>
+      ${details ? `<details class="tool-approval-details"><summary>${t("技术详情")}</summary><pre>${escapeHtml(JSON.stringify(details, null, 2))}</pre></details>` : ""}
+      ${active ? `<div class="tool-approval-actions" role="group" aria-label="${t("工具执行审批")}">
+        <button type="button" data-tool-approval-id="${escapeHtml(card.approval_id)}" data-tool-approval-decision="skip" ${submitting ? "disabled" : ""}>${submitting ? t("正在处理") : t("跳过")}</button>
+        <button type="button" data-tool-approval-id="${escapeHtml(card.approval_id)}" data-tool-approval-decision="allow_once" ${submitting ? "disabled" : ""}>${submitting ? t("正在处理") : t("本次允许")}</button>
+      </div>` : ""}
+      ${runtimeProjection.approvalFeedback && active ? `<small role="status">${escapeHtml(runtimeProjection.approvalFeedback)}</small>` : ""}
+      ${renderChatMeta(card.recorded_at || pending?.requested_at)}
+    </section>
+  `;
 }
 
 function chatMessageText(card: ConversationCard): string {
@@ -666,6 +709,7 @@ export function renderChat(): void {
   ` : "";
   els.chatThread.innerHTML = items.length || historyNotice ? historyNotice + items.map((item, position) => {
     if (item.type === "tool-trace") return renderChatTraceGroup(item.cards, item.round);
+    if (item.type === "tool-approval") return renderToolApprovalCard(item.card, item.round);
     const card = item.card;
     const kind = card.type === "user" ? "user" : "system";
     const who = card.type === "user" ? t("你") : personaAbbreviation();
@@ -962,6 +1006,60 @@ function taskRecordRows(records: TaskRecord[], emptyText: string): string {
   `).join("")}</div>`;
 }
 
+function taskEvidenceSelection(): {
+  round: number;
+  live: NonNullable<typeof runtimeProjection.live>;
+  frame: CallFrame | null;
+} | null {
+  const rounds = runtimeProjection.conversationRoundOrder;
+  if (state.selectedTaskRound !== null && !runtimeProjection.conversationRounds.has(state.selectedTaskRound)) {
+    state.selectedTaskRound = null;
+    state.selectedTaskFrame = null;
+  }
+  const round = state.selectedTaskRound ?? runtimeProjection.round ?? rounds.at(-1) ?? null;
+  if (round === null) return null;
+  const live = round === runtimeProjection.round
+    ? runtimeProjection.live
+    : runtimeProjection.conversationRounds.get(round) || null;
+  if (!live) return null;
+  const frames = live.call_frames || [];
+  if (state.selectedTaskFrame !== null && !frames.some((frame) => frame.frame_id === state.selectedTaskFrame)) {
+    state.selectedTaskFrame = null;
+  }
+  const frame = state.selectedTaskFrame === null
+    ? frames.at(-1) || null
+    : frames.find((item) => item.frame_id === state.selectedTaskFrame) || null;
+  return { round, live, frame };
+}
+
+function taskRoundSelector(selectedRound: number): string {
+  const rounds = runtimeProjection.conversationRoundOrder;
+  const latest = runtimeProjection.round ?? rounds.at(-1) ?? selectedRound;
+  const historical = rounds.filter((round) => round !== latest).reverse();
+  return `<label class="protocol-round-select"><span>${t("选择轮次")}</span><select data-task-round>
+    <option value="latest" ${state.selectedTaskRound === null ? "selected" : ""}>${t("最新")} · R${escapeHtml(latest)}</option>
+    ${historical.map((round) => `<option value="${escapeHtml(round)}" ${state.selectedTaskRound === round ? "selected" : ""}>R${escapeHtml(round)}</option>`).join("")}
+  </select></label>`;
+}
+
+function taskFrameSelector(frames: CallFrame[], selectedFrame: CallFrame): string {
+  const historical = frames.filter((frame) => frame.frame_id !== frames.at(-1)?.frame_id).reverse();
+  const label = (frame: CallFrame): string => `${runtimeTerm(frame.phase || frame.call_channel || "frame")} · ${frame.iteration ?? 1}`;
+  return `<label class="protocol-round-select"><span>${t("选择帧次")}</span><select data-task-frame>
+    <option value="latest" ${state.selectedTaskFrame === null ? "selected" : ""}>${t("最新")} · ${escapeHtml(label(frames.at(-1) || selectedFrame))}</option>
+    ${historical.map((frame) => `<option value="${escapeHtml(frame.frame_id)}" ${state.selectedTaskFrame === frame.frame_id ? "selected" : ""}>${escapeHtml(label(frame))}</option>`).join("")}
+  </select></label>`;
+}
+
+function taskFrameSnapshot(frame: CallFrame | null): string {
+  const pane = frame?.context_panes?.find((item) => item.id === "40_high_freq");
+  const source = String(pane?.content_raw || pane?.content_md || "");
+  const start = source.indexOf("## 当前任务清单状态");
+  if (start < 0) return "";
+  const end = source.indexOf("\n<!-- [STEP_TOOLBELT:", start);
+  return source.slice(start, end < 0 ? undefined : end).trim();
+}
+
 function renderTaskEvidencePage(): string {
   if (runtimeProjection.host !== "connected") {
     return renderRuntimeEmpty("WORKBENCH", "本地宿主未连接", runtimeProjection.error || "无法读取任务真账。", "runtime");
@@ -978,11 +1076,17 @@ function renderTaskEvidencePage(): string {
   const relay = relayRuntimeState();
   const relayDisabled = !relay.ready || relay.inFlight || relay.mutationInFlight;
   const relayLabel = relay.inFlight ? "中继执行中" : relay.ready ? "可以继续" : "等待 continue_requested";
-  const evidenceCards = (runtimeProjection.live?.conversation || [])
-    .filter((card) => card.type === "tool-result"
+  const selectedEvidence = taskEvidenceSelection();
+  const selectedFrame = selectedEvidence?.frame || null;
+  const evidenceCards = (selectedEvidence?.live.conversation || [])
+    .filter((card) => (card.type === "tool-call"
+      || card.type === "tool-result"
       || String(card.event_type || "").includes("receipt"))
+      && (!selectedFrame || card.frame_id === selectedFrame.frame_id))
     .slice(-8)
     .reverse();
+  const reviewingHistory = state.selectedTaskRound !== null || state.selectedTaskFrame !== null;
+  const taskSnapshot = reviewingHistory ? taskFrameSnapshot(selectedFrame) : "";
   const pendingInputs = task?.pending_inputs || [];
   const requirements = task?.source_requirements || [];
   const risks = task?.risk_notes || [];
@@ -1008,17 +1112,22 @@ function renderTaskEvidencePage(): string {
       <span role="status">${escapeHtml(taskProjection.relayFeedback || (relay.ready ? t("未执行；等待用户操作。") : `flags: ${relay.activeFlags.join(", ") || "none"}`))}</span>
     </section>
     <div class="task-columns">
-      <section class="task-pane"><header><span class="hud-label">${t("任务账本")}</span><strong>${escapeHtml(task?.id || "none")}</strong></header>
-        <div class="task-pane-scroll" data-stage-scroll-key="${escapeHtml(`run:tools:task:${task?.id || "none"}`)}">
-          ${pendingInputs.length ? `<section class="task-subsection"><h3>${t("待整合输入")}</h3>${pendingInputs.map((item) => `<article class="task-pending"><b>${escapeHtml(item.id)}</b><em>${escapeHtml(item.status)}</em><p>${escapeHtml(item.summary || t("无摘要"))}</p>${(item.source_refs || []).map((ref) => `<code>${escapeHtml(ref)}</code>`).join("")}</article>`).join("")}</section>` : ""}
+      <section class="task-pane"><header><span class="hud-label">${t(reviewingHistory ? "该帧任务快照" : "任务账本")}</span><strong>${escapeHtml(reviewingHistory ? selectedFrame?.frame_id || "none" : task?.id || "none")}</strong></header>
+        <div class="task-pane-scroll ${reviewingHistory ? "task-frame-snapshot" : ""}" data-stage-scroll-key="${escapeHtml(reviewingHistory ? `run:tools:task:${selectedEvidence?.round || "none"}:${selectedFrame?.frame_id || "none"}` : `run:tools:task:${task?.id || "none"}`)}">
+          ${reviewingHistory
+    ? (taskSnapshot
+      ? renderMarkdownDocument(`task-snapshot:${selectedEvidence?.round}:${selectedFrame?.frame_id}`, taskSnapshot)
+      : `<p class="runtime-empty-copy">${t("该帧未装配活动任务清单。")}</p>`)
+    : `${pendingInputs.length ? `<section class="task-subsection"><h3>${t("待整合输入")}</h3>${pendingInputs.map((item) => `<article class="task-pending"><b>${escapeHtml(item.id)}</b><em>${escapeHtml(item.status)}</em><p>${escapeHtml(item.summary || t("无摘要"))}</p>${(item.source_refs || []).map((ref) => `<code>${escapeHtml(ref)}</code>`).join("")}</article>`).join("")}</section>` : ""}
           <section class="task-subsection"><h3>${t("任务项")}</h3>${taskRecordRows(task?.items || [], t("当前没有任务项。"))}</section>
           <section class="task-subsection"><h3>${t("验收项")}</h3>${taskRecordRows(task?.acceptance || [], t("当前没有验收项。"))}</section>
           ${requirements.length ? `<section class="task-subsection"><h3>${t("来源要求")}</h3>${requirements.map((item) => `<p><b>${escapeHtml(item.id)}</b>${escapeHtml(item.summary || t("无摘要"))}</p>`).join("")}</section>` : ""}
-          ${risks.length ? `<section class="task-subsection warn"><h3>${t("风险备注")}</h3>${risks.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}</section>` : ""}
+          ${risks.length ? `<section class="task-subsection warn"><h3>${t("风险备注")}</h3>${risks.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}</section>` : ""}`}
         </div>
       </section>
-      <section class="task-pane evidence"><header><span class="hud-label">${t("轮次证据")}</span><strong>${escapeHtml(runtimeProjection.round == null ? t("无轮次") : `R${runtimeProjection.round}`)}</strong></header>
-        ${renderRuntimeCards(evidenceCards, t("当前轮尚无结构化工具或回执证据。"), `run:tools:evidence:${task?.id || "none"}:${runtimeProjection.round ?? "none"}`)}
+      <section class="task-pane evidence"><header class="task-evidence-header"><div><span class="hud-label">${t("轮次证据")}</span><strong>${escapeHtml(selectedEvidence ? `${t("本地宿主已连接")} · R${selectedEvidence.round} · ${selectedFrame?.frame_id || t("尚无帧次")}` : t("无轮次"))}</strong></div>
+        ${selectedEvidence && selectedFrame ? `<div class="context-selectors">${taskRoundSelector(selectedEvidence.round)}${taskFrameSelector(selectedEvidence.live.call_frames || [], selectedFrame)}</div>` : ""}</header>
+        ${renderRuntimeCards(evidenceCards, t("该帧尚无结构化工具调用或回执证据。"), `run:tools:evidence:${selectedEvidence?.round ?? "none"}:${selectedFrame?.frame_id || "none"}`)}
       </section>
     </div>
   </section>`;
@@ -1135,7 +1244,7 @@ function renderContextToolSummary(pane?: ContextPane): string {
   const values: Array<[string, string]> = [
     [t("原生工具模式"), data.native_tool_mode == null ? t("未设置") : String(data.native_tool_mode)],
     [t("权限说明"), String(data.permission_label || t("未标记"))],
-    [t("权限级别"), data.permission_level === "limited" ? t("受限") : data.permission_level === "unlimited" ? t("完整") : String(data.permission_level || t("未标记"))],
+    [t("权限级别"), data.permission_level === "limited" ? t("只读") : data.permission_level === "guarded" ? t("受限") : data.permission_level === "unlimited" ? t("放行") : String(data.permission_level || t("未标记"))],
     [t("标准工具"), enabled(data.standard_tools_enabled, "已启用", "未启用")],
     [t("终端工具"), data.terminal_tool === "reaction_finalize" ? t("反应阶段收束") : String(data.terminal_tool || t("未设置"))],
     [t("工具模式"), data.tool_mode === "free" ? t("自由") : String(data.tool_mode || t("未标记"))],
@@ -2167,12 +2276,6 @@ function modelEditor(model?: ModelProfile): string {
     <label><span>${t("默认推理强度")}</span><input name="reasoning_default" value="${escapeHtml(model?.reasoning.default || "")}"></label>
     <div class="settings-switch"><span>${t("流式输出")}</span><input name="streaming_enabled" type="checkbox" aria-label="${t("流式输出")}" ${model?.streaming.enabled !== false ? "checked" : ""}></div>
     <div class="settings-switch"><span>${t("返回用量")}</span><input name="streaming_include_usage" type="checkbox" aria-label="${t("返回用量")}" ${model?.streaming.include_usage !== false ? "checked" : ""}></div>
-    <label><span>${t("提示缓存策略")}</span><select name="prompt_cache_profile">
-      <option value="off" ${model?.prompt_cache.profile === "off" || !model ? "selected" : ""}>${t("关闭")}</option>
-      <option value="key_only" ${model?.prompt_cache.profile === "key_only" ? "selected" : ""}>${t("仅缓存键")}</option>
-      <option value="gpt56_explicit_permanent" ${model?.prompt_cache.profile === "gpt56_explicit_permanent" ? "selected" : ""}>${t("永久层显式缓存")}</option>
-      <option value="gpt56_explicit_tiered" ${model?.prompt_cache.profile === "gpt56_explicit_tiered" ? "selected" : ""}>${t("分层显式缓存")}</option>
-    </select></label>
     <details class="wide"><summary>${t("兼容请求参数")}</summary><label><span>JSON</span><textarea name="request_overrides" rows="6">${escapeHtml(JSON.stringify(model?.request_overrides || {}, null, 2))}</textarea></label></details>
     <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>${t("取消")}</button><button type="submit" class="primary-action">${t("保存")}</button></footer>
   </form>`;
@@ -2711,6 +2814,8 @@ export function renderComposerState(): void {
     els.sendFeedback.textContent = t("尚未配置可用模型，完成模型服务与起手路由后即可发送。");
   } else if (stage === "cleanup_local") {
     els.sendFeedback.textContent = t("正在本地善后");
+  } else if (stage === "tool_approval") {
+    els.sendFeedback.textContent = t("等待工具执行审批");
   } else if (runtimeProjection.stopping || (stopRequested && roundActive)) {
     els.sendFeedback.textContent = t("正在停止生成");
   } else if (relayInFlight) {
@@ -2720,7 +2825,7 @@ export function renderComposerState(): void {
   } else if (runtimeProjection.sendFeedback) {
     els.sendFeedback.textContent = runtimeProjection.sendFeedback;
   } else if (connected) {
-    els.sendFeedback.textContent = t("默认受限；对话与轨迹只显示真实轮次账本。");
+    els.sendFeedback.textContent = t("默认受限；副作用工具会在当前对话中逐次请求审批。");
   } else {
     els.sendFeedback.textContent = t("等待本地宿主");
   }

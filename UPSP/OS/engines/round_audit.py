@@ -140,6 +140,7 @@ class RoundAuditRecorder:
         executor = self.services.executor
         endpoint = None
         attempt = 1
+        logical_call_id = f"R{int(round_num):06d}:{phase}:{int(iteration)}"
         tried_endpoint_fingerprints = set()
         while True:
             try:
@@ -151,6 +152,8 @@ class RoundAuditRecorder:
                     active_protocol_tool_guides=active_protocol_tool_guides,
                     attempt=attempt,
                 )
+                prepared["logical_call_id"] = logical_call_id
+                prepared["route_slot"] = attempt
                 fingerprint = getattr(executor, "_endpoint_fingerprint", None)
                 if callable(fingerprint):
                     tried_endpoint_fingerprints.add(
@@ -207,7 +210,7 @@ class RoundAuditRecorder:
                     exc,
                     tried_endpoint_fingerprints,
                 )
-                if not fallback_tier:
+                if not fallback_tier or attempt >= 3:
                     try:
                         store.record_llm_error(round_num, phase, iteration, exc)
                     except Exception:

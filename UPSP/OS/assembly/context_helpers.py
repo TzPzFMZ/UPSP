@@ -87,6 +87,16 @@ def assign_active_corpus_ids(entries, start_index=1):
     except (TypeError, ValueError):
         next_index = 1
     next_index = max(1, next_index)
+    existing_numbers = [
+        int(corpus_id[2:])
+        for corpus_id in (
+            normalize_active_corpus_id(entry.get("active_corpus_id"))
+            for entry in entries or []
+            if isinstance(entry, dict)
+        )
+        if corpus_id
+    ]
+    next_index = max(next_index, max(existing_numbers, default=0) + 1)
     assigned = []
     for entry in entries or []:
         if not isinstance(entry, dict):

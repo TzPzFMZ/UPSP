@@ -9,6 +9,7 @@ from logic.general_tools import (
     _resolve_request_path,
     _split_list_text,
     _url_denial,
+    UNRESTRICTED_ALLOWED_ROOTS,
 )
 from logic.protocol_tools import normalize_tool_id
 from logic.execution_permission import (
@@ -213,20 +214,20 @@ def _check_web_fetch(request, tool_id, phase):
     )
 
 
-def _path_list_paths_and_denial(raw_value):
+def _path_list_paths_and_denial(raw_value, allowed_roots=None):
     paths = []
     for raw_path in _split_list_text(raw_value):
-        path = _resolve_request_path(raw_path, None)
+        path = _resolve_request_path(raw_path, allowed_roots)
         if path is None:
             continue
-        denial = _permission_denial(path, None)
+        denial = _permission_denial(path, allowed_roots)
         if denial:
             return [], denial, str(path)
         paths.append(path)
     return paths, "", ""
 
 
-def _check_subagent_dispatch(request, tool_id, phase):
+def _check_subagent_dispatch(request, tool_id, phase, allowed_roots=None):
     task_goal = _clean(request.get("task_goal"))
     if not task_goal:
         return _decision(
@@ -257,7 +258,9 @@ def _check_subagent_dispatch(request, tool_id, phase):
             {"task_mode": task_mode},
         )
     allowed_paths, denial, path = _path_list_paths_and_denial(
-        request.get("allowed_paths") or request.get("paths") or request.get("scope"))
+        request.get("allowed_paths") or request.get("paths") or request.get("scope"),
+        allowed_roots,
+    )
     if denial:
         return _decision(
             tool_id,
@@ -267,7 +270,9 @@ def _check_subagent_dispatch(request, tool_id, phase):
             {"denial": denial, "path": path},
         )
     if write_requested:
-        write_paths, denial, path = _path_list_paths_and_denial(write_scope)
+        write_paths, denial, path = _path_list_paths_and_denial(
+            write_scope, allowed_roots
+        )
         if denial:
             return _decision(
                 tool_id,
@@ -358,7 +363,10 @@ def check_general_tool_request(
             "sandbox_tool_not_allowed",
             sandbox_decision_details(sandbox_grant),
         )
-    allowed_roots = sandbox_roots_for_tool(sandbox_grant, tool_id)
+    allowed_roots = (
+        sandbox_roots_for_tool(sandbox_grant, tool_id)
+        if sandbox_grant else UNRESTRICTED_ALLOWED_ROOTS
+    )
     if tool_id == "file_read":
         return _check_file_read(request, tool_id, normalized_phase, allowed_roots)
     if tool_id == "file_search":
@@ -372,5 +380,7 @@ def check_general_tool_request(
     if tool_id == "web_fetch":
         return _check_web_fetch(request, tool_id, normalized_phase)
     if tool_id == "subagent_dispatch":
-        return _check_subagent_dispatch(request, tool_id, normalized_phase)
+        return _check_subagent_dispatch(
+            request, tool_id, normalized_phase, allowed_roots
+        )
     return _decision(tool_id, normalized_phase, True)

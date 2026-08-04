@@ -1,8 +1,9 @@
 # UPSP 官方版 Base 全文件详细设计规范（DDS）
 
-**版本**：DDS v0.48.0
-**日期**：2026-07-27
-**当前变更**：Spec716 完成首次公开 Alpha 上传前的产品术语与模型服务交互收口：GUI 使用“记忆条目／隐私条目”“起手／善后”及工作容器名称；模型连接由协议固定请求后缀，用户只编辑基础地址；公开材料加入独立的支持与参与入口。Runtime、API 与产品版本不变。
+**版本**：DDS v0.48.4
+**日期**：2026-08-04
+**当前变更**：Spec721 固定缓存语料短 ID 与用户输入 16 个交互轮保护，显式继承交互／续轮权限，阻断无进展连环 relay，收口 provider 尝试预算、GUI 增量投影与桌面健康误报，并在每次 Runtime 启动时重新开始待命轮计时。
+**实现正验**：正式 FMZ R639 已完成真实 12 项狗粮，任务与 Round 正常闭合，稳定短 ID、单一用户卡和非零 provider cache 命中均有 Runtime 回执；随后 R640 为独立告警节律轮，预算内恢复后闭合且未形成续轮空转。
 
 ---
 
@@ -97,7 +98,7 @@ Base 版中的所有经验常数——包括但不限于：
 | 反应事务基准窗口 | 600秒（提醒/警告/自动中继为 1x/2x/3x） | 容灾 | 〇·二 |
 | 熔断阈值 | 连续3次失败 | 容灾 | 三十八 |
 | 熔断锁定 | 15分钟 | 容灾 | 三十八 |
-| 待命轮间隔 | 上一轮结束后30分钟 | 容灾 | 〇·三 |
+| 待命轮间隔 | 本次 Runtime 启动或上一轮结束后30分钟，以较晚者为准 | 容灾 | 〇·三 |
 | 身份确认超时（暂停） | 3600秒 | deferred；Seed 不消费 | 二十三 |
 | 疲劳倒计时（暂停） | 20小时 | deferred；Seed 不消费 | 〇·三 |
 | 冻结期 | 200轮 | 容灾 | 三（本表后） |
@@ -280,7 +281,7 @@ Base版当前舱段实例：
 - **Round 当前生命周期**：关闭请求按 `round_close_requested → cleanup_obligation_created → cleanup_obligation_settled → round_settled → round_closed` 记录。cleanup 致命失败改写 `cleanup_obligation_failed + round_unsettled`，不得伪造 `round_closed`，也不自动重放非幂等善后；可降级但已完成底线保全的 cleanup 允许以 `degraded` 结算。
 - **cleanup 义务分级**：已触发的热度、遗忘、LTM 日节律、阶段审计、cleanup API、记忆生命周期、进化、Round 缓存、状态结算、日历、Corpus、flag、状态备份和 Round 审计是闭轮必需义务，异常一律进入 `fatal_reasons`；宿主完成回调属于可重建附属投影，异常只进入 `degraded_reasons`。自然无候选或未到节律仍是合法 no-op。疲劳与休眠系统当前暂停，不构成 Seed cleanup 义务。
 - **上下文边界**：setup/reaction/cleanup 三轴必须继续使用各自固定的分层 `ContextAssembler`。`now_cache`、本次调用 C 轨、当前输入、活动任务板、活动 WB 焦点和执行权限属于模型调用前的必需读取：真实空内容可以为空，读取异常必须形成 `required_context_failure.v1` 并阻止 provider 调用，执行权限异常不得回退到 `unlimited`。器官 manifest 只声明 `assembled|cumulative` 与已注册 context provider，由 Runtime 生成只读 `OrganInvocation.context`；器官上下文不得替代三轴上下文、写入 permanent/system 层或绕过 setup 入口。
-- **工具结果投影边界**：通用工具结果与协议 processor receipt 先按现有链路真实提交，再写入应有 `tool_fact`、`material` 和 file/web 来源证据。必要投影失败时保留既有副作用、result、receipt 与 Frame settlement，当前 reaction 以 `required_context_failure` 停止，不进入下一 provider Frame；cleanup 仍运行且 Round 保持 `unsettled`，不得自动回滚或重放。
+- **工具结果投影边界**：通用工具结果与协议 processor receipt 先按现有链路真实提交，再写入应有 `tool_fact`、`material` 和 file/web 来源证据。必要投影失败时保留既有副作用、result、receipt 与 Frame settlement，当前 reaction 以 `required_context_failure` 停止，不进入下一 provider Frame；cleanup 仍运行且 Round 保持 `unsettled`，不得自动回滚或重放。只有真实 `APIBridgeError` 才能向用户归因为 provider／重试预算失败；上下文投影和其他 Runtime 本地异常必须分别标为 `blocked/required_context_failure` 与 `blocked/runtime_error`，不得把本地实现错误甩给 provider。
 - **Arbor 预留接口**：当前 Seed 已由常驻 Runtime 包裹三条固定工作轴，并具备同步 Trigger/Frame/Round、空载器官拓扑和 Runtime-owned product committer；它仍立即串行排空三轴，生产器官表为空。Arbor 的真正分界是跨轴调度、异步结算和真实 API-first 器官协作。heartbeat 是时钟与健康探测职责，不是平权的第四条 Frame 轴。即时监听、跨轴调度、同步子代理和真实器官尚未实现。
 - **固定三轴**：常驻 Runtime 包裹 setup/reaction/cleanup 三条固定工作轴；Arbor 只能替换调度策略，不得把三轴降格为可选器官或建立第二套内核。
 
@@ -439,7 +440,7 @@ def reaction_loop(intent):
 | **节律轮** | 1 | 心跳判定主轴/日历节律到期 | 写节志+读取真实调用留下的 connectivity 证据+alerts归档 | 节志落盘+警戒结算+alerts归档进IMM |
 | **中继轮** | 2 | 长时任务 checkpoint | **中继续传：总结进度** | **无对外回复** |
 | **自主轮** | 3 | 心跳唤醒 / 任务调度 / 自觉能动 | 1-N 次执行，超时存档续轮 | **可能无回复**·进化集整理（阈值触发） |
-| **待命轮** | 4 | 上一轮结束后间隔 30 分钟 / 心跳紧急唤醒 | 检查已有 connectivity／breaker 证据；不自动发送付费 probe | 健康状态归档 |
+| **待命轮** | 4 | 本次 Runtime 启动或上一轮结束后间隔 30 分钟 / 心跳紧急唤醒 | 检查已有 connectivity／breaker 证据；若 `api_degraded`，开轮前执行有界恢复 probe | 健康状态归档 |
 
 五类轮的差异仅在两端（起手步触发源 + 善后步输出形态），中间反应步完全同构。
 
@@ -472,9 +473,11 @@ def reaction_loop(intent):
 | **L4** | 全部 API 挂了 | 脚本极端措施 | 联系紧急联系人 / 唤醒本地冷备模型 | ⚠️ 接口位 |
 | **L5** | 断电 | 硬件 | UPS / 紧急电源 | ❌ 非软件范畴 |
 
-**L1（脚本级 API 重试）**：timeout、网络断连、HTTP 408/429/5xx、`provider_stream_interrupted` 与 `provider_native_tool_empty_output` 视为暂态失败。当前模型按 `LocalAppData\UPSP\config\models.json → transport.handshake.retry` 重试；值2表示首试加两次重试，且每模型硬性封顶三次，同一模型三次保持同一 payload，间隔为1秒、2秒。预算耗尽后才按稳定模型配置 ID 记录一次 connectivity/breaker 失败，再沿当前阶段解析出的有效模型链切换下一个不同 URL/model/key 指纹模型；单阶段最多三个不同模型，因此最坏九次。除408/429外的4xx、本地配置／审计／校验错误、不完整工具参数和内容超限等非恢复性错误不重试、不制造伪降级。全部模型耗尽后抛异常进入 L2，由既有 Runtime cleanup 收束，不自动重放整个 Round。纯脚本操作，不需 LLM 参与，不换轮。
+**L1（脚本级 API 重试）**：timeout、网络断连、HTTP 408/429/5xx、`provider_stream_interrupted` 与 `provider_native_tool_empty_output` 视为暂态失败。当前模型按 `LocalAppData\UPSP\config\models.json → transport.handshake.retry` 重试；值2表示首试加两次重试，且每模型硬性封顶三次，同一模型三次保持同一 payload，间隔为1秒、2秒。预算耗尽后才按稳定模型配置 ID 记录一次 connectivity/breaker 失败，再沿当前阶段解析出的有效模型链切换下一个不同 URL/model/key 指纹模型；单阶段最多三个不同模型，因此最坏九次。上层 Round／reaction 不得重新发放相同预算。每次 HTTP 尝试使用同一 logical call ID，并记录 route slot、attempt、状态码、错误分类和耗时。除408/429外的4xx、本地配置／审计／校验错误、不完整工具参数和内容超限等非恢复性错误不重试、不制造伪降级。全部模型耗尽后抛异常进入 L2，由既有 Runtime cleanup 收束，不自动重放整个 Round，也不得以空回复伪装 `settled/closed`。纯脚本操作，不需 LLM 参与，不换轮。
 
-**流式投影**：三种活动协议的 `streaming.enabled` 均进入同一标准库传输链。OpenAI Chat 消费 `choices[].delta / [DONE]`，OpenAI Responses 消费文本、拒绝、函数参数增量与 `response.completed`，Anthropic Messages 消费 `text_delta / input_json_delta / message_stop`；未知事件安全忽略，普通 JSON 响应安全回落。每次真实网络尝试生成独立 `stream_id`，可见正文按0.5秒或累计256字符写入现有 Round JSONL；重试或切换模型时 GUI 只呈现同 Frame 的最新尝试。工具参数、provider 原始信封与 reasoning/thinking 不进入对话正文。Parsed／final 输出按同一 Frame 原位替换流卡；最终失败或主动停止可保留已真实收到的正文，但不得把半截正文记作最终回复。
+**流式投影**：三种活动协议的 `streaming.enabled` 均进入同一标准库传输链。OpenAI Chat 消费 `choices[].delta / [DONE]`，OpenAI Responses 消费文本、拒绝、函数参数增量与 `response.completed`，Anthropic Messages 消费 `text_delta / input_json_delta / message_stop`；未知事件安全忽略，普通 JSON 响应安全回落。每次真实网络尝试生成独立 `stream_id`，可见正文按0.5秒或累计256字符写入现有 Round JSONL；重试或切换模型时 GUI 只呈现同 Frame 的最新尝试。工具参数、provider 原始信封与 reasoning/thinking 不进入对话正文。Parsed／final 输出按同一 Frame 原位替换流卡；没有收到协议终止事件的 partial SSE 只保留在审计中，不得成为过程回复或最终回复。
+
+**GUI live 投影**：每轮外部用户卡只来自 `round_started.input_snapshot.trigger.messages`，身份为稳定 Round＋消息序号；旧账缺少该事件时只从最早 step snapshot 回退一次，不遍历每个 Frame 重建。`/api/live/events` 对当前 Round 只解析 JSONL 新增字节，Round 切换、截断或文件替换才重建；任务投影在 Round 或事件游标变化后的下一次现有轮询中刷新。
 
 **L2（B 类蓝屏→善后步）**：反应步异常被 `try/except` 捕获 → `finally` 块善后步必走。善后步拿到 `{error, aborted: true}`，归档残局，写 alerts.md。
 
@@ -514,12 +517,12 @@ def reaction_loop(intent):
 | --- | --- | --- |
 | 疲劳倒计时（暂停） | Seed 不运行疲劳系统 | `fatigue_expired` 固定为 false；不检查、不清理、不触发轮次 |
 | 感受缓冲超时 | `next_settle` 时间戳过了没？ | 过了 → 置位 `feeling_settle_due = true` |
-| API 熔断 | connectivity.json 中当前位格有效模型链的 endpoint 最新状态为 `error/timeout`，或 circuit_breaker=open？ | 有 → 置位 `api_degraded = true`；同 endpoint 最新 `ok` 抵消旧错误，模型库中未参与当前路由的失败不阻塞恢复 |
+| API 熔断 | 当前位格 Setup 路由链是否全部因最新 `error/timeout` 或 circuit_breaker=open 而不可用？ | 全部不可用 → 置位 `api_degraded = true`；任一 Setup 候选最新 `ok` 即可恢复，其他阶段及未参与当前 Setup 路由的失败不阻塞开轮 |
 | STM降格待处理 | heat.json 有 degrade=true 且 stored=false 的条目没？ | 有 → 置位 `stm_degrade_pending = true` |
 | 外部进程／器官健康（Arbor 预留） | Seed 不运行外部器官健康检查 | `process_down` 固定为 false；当前崩溃恢复由 Runtime supervisor 承担 |
 | 用户消息等待 | 入口队列或 `now_cache.jsonl` 有新外部输入没？ | 有 → 置位 `user_message_waiting = true` |
 | 节律到期 | total_round - last_rhythm_round ≥ 32？ | 是 → 置位 `rhythm_due = true` |
-| 待命到期 | 距上一轮结束 ≥ 30分钟？ | 是 → 置位 `standby_due = true` |
+| 待命到期 | 距本次 Runtime 启动或上一轮结束（取较晚者）≥ 30分钟？ | 是 → 置位 `standby_due = true` |
 | 中继续传事实 | 反应步合法填写 `reaction_finalize.relay_closeout`、反应步超时或脚本事实源明确请求续传？ | 是 → 置位 `continue_requested = true` |
 | 搁置到期 | shelve_timer 倒计时到 0 没？ | 到了 → 置位 `shelve_timer_expired = true` |
 | Token 预警（V2） | token 用量比例 ≥ 0.7？ | 是 → 置位 `token_usage_warning = true` |
@@ -535,7 +538,9 @@ def reaction_loop(intent):
 
 基础14项 + 日历5项 + 进化集材料阈值1项 = 20个标记字段保留在 `persona/state.json.heartbeat_flags` schema 中。`fatigue_expired`、`identity_timeout` 是暂停系统的保留字段，`process_down` 是 Arbor 外部进程／器官健康预留；三者在 Seed 固定为 false，不进入心跳触发、轮型、指南、工具、状态栏或模型可见活动合同。`context_pressure` 与 `cache_compaction_due` 由 Runtime／装配器事实置位，不由 heartbeat tick 自行推导；字段新增、暂停或启用必须同步 schema、模板、模型可见协议与 truth audit。
 
-heartbeat_flags 由心跳检测、脚本事实源或 Runtime 内部结算置位，由起手步读取并转化为本轮触发依据，由善后步在归档完成后选择性清零并恢复心跳检测。中继只通过合法 `reaction_finalize.relay_closeout`、反应步超时或脚本事实源置位 `continue_requested`；Base 版不再开放独立 LLM-facing 心跳置位协议工具。起手步不负责清零，避免反应步异常时触发信号提前丢失。`heartbeat_tick` 只做心跳检测，不产生独立轮次；`heartbeat_restart` 只负责善后末尾重置待命倒计时与恢复心跳检测，不负责清理已消费 flag。
+heartbeat_flags 由心跳检测、脚本事实源或 Runtime 内部结算置位，由起手步读取并转化为本轮触发依据，由善后步在归档完成后选择性清零并恢复心跳检测。中继只通过合法 `reaction_finalize.relay_closeout`、反应步超时或脚本事实源置位 `continue_requested`；Base 版不再开放独立 LLM-facing 心跳置位协议工具。起手步不负责清零，避免反应步异常时触发信号提前丢失。`heartbeat_tick` 只做心跳检测，不产生独立轮次；`heartbeat_restart` 只负责善后末尾重置待命倒计时与恢复心跳检测，不负责清理已消费 flag。每次 Runtime 启动还会清除旧 `standby_due` 并建立本进程待命计时锚点；该锚点不改写作为历史事实的 `last_round_closed_at`，停机时间不计入下一次待命间隔。
+
+自动 continuation 按工具结果、processor receipt、来源读取、任务／验收落账、输出文件哈希和审批结果计算真实进展；自然语言、handoff 正文、Round／Frame、`executed_at/fetched_at/requested_at/resolved_at` 等审计时间和身份刷新不计进展。显式 engineering grant 存在时从其 `task_root/output` 计算产物哈希；无 grant 时从本轮成功副作用工具的真实 `cwd/path/modified_files/write_scope` 定位 `output` 产物，不恢复 workspace allowlist。允许一次无进展 relay；该 relay 再次请求续轮时，在置位新的 `continue_requested` 前以 `blocked/no_progress_relay` 本地收束并结算旧 intent。产生真实进展后计数归零。
 
 五类触发归口：
 
@@ -642,6 +647,7 @@ while True:
 ### 常驻 Runtime、主动停止与异常恢复
 
 - GUI 宿主启动后直接持有一个 `Runtime.run_forever()`；HTTP、heartbeat、Round 与中继共享该实例，发送不再另起 CLI 进程或消息临时文件。
+- heartbeat 每次启动都重新开始待命轮计时；普通停机期间不推进该倒计时，也不借启动动作伪造 Round 结束时间。
 - 每个活动 PID 使用 `LocalAppData\UPSP\runtime\<PID>\` 下的 Windows 文件锁和 `upsp_runtime_supervisor.v1` 监督状态。第二 Runtime 或端口冲突必须明确失败，不允许静默换端口或出现第二个 persona 写入者。
 - 同一实例一次只执行一个 Round；运行期间的新发送或中继返回冲突，不建立隐藏队列。浏览器页面关闭不等于 Runtime 退出。
 - 单次 provider 网络等待运行在标准库 `multiprocessing` 子进程中。API Key 只经进程管道传递，不得进入命令行、文件、日志或监督状态；主进程退出时 worker 必须随之结束。
@@ -665,12 +671,12 @@ Base 版采用"持续时钟"模式——既可以主动扫（轮询式），也�
 
 ### 心跳与待命轮的分工
 
-心跳吃掉了"保活"的大半职责后，当前待命轮只消费已有状态与真实调用留下的 connectivity 证据；主动付费探针仍属 deferred：
+心跳吃掉了"保活"的大半职责后，当前待命轮通常只消费已有状态与真实调用留下的 connectivity 证据；仅当 `api_degraded` 已置位并准备开轮时，Runtime 才执行一次有界恢复探针：
 
 | 机制 | 职责 | 频率 |
 | --- | --- | --- |
 | **心跳** | 扫**自身**脚本级状态（标记、缓冲、计数、进程） | 秒级（5s） |
-| **待命轮** | 检查当前有效模型链的既有 connectivity／breaker 证据；不自动发送付费 probe | 上一轮结束后间隔 30 分钟 |
+| **待命轮** | 检查 Setup 路由链既有 connectivity／breaker 证据；降级时在 Setup 前探测至首条可用路由 | Runtime 启动或上一轮结束后间隔 30 分钟 |
 | **节律轮** | 32 主轴轮一次的大整理+写节志 | DDS 原定义不变 |
 
 ### 疲劳与休眠（暂停）
@@ -829,6 +835,7 @@ Windows 路径必须使用 Known Folder API 取得，不能硬编码盘符、用
 - Windows Job Object 对后端及其 provider worker 启用 kill-on-close。正常退出先走现有停止和本地善后，再请求后端关闭；壳层崩溃时由 Job Object 回收进程树，下次启动只使用既有无重放恢复。
 - 一个 Windows 会话只允许一个桌面窗口。右上角关闭隐藏到托盘，最小化仍进入任务栏；托盘只显示“打开／当前状态／退出”，隐藏通知只给完成、停止或失败状态，不包含回复、工具参数或其他正文。
 - WebView2 用户数据、Python cache 和桌面日志只写 `LocalAppData\UPSP\cache` 或 `LocalAppData\UPSP\logs`，不得写安装目录。GUI 证据下载继续使用 Windows 保存对话框。
+- 壳层的两秒状态计时器只允许一个在途请求；单次超时只显示非模态“后端繁忙、正在重试”。只有确认后端进程退出，或连续失败达到门限且进程不可访问时才显示故障弹窗；任一次成功立即清除失败计数。
 
 安装后的生产布局固定为：
 
@@ -929,7 +936,7 @@ Runtime、CLI、GUI 与本地宿主统一从 `paths.PERSONA_DIR` 解析活体路
 
 用户选择模型测试时仍具备以下硬边界：
 
-- 只有用户点击并确认“会产生一次真实付费请求”后才执行；系统不自动探测；
+- 只有用户点击并确认“会产生一次真实付费请求”后才执行该初始化测试；运行期 `api_degraded` 的 Setup 前恢复探针属于独立的隐藏默认能力；
 - 只调用当前有效起手主模型，不尝试备用或跨阶段容灾；
 - 不加载 persona，不装配十层上下文，不创建 Frame/Round，不落 connectivity 或审计文件；
 - 复用生产协议适配、流式设置、连续 180 秒等待、首次加两次暂态重试和错误分类；
@@ -1705,7 +1712,7 @@ Spec598 后 Seed 暂停疲劳系统。状态字段与配置位置保留，便于
 
 ### token_usage
 
-每次 provider 调用后，`RuntimeServices._update_token_usage()` 按该次 `tokens_input + tokens_output` 与 endpoint context window 计算并写入 `usage_ratio`。heartbeat 读取该比例，与 `token_usage.warning_ratio`（默认0.7）比较后置位或清除 `token_usage_warning`，归入 rhythm 触发类；它不重新统计 token。配置中的 `token_usage.critical_ratio` / `urgent_ratio`（默认0.85）当前没有 Runtime 消费者，只作兼容字段保留；POPUP 以独立的0.85常数把已置位预警显示为“紧急”或“偏高”，不构成第二个 heartbeat flag 写入口。必要说明写作 `kind=setup_fact`，运行期临时任务说明走 GUIDE/POPUP/内容窗口，不写成正式 `material` 缓存；不得再通过 `runtime.next_round` 便签制造第二套调度入口。
+每次 provider 调用后，`RuntimeServices._update_token_usage()` 按该次 `tokens_input + tokens_output` 与 endpoint context window 计算并写入 `usage_ratio`。heartbeat 读取该比例，与 `token_usage.warning_ratio`（默认0.7）比较后置位或清除 `token_usage_warning`，归入 rhythm 触发类；它不重新统计 token。配置中的 `token_usage.critical_ratio` / `urgent_ratio`（默认0.85）当前没有 Runtime 消费者，只作兼容字段保留；POPUP 以独立的0.85常数把已置位预警显示为“紧急”或“偏高”，不构成第二个 heartbeat flag 写入口。必要说明写作 `kind=setup_fact`，运行期临时任务说明走 GUIDE/POPUP/内容窗口，不写成正式 `material` 缓存；不得再通过 `runtime.next_round` 便签制造第二套调度入口。一次性事故恢复不得把被回滚调用的 `usage_ratio` 当作当前健康事实重放；真实 token 用量留在原 Round 审计中，恢复态的瞬时 token 计数清零，下一次真实 provider 回执再重新建立该健康快照。
 
 ### runtime
 
@@ -1726,7 +1733,7 @@ Spec598 后 Seed 暂停疲劳系统。状态字段与配置位置保留，便于
 |------|------|--------|------|
 | fatigue_expired | bool | 暂停系统预留 | Seed 固定为 false，不进入活动合同 |
 | feeling_settle_due | bool | 心跳/Runtime | 感受缓冲超时（next_settle时间戳已过）；唯一活动时由 Runtime 本地结算，不能触发自主轮 |
-| api_degraded | bool | 心跳 | API降级（connectivity.json中有熔断记录） |
+| api_degraded | bool | 心跳 | 当前 Setup 路由链全部不可用；开轮前有界恢复探针成功后原子清除 |
 | stm_degrade_pending | bool | 心跳 | STM降格待处理（heat.json中有degrade=true且stored=false的条目） |
 | process_down | bool | Arbor 预留 | 外部进程／器官健康；Seed 固定为 false，当前进程恢复由 supervisor 承担 |
 | user_message_waiting | bool | 脚本 | 用户消息到达，等待处理 |
@@ -3858,6 +3865,8 @@ layers/*.json → provider 协议编译 → step.json.request_body
 
 **定期层**：`periodic_mounts.json` 只承载定期记忆投影。它属于上下文频率层，不等于当前为空的 Registry `periodic` 规则分类；当前没有场景 RULES 自动追加，也没有技能工具投影生产或装配。原“常驻只读容器/外部内容”改为高频层参考窗口。
 
+提示缓存是 Runtime 隐藏默认能力，不属于用户配置。三种 provider 协议共用 B0/B1 语义：B0 位于 `10_permanent` 末端；B1 优先 `30_lately`、否则 `20_periodic`，且只在 B0 后新增稳定内容达到 4096 字符时启用。OpenAI Chat/Responses 与 Anthropic Messages 仅在请求编译末端转换为各自协议字段；旧 OpenAI 模型保留原生隐式缓存。缓存键只由 persona、provider、model、调用 lane 与缓存 schema 构成，不包含 Round、Frame、时间或活动状态。缓存字段不得由兼容请求参数覆盖；请求中出现字段只证明已发送，实际命中只认 provider usage。
+
 ### periodic_mounts.json schema
 
 位置：`STM/context/periodic_mounts.json`
@@ -4293,21 +4302,22 @@ POPUP 不属于可裁剪层，使用 active/consumed/expired 生命周期，而�
   "strategy": "character_watermark",
   "now_cache_path": "STM/context/cache/now_cache.jsonl",
   "lately_cache_path": "STM/context/cache/lately_cache.jsonl",
+  "active_corpus_meta_path": "STM/context/cache/active_corpus_meta.json",
   "corpus_rhythms_path": "LTM/Corpus/public/rhythms/"
 }
 ```
 
-`now_budget_chars` / `now_trim_chars` 与 `lately_budget_chars` / `lately_trim_chars` 是当前主线缓存长度配置，分别来自 `config/context/now.json` 与 `config/context/lately.json`。旧 `setup_rounds` / `reaction_rounds` / `cleanup_rounds`、`hot_window_rounds`、`trim_rounds` 已退役为迁移说明，不再作为运行时长度上限。`now_cache_path`、`lately_cache_path` 和 `corpus_rounds_path` 是当前主源。
+`now_budget_chars` / `now_trim_chars` 与 `lately_budget_chars` / `lately_trim_chars` 是当前主线缓存长度配置，分别来自 `config/context/now.json` 与 `config/context/lately.json`。旧 `setup_rounds` / `reaction_rounds` / `cleanup_rounds`、`hot_window_rounds`、`trim_rounds` 已退役为迁移说明，不再作为运行时长度上限。`now_cache_path`、`lately_cache_path` 和 `corpus_rounds_path` 是当前主源；`active_corpus_meta.v1` 只保存下一短 ID 与已消费外部交互批次计数。`ref.active_corpus_id` 与 `ref.interaction_round_index` 只属于活跃 `now/lately` 履带，在 raw_log 镜像边界必须剥离；raw_log 与后续 Corpus 只保存不可变语料事实和稳定 `raw_log_key`。
 
 ## 22.2 生命周期
 
 每轮结束：
 
-1. 当前轮 user / assistant 语料块先写入 `now_cache.jsonl`；
+1. 当前轮 user / assistant 语料块先写入 `now_cache.jsonl`；语料第一次进入 now 时获得持久 `ref.active_corpus_id`，同一块跨 Frame、重启、普通 keep/rewrite 和 `now → lately` 不变，压缩摘要作为新语料获得新 ID；
 2. 正常 reaction material 写入 `now_cache.jsonl` 并固定到本轮结束；交互、助手回复、对话进展、工具事实、最小承诺、故障记账等 eligible 块先写入 now，等待 now 字符水位触发后滚入 lately；cleanup/final-reply 临时 material 仍为 now-only `round_retention=drop`；
 3. `now_cache.jsonl` 超过 `now.budget_chars` 时按完整块即时结算普通语料；本轮 material 不被水位删除。轮末 settlement 把正常 material 从 now 迁入 lately，material 不写 Corpus；
-4. `lately_cache.jsonl` 超过 `lately.budget_chars` 时，最旧完整语料块批量删除，不写入额外常驻层；
-5. A 轨语料被 lately 接纳时镜像进 `STM/buffer/raw_log.jsonl`，主轴节律轮再归档进 `LTM/Corpus/public/rhythms/` 并由同批 JSONL 派生 Markdown；
+4. `lately_cache.jsonl` 超过 `lately.budget_chars` 时，最旧完整语料块批量删除，不写入额外常驻层；仅 `kind=interaction/role=user` 的原始外部输入在当前消费批次起连续 16 个交互轮内禁止删除或压缩，第 17 个交互轮起恢复普通 FIFO 资格。relay、rhythm、standby、cleanup 与 Frame 不计交互轮；受保护输入本身超水位时记录 soft overflow，不静默删除；
+5. A 轨语料被 lately 接纳时剥离活跃短 ID／交互轮保护元数据，再镜像进 `STM/buffer/raw_log.jsonl`；主轴节律轮随后归档进 `LTM/Corpus/public/rhythms/` 并由同批 JSONL 派生 Markdown；
 6. 日历节律只沿 JSONL 链逐级合并 Corpus，冲突时保持源文件并 fail closed。
 
 ## 22.3 节律点与对话历史的关系
@@ -4500,7 +4510,9 @@ Runtime 将有效 `setup_finalize` 投影为本轮 setup → reaction 的 `kind=
 | ④ | 退出（A类体面/B类蓝屏） | 脚本 | 硬 |
 | ⑤ | 交出结果 | LLM→脚本 | — |
 
-每次迭代 = 最多 1 个 `focus_tool`（注意力独占或高副作用操作位；`container_focus` 负责 WB focus open/close/restore，`memory_container_create` 会创建容器并替换 WB focus，`memory_container_write` 要求入口已可见 WB focus）+ N 个 `sync_tool` 提交 + N 个 `read_tool` 装配请求。反应步上下文是动态的——loop 中 LLM 直接调用当前已导出的 provider-native tool schema；Runtime 按注册表把协议工具投影到内部 `protocol_tool_request` / processor / receipt，把通用工具投影到内部 `general_tool_request → general_tool_call → general_tool_result`。LLM 直接写旧文本路由字段时，Runtime 将其记为 retired / invalid，不执行，并把“必须改用 provider-native 工具调用”回灌到下一次反应迭代。工具短索引只帮助选择 tool_id 与理解边界，完整 guide 不再作为开通条件。`memory_write` 在提交所在迭代即时结算并把真实回执回灌下一迭代，引用式容器挂接由后续 `memory_container_create/write` 回执证明，最终回复必须基于回执。通用工具当前开放 `file_read`、`file_search`、`file_edit`、`file_write`、`web_fetch`、`web_search`、`shell_command`、`subagent_dispatch`，不产生 `protocol_tool_receipt`，也不进入协议工具事务验账；`file_edit/file_write/shell_command/subagent_dispatch` 受执行权限档位过滤，受限档不下发、不执行。同一 reaction round 内同签名通用工具请求已有结果时直接返回 duplicate rejected，并通过 POPUP “工具循环警告”要求消费已有结果、修正参数、换工具或收束。退出条件：A类体面（LLM声明够了/时间上限/用户消息等待）→ 完整结果；B类蓝屏（卡死/崩溃/超时无响应）→ `{error, aborted: true}`。
+每次迭代 = 最多 1 个 `focus_tool`（注意力独占或高副作用操作位；`container_focus` 负责 WB focus open/close/restore，`memory_container_create` 会创建容器并替换 WB focus，`memory_container_write` 要求入口已可见 WB focus）+ N 个 `sync_tool` 提交 + N 个 `read_tool` 装配请求。反应步上下文是动态的——loop 中 LLM 直接调用当前已导出的 provider-native tool schema；Runtime 按注册表把协议工具投影到内部 `protocol_tool_request` / processor / receipt，把通用工具投影到内部 `general_tool_request → general_tool_call → general_tool_result`。LLM 直接写旧文本路由字段时，Runtime 将其记为 retired / invalid，不执行，并把“必须改用 provider-native 工具调用”回灌到下一次反应迭代。工具短索引只帮助选择 tool_id 与理解边界，完整 guide 不再作为开通条件。`memory_write` 在提交所在迭代即时结算并把真实回执回灌下一迭代，引用式容器挂接由后续 `memory_container_create/write` 回执证明，最终回复必须基于回执。通用工具当前开放 `file_read`、`file_search`、`file_edit`、`file_write`、`web_fetch`、`web_search`、`shell_command`、`subagent_dispatch`，不产生 `protocol_tool_receipt`，也不进入协议工具事务验账。执行权限固定为三档：`limited`（只读）只导出四种读取／搜索工具，`guarded`（受限）与 `unlimited`（放行）导出相同完整工具集；因此 reaction 顶层工具头仍只有只读与完整两种，连同 setup、cleanup 总数严格为四。共享完整 schema 只表示工具集合相同，`01_tool_header.permission_level/permission_label` 仍必须显示真实 `guarded/受限` 或 `unlimited/放行`，工具描述必须同时说明受限档先调用后审批与放行档直接执行。受限档只在 `file_edit/file_write/shell_command/subagent_dispatch` handler 之前进入对话内逐次审批；放行档不审批。同一 reaction round 内同签名通用工具请求已有结果时直接返回 duplicate rejected，并通过 POPUP “工具循环警告”要求消费已有结果、修正参数、换工具或收束。退出条件：A类体面（LLM声明够了/时间上限/用户消息等待）→ 完整结果；B类蓝屏（卡死/崩溃/超时无响应）→ `{error, aborted: true}`。
+
+用户新输入选择的执行权限显式绑定当前 interaction／continuation chain，不依赖进程环境变量临时覆盖。自动 relay 和同链节律继承来源链权限，新用户输入可覆盖；桌面进程重启与无来源链的节律／待命轮回落 `guarded`。受限档模型应直接发起副作用工具调用，由 Runtime 在 handler 前暂停并显示审批卡，不得先等待一条不存在的预授权消息。
 
 #### 协议工具 provider-native 执行子流程 ← v0.12.2 新增，Spec246 重塑
 
@@ -4526,11 +4538,11 @@ Spec244 起，provider-native 反应步不再导出 `protocol_tool_guide_request
 2. Runtime 校验该 `tool_id` 属于 `general_tool`，且状态为 enabled；
 3. backend ready 后，Runtime 计算同轮请求签名；签名只包含 `tool_id` 与关键参数，不包含 `call_id/purpose/reason/provider trace` 等噪声；
 4. 如果同一 reaction round 内已有同签名结果，直接返回 `general_tool_result status=rejected`，成功重复为 `duplicate_tool_result_satisfied`，失败重复为 `duplicate_tool_failure_repeated`，不再调用 handler；
-5. 非重复请求进入 `ExecutionCapabilityGate`，在 handler 前执行动作级能力裁决；受限档强行提交高副作用工具时直接返回 `permission_level_required`，其他拒绝直接返回 `general_tool_result status=rejected`，稳定 reason 为 `capability_denied`、`dangerous_shell_command`、`outside_allowlist`、`private_network_denied` 或 `write_scope_missing`；
+5. 非重复请求进入 `ExecutionCapabilityGate`，在 handler 前执行动作级能力裁决；只读档强行提交副作用工具时返回 `permission_level_required`；受限档通过能力裁决后必须等待当前精确调用的 `allow_once/skip`，未批准时 handler 调用数为零；其他拒绝直接返回 `general_tool_result status=rejected`；
 6. 门禁放行后，脚本形成内部 `general_tool_call`，由注册表 active handler 执行；
 7. 结果以 `general_tool_result` 返回给下一次反应步迭代；执行事实写入 `kind=tool_fact` now 语料块，只读正文/候选写入 `kind=material` 或 CONTENT；它不是 `protocol_tool_receipt`，不进入 `tool_transaction_audit`。
 
-`file_read` 默认限制在工作区 allowlist 内，拒绝 `.git`、密钥类路径与 `persona/STM`、`persona/LTM`、`persona/relation` 等 live persona 私密数据。`file_search` 使用同一读取 allowlist，只接受文件名 glob `pattern`，默认不递归；结果只含候选路径、`result_count/max_results/has_more` 与搜索窗口事实，不读取正文、不进入 CONTENT。`file_edit` 默认只接受 unified diff patch/diff，目标限仓库 tracked 文本文件或显式 allowlist，前置门禁拒绝 live persona、密钥、越权路径、缺 patch 和自然语言写入。`file_write` 仅在放行档下发，可在工作区内创建或覆盖普通文本文件，必须填写 `path/content/purpose`，仍拒绝 live persona、Git 内部路径、密钥类路径、越权路径和非文件目标。`web_fetch` / `web_search` 默认只读公开 `http/https` 网页，前置门禁拒绝本机/私网、登录交互、下载型资源与外部账号操作。`shell_command` 默认只在 allowlist cwd 执行低风险命令，前置门禁拒绝删除、移动、重置、后台服务、网络写、远端脚本管道和凭据读取；当前 Windows 后端按 `cmd.exe` 语义执行，近位 guide 必须提醒 `dir/type/python -m pytest` 优先，PowerShell cmdlet 需显式 `powershell -NoProfile -Command ...`，不得使用 `python - <<'PY'` 等 Bash/POSIX here-doc；多行 Python 应用 `file_write` 写临时 `.py` 后执行，或使用 PowerShell here-string 管道。`shell_command` 的模型可见 `tool_fact` 必须包含限长 `stdout/stderr` 摘录与截断说明；输出先按 bytes 捕获并 strict fallback 解码，解码失败不得向模型可见文本写入 U+FFFD，只给安全摘要和字节长度 / sha256。`subagent_dispatch` 默认只调度边界清晰的子 agent 任务，必须声明任务目标、允许路径和期望产物；写入型任务必须声明 `write_scope`；无真实后端时返回 `rejected/backend_unavailable`，不伪造外部 agent 执行。
+未提供 `UPSP_ENGINEERING_SANDBOX_GRANT_JSON` 时，通用文件与命令工具不再套用安装目录／workspace 默认 allowlist，而以当前 Windows 用户本来拥有的普通文件系统权限为上限；显式工程 grant 仍优先缩小可用工具及 read/write/shell 根目录，任何审批都不能越过 grant。位格 live 真源、Git 内部数据、LocalAppData 模型密钥配置、常见凭据目录、密钥类路径和灾难性命令继续硬拒绝。`file_edit` 仍只接受 unified diff，`file_write` 仍要求 `path/content/purpose`；`web_fetch/web_search` 仍拒绝本机／私网、登录交互、下载资源和外部账号操作。受限档审批等待阶段为 `tool_approval`：heartbeat 暂停、不创建新 Frame、不继续 provider；停止轮次、宿主关闭或异常会取消待审批并唤醒等待线程。Round JSONL 只记录审批 ID、工具 ID、调用签名、安全摘要、决定和时间，完整命令／补丁／正文只存在于当前进程瞬时对象及同源状态投影中。
 
 #### 协议级固定操作流与流程插槽 ← v0.13.0 新增
 
@@ -4600,7 +4612,7 @@ Spec 041/053/083 迁出项：关键词由反应步 provider-native `memory_write
 | **节律轮** | 1 | 心跳判定主轴或日历节律到期 | 写节志+消费真实调用留下的 connectivity 证据+alerts归档 | 节志落盘+警戒结算+alerts归档进IMM |
 | **中继轮** | 2 | 长时任务 checkpoint（300s时限） | **中继续传：总结进度** | **无对外回复** |
 | **自主轮** | 3 | 心跳唤醒/任务调度/自觉能动 | 1-N 次执行，超时存档续轮 | **可能无回复**·**进化集整理（阈值触发，默契集/联系集积累驱动）** |
-| **待命轮** | 4 | 上一轮结束后≥30分钟/心跳紧急唤醒 | 检查已有 connectivity／breaker 证据；不自动发送付费 probe | 健康状态归档 |
+| **待命轮** | 4 | 上一轮结束后≥30分钟/心跳紧急唤醒 | 检查已有 connectivity／breaker 证据；降级时在 Setup 前执行有界恢复 probe | 健康状态归档 |
 
 三种关键修正：
 1. **中继轮反应步**：~~复盘/整合/压缩~~ → "中继续传：总结进度"。UPSP 没有"压缩上下文"概念——对话历史走履带式管理，自然滚动。
@@ -4704,7 +4716,7 @@ heartbeat_flags 当前为 20 项：基础14项 + 日历5项 + 进化集材料阈
 | # | 职责 | 说明 |
 |---|------|------|
 | 1 | 写节志 | 脚本预填统计 + LLM 写 ≤512 字正文，落盘 Chronicle/rhythms/ |
-| 2 | 连接状态复核 | 读取当前有效模型链真实调用留下的 connectivity／breaker 证据；不主动发送付费 probe（§39） |
+| 2 | 连接状态复核 | 读取当前有效模型链真实调用及开轮前恢复 probe 留下的 connectivity／breaker 证据；节律反应内不重复探测（§39） |
 | 3 | alerts 归档进 IMM | STM/health/base/alerts.md → LTM/Immune/alerts.md |
 
 主轴节律轮把 `STM/buffer/raw_log.jsonl` 当前积累的原始语料归档进 `COR/public/rhythms/`，成功后清空 raw_log；日历节律再按周期逐级合并。
@@ -5922,7 +5934,7 @@ LocalAppData\UPSP\config\
 | models | models[].connection_id | string | — | 指向服务连接；被引用连接不得删除 |
 | models | models[].context_window | int | 0 | 模型上下文窗口；0 表示未声明 |
 | models | models[].reasoning | object | — | 支持的推理强度与默认强度 |
-| models | models[].streaming / prompt_cache / request_overrides | object | — | 流式、缓存策略与兼容请求参数；兼容参数不得携带密钥 |
+| models | models[].streaming / prompt_cache / request_overrides | object | — | 流式与兼容请求参数；`prompt_cache` 仅为 Runtime 内部兼容字段并统一归一为 `automatic_tiered`，GUI 不提供开关；兼容参数不得携带密钥或覆盖缓存字段 |
 | models | transport.handshake.retry | int | 2 | 每个不同模型追加重试次数；首试加两次且硬性封顶三次 |
 | models | transport.handshake.timeout_seconds | int（秒） | 10 | 连接握手等待窗口 |
 | models | transport.handshake.request_timeout_seconds | int（秒） | 180 | 普通模型服务响应的连续无数据等待窗口 |
@@ -6367,7 +6379,7 @@ JSON 是脚本内部结构或本地调度脑/专家接口格式，不是远端 L
 
 当前协议工具中的四个易混边界必须保留命名锚点：
 
-- `guide_submit` 只提交当前 active guide 已声明的结构字段；它不是普通任务的默认第一动作，也不替代真实工作证据。
+- `guide_submit` 使用稳定 schema 常驻两种 reaction 工具头，不以 active guide 增删工具或改写 `guide_id` 枚举。当前 active guide 的合法 ID/item/option 只由末位提示近位给出，并由 processor 最终校验；无 active task guide 时只允许常驻 `reaction_loop_guide` 的任务引导入口。历史 guide 与任务事实继续进入上下文，但一律是 `historical / executable=false`；它不是普通任务的默认第一动作，也不替代真实工作证据。
 - `pending_cancel` 只结算 `memory_write` 多次失败后形成的显式 open pending，不得取消已经 applied 的写入事实。
 - `relay_intent_settle` 只结算指定 `relay_intent_id` 的状态，不直接制造下一轮或伪装用户输入。
 - `corpus_read` 是 `read_tool`，只对当前可见的折叠轮中进展短 ID 做一次性展开；不写 persona，也不产生长期记忆。
@@ -6393,6 +6405,7 @@ JSON 是脚本内部结构或本地调度脑/专家接口格式，不是远端 L
 | `general_tool_request` | Runtime 内部路由字段 | runtime | provider-native 通用工具投影后的请求结构；当前为 `file_read` / `file_search` / `file_edit` / `file_write` / `web_fetch` / `web_search` / `shell_command` / `subagent_dispatch`；旧文本字段直接写入只进 retired / invalid 审计 |
 | `general_tool_call` | Runtime 内部对象 | general tool dispatcher / handler | 脚本按注册表 active backend 的 handler、权限与 backend_type 执行外部行动 |
 | `general_tool_result` | 脚本生成 | 反应步下一迭代 / now 当前缓存 | 通用工具执行结果；不叫 `protocol_tool_receipt`，不进入 `tool_transaction_audit`；执行事实写 `kind=tool_fact`，只读正文/候选写 `kind=material` 或 CONTENT |
+| `error_hint` | Runtime 从失败结果安全派生 | provider-native tool result / 单轮 POPUP | 所有 rejected/blocked/error/denied/needs_review 统一投影 `kind/retry/attempted/current/expected/next_action`；不改原 receipt/JSONL/技术错误，未知错误要求停止并报告而非原样重试 |
 | `runtime.tool_transaction_audit` | Runtime 基座审计线 | round JSONL / 后续审计 | `tool_transaction_audit` 在 processor 完成后生成的事后验账结果；非法 `tool_request` 与旧内部 request 字段拒绝事实也在此留痕；不进入 reaction guide，不接受 protocol submission，不产生真实工具结果 |
 | `memory_write_declaration` | provider-native `memory_write` 调用 | memory_write processor / `logic/memory_write.py` | 字段口径：`title/weight/subject/body/candidate_keywords/interaction_feelings/relationship_feelings/reason/resolves_pending_id`；`relationship_feelings` 每项严格为 `{subject, word}`，感受词来自同一 schema description |
 | `memory_write_receipt` | memory_write 脚本生成 | 下一反应迭代 / now 当前缓存 / 善后步 | 核心字段为 `tool_id/tool_family/tool_class/status/source/mem_id/title/weight/subject/keywords/reason`；有效感受按需附带 `interaction_feelings/relationship_feelings`，逐项拒绝按需附带 `feeling_rejections`；成功写入后供下一反应迭代判断、联系集、默契集、联想计数、状态结算和审计读取 |
@@ -6471,7 +6484,7 @@ reaction 常驻主指南同时承担两条通用决策阈值：用户明确要�
 - 每个稳定模型配置 ID 独立维护熔断器；默认连续失败 3 次开启，参数来自 `LocalAppData\UPSP\config\models.json → transport.circuit_breaker.max_failures`。
 - 默认冷却 900 秒，参数来自 `transport.circuit_breaker.cooldown_seconds`。当前调用遇到已开启模型时沿本阶段有效链选择下一个不同指纹模型。
 - 同一模型的一轮暂态重试耗尽后才记一次 connectivity/breaker 失败；成功请求立即记该模型 `ok`。
-- 当前 Seed 不为恢复额外发送付费探针。setup 前恢复检查和后续 Frame 边界只消费有效路由模型已有的真实 connectivity 证据；模型库中未被当前路由使用的失败不得阻塞恢复。
+- 当前 Seed 仅在 `api_degraded=true` 且准备开轮时发送恢复探针：沿 Setup 路由链顺序检查，每个候选至多一次、遵守 breaker 冷却、首个成功即停止；普通心跳与后续 Frame 边界不额外探测。探针不装配 persona、上下文、工具或缓存，不创建 Frame；失败保留降级旗标与原应急路径。
 
 ## 38.6 自愈三层次
 
@@ -6525,7 +6538,7 @@ STM/health/
 }
 ```
 
-`recent_latencies.status` 规范值为 `ok` / `error` / `timeout`。`endpoint` 在新格式中是稳定模型配置 ID；旧 `primary/fallback/emergency` 只为历史记录兼容。心跳判断 `api_degraded` 时只检查当前位格有效模型链：最新 `ok` 抵消同模型旧 `error/timeout`；若活动模型最新状态仍为 `error/timeout`，或对应 `circuit_breaker=open`，才视为 API 降级。未使用模型和已从 FIFO 淘汰的旧路由不得阻塞恢复。
+`recent_latencies.status` 规范值为 `ok` / `error` / `timeout`。`endpoint` 在新格式中是稳定模型配置 ID；旧 `primary/fallback/emergency` 只为历史记录兼容。心跳判断 `api_degraded` 时只检查当前位格 Setup 路由链：全部候选的最新状态均为 `error/timeout` 或对应 `circuit_breaker=open` 才视为全局降级；任一候选最新 `ok` 即表示开轮路径可用。其他阶段、未使用模型和已从 FIFO 淘汰的旧路由不得阻塞恢复。开轮前恢复探针写入可选 `source=pre_setup_recovery_probe`，但真实恢复仍以该候选的 `ok` 状态为准。
 
 `recent_latencies` 全局保留最近 32 条（FIFO 滚动，`config/system.json → connectivity.max_latency_records` 可配）——与节律点 32 主轴轮对齐，设计语言统一。滚动即丢弃。
 
@@ -6573,7 +6586,7 @@ STM/health/
 | 默认场景 | 待命轮 / 开机启动 | 节律轮 |
 | 可配置 | config/system.json `health_check` 字段 | 同左 |
 
-三场景可配置（config/system.json）：活跃自检只面向当前有效模型链，全面自检覆盖全局模型库。当前 Seed 的 API 恢复检查不额外发送付费 probe，只消费真实调用留下的 connectivity 证据；主动全面探测仍是未来部署能力，不能由本表冒充已实现。
+三场景可配置（config/system.json）：活跃自检只面向当前有效模型链，全面自检覆盖全局模型库。当前 Seed 只实现 `api_degraded` 开轮前的 Setup 路由有界恢复 probe；主动全面探测仍是未来部署能力，不能由本表冒充已实现。
 
 ## 39.1 握手协议 schema
 

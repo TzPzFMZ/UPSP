@@ -18,9 +18,11 @@ class ConnectivityStore:
     DEGRADED_STATUSES = {"error", "timeout"}
     API_ENDPOINT_TIERS = {"primary", "fallback", "emergency"}  # 旧格式兼容
 
-    def __init__(self, path=None, active_endpoint_ids=None, config_store=None):
+    def __init__(self, path=None, active_endpoint_ids=None,
+                 recovery_endpoint_ids=None, config_store=None):
         self.path = path or CONNECTIVITY_JSON
         self._active_endpoint_ids = active_endpoint_ids
+        self._recovery_endpoint_ids = recovery_endpoint_ids
         self._config_store = config_store or ConfigStore(use_api_environment=False)
 
     def active_endpoint_ids(self):
@@ -28,6 +30,12 @@ class ConnectivityStore:
             values = self._active_endpoint_ids()
             return {str(value) for value in (values or []) if str(value)}
         return set(self.API_ENDPOINT_TIERS)
+
+    def recovery_endpoint_ids(self):
+        if callable(self._recovery_endpoint_ids):
+            values = self._recovery_endpoint_ids()
+            return {str(value) for value in (values or []) if str(value)}
+        return set()
 
     def load(self):
         if not os.path.isfile(self.path):
@@ -49,14 +57,17 @@ class ConnectivityStore:
             return text
         return text or "unknown"
 
-    def log_latency(self, endpoint, status, message=""):
+    def log_latency(self, endpoint, status, message="", *, source=""):
         data = self.load()
-        data.setdefault("recent_latencies", []).append({
+        entry = {
             "endpoint": endpoint or "unknown",
             "status": self._normalize_status(status),
             "message": str(message or "")[:200],
             "timestamp": local_now().isoformat(),
-        })
+        }
+        if source:
+            entry["source"] = str(source)[:80]
+        data.setdefault("recent_latencies", []).append(entry)
         limit = self._config_store.load("system")["connectivity"]["max_latency_records"]
         data["recent_latencies"] = data["recent_latencies"][-limit:]
         self.save(data)
@@ -73,6 +84,18 @@ class ConnectivityStore:
 
     def has_degraded(self):
         data = self.load()
+        recovery = self.recovery_endpoint_ids()
+        if recovery:
+            latest = self.latest_status_by_endpoint(data)
+            slots = data.get("endpoints", {})
+            return all(
+                (
+                    isinstance(slots.get(endpoint), dict)
+                    and slots[endpoint].get("circuit_breaker") == "open"
+                )
+                or latest.get(endpoint) in self.DEGRADED_STATUSES
+                for endpoint in recovery
+            )
         active = self.active_endpoint_ids()
         for endpoint, slot in data.get("endpoints", {}).items():
             if endpoint not in active:
@@ -86,7 +109,29 @@ class ConnectivityStore:
                 return True
         return False
 
+    def has_recovered(self):
+        data = self.load()
+        recovery = self.recovery_endpoint_ids()
+        if recovery:
+            statuses = self.recovery_statuses(data)
+            return any(status == "ok" for status in statuses) and not self.has_degraded()
+        statuses = self.active_statuses(data)
+        return (
+            bool(statuses)
+            and all(status == "ok" for status in statuses)
+            and not self.has_degraded()
+        )
+
     def active_statuses(self, data=None):
         active = self.active_endpoint_ids()
         latest = self.latest_status_by_endpoint(data)
         return [status for endpoint, status in latest.items() if endpoint in active]
+
+    def recovery_statuses(self, data=None):
+        recovery = self.recovery_endpoint_ids()
+        latest = self.latest_status_by_endpoint(data)
+        return [
+            latest[endpoint]
+            for endpoint in recovery
+            if endpoint in latest
+        ]

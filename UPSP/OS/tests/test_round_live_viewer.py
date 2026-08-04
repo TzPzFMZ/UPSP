@@ -987,6 +987,27 @@ def test_live_projection_deduplicates_repeated_user_input_snapshots():
     assert [card["content_md"] for card in user_cards] == ["Read this book."]
 
 
+def test_spec721_round_started_is_only_user_card_source():
+    events = [
+        _event(1, "round_started", {
+            "round_type": "interactive",
+            "input_snapshot": {"trigger": {"messages": [
+                "Canonical request.", "Canonical request.",
+            ]}},
+        }),
+        _event(2, "step_input_snapshot", {"messages": [
+            {"role": "user", "content": "Shortened request."}]}, phase="setup", iteration=1),
+        _event(3, "step_input_snapshot", {"messages": [
+            {"role": "user", "content": "Expanded request."}]}, phase="reaction", iteration=1),
+    ]
+    cards = [card for card in build_live_state(events)["conversation"]
+             if card["type"] == "user"]
+    assert [(card["card_id"], card["content_md"]) for card in cards] == [
+        ("R000614:user:1", "Canonical request."),
+        ("R000614:user:2", "Canonical request."),
+    ]
+
+
 def test_live_projection_recovers_now_pane_from_real_snapshot_without_explicit_now_marker():
     events = [
         _event(1, "step_input_snapshot", {
@@ -1274,7 +1295,12 @@ def test_spec417_live_projection_does_not_guess_popup_layer_from_plain_popup_lab
 
 def test_live_projection_builds_call_frames_and_marks_latest_frame():
     events = [
-        _event(1, "round_started", {"round_type": "interactive"}),
+        _event(1, "round_started", {
+            "round_type": "interactive",
+            "input_snapshot": {"trigger": {"messages": [
+                "Read this book, please. <b>do not translate me</b>",
+            ]}},
+        }),
         _event(2, "step_input_snapshot", {
             "messages": [
                 {"role": "system", "content": "POPUP｜弹窗层\n当前是起手步"},

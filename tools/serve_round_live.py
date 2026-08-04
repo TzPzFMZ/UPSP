@@ -16,7 +16,7 @@ PROGRAM_OS_ROOT = REPO_ROOT / "UPSP" / "OS"
 if str(PROGRAM_OS_ROOT) not in sys.path:
     sys.path.insert(0, str(PROGRAM_OS_ROOT))
 
-from data.round_audit_viewer import latest_event_index, list_rounds, load_round_events  # noqa: E402
+from data.round_audit_viewer import list_rounds, load_round_events  # noqa: E402
 from data.round_live_viewer import build_live_state, events_after  # noqa: E402
 from paths import AUDIT_HTML_DIR, STM_CTX_ROUND_DIR  # noqa: E402
 
@@ -38,6 +38,8 @@ def _json_bytes(payload: object) -> bytes:
 class RoundLiveHandler(BaseHTTPRequestHandler):
     round_dir: Path = default_round_dir()
     html_path: Path = default_html_path()
+    _event_cache_lock = threading.Lock()
+    _event_cache: dict[str, object] = {}
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("[round-live] " + fmt % args + "\n")
@@ -98,6 +100,61 @@ class RoundLiveHandler(BaseHTTPRequestHandler):
         if not rounds:
             return False
         return int(rounds[-1]["round"]) == int(round_num)
+
+    @classmethod
+    def _load_cached_round_events(cls, round_num: int) -> list[dict]:
+        path = (cls.round_dir / f"round_{int(round_num)}.jsonl").resolve()
+        if path.parent != cls.round_dir.resolve():
+            raise ValueError("round path escapes round_dir")
+        with cls._event_cache_lock:
+            stat = path.stat()
+            identity = (stat.st_dev, stat.st_ino or stat.st_ctime_ns)
+            cache = cls._event_cache
+            if (
+                    cache.get("path") != str(path)
+                    or cache.get("identity") != identity
+                    or stat.st_size < int(cache.get("offset") or 0)):
+                cache = {
+                    "path": str(path),
+                    "identity": identity,
+                    "offset": 0,
+                    "pending": b"",
+                    "tail": b"",
+                    "events": [],
+                }
+            offset = int(cache.get("offset") or 0)
+            tail = bytes(cache.get("tail") or b"")
+            with path.open("rb") as handle:
+                if offset and tail:
+                    handle.seek(max(0, offset - len(tail)))
+                    if handle.read(len(tail)) != tail:
+                        cache = {
+                            "path": str(path),
+                            "identity": identity,
+                            "offset": 0,
+                            "pending": b"",
+                            "tail": b"",
+                            "events": [],
+                        }
+                        offset = 0
+                if stat.st_size > offset:
+                    handle.seek(offset)
+                    chunk = handle.read(stat.st_size - offset)
+                    data = bytes(cache.get("pending") or b"") + chunk
+                    lines = data.split(b"\n")
+                    cache["pending"] = lines.pop()
+                    events = list(cache.get("events") or [])
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            events.append(json.loads(line.decode("utf-8")))
+                    cache["events"] = events
+                    cache["offset"] = offset + len(chunk)
+                marker_offset = int(cache.get("offset") or 0)
+                handle.seek(max(0, marker_offset - 256))
+                cache["tail"] = handle.read(min(256, marker_offset))
+            cls._event_cache = cache
+            return list(cache.get("events") or [])
 
     def do_GET(self) -> None:  # noqa: N802
         path, query = self._viewer_path()
@@ -160,10 +217,11 @@ class RoundLiveHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "bad_after"})
                 return
             try:
-                latest_index = latest_event_index(str(self.round_dir), round_num)
+                events = self._load_cached_round_events(round_num)
             except FileNotFoundError:
                 self._send_json(404, {"error": "round_not_found"})
                 return
+            latest_index = int(events[-1].get("event_index") or 0) if events else 0
             if after >= latest_index:
                 self._send_json(200, {
                     "schema_version": "round_live_events.v1",
@@ -173,11 +231,6 @@ class RoundLiveHandler(BaseHTTPRequestHandler):
                     "state": None,
                     "round": round_num,
                 })
-                return
-            try:
-                events = load_round_events(str(self.round_dir), round_num)
-            except FileNotFoundError:
-                self._send_json(404, {"error": "round_not_found"})
                 return
             payload = events_after(
                 events,

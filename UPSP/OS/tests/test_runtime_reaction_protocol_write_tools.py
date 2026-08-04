@@ -653,6 +653,51 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             for receipt in result["_reaction_loop_guard_receipts"]
         )
 
+    def test_spec719_third_identical_natural_finish_block_stops_provider_loop(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        task_id = rt.workbench.create_task_guide_task(
+            task_title="Open task", task_goal="must close ledger",
+            guide={
+                "items": [{"item_id": "item_01", "required": True, "status": "open"}],
+                "acceptance": [{"acceptance_id": "acc_01", "required": True, "status": "pending"}],
+            },
+        )
+        rt.workbench.save_guide({
+            "guide_id": f"task:{task_id}", "kind": "task_execution", "task_id": task_id,
+            "items": [{"item_id": "task_progress", "options": [{
+                "option_id": "update_task_status", "required_fields": [],
+                "allowed_fields": ["items", "acceptance"],
+            }]}],
+        }, active=True)
+
+        class RepeatedNaturalFinish:
+            def __init__(self):
+                self.reaction_calls = 0
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                assert _logical_step(step, active_protocol_tool_guides) != "final_reply"
+                self.reaction_calls += 1
+                if self.reaction_calls > 3:
+                    raise AssertionError("fourth provider call must not happen")
+                return {"response": "任务已经完成。" * 200, "tool_call_envelopes": []}
+
+        executor = RepeatedNaturalFinish()
+        rt.executor = executor
+        result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
+
+        assert executor.reaction_calls == 3
+        assert result["_settlement_ledgers"][-1]["auto_blocked"] is True
+        assert result["_settlement_ledgers"][-1]["closeout_decision"] == "blocked"
+        assert any(receipt.get("status") == "task_acceptance_auto_blocked"
+                   for receipt in result["_reaction_loop_guard_receipts"])
+        assert "任务已经完成。" * 2 not in result["response"]
+
     def test_spec477_task_blocker_natural_reply_then_handoff_without_closeout_ladder(
             self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
@@ -1050,7 +1095,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert "reason 不会改变账本状态" in feedback
         assert task_acceptance_block_signature({
             "blockers": [" task_01 ", "acc_01"],
-        }) == "task_01|acc_01"
+        }) == "task_acceptance_blocked||acc_01|task_01"
 
         store = WorkbenchStore(root_dir=str(tmp_path / "workbench-554"))
         allowed = check_task_closeout_acceptance(

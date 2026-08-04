@@ -20,6 +20,7 @@ import hashlib
 import multiprocessing
 import os
 import queue
+import re
 import socket
 import sys
 import tempfile
@@ -49,11 +50,8 @@ from logic.runtime_channels import (
     STEP_TERMINAL_TOOLS,
     channel_for_step,
 )
-from engines.prompt_cache_planner import (
-    EXPLICIT_PROFILES,
-    apply_explicit_breakpoints,
-    profile_settings,
-)
+from engines.prompt_cache_planner import apply_explicit_breakpoints, profile_settings
+from paths import ACTIVE_PID
 
 _SYSTEM_SLEEP = time.sleep
 
@@ -956,40 +954,18 @@ class APIExecutor:
             self._prompt_and_messages_from_context_layers(by_key)
         )
         payload_message_layers = list(message_layers)
-
-        if provider == "openai_responses":
-            payload = {
-                "model": model_name,
-                "input": self._responses_input(messages, provider),
-            }
-            if str(system_prompt or "").strip():
-                payload["instructions"] = str(system_prompt).strip()
-        elif provider == "anthropic_messages":
-            anthropic_system, anthropic_messages = self._anthropic_messages(
-                messages,
-                system_prompt=system_prompt,
-            )
-            payload = {
-                "model": model_name,
-                "messages": anthropic_messages,
-            }
-            if anthropic_system:
-                payload["system"] = anthropic_system
-        else:
-            payload_messages = self._chat_messages(
+        payload_messages = self._chat_messages(
                 messages,
                 provider,
                 model_name=model_name,
                 endpoint_config=endpoint_meta,
             )
-            if str(system_prompt or "").strip():
-                payload_messages = [
-                    {"role": "system", "content": str(system_prompt).strip()}
-                ] + payload_messages
-                payload_message_layers = ["10_permanent"] + payload_message_layers
-            while len(payload_message_layers) < len(payload_messages):
-                payload_message_layers.append("50_now")
-            payload = {"model": model_name, "messages": payload_messages}
+        if str(system_prompt or "").strip():
+            payload_messages = [{"role": "system", "content": str(system_prompt).strip()}] + payload_messages
+            payload_message_layers = ["10_permanent"] + payload_message_layers
+        while len(payload_message_layers) < len(payload_messages):
+            payload_message_layers.append("50_now")
+        payload = {"model": model_name, "messages": payload_messages}
         payload.update(self._generation_config_payload(generation_config))
         if tools:
             payload["tools"] = tools
@@ -1001,13 +977,35 @@ class APIExecutor:
             prompt_cache_scope=prompt_cache_scope,
             model_name=model_name,
         )
-        if settings.get("profile") in EXPLICIT_PROFILES:
+        if settings.get("mode") == "explicit":
             payload, prompt_cache_plan = apply_explicit_breakpoints(
                 payload,
                 profile=settings["profile"],
                 message_layers=payload_message_layers,
                 layer_contents=by_key,
+                provider=provider,
             )
+        if provider == "openai_responses":
+            canonical_messages = payload.pop("messages")
+            if settings.get("mode") == "explicit":
+                payload["input"] = canonical_messages
+            else:
+                payload["input"] = self._responses_input(messages, provider)
+                if str(system_prompt or "").strip():
+                    payload["instructions"] = str(system_prompt).strip()
+        elif provider == "anthropic_messages":
+            system_blocks = []
+            dialogue = []
+            for message in payload.pop("messages"):
+                role = str(message.get("role") or "user")
+                content = message.get("content")
+                if role in {"system", "developer"} and not dialogue:
+                    system_blocks.extend(content if isinstance(content, list) else [{"type": "text", "text": str(content or "")}])
+                else:
+                    dialogue.append({"role": "assistant" if role == "assistant" else "user", "content": content})
+            payload["messages"] = dialogue
+            if system_blocks:
+                payload["system"] = system_blocks
         return payload, prompt_cache_plan
 
     @staticmethod
@@ -1115,7 +1113,10 @@ class APIExecutor:
         model_name = model or ep.get("model", "")
         provider = provider_for_url(url, ep)
         request_url = self._resolved_request_url(url, provider)
-        execution_permission_level = load_execution_permission_level(self.cfg)
+        execution_permission_level = (
+            getattr(self, "execution_permission_level", None)
+            or load_execution_permission_level(self.cfg)
+        )
         native_tools = self._native_tools_for_step(
             step,
             provider,
@@ -1200,7 +1201,10 @@ class APIExecutor:
         model_name = model or ep.get("model", "")
         provider = provider_for_url(url, ep)
         request_url = self._resolved_request_url(url, provider)
-        execution_permission_level = load_execution_permission_level(self.cfg)
+        execution_permission_level = (
+            getattr(self, "execution_permission_level", None)
+            or load_execution_permission_level(self.cfg)
+        )
         native_tools = self._native_tools_for_step(
             step,
             provider,
@@ -1328,7 +1332,8 @@ class APIExecutor:
     def call_prepared_once(self, prepared):
         return self._call_prepared_internal(prepared, allow_fallback=False)
 
-    def probe_model_profile(self, profile_id):
+    def probe_model_profile(self, profile_id, *, max_attempts=None,
+                            connectivity_source=""):
         """Test exactly one configured model without persona context or audit layers."""
         profile_id = str(profile_id or "").strip()
         if not profile_id:
@@ -1391,10 +1396,76 @@ class APIExecutor:
             "payload": payload,
             "request_contract_audit": {},
             "provider_request_envelope": {},
+            "_max_attempts": max_attempts,
+            "_connectivity_source": str(connectivity_source or ""),
+            "_require_nonempty_response": True,
         })
         if not str(result.get("response") or "").strip():
             raise APIBridgeError(profile_id, "provider returned an empty response")
         return result
+
+    def probe_setup_route_once(self):
+        """Probe the effective setup chain once per candidate until one works."""
+        started = time.time()
+        try:
+            api_cfg = self.cfg.load("api")
+        except Exception:
+            api_cfg = {}
+        endpoints = api_cfg.get("endpoints") or {}
+        route = list((api_cfg.get("step_routes") or {}).get("setup") or [])[:3]
+        attempted = []
+        skipped = []
+        failures = []
+        seen_profiles = set()
+        for tier in route:
+            endpoint = endpoints.get(tier) or {}
+            profile_id = str(endpoint.get("profile_id") or tier).strip()
+            if not profile_id or profile_id in seen_profiles or not endpoint.get("url"):
+                continue
+            seen_profiles.add(profile_id)
+            breaker = self._get_breaker(tier, endpoint=endpoint)
+            if not breaker.allow_request():
+                skipped.append({"profile_id": profile_id, "reason": "breaker_open"})
+                continue
+            attempted.append(profile_id)
+            try:
+                result = self.probe_model_profile(
+                    profile_id,
+                    max_attempts=1,
+                    connectivity_source="pre_setup_recovery_probe",
+                )
+            except ProviderCallCancelled:
+                raise
+            except Exception as exc:
+                failure = {
+                    "profile_id": profile_id,
+                    "kind": type(exc).__name__,
+                }
+                status_code = getattr(exc, "status_code", None)
+                if status_code is not None:
+                    failure["status_code"] = int(status_code)
+                failures.append(failure)
+                continue
+            return {
+                "status": "recovered",
+                "attempted_profile_ids": attempted,
+                "skipped": skipped,
+                "failures": failures,
+                "selected_profile_id": profile_id,
+                "elapsed_ms": int((time.time() - started) * 1000),
+                "tokens_input": int(result.get("tokens_input") or 0),
+                "tokens_output": int(result.get("tokens_output") or 0),
+            }
+        return {
+            "status": "failed" if attempted else "skipped",
+            "attempted_profile_ids": attempted,
+            "skipped": skipped,
+            "failures": failures,
+            "selected_profile_id": None,
+            "elapsed_ms": int((time.time() - started) * 1000),
+            "tokens_input": 0,
+            "tokens_output": 0,
+        }
 
     def _call_prepared_internal(self, prepared, *, allow_fallback):
         prepared = dict(prepared or {})
@@ -1417,10 +1488,19 @@ class APIExecutor:
         payload = prepared.get("payload") or {}
         request_contract_audit = prepared.get("request_contract_audit") or {}
         provider_request_envelope = prepared.get("provider_request_envelope") or {}
+        connectivity_source = str(prepared.get("_connectivity_source") or "")
+        logical_call_id = str(prepared.get("logical_call_id") or "")
+        route_slot = int(prepared.get("route_slot") or prepared.get("attempt") or 1)
         start_time = time.time()
         last_error = None
         max_attempts = min(3, max(1, 1 + self.cfg.get_handshake_retry()))
+        if prepared.get("_max_attempts") is not None:
+            max_attempts = min(
+                max_attempts,
+                max(1, int(prepared.get("_max_attempts") or 1)),
+            )
         for attempt in range(max_attempts):
+            attempt_started = time.time()
             try:
                 self._raise_if_cancelled()
                 self._wait_before_provider_call(
@@ -1458,6 +1538,11 @@ class APIExecutor:
                     endpoint=health_endpoint,
                 )
                 response_text = self._response_text(response_data)
+                if (
+                        prepared.get("_require_nonempty_response")
+                        and not str(response_text or "").strip()):
+                    raise APIBridgeError(
+                        health_endpoint, "provider returned an empty response")
                 if self._native_tool_empty_output(native_tools, response_text, envelopes):
                     error_message = self._provider_format_error_message(
                         "provider_native_tool_empty_output",
@@ -1481,7 +1566,8 @@ class APIExecutor:
                     )
                     raise APIBridgeError(tier, error_message)
                 breaker.record_success()
-                self._log_connectivity(health_endpoint, "ok", "")
+                self._log_connectivity(
+                    health_endpoint, "ok", "", source=connectivity_source)
                 self._log_api_progress(
                     "ok",
                     step=step,
@@ -1497,6 +1583,20 @@ class APIExecutor:
                         f"response_chars={len(response_text or '')}"
                     ),
                 )
+                self._emit_stream_event("llm_http_attempt", {
+                    "schema_version": "provider_http_attempt.v1",
+                    "logical_call_id": logical_call_id,
+                    "route_slot": route_slot,
+                    "attempt": attempt + 1,
+                    "max_attempts": max_attempts,
+                    "tier": tier,
+                    "provider": provider,
+                    "model": model_name,
+                    "status": "ok",
+                    "status_code": 200,
+                    "error_kind": "",
+                    "elapsed_ms": int((time.time() - attempt_started) * 1000),
+                })
                 return {
                     "response": response_text,
                     "tool_call_envelopes": envelopes,
@@ -1520,6 +1620,21 @@ class APIExecutor:
                 elif isinstance(e, ConnectionError):
                     e = APIBridgeError(tier, f"网络错误: {e}")
                 last_error = e
+                status_code = self._provider_error_status_code(e)
+                self._emit_stream_event("llm_http_attempt", {
+                    "schema_version": "provider_http_attempt.v1",
+                    "logical_call_id": logical_call_id,
+                    "route_slot": route_slot,
+                    "attempt": attempt + 1,
+                    "max_attempts": max_attempts,
+                    "tier": tier,
+                    "provider": provider,
+                    "model": model_name,
+                    "status": "error",
+                    "status_code": status_code or None,
+                    "error_kind": self._provider_error_kind(e, status_code),
+                    "elapsed_ms": int((time.time() - attempt_started) * 1000),
+                })
                 self._log_api_progress(
                     "error",
                     step=step,
@@ -1535,7 +1650,10 @@ class APIExecutor:
                     raise
                 if not self._is_transient_provider_error(e):
                     breaker.record_failure()
-                    self._log_connectivity(health_endpoint, "error", str(e))
+                    self._log_connectivity(
+                        health_endpoint, "error", str(e),
+                        source=connectivity_source,
+                    )
                     raise
                 if attempt < max_attempts - 1:
                     self._sleep_between_provider_attempts(attempt + 1)
@@ -1546,7 +1664,10 @@ class APIExecutor:
         connectivity_status = (
             "timeout" if self._is_api_timeout_error(last_error) else "error"
         )
-        self._log_connectivity(health_endpoint, connectivity_status, str(last_error))
+        self._log_connectivity(
+            health_endpoint, connectivity_status, str(last_error),
+            source=connectivity_source,
+        )
 
         tried_fingerprints = {
             tuple(item)
@@ -1559,7 +1680,10 @@ class APIExecutor:
             excluded_fingerprints=tried_fingerprints,
             step=step,
         )
-        if fallback_tier and allow_fallback:
+        if (
+                fallback_tier
+                and allow_fallback
+                and int(prepared.get("attempt") or 1) < 3):
             fallback_prepared = self.prepare_provider_request(
                 step,
                 system_prompt,
@@ -1572,9 +1696,45 @@ class APIExecutor:
             fallback_prepared["_tried_endpoint_fingerprints"] = list(
                 tried_fingerprints
             )
+            fallback_prepared["logical_call_id"] = logical_call_id
+            fallback_prepared["route_slot"] = int(
+                fallback_prepared.get("attempt") or 1
+            )
             return self.call_prepared(fallback_prepared)
 
         raise last_error
+
+    @staticmethod
+    def _provider_error_status_code(error):
+        try:
+            status = int(getattr(error, "status_code", None))
+            if status > 0:
+                return status
+        except (TypeError, ValueError):
+            pass
+        matches = re.findall(
+            r"(?:status_code\s*=\s*|HTTP\s+|\[)([1-5][0-9]{2})(?:\]|\b)",
+            str(error or ""),
+            flags=re.IGNORECASE,
+        )
+        return int(matches[-1]) if matches else 0
+
+    @staticmethod
+    def _provider_error_kind(error, status_code=0):
+        text = str(error or "").lower()
+        if isinstance(error, APITimeoutError) or "timeout" in text:
+            return "timeout"
+        if "econnrefused" in text or "connection refused" in text:
+            return "connection_refused"
+        if "dns" in text or "name resolution" in text or "getaddrinfo" in text:
+            return "dns_error"
+        if "tls" in text or "ssl" in text or "certificate" in text:
+            return "tls_error"
+        if status_code:
+            return f"http_{int(status_code)}"
+        if isinstance(error, APIBridgeError):
+            return "transport_error"
+        return "internal_error"
 
     def call(self, step, system_prompt, messages, model=None, endpoint=None,
              active_protocol_tool_guides=None):
@@ -1823,7 +1983,7 @@ class APIExecutor:
             prompt_cache_scope=prompt_cache_scope,
             model_name=model_name,
         )
-        if settings.get("profile") in EXPLICIT_PROFILES:
+        if settings.get("mode") == "explicit":
             payload_message_layers = ["50_now"] * len(payload_messages)
             if str(system_prompt or "").strip():
                 payload_message_layers[0] = "10_permanent"
@@ -1832,6 +1992,7 @@ class APIExecutor:
                 profile=settings["profile"],
                 message_layers=payload_message_layers,
                 layer_contents={},
+                provider=provider or "openai_chat",
                 promoted_min_chars=4096,
             )
         return payload
@@ -2029,16 +2190,12 @@ class APIExecutor:
             if isinstance(value, dict):
                 overrides.update(value)
         prompt_cache = endpoint_config.get("prompt_cache")
-        profile_configured = (
-            isinstance(prompt_cache, dict)
-            and "profile" in prompt_cache
-        )
         cache_override_fields = sorted({
             "prompt_cache_key",
             "prompt_cache_options",
             "prompt_cache_retention",
         } & set(overrides))
-        if profile_configured and cache_override_fields:
+        if cache_override_fields:
             raise ValueError(
                 "prompt_cache_payload_override_conflict:"
                 + ",".join(cache_override_fields)
@@ -2081,16 +2238,9 @@ class APIExecutor:
                                prompt_cache_scope=None,
                                model_name=""):
         if not isinstance(endpoint_config, dict):
-            return {}
+            endpoint_config = {}
         raw = endpoint_config.get("prompt_cache")
-        if raw is True:
-            cfg = {}
-        elif isinstance(raw, dict):
-            if raw.get("enabled") is False:
-                return {}
-            cfg = raw
-        else:
-            return {}
+        cfg = raw if isinstance(raw, dict) else {}
 
         normalized_step = str(step or "").strip().lower()
         normalized_scope = cls._normalize_prompt_cache_scope(
@@ -2116,28 +2266,9 @@ class APIExecutor:
                 or str(endpoint_config.get("model") or "")
             ),
             lane=lane,
+            persona_id=ACTIVE_PID,
         )
-        if resolved_profile is not None:
-            return resolved_profile
-
-        key = str(cfg.get("key") or "").strip()
-        if not key:
-            prefix = str(
-                cfg.get("key_prefix")
-                or cfg.get("prefix")
-                or ""
-            ).strip()
-            key = f"{prefix}:{lane}" if prefix else lane
-
-        settings = {
-            "lane": lane,
-            "key": key,
-            "applied": provider in cls.OPENAI_PROMPT_CACHE_PROVIDERS,
-        }
-        retention = str(cfg.get("retention") or "").strip()
-        if retention:
-            settings["retention"] = retention
-        return settings
+        return resolved_profile
 
     @classmethod
     def _prompt_cache_scope_for_channel(cls, channel):
@@ -3135,9 +3266,13 @@ class APIExecutor:
     # 连通性日志
     # ==============================================================
 
-    def _log_connectivity(self, endpoint, status, message=""):
+    def _log_connectivity(self, endpoint, status, message="", *, source=""):
         """记录 API 连通性（通过 ConnectivityStore，不直接操作文件）"""
         try:
-            self.conn.log_latency(endpoint, status, message)
+            try:
+                self.conn.log_latency(
+                    endpoint, status, message, source=source)
+            except TypeError:
+                self.conn.log_latency(endpoint, status, message)
         except Exception:
             pass

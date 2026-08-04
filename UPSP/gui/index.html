@@ -75,8 +75,9 @@
           <div class="chat-controls">
             <label for="permissionLevel" data-i18n="执行权限：">执行权限：</label>
             <select id="permissionLevel" name="permission_level" aria-describedby="sendFeedback">
-              <option value="limited" selected data-i18n="受限">受限</option>
-              <option value="unlimited" data-i18n="完整">完整</option>
+              <option value="limited" data-i18n="只读">只读</option>
+              <option value="guarded" selected data-i18n="受限">受限</option>
+              <option value="unlimited" data-i18n="放行">放行</option>
             </select>
             <button id="configureModelButton" type="button" data-i18n="配置模型服务" hidden>配置模型服务</button>
             <button id="sendButton" type="submit" data-i18n="发送">发送</button>

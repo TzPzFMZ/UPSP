@@ -19,6 +19,9 @@ class FakeHeartbeat:
     def resume(self):
         self.resumed += 1
 
+    def enqueue_message(self, message):
+        self.messages.append(message)
+
     def dequeue_messages(self):
         messages = list(self.messages)
         self.messages.clear()
@@ -401,6 +404,47 @@ def test_all_active_trigger_groups_enter_setup(tmp_path):
         assert rt._trigger_queue.pop() is trigger
 
 
+def test_spec721_automatic_trigger_inherits_explicit_permission_chain(tmp_path):
+    rt = _runtime(tmp_path)
+    assert rt.submit_message("start", "unlimited") is True
+    source = rt.enqueue_trigger(
+        {"user_message_waiting": True}, rt.sm.load())
+    assert source.execution_permission_level == "unlimited"
+
+    rt.sm.set_flag("continue_requested", True)
+    rt.permission_chain.finish(
+        source.execution_permission_level,
+        {"_settlement": {"status": "settled"}}, rt.sm)
+    trigger = rt.enqueue_trigger(
+        {"rhythm_due": True, "continue_requested": True}, rt.sm.load())
+
+    assert trigger.round_type == "rhythm"
+    assert trigger.execution_permission_level == "unlimited"
+
+    rt.sm.clear_flags(("continue_requested",))
+    rt.permission_chain.finish(
+        trigger.execution_permission_level,
+        {"_settlement": {"status": "settled"}}, rt.sm)
+    unrelated = rt.enqueue_trigger({"standby_due": True}, rt.sm.load())
+    assert unrelated.execution_permission_level == "guarded"
+
+
+def test_spec721_new_user_permission_replaces_previous_chain(tmp_path):
+    rt = _runtime(tmp_path)
+    rt.permission_chain.authorize("unlimited")
+    assert rt.submit_message("new", "limited") is True
+
+    trigger = rt._new_trigger(
+        "rhythm", {
+            "rhythm_due": True,
+            "user_message_waiting": True,
+            "continue_requested": True,
+        })
+
+    assert trigger.execution_permission_level == "limited"
+    assert trigger.messages == ("new",)
+
+
 def test_newer_queued_trigger_discards_stale_setup_result(tmp_path):
     rt = _runtime(tmp_path)
     setup = FakeSetupRunner(_setup_result())
@@ -514,6 +558,26 @@ def test_required_context_failure_still_runs_cleanup_without_false_close(tmp_pat
         event for event in events if event["event_type"] == "round_unsettled")
     assert "required_context:projection:protocol_tool_fact:OSError" in (
         unsettled["payload"]["fatal_reasons"])
+
+
+def test_spec721_reaction_exception_reports_provider_and_local_causes_separately():
+    from engines.runtime_control import RuntimeControl
+    from errors import APIBridgeError, RequiredContextError
+
+    provider = RuntimeControl.step_exception_result(
+        "reaction", APIBridgeError("provider", "HTTP 503"))
+    context = RuntimeControl.step_exception_result(
+        "reaction", RequiredContextError("projection", "protocol_tool_fact", OSError()))
+    local = RuntimeControl.step_exception_result(
+        "reaction", RuntimeError("Corpus raw_log_key conflict"))
+
+    assert provider["_local_blocked_reason"] == "blocked/provider_failure"
+    assert "模型调用" in provider["response"]
+    assert context["_local_blocked_reason"] == "blocked/required_context_failure"
+    assert context["_required_context_failure"]["scope"] == "protocol_tool_fact"
+    assert "上下文" in context["response"]
+    assert local["_local_blocked_reason"] == "blocked/runtime_error"
+    assert "Runtime 内部错误" in local["response"]
 
 
 def test_round_audit_failure_does_not_skip_cleanup_or_false_close(

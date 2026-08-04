@@ -18,6 +18,7 @@ from constants import local_now
 from paths import (
     PROGRAM_UPSP_ROOT,
     PERSONA_DIR,
+    GLOBAL_CONFIG_DIR,
     STATE_JSON,
     CORE_MD,
     WEB_BACKEND_HEALTH_JSON,
@@ -37,12 +38,36 @@ from utils.read_tool_material import read_tool_material_content
 
 WORKSPACE_ROOT = Path(PROGRAM_UPSP_ROOT).resolve()
 DEFAULT_ALLOWED_ROOTS = (WORKSPACE_ROOT,)
+UNRESTRICTED_ALLOWED_ROOTS = object()
 DEFAULT_DENIED_ROOTS = (
     Path(PERSONA_DIR).resolve() / "STM",
     Path(PERSONA_DIR).resolve() / "LTM",
     Path(PERSONA_DIR).resolve() / "relation",
 )
 DEFAULT_DENIED_FILES = {Path(STATE_JSON).resolve(), Path(CORE_MD).resolve()}
+DEFAULT_CREDENTIAL_ROOTS = tuple(
+    path.resolve()
+    for path in (
+        Path(GLOBAL_CONFIG_DIR),
+        Path.home() / ".ssh",
+        Path.home() / ".aws",
+        Path.home() / ".azure",
+        Path.home() / ".config" / "gcloud",
+        Path.home() / ".config" / "gh",
+    )
+)
+DEFAULT_CREDENTIAL_FILES = {
+    path.resolve()
+    for path in (
+        Path.home() / ".codex" / "auth.json",
+        Path.home() / ".docker" / "config.json",
+        Path.home() / ".git-credentials",
+        Path.home() / ".netrc",
+        Path.home() / "_netrc",
+        Path.home() / ".npmrc",
+        Path.home() / ".pypirc",
+    )
+}
 EXTRA_FILE_READ_ROOTS_ENV = "UPSP_FILE_READ_EXTRA_ROOTS"
 SECRET_SUFFIXES = {
     ".env",
@@ -137,6 +162,8 @@ def _clean(value):
     return str(value or "").strip().strip("`").strip('"').strip("'")
 
 def _resolved_roots(roots):
+    if roots is UNRESTRICTED_ALLOWED_ROOTS:
+        return DEFAULT_ALLOWED_ROOTS
     return tuple(Path(root).resolve() for root in roots or DEFAULT_ALLOWED_ROOTS)
 
 
@@ -168,6 +195,8 @@ def _extra_file_read_roots():
 
 
 def _file_read_allowed_roots(allowed_roots):
+    if allowed_roots is UNRESTRICTED_ALLOWED_ROOTS:
+        return UNRESTRICTED_ALLOWED_ROOTS
     if allowed_roots is not None:
         return allowed_roots
     return DEFAULT_ALLOWED_ROOTS + _extra_file_read_roots()
@@ -365,13 +394,18 @@ def _permission_denial(path, allowed_roots, denied_roots=None, denied_files=None
     if path in denied_files:
         return "persona_live_denied"
 
+    if path in DEFAULT_CREDENTIAL_FILES or any(
+            path.is_relative_to(root) for root in DEFAULT_CREDENTIAL_ROOTS):
+        return "secret_like_path"
+
     denied_roots = _resolved_roots(denied_roots or DEFAULT_DENIED_ROOTS)
     if any(path.is_relative_to(root) for root in denied_roots):
         return "persona_live_denied"
 
-    allowed = _resolved_roots(allowed_roots)
-    if not any(path.is_relative_to(root) for root in allowed):
-        return "outside_allowlist"
+    if allowed_roots is not UNRESTRICTED_ALLOWED_ROOTS:
+        allowed = _resolved_roots(allowed_roots)
+        if not any(path.is_relative_to(root) for root in allowed):
+            return "outside_allowlist"
     if ".git" in lowered_parts:
         return "git_internal_denied"
 
@@ -1031,6 +1065,23 @@ def _execute_file_write(request, allowed_roots=None, denied_roots=None, denied_f
 
 def _dangerous_command_reason(command):
     lowered = (command or "").strip().lower()
+    normalized = lowered.replace("\\", "/")
+    credential_paths = {
+        str(path).lower().replace("\\", "/")
+        for path in (*DEFAULT_CREDENTIAL_ROOTS, *DEFAULT_CREDENTIAL_FILES)
+    }
+    credential_paths.update({
+        ".codex/auth.json",
+        ".config/gh/hosts.yml",
+        ".docker/config.json",
+        ".git-credentials",
+        ".netrc",
+        "_netrc",
+        ".npmrc",
+        ".pypirc",
+    })
+    if any(marker in normalized for marker in credential_paths):
+        return "credential_access"
     checks = (
         (r"\bgit\s+reset\s+--hard\b", "git_reset_hard"),
         (r"\bgit\s+clean\b", "git_clean"),
@@ -1044,6 +1095,8 @@ def _dangerous_command_reason(command):
         (r"\b(curl|wget|invoke-webrequest|iwr)\b.*(--data|-d\s+|-x\s+post|-method\s+post|-t\s+)",
          "network_write"),
         (r"\b(secret|token|credential|credentials|password|api_key|apikey)\b|\.env\b",
+         "credential_access"),
+        (r"^\s*(set|env|printenv)\s*$|\benv:\*|\bgetenvironmentvariables\b",
          "credential_access"),
     )
     for pattern, reason in checks:

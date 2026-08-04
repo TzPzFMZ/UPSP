@@ -11,6 +11,7 @@ class RuntimeTrigger:
     round_type: str
     flags: dict[str, Any] = field(default_factory=dict)
     messages: tuple[Any, ...] = ()
+    execution_permission_level: str = "guarded"
 
     def as_dict(self):
         return {
@@ -20,6 +21,7 @@ class RuntimeTrigger:
             "round_type": self.round_type,
             "flags": dict(self.flags),
             "messages": list(self.messages),
+            "execution_permission_level": self.execution_permission_level,
         }
 
 
@@ -85,6 +87,7 @@ class RoundContext:
     topology_version: str = ""
     setup_frame: FrameRef | None = None
     cleanup_frame: FrameRef | None = None
+    execution_permission_level: str = "guarded"
 
 
 @dataclass

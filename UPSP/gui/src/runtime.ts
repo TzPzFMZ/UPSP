@@ -206,6 +206,10 @@ async function syncConversationHistory({ force = false }: { force?: boolean } = 
     if (state.selectedContextRound !== null && !retained.has(state.selectedContextRound)) {
       state.selectedContextRound = null;
     }
+    if (state.selectedTaskRound !== null && !retained.has(state.selectedTaskRound)) {
+      state.selectedTaskRound = null;
+      state.selectedTaskFrame = null;
+    }
     runtimeProjection.conversationHistoryError = failed.length
       ? t("较早对话未完全载入")
       : "";
@@ -244,6 +248,10 @@ export function pollRuntime({ forceFull = false, ignoreVisibility = false }: { f
     return polling.runtime;
   }
   const request = (async () => {
+    const previousRound = runtimeProjection.round;
+    const previousEventIndex = Number(
+      runtimeProjection.live?.last_event_index || 0,
+    );
     try {
       const [status, livePayload] = await Promise.all([
         fetchRuntimeJson<RuntimeStatus>("./api/runtime/status"),
@@ -258,7 +266,12 @@ export function pollRuntime({ forceFull = false, ignoreVisibility = false }: { f
       runtimeProjection.round = livePayload.round;
       runtimeProjection.error = "";
       runtimeProjection.fullRefreshNeeded = false;
+      const liveAdvanced = previousRound !== livePayload.round
+        || previousEventIndex !== Number(livePayload.state?.last_event_index || 0);
       await syncConversationHistory();
+      if (liveAdvanced) {
+        await pollTaskProjection({ force: true, ignoreVisibility: true });
+      }
       if (runtimeProjection.awaitingProjection && runtimeProjectionAdvanced()) {
         runtimeProjection.awaitingProjection = false;
         runtimeProjection.submitBaseline = null;
@@ -288,6 +301,7 @@ export function runtimePollingActive(): boolean {
   const lifecycle = runtimeProjection.live?.round_lifecycle?.state;
   return Boolean(
     status?.send_in_flight
+    || status?.pending_tool_approval
     || status?.relay_in_flight
     || status?.mutation_in_flight
     || status?.can_stop
@@ -779,9 +793,9 @@ export async function submitContainerFocus(action: string, containerId: string):
 
 function confirmUnlimitedPermission(permissionLevel: PermissionLevel): boolean {
   if (permissionLevel !== "unlimited" || runtimeProjection.unlimitedConfirmed) return true;
-  const confirmed = window.confirm(t("完整权限会允许运行时使用 unrestricted 工具。仅确认当前页面会话使用完整权限？"));
+  const confirmed = window.confirm(t("放行权限会允许副作用工具直接执行。仅确认当前页面会话使用放行权限？"));
   if (!confirmed) {
-    els.permissionLevel.value = "limited";
+    els.permissionLevel.value = "guarded";
     runtimeProjection.unlimitedConfirmed = false;
     return false;
   }
@@ -840,7 +854,7 @@ export async function submitRuntimeMessage(event: SubmitEvent): Promise<void> {
     runtimeProjection.submitBaseline = null;
     const labels = {
       400: t("输入参数无效"),
-      403: t("来源或完整权限确认被拒绝"),
+      403: t("来源或放行权限确认被拒绝"),
       409: t("已有运行时写操作正在执行"),
       502: t("运行时执行失败"),
       503: t("本地运行时宿主不可用"),
@@ -848,6 +862,29 @@ export async function submitRuntimeMessage(event: SubmitEvent): Promise<void> {
     runtimeProjection.sendFeedback = `${labels[failure.status as keyof typeof labels] || t("提交失败")}：${failure.code || failure.message}`;
   } finally {
     runtimeProjection.sending = false;
+    await pollRuntime({ forceFull: true, ignoreVisibility: true });
+  }
+}
+
+export async function submitToolApproval(
+  approvalId: string,
+  decision: "allow_once" | "skip",
+): Promise<void> {
+  if (!approvalId || runtimeProjection.approvalSubmitting) return;
+  runtimeProjection.approvalSubmitting = approvalId;
+  runtimeProjection.approvalFeedback = "";
+  renderChat();
+  try {
+    await fetchRuntimeJson<JsonObject>("./api/runtime/tool-approval", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approval_id: approvalId, decision }),
+    });
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    runtimeProjection.approvalFeedback = `${t("审批失败")}：${failure.code || failure.message}`;
+  } finally {
+    runtimeProjection.approvalSubmitting = "";
     await pollRuntime({ forceFull: true, ignoreVisibility: true });
   }
 }
@@ -957,7 +994,7 @@ export async function submitRuntimeRelay(): Promise<void> {
     const failure = errorView(error);
     const labels = {
       400: t("中继参数无效"),
-      403: t("来源或完整权限确认被拒绝"),
+      403: t("来源或放行权限确认被拒绝"),
       409: t("中继状态已变化或已有写操作在途"),
       502: t("运行时中继执行失败"),
       503: t("本地运行时宿主不可用"),
