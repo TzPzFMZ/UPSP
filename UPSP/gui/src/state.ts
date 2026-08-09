@@ -96,6 +96,7 @@ export const runtimeProjection: RuntimeProjection = {
   awaitingProjection: false,
   submitBaseline: null,
   unlimitedConfirmed: false,
+  permissionChanging: false,
   approvalSubmitting: "",
   approvalFeedback: "",
   fullRefreshNeeded: true,
@@ -106,6 +107,10 @@ export const runtimeProjection: RuntimeProjection = {
   conversationHistoryLatest: null,
   conversationHistoryError: "",
   conversationHistoryVersion: 0,
+  contextPrefixDiff: null,
+  contextPrefixDiffKey: "",
+  contextPrefixDiffLoading: false,
+  contextPrefixDiffError: "",
 };
 
 export const depositionProjection: DepositionProjection = {
@@ -274,6 +279,7 @@ export const els: Elements = {
   stopButton: requiredElement<HTMLButtonElement>("#stopButton"),
   configureModelButton: requiredElement<HTMLButtonElement>("#configureModelButton"),
   sendFeedback: requiredElement<HTMLElement>("#sendFeedback"),
+  contextUsage: requiredElement<HTMLOutputElement>("#contextUsage"),
   ledgerRound: requiredElement<HTMLElement>("#ledgerRound"),
   ledgerContext: requiredElement<HTMLElement>("#ledgerContext"),
   ledgerFrame: requiredElement<HTMLElement>("#ledgerFrame"),

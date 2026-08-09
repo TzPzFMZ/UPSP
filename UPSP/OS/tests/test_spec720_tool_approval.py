@@ -1,4 +1,5 @@
 import threading
+import time
 
 import pytest
 
@@ -167,6 +168,56 @@ def test_tool_approval_stage_remains_stoppable():
     assert snapshot["heartbeat_suspended"] is True
 
 
+def test_runtime_approval_uses_runtime_control_stage_and_resumes_reaction():
+    from engines.runtime import Runtime
+    from engines.runtime_control import RuntimeControl
+    from engines.tool_approval import ToolApprovalCoordinator
+
+    events = []
+
+    class Store:
+        def append_event(self, _round, event_type, payload, **_kwargs):
+            events.append((event_type, payload))
+
+    runtime = Runtime.__new__(Runtime)
+    runtime.control = RuntimeControl()
+    runtime.control.round_in_flight = True
+    runtime.control.round_num = 720
+    runtime.control.set_stage("reaction")
+    runtime.tool_approval = ToolApprovalCoordinator()
+    runtime.audit = type("Audit", (), {"get_store": lambda self: Store()})()
+    runtime.hb = type("Heartbeat", (), {"_paused": True})()
+    outcome = []
+    worker = threading.Thread(
+        target=lambda: outcome.append(runtime._request_tool_approval({
+            "round": 720,
+            "frame_id": "R000720:reaction:1",
+            "tool_id": "file_write",
+        })),
+        daemon=True,
+    )
+    worker.start()
+    deadline = time.monotonic() + 2
+    pending = None
+    while time.monotonic() < deadline:
+        pending = runtime.tool_approval.snapshot()
+        if pending:
+            break
+        time.sleep(0.01)
+
+    assert pending is not None
+    assert runtime.control.snapshot(runtime.hb)["stage"] == "tool_approval"
+    runtime.resolve_tool_approval(pending["approval_id"], "allow_once")
+    worker.join(timeout=2)
+
+    assert outcome == ["allow_once"]
+    assert runtime.control.snapshot(runtime.hb)["stage"] == "reaction"
+    assert [event_type for event_type, _payload in events] == [
+        "general_tool_approval_requested",
+        "general_tool_approval_resolved",
+    ]
+
+
 def test_approval_audit_projection_keeps_safe_fields_only():
     from data.round_live_viewer import _cards_for_event
 
@@ -249,11 +300,9 @@ def test_requested_audit_failure_cancels_approval_without_waiting():
         audit = type("Audit", (), {"get_store": lambda self: BrokenStore()})()
         control = type("Control", (), {
             "snapshot": lambda self, _hb: {"stage": "tool_approval"},
+            "set_stage": lambda self, stage: setattr(self, "stage", stage),
         })()
         hb = object()
-
-        def _set_active_stage(self, stage):
-            self.stage = stage
 
     runtime = Runtime()
     with pytest.raises(OSError, match="disk full"):
@@ -261,4 +310,4 @@ def test_requested_audit_failure_cancels_approval_without_waiting():
             runtime, {"round": 720, "tool_id": "file_write"}
         )
     assert runtime.tool_approval.snapshot() is None
-    assert runtime.stage == "reaction"
+    assert runtime.control.stage == "reaction"

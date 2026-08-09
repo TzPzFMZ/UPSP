@@ -42,6 +42,8 @@
 
 写入回执可以成为身体事实，但必须区分 `accepted`、`rejected`、`applied`、`needs_review` 等状态。只有真实 applied 回执才能支撑“已经写入”。
 
+任务项的 `done` 和验收项的 `passed` 只能引用成功证据。确实无法继续时可登记 `blocked`，但必须同时写明可复核 reason，并引用 Runtime 已登记的成功证据或白名单失败调用 `call:<call_id>`；失败调用不能生成或冒充成功 `EV-*`。
+
 `native_tool_result` 不是可调用工具，也不是回执真源。它只是原生工具失败、拒绝或无效请求被运行时系统投影到弹窗层的纠错卡。看见它时，只能按 `next_action` 修正下一次真实工具调用。
 
 ## §TLS-06 工具索引与近位提示
@@ -66,6 +68,6 @@
 
 setup / cleanup 的终端结果只能来自对应 finalize 工具；反应步完成时直接自然语言回复用户，由 Runtime 按账本派生 `finish` 并投影 final response。setup、cleanup 阶段模型裸文本、旧出口信封表格、冒号行、自然语言动作承诺和思考流只可作为安全/来源证据观察材料，不执行、不写回、不关闭轮；reaction loop 阶段自然语言可作为 `assistant_text` / `kind=dialogue_progress` 进展事件，若无阻断也可成为最终回复候选，但不解析成工具事实、协议提交或长期记忆。用户可见最终回复来自无阻断自然语言候选或 Runtime 确定性兜底；表单字段和普通正文里的 `assistant_reply` 都不生成 final_response。
 
-交接不再另设 LLM-facing 工具。`reaction_finalize` 只保留 `handoff_text` 作为跨轮中继自然语言出口；不给善后步写自然语言交接。善后必需材料来自 `cleanup_round` 临时材料块、结构化回执和 Runtime pending metadata。Runtime 把合法 `continue` 的 `handoff_text` 登记为 `runtime.relay_intents` 调度 payload，生成 `relay_intent_id` 写入中继规划池，并内部置位 `continue_requested`；同时写成 `kind=relay_handoff` / `role=user` 交接语料，标题声明不是用户原始输入。模型可见层展示上轮交接任务、当前中继目标卡和中继意图指针，不投递为 POPUP 交接层或 model-visible `relay_input`。
+交接不再另设 LLM-facing 工具。`reaction_finalize` 只保留 `handoff_text` 作为跨轮中继自然语言出口；不给善后步写自然语言交接。善后必需材料来自 `cleanup_round` 临时材料块、结构化回执和 Runtime pending metadata。Runtime 把合法 `continue` 的 `handoff_text` 登记为 `runtime.relay_intents` 调度 payload，生成 `relay_intent_id` 写入中继规划池，并内部置位 `continue_requested`；同时写成 `kind=relay_handoff` / `role=user` 交接语料，标题声明不是用户原始输入。模型可见层展示上轮交接任务、当前中继目标卡和中继意图指针，不投递为 POPUP 交接层或 model-visible `relay_input`。若所有必需任务项和验收项已经有证据地完成或阻塞且至少一项阻塞，Runtime 会直接按 `terminal_blocked` 进入善后；此时不得再用 `reaction_finalize` 制造下一轮。
 
 解析器在本边界下退休为保安和证据观察员：它可以扫描 prompt injection、旧接口污染、危险命令、来源声称和越权意图，但不能把文本解析成工具请求、协议提交、processor receipt、缓存写入或用户回复。

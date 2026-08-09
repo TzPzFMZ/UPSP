@@ -9,6 +9,56 @@ import hashlib
 from typing import Any
 
 
+def _nonnegative_usage_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value >= 0 else None
+
+
+def total_input_tokens(raw_usage: Any) -> int | None:
+    """Return the provider-reported full input token count, without guessing."""
+    if not isinstance(raw_usage, dict):
+        return None
+
+    if "prompt_tokens" in raw_usage:
+        return _nonnegative_usage_int(raw_usage.get("prompt_tokens"))
+
+    anthropic_fields = (
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    )
+    if any(field in raw_usage for field in anthropic_fields):
+        input_tokens = _nonnegative_usage_int(raw_usage.get("input_tokens"))
+        if input_tokens is None:
+            return None
+        total = input_tokens
+        for field in anthropic_fields:
+            if field not in raw_usage:
+                continue
+            value = _nonnegative_usage_int(raw_usage.get(field))
+            if value is None:
+                return None
+            total += value
+        return total
+
+    deepseek_fields = (
+        "prompt_cache_hit_tokens",
+        "prompt_cache_miss_tokens",
+    )
+    if all(field in raw_usage for field in deepseek_fields):
+        total = 0
+        for field in deepseek_fields:
+            value = _nonnegative_usage_int(raw_usage.get(field))
+            if value is None:
+                return None
+            total += value
+        return total
+    if any(field in raw_usage for field in deepseek_fields):
+        return None
+
+    return _nonnegative_usage_int(raw_usage.get("input_tokens"))
+
+
 def usage_int(*values: Any) -> int:
     for value in values:
         try:
@@ -132,13 +182,13 @@ def extract_prompt_cache_telemetry(
     input_details = _mapping(raw_usage.get("input_tokens_details"))
     usage_meta = _mapping(raw_usage.get("usage_metadata"))
 
-    prompt_tokens = usage_int(
-        raw_usage.get("prompt_tokens"),
-        raw_usage.get("input_tokens"),
-        raw_usage.get("inputTokenCount"),
-        usage_meta.get("prompt_token_count"),
-        usage_meta.get("total_token_count"),
-    )
+    prompt_tokens = total_input_tokens(raw_usage)
+    if prompt_tokens is None:
+        prompt_tokens = usage_int(
+            raw_usage.get("inputTokenCount"),
+            usage_meta.get("prompt_token_count"),
+            usage_meta.get("total_token_count"),
+        )
 
     cache_read_tokens, cache_read_source = _cache_read_usage(
         raw_usage,

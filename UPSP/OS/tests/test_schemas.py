@@ -68,6 +68,7 @@ class TestMemorySchema:
             "access",
             "recalled",
             "current_overview",
+            "current_overview_updated_at",
             "tags",
             "linked_containers",
             "decay_period_days",
@@ -80,6 +81,7 @@ class TestMemorySchema:
         assert meta["recalled"] is False
         assert meta["dream"] is False
         assert meta["current_overview"] == ""
+        assert meta["current_overview_updated_at"] == ""
         assert {
             "abstract",
             "locked",

@@ -60,6 +60,7 @@ from logic.relay_target import (
 )
 from logic.rhythm_guidance import active_emergency_items, emergency_attempt_decision
 from logic.runtime_channels import build_message_envelope
+from logic.task_guide import BLOCKER_EVIDENCE_STATUSES
 from logic.tool_transaction_audit import audit_tool_transactions
 from logic.write_pending_settlement import (
     WritePendingTracker,
@@ -82,6 +83,55 @@ class ReactionLoopState:
     trigger_id: str = ""
     caused_by: str = ""
     topology_version: str = ""
+
+
+def _current_work_guide_id(workbench):
+    try:
+        if hasattr(workbench, "active_guide_slots"):
+            return str((workbench.active_guide_slots() or {}).get("work") or "").strip()
+        return str(workbench.get("base.active_guide") or "").strip()
+    except Exception:
+        return ""
+
+
+def _terminal_blocked_ledger(task_acceptance, source):
+    return {
+        "closeout_decision": "blocked",
+        "handoff_text": "",
+        "runtime_derived_blocked": True,
+        "blocked_reason": (
+            task_acceptance.get("reason") or "task_acceptance_blocked"
+        ),
+        "blockers": list(task_acceptance.get("blockers") or []),
+        "source": source,
+    }
+
+
+def _new_blocker_evidence_refs(seen_refs, *result_groups):
+    new_refs = set()
+    for item in (
+            result
+            for group in result_groups
+            for result in (group or [])):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("tool_id") or "").strip() == "guide_submit":
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        reason = str(item.get("reason") or "").strip()
+        if status == "rejected" or reason in DUPLICATE_GENERAL_TOOL_REASONS:
+            continue
+        call_id = str(
+            item.get("call_id")
+            or item.get("tool_call_id")
+            or item.get("id")
+            or ""
+        ).strip()
+        if status in BLOCKER_EVIDENCE_STATUSES and call_id:
+            ref = f"call:{call_id}"
+            if ref not in seen_refs:
+                new_refs.add(ref)
+    return new_refs
 
 
 @dataclass(frozen=True)
@@ -296,6 +346,22 @@ def _run_reaction_frames(session):
     boosted_memory_ids = set()
     for mid in mounted_mem_ids:
         self._boost_mounted_memory_once(mid, round_num, boosted_memory_ids)
+    for evidence in preselection_evidence:
+        if evidence.get("item_type") != "memory":
+            continue
+        mem_id = str(evidence.get("item_id") or "").strip()
+        if not mem_id or mem_id in boosted_memory_ids:
+            continue
+        try:
+            meta = self.memory_store.read_meta_by_id(mem_id)
+        except Exception:
+            continue
+        self._boost_mounted_memory_once(
+            mem_id,
+            round_num,
+            boosted_memory_ids,
+            meta.get("_memory_layer") or "STM",
+        )
 
     accumulated_messages = []
     iteration_records = result_state.iteration_records
@@ -393,6 +459,10 @@ def _run_reaction_frames(session):
     relay_execution_correction_count = 0
     relay_execution_progress_seen = False
     chronicle_no_active_focus_rejections = 0
+    guide_correction_active_id = _current_work_guide_id(self.workbench)
+    guide_correction_rejections = []
+    guide_correction_rejection_frames = 0
+    guide_correction_evidence_refs = set()
     pending_relay_target = normalize_pending_target(
         state.get("base", {}).get("runtime", {}).get(
             "pending_relay_target"))
@@ -553,6 +623,10 @@ def _run_reaction_frames(session):
             iteration_native_tool_feedbacks.append(cancelled_pending_warning)
 
         # 装配 reaction 步 messages（含远/近缓存+三源末位输入），并渲染 step.md 供审计。
+        audit_iteration = i + 1
+        permission_boundary = getattr(self, "permission_boundary_callback", None)
+        if callable(permission_boundary):
+            permission_boundary(round_num, "reaction", audit_iteration)
         if self._should_suppress_active_guide_feedback(round_type, current_state):
             active_protocol_tool_guides = []
             active_guide_feedback = ""
@@ -572,7 +646,6 @@ def _run_reaction_frames(session):
 
         # 当前反应迭代号必须进入上下文装配，供 dialogue_progress
         # 判断“新产生后下一次展开、之后折叠”的生命周期。
-        audit_iteration = i + 1
         frame_ref = FrameRef.for_axis(
             round_num,
             "reaction",
@@ -1113,9 +1186,6 @@ def _run_reaction_frames(session):
                 validation = reaction_obligations.validate_closeout_form(
                     parsed_reaction.get("closeout_form"))
                 settlement_ledger = validation.get("settlement_ledger") or {}
-                if settlement_ledger:
-                    parsed_reaction["settlement_ledger"] = settlement_ledger
-                    all_settlement_ledgers.append(settlement_ledger)
                 write_pending_blocker = write_pending_tracker.finalize_blocker()
                 if (
                     not validation.get("blocked")
@@ -1182,6 +1252,34 @@ def _run_reaction_frames(session):
                 task_acceptance = self._task_closeout_acceptance(
                     parsed_reaction.get("closeout_form"))
                 if not task_acceptance.get("allowed", True):
+                    if task_acceptance.get("terminal_blocked") is True:
+                        settlement_ledger = _terminal_blocked_ledger(
+                            task_acceptance,
+                            "reaction_finalize",
+                        )
+                        parsed_reaction["settlement_ledger"] = settlement_ledger
+                        all_settlement_ledgers.append(settlement_ledger)
+                        reaction_loop_guard_receipts.append({
+                            "tool_id": "reaction_finalize",
+                            "tool_family": "substrate_tool",
+                            "tool_class": "sync_tool",
+                            "status": "task_acceptance_terminal_blocked",
+                            "source": "reaction_finalize",
+                            "reason": task_acceptance.get("reason"),
+                            "blockers": task_acceptance.get("blockers", []),
+                        })
+                        reaction_finalize_validated = True
+                        final_reply_pending = True
+                        closeout_projection_text = str(response_text or "").strip()
+                        exit_signal = "final_reply_pending"
+                        iteration_records.append({
+                            "index": i,
+                            "response": response_text[:200],
+                            "containers_created": [],
+                            "exit_signal": "task_acceptance_terminal_blocked",
+                        })
+                        i += 1
+                        break
                     closeout_decision = str(
                         (parsed_reaction.get("closeout_form") or {}).get(
                             "closeout_decision") or ""
@@ -1194,9 +1292,6 @@ def _run_reaction_frames(session):
                         else:
                             closeout_task_finish_block_signature = block_signature
                             closeout_task_finish_block_count = 1
-                    else:
-                        closeout_task_finish_block_signature = ""
-                        closeout_task_finish_block_count = 0
                     if (
                             closeout_decision == "finish"
                             and closeout_task_finish_block_count >= 3):
@@ -1294,6 +1389,9 @@ def _run_reaction_frames(session):
                     })
                     i += 1
                     continue
+                if settlement_ledger:
+                    parsed_reaction["settlement_ledger"] = settlement_ledger
+                    all_settlement_ledgers.append(settlement_ledger)
             if native_terminal_finalize_only:
                 iter_tool_summaries = parsed_reaction.get("tool_summaries", [])
                 all_tool_summaries.extend(iter_tool_summaries)
@@ -2166,6 +2264,91 @@ def _run_reaction_frames(session):
                     "source": "reaction_finalize_mixed_post_settlement",
                     "reasons": list(finalize_errors),
                 })
+
+        current_work_guide_id = _current_work_guide_id(self.workbench)
+        new_blocker_evidence_refs = _new_blocker_evidence_refs(
+            guide_correction_evidence_refs,
+            iter_general_tool_results,
+            iter_protocol_receipts,
+        )
+        correction_progress = (
+            iter_general_tool_has_effective_progress
+            or _has_effective_protocol_progress(iter_protocol_receipts)
+            or bool(new_blocker_evidence_refs)
+        )
+        if current_work_guide_id != guide_correction_active_id:
+            guide_correction_active_id = current_work_guide_id
+            guide_correction_rejections = []
+            guide_correction_rejection_frames = 0
+            guide_correction_evidence_refs = set()
+        elif correction_progress:
+            guide_correction_rejections = []
+            guide_correction_rejection_frames = 0
+        guide_correction_evidence_refs.update(new_blocker_evidence_refs)
+        rejected_guide_receipts = [
+            receipt
+            for receipt in iter_guide_submit_receipts
+            if isinstance(receipt, dict)
+            and str(receipt.get("status") or "").strip() == "rejected"
+            and str(receipt.get("guide_id") or "").strip() == current_work_guide_id
+        ]
+        if (
+                current_work_guide_id
+                and not correction_progress
+                and rejected_guide_receipts):
+            guide_correction_rejection_frames += 1
+            guide_correction_rejections.extend({
+                "reason": str(receipt.get("reason") or "guide_submission_rejected").strip(),
+                "error_hint": copy.deepcopy(receipt.get("error_hint") or {}),
+            } for receipt in rejected_guide_receipts)
+            guide_correction_rejections = guide_correction_rejections[-3:]
+
+        if guide_correction_rejection_frames >= 3:
+            blocked_reason = "blocked/task_guide_correction_exhausted"
+            blockers = [item["reason"] for item in guide_correction_rejections]
+            auto_blocked_ledger = {
+                "closeout_decision": "blocked",
+                "handoff_text": "",
+                "auto_blocked": True,
+                "blocked_reason": blocked_reason,
+                "blockers": blockers,
+                "error_hints": [
+                    copy.deepcopy(item["error_hint"])
+                    for item in guide_correction_rejections
+                ],
+                "source": "reaction_task_guide_correction",
+            }
+            parsed_reaction["settlement_ledger"] = auto_blocked_ledger
+            all_settlement_ledgers.append(auto_blocked_ledger)
+            reaction_loop_guard_receipts.append({
+                "tool_id": "guide_submit",
+                "tool_family": "protocol_tool",
+                "tool_class": "runtime_guard",
+                "status": "task_guide_correction_exhausted_auto_blocked",
+                "source": "reaction_task_guide_correction",
+                "reason": blocked_reason,
+                "rejection_count": guide_correction_rejection_frames,
+                "rejected_receipt_count": len(guide_correction_rejections),
+                "blockers": blockers,
+                "error_hints": [
+                    copy.deepcopy(item["error_hint"])
+                    for item in guide_correction_rejections
+                ],
+            })
+            all_native_tool_feedbacks.extend(iter_native_feedbacks)
+            reaction_finalize_validated = True
+            final_reply_pending = True
+            result_state.local_blocked_reason = blocked_reason
+            exit_signal = "final_reply_pending"
+            iteration_records.append({
+                "index": i,
+                "response": response_text[:200],
+                "containers_created": iter_created,
+                "exit_signal": "task_guide_correction_exhausted_auto_blocked",
+            })
+            i += 1
+            break
+
         if duplicate_general_tool_results:
             iter_native_feedbacks = _remove_general_tool_duplicate_feedbacks(
                 iter_native_feedbacks)
@@ -2359,6 +2542,56 @@ def _run_reaction_frames(session):
                     "response": response_text[:200],
                     "containers_created": iter_created,
                     "exit_signal": "write_pending_blocked",
+                })
+                i += 1
+                continue
+            task_acceptance = self._task_closeout_acceptance(
+                mixed_reaction_finalize.get("closeout_form"))
+            if not task_acceptance.get("allowed", True):
+                if task_acceptance.get("terminal_blocked") is True:
+                    settlement_ledger = _terminal_blocked_ledger(
+                        task_acceptance,
+                        "reaction_finalize_mixed_post_settlement",
+                    )
+                    parsed_reaction["settlement_ledger"] = settlement_ledger
+                    all_settlement_ledgers.append(settlement_ledger)
+                    reaction_loop_guard_receipts.append({
+                        "tool_id": "reaction_finalize",
+                        "tool_family": "substrate_tool",
+                        "tool_class": "sync_tool",
+                        "status": "task_acceptance_terminal_blocked",
+                        "source": "reaction_finalize_mixed_post_settlement",
+                        "reason": task_acceptance.get("reason"),
+                        "blockers": task_acceptance.get("blockers", []),
+                    })
+                    reaction_finalize_validated = True
+                    final_reply_pending = True
+                    closeout_projection_text = str(response_text or "").strip()
+                    exit_signal = "final_reply_pending"
+                    iteration_records.append({
+                        "index": i,
+                        "response": response_text[:200],
+                        "containers_created": iter_created,
+                        "exit_signal": "task_acceptance_terminal_blocked",
+                    })
+                    i += 1
+                    break
+                pending_native_tool_feedbacks.append(
+                    self._task_acceptance_feedback(task_acceptance))
+                reaction_loop_guard_receipts.append({
+                    "tool_id": "reaction_finalize",
+                    "tool_family": "substrate_tool",
+                    "tool_class": "sync_tool",
+                    "status": "task_acceptance_blocked",
+                    "source": "reaction_finalize_mixed_post_settlement",
+                    "reason": task_acceptance.get("reason"),
+                    "blockers": task_acceptance.get("blockers", []),
+                })
+                iteration_records.append({
+                    "index": i,
+                    "response": response_text[:200],
+                    "containers_created": iter_created,
+                    "exit_signal": "task_acceptance_blocked",
                 })
                 i += 1
                 continue

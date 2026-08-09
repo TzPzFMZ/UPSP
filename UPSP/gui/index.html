@@ -83,7 +83,10 @@
             <button id="sendButton" type="submit" data-i18n="发送">发送</button>
             <button id="stopButton" type="button" data-i18n="停止生成" hidden>停止生成</button>
           </div>
-          <span id="sendFeedback" role="status" data-i18n="等待本地宿主">等待本地宿主</span>
+          <div class="chat-command-footer">
+            <span id="sendFeedback" role="status" data-i18n="等待本地宿主">等待本地宿主</span>
+            <output id="contextUsage" class="context-usage" aria-live="polite"></output>
+          </div>
         </form>
       </section>
       <section class="stage-page" id="stagePage" aria-live="polite"></section>

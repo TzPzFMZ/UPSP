@@ -84,7 +84,7 @@ class AuditStore:
         layer_file_map = {
             "10_permanent.md":     layers.get("permanent", ""),
             "20_periodic.md":      layers.get("periodic", ""),
-            "30_lately.md":        layers.get("lately", ""),
+            "30_lately.md":        layers.get("lately_markdown", ""),
             "40_high_freq.md":     layers.get("high_freq", ""),
             "50_now.md":           layers.get("now_markdown", layers.get("now", "")),
             "60_statusbar.md":     layers.get("statusbar", ""),
@@ -126,10 +126,12 @@ class AuditStore:
                 content,
                 source="context_assembler",
                 content_markdown=layers.get(f"{layer_id}_markdown"),
+                block_index=layers.get(f"{layer_id}_block_index"),
             )
             if layer_id == "statusbar" and isinstance(
                     layers.get("statusbar_projection"), dict):
                 payload["projection"] = layers["statusbar_projection"]
+            self._validate_context_layer_payload(payload, layer_key, path)
             status = self._write_layer_json_if_changed(path, payload)
             layer_manifest[layer_id] = self._layer_manifest_entry(
                 payload,
@@ -262,7 +264,8 @@ class AuditStore:
             content,
             *,
             source="",
-            content_markdown=None):
+            content_markdown=None,
+            block_index=None):
         normalized = cls._content_for_hash(content)
         payload = {
             "schema": "context_layer.v1",
@@ -276,6 +279,9 @@ class AuditStore:
         }
         if content_markdown is not None:
             payload["content_markdown"] = str(content_markdown or "")
+            payload["model_visible_chars"] = len(payload["content_markdown"])
+        if block_index is not None:
+            payload["block_index"] = block_index
         return payload
 
     @staticmethod
@@ -327,7 +333,7 @@ class AuditStore:
 
     @classmethod
     def _layer_manifest_entry(cls, payload, *, dirty, reused):
-        return {
+        entry = {
             "layer_key": payload.get("layer_key"),
             "layer_id": payload.get("layer_id"),
             "order": payload.get("order"),
@@ -337,6 +343,9 @@ class AuditStore:
             "dirty": bool(dirty),
             "reused": bool(reused),
         }
+        if "model_visible_chars" in payload:
+            entry["model_visible_chars"] = payload["model_visible_chars"]
+        return entry
 
     def _write_layer_json_if_changed(self, path, payload):
         try:
@@ -434,6 +443,8 @@ class AuditStore:
                 "sha256": payload.get("sha256"),
                 "source": payload.get("source"),
             }
+            if "model_visible_chars" in payload:
+                entry["model_visible_chars"] = payload["model_visible_chars"]
             status = status_by_key.get(layer_key)
             if status is None:
                 status = context_status_by_key.get(layer_key)
@@ -476,9 +487,51 @@ class AuditStore:
         expected_chars = self._content_chars(content)
         if payload.get("chars") != expected_chars:
             self._raise_context_truth_corrupted(f"layer_chars_mismatch:{path}")
+        if "model_visible_chars" in payload:
+            content_markdown = payload.get("content_markdown")
+            if (
+                    not isinstance(content_markdown, str)
+                    or payload.get("model_visible_chars") != len(content_markdown)):
+                self._raise_context_truth_corrupted(
+                    f"layer_visible_chars_mismatch:{path}")
         expected_sha = self._sha256_text(self._content_for_hash(content))
         if payload.get("sha256") != expected_sha:
             self._raise_context_truth_corrupted(f"layer_sha_mismatch:{path}")
+        block_index = payload.get("block_index")
+        if block_index is None:
+            return
+        if not isinstance(content, str) or not isinstance(block_index, list):
+            self._raise_context_truth_corrupted(f"layer_block_index_invalid:{path}")
+        seen = set()
+        previous_end = 0
+        for block in block_index:
+            if not isinstance(block, dict):
+                self._raise_context_truth_corrupted(f"layer_block_invalid:{path}")
+            block_id = block.get("block_id")
+            start = block.get("char_start")
+            end = block.get("char_end")
+            if (
+                    not isinstance(block_id, str)
+                    or not block_id
+                    or block_id in seen
+                    or not isinstance(start, int)
+                    or isinstance(start, bool)
+                    or not isinstance(end, int)
+                    or isinstance(end, bool)
+                    or start < previous_end
+                    or start < 0
+                    or end <= start
+                    or end > len(content)):
+                self._raise_context_truth_corrupted(f"layer_block_invalid:{path}")
+            if not isinstance(block.get("title"), str):
+                self._raise_context_truth_corrupted(f"layer_block_title_invalid:{path}")
+            for field in ("kind", "source_block_id"):
+                if field in block and not isinstance(block.get(field), str):
+                    self._raise_context_truth_corrupted(
+                        f"layer_block_field_invalid:{field}:{path}"
+                    )
+            seen.add(block_id)
+            previous_end = end
 
     @staticmethod
     def _write_text_if_changed(path, content):

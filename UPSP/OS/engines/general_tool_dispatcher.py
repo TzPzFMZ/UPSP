@@ -71,7 +71,9 @@ SIGNATURE_FIELDS_BY_TOOL = {
     "file_search": ("root", "pattern", "recursive", "max_results"),
     "file_edit": ("path", "patch"),
     "file_write": ("path", "content"),
-    "web_fetch": ("url", "char_start"),
+    "web_fetch": (
+        "url", "char_start", "find_text", "source_content_sha256",
+    ),
     "web_search": ("query", "max_results"),
     "shell_command": ("cwd", "command"),
     "subagent_dispatch": (

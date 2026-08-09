@@ -41,6 +41,7 @@ from assembly.context_helpers import (
     format_step_guide_popup,
     load_general_tool_index,
     load_protocol_tool_index,
+    join_layer_blocks,
     messages_text,
     normalize_layer_entries,
     render_corpus_entries_for_context,
@@ -57,6 +58,7 @@ from assembly.context_indexes import (
 )
 from assembly.context_mounts import (
     build_mounted_content as context_build_mounted_content,
+    build_mounted_content_blocks as context_build_mounted_content_blocks,
     load_container_content as context_load_container_content,
     load_memory_content as context_load_memory_content,
     memory_mount_meta as context_memory_mount_meta,
@@ -64,7 +66,7 @@ from assembly.context_mounts import (
     load_skill_content as context_load_skill_content,
 )
 from assembly.context_periodic import (
-    build_periodic as context_build_periodic,
+    build_periodic_with_block_index as context_build_periodic_with_block_index,
 )
 from data.relation_store import relation_card_label, relation_public_name
 from data.audit_store import AuditStore
@@ -178,6 +180,8 @@ class ContextAssembler:
         self._registry = None       # rules_registry.json 缓存
         self._rules_cache = {}      # 文件内容缓存 {path: content}
         self._layer_cache = {}      # 频率层缓存 {(step, layer): text} DDS §21
+        self._layer_block_cache = {}
+        self._current_layer_block_index = {}
         self._current_input_text = None
         self._current_interaction_meta = None
         self._hidden_stm_memory_ids = set()
@@ -323,6 +327,7 @@ class ContextAssembler:
             self._current_input_text = current_input_text
         visible_input_text = current_input_text or self._current_input_text
         visible_interaction_meta = self._current_interaction_meta
+        self._current_layer_block_index = {}
         permanent = self._cached_or_build(
             context_step, "permanent", cc.get("permanent_expired", True),
             lambda: self._build_permanent(state, context_step, round_type))
@@ -524,7 +529,10 @@ class ContextAssembler:
         )
         if native_feedback_popup:
             popup_parts.extend(self.popup_policy.split_fragments(native_feedback_popup))
-        popup_combined = self.popup_policy.combine(popup_parts)
+        popup_combined, popup_block_index = (
+            self.popup_policy.combine_with_block_index(popup_parts)
+        )
+        self._current_layer_block_index["popup"] = popup_block_index
         if popup_combined:
             messages.append({"role": "system", "content": f"<!-- POPUP（弹窗层，messages绝对末位） -->\n{popup_combined}"})
 
@@ -542,6 +550,7 @@ class ContextAssembler:
         # 审计落盘（含全部七层元数据，供 manifest.json 统计）
         try:
             # 计算各层字符数
+            lately_layer_markdown = messages_text(lately_section)
             now_layer_markdown = messages_text(now_section)
             now_layer_content = self._native_replay_layer_messages(
                 now_entries,
@@ -550,7 +559,8 @@ class ContextAssembler:
             self.audit.write_audit(context_step, {
                 "permanent": permanent, "periodic": periodic,
                 "high_freq": high_freq,
-                "lately": messages_text(lately_entries),
+                "lately": lately_section,
+                "lately_markdown": lately_layer_markdown,
                 "now": now_layer_content,
                 "now_markdown": now_layer_markdown,
                 "statusbar": statusbar,
@@ -558,6 +568,11 @@ class ContextAssembler:
                 "call_only": messages_text(call_only_entries),
                 "popup": popup_combined,
                 "full_system": system,
+                "permanent_block_index": self._current_layer_block_index.get("permanent", []),
+                "periodic_block_index": self._current_layer_block_index.get("periodic", []),
+                "high_freq_block_index": self._current_layer_block_index.get("high_freq", []),
+                "statusbar_block_index": self._current_layer_block_index.get("statusbar", []),
+                "popup_block_index": self._current_layer_block_index.get("popup", []),
             })
         except Exception as exc:
             raise RuntimeError("context_audit_write_failed") from exc
@@ -768,9 +783,16 @@ class ContextAssembler:
         """若未过期且有缓存则复用，否则重建并存入缓存"""
         cache_key = (step, layer)
         if not expired and cache_key in self._layer_cache:
+            self._current_layer_block_index[layer] = list(
+                self._layer_block_cache.get(cache_key, [])
+            )
             return self._layer_cache[cache_key]
+        self._current_layer_block_index[layer] = []
         text = builder()
         self._layer_cache[cache_key] = text
+        self._layer_block_cache[cache_key] = list(
+            self._current_layer_block_index.get(layer, [])
+        )
         self._mark_layer_fresh(layer)
         return text
 
@@ -779,6 +801,7 @@ class ContextAssembler:
         for key in list(self._layer_cache):
             if key[1] == layer:
                 del self._layer_cache[key]
+                self._layer_block_cache.pop(key, None)
         if layer == "high_freq":
             return
         if layer == "popup":
@@ -813,15 +836,33 @@ class ContextAssembler:
     # ==============================================================
 
     def _build_permanent(self, state, step, round_type):
-        parts = []
-        parts.append(self._load_core_identity())
-
-        # RULES：当前 Registry 只自动装配 permanent。
-        permanent_rules = self._load_rules_for_layers(["permanent"])
-        if permanent_rules:
-            parts.append(f"<!-- [RULES:permanent+step] -->\n## RULES\n{permanent_rules}")
-
-        return "\n\n".join(parts)
+        blocks = [{
+            "block_id": "permanent:core_identity",
+            "title": "位格核心",
+            "kind": "core_identity",
+            "source_block_id": "persona/core.md",
+            "content": self._load_core_identity(),
+        }]
+        rule_blocks = self._load_rules_for_layers(["permanent"])
+        if isinstance(rule_blocks, str):
+            rule_blocks = ([{
+                "block_id": "rule:permanent",
+                "title": "permanent rules",
+                "kind": "permanent_rule",
+                "content": rule_blocks,
+            }] if rule_blocks else [])
+        for index, block in enumerate(rule_blocks):
+            if index == 0:
+                block["content"] = (
+                    "<!-- [RULES:permanent+step] -->\n## RULES\n"
+                    + block["content"]
+                )
+            else:
+                block["separator_before"] = "\n\n---\n\n"
+        blocks.extend(rule_blocks)
+        text, block_index = join_layer_blocks(blocks)
+        self._current_layer_block_index["permanent"] = block_index
+        return text
 
     # ==============================================================
     # 定期层
@@ -829,7 +870,11 @@ class ContextAssembler:
 
     def _build_periodic(self, state, step, round_type):
         """定期层 DDS §19.5：仅装配当前活动的定期记忆投影。"""
-        return context_build_periodic(self, state, step, round_type)
+        text, block_index = context_build_periodic_with_block_index(
+            self, state, step, round_type
+        )
+        self._current_layer_block_index["periodic"] = block_index
+        return text
 
     # ==============================================================
     # 高频层
@@ -846,65 +891,95 @@ class ContextAssembler:
         if not input_keywords and current_input_text:
             input_keywords = self._derive_keywords_from_text(current_input_text)
 
-        parts = []
+        blocks = []
+
+        def add(block_id, title, kind, content, source_block_id=""):
+            if content:
+                blocks.append({
+                    "block_id": block_id,
+                    "title": title,
+                    "kind": kind,
+                    "source_block_id": source_block_id,
+                    "content": content,
+                })
 
         # 1. 容器索引（每容器一条最近修改子项）
-        parts.append(self._build_container_index())
+        add("high_freq:container_index", "容器索引", "container_index",
+            self._build_container_index())
         limits = self._high_freq_index_limits()
         # 2. LTM 热度索引（last_recalled_at排序，分钟粒度）
-        parts.append(self._build_ltm_heat_index(
-            limit=limits.get("ltm_heat_index", 16)))
+        add("high_freq:ltm_heat", "LTM 热度索引", "ltm_heat_index",
+            self._build_ltm_heat_index(limit=limits.get("ltm_heat_index", 16)))
         # 3. STM 热度索引（H值降序）
-        parts.append(self._build_stm_heat_index(
-            limit=limits.get("stm_heat_index", STM_INDEX_DISPLAY_LIMIT)))
+        add("high_freq:stm_heat", "STM 热度索引", "stm_heat_index",
+            self._build_stm_heat_index(
+                limit=limits.get("stm_heat_index", STM_INDEX_DISPLAY_LIMIT)))
         # 4. Skills 倒排索引（8条）
-        parts.append(self._build_keyword_index(
-            "skills", limits.get("skills_inverted", 8)))
+        add("high_freq:skills_inverted", "Skills 倒排索引", "skills_inverted",
+            self._build_keyword_index("skills", limits.get("skills_inverted", 8)))
         # 5. LTM 倒排索引（8条）
-        parts.append(self._build_keyword_index(
-            "ltm", limits.get("ltm_inverted", 8)))
+        add("high_freq:ltm_inverted", "LTM 倒排索引", "ltm_inverted",
+            self._build_keyword_index("ltm", limits.get("ltm_inverted", 8)))
         # 6. STM 倒排索引（8条）
-        parts.append(self._build_keyword_index(
-            "stm", limits.get("stm_inverted", 8)))
+        add("high_freq:stm_inverted", "STM 倒排索引", "stm_inverted",
+            self._build_keyword_index("stm", limits.get("stm_inverted", 8)))
         # 7. 联想索引 — 只投影记忆条目，输入关键词驱动
-        parts.append(self._build_association_index(
-            limits.get("association_index", 8), input_keywords))
+        add("high_freq:association", "联想索引", "association_index",
+            self._build_association_index(
+                limits.get("association_index", 8), input_keywords))
         # 8. 关系索引：动态倒排 + 四区底图
-        parts.append(self._build_relation_inverted_index(
-            limit=limits.get("relation_inverted", 8),
-            current_input_text=current_input_text,
-            interaction_meta=interaction_meta,
-        ))
-        parts.append(self._build_relation_domain_index(
-            limit=limits.get("relation_domain", 8),
-            current_input_text=current_input_text,
-            interaction_meta=interaction_meta,
-        ))
+        add("high_freq:relation_inverted", "关系倒排索引", "relation_inverted",
+            self._build_relation_inverted_index(
+                limit=limits.get("relation_inverted", 8),
+                current_input_text=current_input_text,
+                interaction_meta=interaction_meta,
+            ))
+        add("high_freq:relation_domain", "关系域索引", "relation_domain",
+            self._build_relation_domain_index(
+                limit=limits.get("relation_domain", 8),
+                current_input_text=current_input_text,
+                interaction_meta=interaction_meta,
+            ))
         task_board = self._build_task_board_projection()
-        if task_board:
-            parts.append(task_board)
+        add("high_freq:task_board", "任务工作台", "task_board", task_board)
         step_toolbelt = self._build_step_toolbelt_index(step, round_type)
-        if step_toolbelt:
-            parts.append(step_toolbelt)
+        add("high_freq:step_toolbelt", "当前步短工具带", "step_toolbelt",
+            step_toolbelt)
         # 9. CONTENT（挂载正文 + 参考窗口 + WB工作台）
         current_round = current_round_from_state(state)
         try:
             focus_projection = self._build_workbench_focus_projection(current_round)
         except TypeError:
             focus_projection = self._build_workbench_focus_projection()
-        if focus_projection:
-            parts.append(focus_projection)
-        for focus_entry in normalize_layer_entries(runtime_focus_entries):
+        add("high_freq:workbench_focus", "WB 焦点投影", "workbench_focus",
+            focus_projection)
+        for index, focus_entry in enumerate(
+                normalize_layer_entries(runtime_focus_entries), 1):
             focus_content = str(focus_entry.get("content") or "").strip()
             if focus_content:
-                parts.append(focus_content)
+                ref = focus_entry.get("ref") if isinstance(focus_entry.get("ref"), dict) else {}
+                source_id = str(
+                    focus_entry.get("source_block_id")
+                    or focus_entry.get("id")
+                    or ref.get("source_block_id")
+                    or ""
+                )
+                add(
+                    f"high_freq:runtime_focus:{index}:{source_id}",
+                    str(focus_entry.get("title") or f"Runtime 焦点 {index}"),
+                    "runtime_focus",
+                    focus_content,
+                    source_id,
+                )
         content_mounts = self._content_mounts_with_triple_hits(
             mount_ids, input_keywords) if include_content else []
         if include_content and content_mounts:
-            parts.append(self._build_mounted_content(
-                content_mounts,
-                current_round=current_round))
-        return "\n\n".join(p for p in parts if p)
+            blocks.extend(context_build_mounted_content_blocks(
+                self, content_mounts, current_round=current_round
+            ))
+        text, block_index = join_layer_blocks(blocks)
+        self._current_layer_block_index["high_freq"] = block_index
+        return text
 
     def _build_task_board_projection(self):
         try:
@@ -1526,7 +1601,9 @@ class ContextAssembler:
         except Exception:
             pass
         self._last_statusbar_projection = projection
-        return self.statusbar.render(projection)
+        text, block_index = self.statusbar.render_with_block_index(projection)
+        self._current_layer_block_index["statusbar"] = block_index
+        return text
 
     @staticmethod
     def _relation_card_summary(relation_store, card):
@@ -1653,9 +1730,9 @@ class ContextAssembler:
         return content
 
     def _load_rules_for_layers(self, layers):
-        """加载指定 layer 的 rules 文件内容并拼接。"""
+        """加载指定 layer 的 rules 文件并保留真实文件边界。"""
         reg = self._load_registry()
-        contents = []
+        blocks = []
 
         for layer in layers:
             entries = reg.get(layer, [])
@@ -1664,9 +1741,14 @@ class ContextAssembler:
                 if path:
                     content = self._load_rule_file(path)
                     if content.strip():
-                        contents.append(content)
-
-        return "\n\n---\n\n".join(contents) if contents else ""
+                        blocks.append({
+                            "block_id": f"rule:{path}",
+                            "title": str(entry.get("file") or os.path.basename(path)),
+                            "kind": "permanent_rule",
+                            "source_block_id": str(path),
+                            "content": content,
+                        })
+        return blocks
 
     # ==============================================================
     # schema.md 区段提取

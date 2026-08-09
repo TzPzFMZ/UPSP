@@ -240,6 +240,36 @@ class TestAuditStore:
         assert target.read_text(encoding="utf-8") == "ok"
         assert len(calls) == 2
 
+    def test_spec723_block_index_is_persisted_and_invalid_ranges_fail_closed(
+            self, tmp_path):
+        from data.audit_store import AuditStore
+
+        content = "alpha\n\nbeta"
+        block_index = [
+            {"block_id": "a", "title": "A", "char_start": 0, "char_end": 5},
+            {"block_id": "b", "title": "B", "char_start": 7, "char_end": 11},
+        ]
+        store = AuditStore(reaction_dir=str(tmp_path / "context" / "reaction"))
+        store.write_audit("reaction", self._spec424_layers(
+            permanent=content,
+            permanent_block_index=block_index,
+        ))
+        layer_path = tmp_path / "context" / "reaction" / "layers" / "10_permanent.json"
+        assert json.loads(layer_path.read_text(encoding="utf-8"))["block_index"] == block_index
+
+        for invalid in (
+            [dict(block_index[0]), {**block_index[1], "block_id": "a"}],
+            [dict(block_index[0]), {**block_index[1], "char_start": 4}],
+            [{**block_index[0], "char_end": len(content) + 1}],
+        ):
+            payload = store._layer_payload(
+                "10_permanent", "permanent", 10, content,
+                block_index=invalid,
+            )
+            with pytest.raises(ValueError, match="context_truth_corrupted"):
+                store._validate_context_layer_payload(
+                    payload, "10_permanent", str(layer_path))
+
     def test_spec586_audit_atomic_write_json_uses_shared_retry_helper(
             self, tmp_path, monkeypatch):
         from data import audit_store
@@ -851,6 +881,22 @@ class TestStateStoreContinued:
 # ============================================================
 
 class TestRoundSnapshotStore:
+    def test_provider_request_snapshot_keeps_numeric_context_window(self, tmp_path):
+        from data.round_snapshot_store import RoundSnapshotStore
+
+        store = RoundSnapshotStore(str(tmp_path / "context"))
+        store.record_step_input(723, "reaction", provider_request_envelope={
+            "created_at": "2026-08-06T12:34:56+08:00",
+            "context_window_tokens": 1_000_000,
+            "request_body": {"api_key": "secret", "max_tokens": 100},
+        })
+
+        envelope = store.read_events(723)[0]["payload"]["provider_request_envelope"]
+        assert envelope["created_at"] == "2026-08-06T12:34:56+08:00"
+        assert envelope["context_window_tokens"] == 1_000_000
+        assert envelope["request_body"]["api_key"] == "[redacted]"
+        assert envelope["request_body"]["max_tokens"] == 100
+
     def test_close_round_is_not_reversed_by_post_close_prune_failure(
             self, tmp_path, monkeypatch):
         from data.round_snapshot_store import RoundSnapshotStore
@@ -1047,10 +1093,21 @@ class TestRoundSnapshotStore:
 
         context = tmp_path / "context"
         audit = AuditStore(reaction_dir=str(context / "reaction"))
+        lately = [
+            {"role": "user", "content": "语料短ID：C-00427。\n历史输入"},
+            {"role": "assistant", "content": "语料短ID：C-00428。\n历史回复"},
+        ]
         audit.write_audit("reaction", {
             "permanent": "permanent snapshot",
+            "permanent_block_index": [{
+                "block_id": "permanent:core",
+                "title": "Core",
+                "char_start": 0,
+                "char_end": len("permanent snapshot"),
+            }],
             "periodic": "periodic snapshot",
-            "lately": "lately snapshot",
+            "lately": lately,
+            "lately_markdown": "\n".join(item["content"] for item in lately),
             "high_freq": "high freq snapshot",
             "now": "now snapshot",
             "statusbar": "statusbar snapshot",
@@ -1089,8 +1146,20 @@ class TestRoundSnapshotStore:
             "99_popup",
         ]
         by_key = {layer["layer_key"]: layer for layer in snapshot["layers"]}
+        step_envelope = json.loads(
+            (context / "reaction" / "step.json").read_text(encoding="utf-8")
+        )
+        assert by_key["30_lately"]["content"] == lately
         assert by_key["50_now"]["content"] == "now snapshot"
+        assert by_key["10_permanent"]["block_index"][0]["block_id"] == "permanent:core"
         assert by_key["02_generation_config"]["content"]["seed"] == 427
+        assert payload["provider_request_envelope"]["request_body"] == step_envelope["request_body"]
+        assert payload["provider_request_envelope"]["request_body_source_map"] == (
+            step_envelope["request_body_source_map"]
+        )
+        assert payload["provider_request_envelope"]["wire_body_sha256"] == (
+            step_envelope["wire_body_sha256"]
+        )
 
     def test_write_snapshot_respects_executed_phases(self, tmp_path):
         from data.round_snapshot_store import RoundSnapshotStore
@@ -1659,6 +1728,16 @@ class TestMemoryStore:
         assert result["read_mode"] == "full"
         assert result["total_chars"] == len(result["body"])
 
+        recalled_at = "2026-08-06T15:16:17+08:00"
+        updated = ms.MemoryStore().mark_recalled(
+            mem_id,
+            round_num=724,
+            recalled_at=recalled_at,
+        )
+        persisted = json.loads(summary_meta.read_text(encoding="utf-8"))[mem_id]
+        assert updated["last_recalled_round"] == 724
+        assert persisted["last_recalled_at"] == recalled_at
+
     def test_spec220_read_body_by_id_reads_ltm_abstract_body(self, tmp_path, monkeypatch):
         from data import memory_store as ms
         monkeypatch.setattr(ms, "MEMORY_MD", str(tmp_path / "stm_memory.md"))
@@ -1729,6 +1808,60 @@ class TestMemoryStore:
             "MEM-00001001", operation="remove", container_refs=["DC-1"])
         assert updated["linked_containers"] == []
         assert "DC-1" not in store.read_entry("MEM-00001001")
+
+    def test_spec724_overview_timestamp_changes_only_with_overview(self, tmp_path, monkeypatch):
+        from data import memory_store as ms
+        monkeypatch.setattr(ms, "MEMORY_MD", str(tmp_path / "memory.md"))
+        monkeypatch.setattr(ms, "META_JSON", str(tmp_path / "meta.json"))
+        monkeypatch.setattr(ms, "INDEX_MD", str(tmp_path / "index.md"))
+        fixed = RealDatetime.fromisoformat("2026-08-06T13:14:15+08:00")
+        monkeypatch.setattr(ms, "local_now", lambda: fixed)
+
+        store = ms.MemoryStore()
+        store.write_entry("MEM-00001001", "Bridge Test", "body", weight=5)
+        store.set_meta("MEM-00001001", {
+            "id": "MEM-00001001",
+            "title": "Bridge Test",
+            "current_overview": "旧备注",
+            "linked_containers": [],
+        })
+
+        unchanged = store.update_linked_containers(
+            "MEM-00001001", "add", ["DC-1"], current_overview="旧备注")
+        assert unchanged["current_overview_updated_at"] == ""
+        changed = store.update_linked_containers(
+            "MEM-00001001", "set", ["DC-2"], current_overview="新备注")
+        assert changed["current_overview_updated_at"] == fixed.isoformat()
+        repeated = store.update_linked_containers(
+            "MEM-00001001", "set", ["DC-2"], current_overview="新备注")
+        assert repeated["current_overview_updated_at"] == fixed.isoformat()
+
+        projected = ms.project_memory_body(
+            "## MEM-00001001\n**最后调用**：第1轮\n现状概况：旧备注\n关联容器：DC-1\n正文",
+            {**repeated, "created_round": 1, "last_recalled_round": 9,
+             "created_at": "2026-08-01T01:02:03+08:00",
+             "last_recalled_at": "2026-08-06T12:00:00+08:00"},
+        )
+        assert "旧备注" not in projected and "DC-1" not in projected
+        assert "**最近调用轮次**：R000009" in projected
+        assert "**最近调用时间**：2026-08-06T12:00:00+08:00" in projected
+        assert "**挂接备注**：新备注" in projected
+        assert "**关联容器**：DC-2" in projected
+
+        body_line = "关联容器：这句话属于记忆正文，不是模板元数据"
+        projected = ms.project_memory_body(
+            "\n".join([
+                "## MEM-00001001",
+                "**入库**：第1轮",
+                "**内容**（≤2048字）：第一段",
+                body_line,
+                "入库时间：2026-08-01T01:02:03+08:00",
+                "关联容器：DC-1",
+            ]),
+            repeated,
+        )
+        assert body_line in projected
+        assert "\n关联容器：DC-1" not in projected
 
     def test_mark_private_moves_body_preserves_subject_and_creates_file_lazily(
             self, tmp_path, monkeypatch):

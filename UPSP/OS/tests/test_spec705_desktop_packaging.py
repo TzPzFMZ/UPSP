@@ -96,8 +96,8 @@ def test_spec705_shell_keeps_native_and_runtime_boundaries():
     assert "SaveFileDialog" in form
     assert "Interlocked.Exchange(ref _statusRefreshInFlight, 1)" in form
     assert '_statusItem.Text = "当前状态：后端繁忙，正在重试";' in form
-    assert "_backendStatusFailures >= 3" in form
-    assert "_backendStatusFailures = 0;" in form
+    assert "_backendStatusFailures" not in form
+    assert "!_backendFailureShown && _backend.HasExited" in form
     assert "if (Visible)" in form
     assert "Hide();" in form
     assert "Local\\UPSP.Desktop.SingleInstance.v1" in program
@@ -185,10 +185,10 @@ def test_spec707_product_manifest_is_the_release_version_truth():
     assert product == {
         "schema_version": "upsp_product_manifest.v1",
         "name": "UPSP",
-        "version": "0.1.0-alpha.7",
-        "windows_file_version": "0.1.0.7",
+        "version": "0.1.0-alpha.8",
+        "windows_file_version": "0.1.0.8",
         "channel": "alpha",
-        "build_number": 7,
+        "build_number": 8,
         "author": {
             "zh-CN": "由 TzPzFMZ 发起、设计并与 AI 协作开发",
             "en-US": (

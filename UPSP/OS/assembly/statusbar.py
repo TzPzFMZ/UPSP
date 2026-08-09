@@ -8,6 +8,8 @@ DDS §19.3 STATUSBAR 独立状态栏层（位于 now 之后、POPUP 之前）
 """
 from datetime import datetime
 
+from assembly.context_helpers import join_layer_blocks
+
 
 RESERVED_STATUSBAR_FLAGS = {
     "identity_timeout",
@@ -86,9 +88,13 @@ class StatusBarBuilder:
             "supplemental_sections": [],
         }
 
-    @staticmethod
-    def render(projection):
+    @classmethod
+    def render(cls, projection):
         """将结构化投影渲染为模型可见 STATUSBAR。"""
+        return cls.render_with_block_index(projection)[0]
+
+    @staticmethod
+    def render_with_block_index(projection):
         projection = projection or {}
         round_meta = projection.get("round", {})
         lines = ["## STATUSBAR"]
@@ -111,25 +117,42 @@ class StatusBarBuilder:
         if status == "unregistered":
             lines.append("关系状态：未登记")
 
-        sections = ["\n".join(lines)]
-        sections.extend(
-            str(item).strip()
-            for item in projection.get("supplemental_sections") or []
-            if str(item or "").strip()
-        )
+        blocks = [{
+            "block_id": "status:summary",
+            "title": "状态概览",
+            "kind": "status_summary",
+            "content": "\n".join(lines),
+        }]
+        for index, item in enumerate(projection.get("supplemental_sections") or [], 1):
+            content = str(item or "").strip()
+            if content:
+                blocks.append({
+                    "block_id": f"status:supplemental:{index}",
+                    "title": f"补充状态 {index}",
+                    "kind": "status_supplemental",
+                    "content": content,
+                })
         cards = projection.get("relation_cards") or []
-        if cards:
-            relation_lines = ["## 关系卡"]
-            for card in cards:
-                state_tag = f" [{card.get('focus_type')}]" if card.get("focus_type") else ""
-                summary = str(card.get("summary") or "").strip()
-                suffix = f"最近：{summary}" if summary else "无最近交互"
-                relation_lines.append(
-                    f"- [{card.get('category', '?')}] "
-                    f"{card.get('name') or card.get('id') or '?'}{state_tag} — {suffix}"
-                )
-            sections.append("\n".join(relation_lines))
-        return "\n\n".join(sections)
+        for index, card in enumerate(cards, 1):
+            state_tag = f" [{card.get('focus_type')}]" if card.get("focus_type") else ""
+            summary = str(card.get("summary") or "").strip()
+            suffix = f"最近：{summary}" if summary else "无最近交互"
+            name = card.get("name") or card.get("id") or "?"
+            content = (
+                ("## 关系卡\n" if index == 1 else "")
+                + f"- [{card.get('category', '?')}] {name}{state_tag} — {suffix}"
+            )
+            block = {
+                "block_id": f"status:relation:{card.get('id') or index}",
+                "title": f"关系卡 {name}",
+                "kind": "status_relation_card",
+                "source_block_id": str(card.get("id") or ""),
+                "content": content,
+            }
+            if index > 1:
+                block["separator_before"] = "\n"
+            blocks.append(block)
+        return join_layer_blocks(blocks)
 
     # ==============================================================
     # 工化指数 → 描述词

@@ -22,7 +22,7 @@ from logic.cache_compaction_guide import cache_compaction_due_receipt
 from logic.feeling_lookup import FeelingWordTable
 from logic.rhythm_guide_materializer import materialize_current_rhythm_guide
 from logic.sandbox_grant import load_sandbox_grant
-from logic.execution_permission import DEFAULT_LEVEL, ExecutionPermissionChain, execution_permission_audit
+from logic.execution_permission import DEFAULT_LEVEL, ExecutionPermissionChain, RuntimePermissionUpdates, execution_permission_audit
 from logic.single_round_probe_policy import single_round_probe_enabled
 from paths import ORGAN_TOPOLOGY
 class Runtime:
@@ -88,7 +88,9 @@ class Runtime:
         self.on_round_finished = None
         self.cleanup_pipeline.stage_callback = self.control.set_stage
         self.permission_chain = ExecutionPermissionChain(self.executor, self.assembler, self.general_tool_dispatcher, self.setup_runner, self.reaction_loop_runner, self.cleanup_pipeline)
-
+        self.permission_updates = RuntimePermissionUpdates(self.permission_chain, self.audit, self.control, self.hb)
+        self.setup_runner.permission_boundary_callback = self.permission_updates.apply
+        self.reaction_loop_runner.permission_boundary_callback = self.permission_updates.apply
     def __setattr__(self, name, value):
         object.__setattr__(self, name, value)
         services = self.__dict__.get("services")
@@ -199,10 +201,8 @@ class Runtime:
     def request_shutdown(self):
         self.tool_approval.cancel()
         self.control.request_shutdown(self)
-
     def release_stop_latch(self):
         return self.control.release_stop_latch(self.executor)
-
     def submit_message(self, message, execution_permission_level=DEFAULT_LEVEL):
         if not self.release_stop_latch():
             return False
@@ -210,19 +210,18 @@ class Runtime:
         self.hb.enqueue_message(message)
         self.hb.resume()
         return True
-
     def request_stop(self):
         receipt = self.control.request_stop(self)
         if receipt.get("accepted"):
             self.tool_approval.cancel()
         return receipt
-
     def cancel_pending_input(self):
         self.permission_chain.cancel_pending()
         return self.control.cancel_pending_input(self)
 
     def runtime_status(self):
-        return self.tool_approval.attach_status(self.control.snapshot(self.hb))
+        return self.permission_updates.attach_status(
+            self.tool_approval.attach_status(self.control.snapshot(self.hb)))
 
     def resolve_tool_approval(self, approval_id, decision):
         return self.tool_approval.resolve(approval_id, decision)
@@ -419,6 +418,8 @@ class Runtime:
             try:
                 self.sm.set_phase("post")
                 self.control.set_stage("cleanup_model")
+                self.permission_updates.apply(round_num, "cleanup", 1)
+                context.execution_permission_level = self.permission_chain.current
                 context.state = self.sm.load()
                 if isinstance(result, dict):
                     result["_interaction_meta"] = interaction_meta
@@ -436,7 +437,7 @@ class Runtime:
                 self.sm.set_phase("idle")
             except Exception:
                 pass
-            self.permission_chain.finish(trigger.execution_permission_level, result, self.sm)
+            self.permission_chain.finish(self.permission_chain.current, result, self.sm)
             stopped, settlement = bool(result.get("_user_stop_requested")), str((result.get("_settlement") or {}).get("status") or "")
             latch_until_explicit = stopped or settlement in {"degraded", "unsettled"}
             try:

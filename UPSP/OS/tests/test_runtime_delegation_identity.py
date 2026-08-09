@@ -350,6 +350,66 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         assert calls == [1, 2, 3]
         assert setup_result.intent["security_verdict"] == "pass"
 
+    def test_spec725_setup_retry_applies_pending_permission_before_next_frame(
+            self, tmp_path):
+        from engines.round_context import RoundContext
+
+        rt = self._make_runtime(tmp_path)
+        rt.audit.start(725, "interactive", {})
+        assert rt.control.establish_round("interactive", lambda: 725) == 725
+        rt.permission_chain.apply("guarded")
+        runner = rt.setup_runner
+        assembled_permissions = []
+
+        def assemble_setup(
+                state, round_type, user_msgs, internal_handoff=None,
+                interaction_meta=None):
+            del state, round_type, user_msgs, internal_handoff, interaction_meta
+            level = runner.assembler.execution_permission_level
+            assembled_permissions.append(level)
+            return "setup system", [{"role": "user", "content": level}]
+
+        runner.assembler.assemble_setup = assemble_setup
+        runner._round_audit_parsed = lambda *args, **kwargs: None
+        runner._round_audit_settlement = lambda *args, **kwargs: None
+        runner._update_token_usage = lambda result: None
+        calls = []
+
+        def fake_call(phase, system, messages, round_num, iteration=1, **kwargs):
+            del phase, system, round_num, kwargs
+            calls.append((iteration, list(messages)))
+            if iteration == 1:
+                rt.permission_updates.request("unlimited")
+                return {"response": "retry", "tool_call_envelopes": []}
+            return {
+                "response": "",
+                "tool_call_envelopes": [self._native_tool_envelope(
+                    "setup_finalize",
+                    {"security_verdict": "pass"},
+                    tool_family="substrate_tool",
+                    tool_class="sync_tool",
+                )],
+            }
+
+        runner._call_llm_with_round_audit = fake_call
+        context = RoundContext(
+            round_num=725,
+            round_type="interactive",
+            state=rt.sm.load(),
+            flags={},
+            interaction_meta={},
+            execution_permission_level="guarded",
+        )
+
+        result = runner.run(context)
+
+        assert result.intent["security_verdict"] == "pass"
+        assert assembled_permissions == ["guarded", "unlimited"]
+        assert calls[1][1][0]["content"] == "unlimited"
+        assert "setup_finalize" in calls[1][1][-1]["content"]
+        assert context.execution_permission_level == "unlimited"
+        assert rt.permission_chain.current == "unlimited"
+
     def test_spec274_setup_runner_marks_missing_finalize_after_two_retries(
             self, tmp_path):
         from engines.round_context import RoundContext

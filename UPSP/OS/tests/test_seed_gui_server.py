@@ -5,6 +5,8 @@ import os
 import re
 import socket
 import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -235,6 +237,14 @@ class FakeCli:
         self.calls.append((["resident", "tool-approval", approval_id, decision], {}))
         return {"approval_id": approval_id, "decision": decision}
 
+    def update_execution_permission(self, permission_level):
+        self.calls.append((["resident", "execution-permission", permission_level], {}))
+        return {
+            "status": "pending",
+            "permission_level": permission_level,
+            "effective_after": "next_frame_boundary",
+        }
+
 
 def _gui_root(tmp_path):
     root = tmp_path / "gui"
@@ -404,7 +414,7 @@ def test_spec683_static_whitelist_polling_and_runtime_status(tmp_path):
         status, about = _request(server, "GET", "/api/about")
         assert status == 200
         assert about["schema_version"] == "seed_gui_about.v1"
-        assert about["product"]["version"] == "0.1.0-alpha.7"
+        assert about["product"]["version"] == "0.1.0-alpha.8"
         assert about["product"]["author"]["zh-CN"] == (
             "由 TzPzFMZ 发起、设计并与 AI 协作开发"
         )
@@ -1594,7 +1604,9 @@ def test_spec685_deposition_projection_filters_private_and_paths():
     assert [item["id"] for item in index["memory"]] == ["MEM-PUBLIC01"]
     assert "PRIVATE" not in json.dumps(index)
     assert "path" not in json.dumps(index)
-    assert reader.detail("memory", "MEM-PUBLIC01")["item"]["body"] == "公开正文"
+    memory_body = reader.detail("memory", "MEM-PUBLIC01")["item"]["body"]
+    assert memory_body.endswith("公开正文")
+    assert "**挂接备注更新时间**：未记录" in memory_body
     assert reader.detail("container", "PRJ-001")["item"]["content"] == "项目正文"
     relation = reader.detail("relation", "REL-USER")["item"]
     assert relation["axes"] == {
@@ -1924,6 +1936,350 @@ def test_spec686_container_focus_validation_conflict_and_shared_lock(tmp_path):
         _close(server, thread)
 
 
+def test_spec729_runtime_status_never_scans_latest_round(tmp_path, monkeypatch):
+    import builtins
+
+    fake_cli = FakeCli()
+    server, thread = _server(tmp_path, fake_cli)
+    big_round = tmp_path / "round" / "round_999999.jsonl"
+    with big_round.open("wb") as handle:
+        handle.truncate(150 * 1024 * 1024)
+    original_open = Path.open
+
+    def guarded_open(path, *args, **kwargs):
+        if Path(path) == big_round:
+            raise AssertionError("runtime status must not open the Round JSONL")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "upsp_cli":
+            raise AssertionError("runtime status must not import upsp_cli")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    try:
+        status, runtime = _request(server, "GET", "/api/runtime/status")
+        assert status == 200
+        assert runtime["schema_version"] == "seed_gui_runtime_status.v2"
+        assert runtime["cli"]["data"] == {
+            "active_flags": [],
+            "round_type": None,
+            "active_guides": {"rhythm": "", "work": ""},
+        }
+    finally:
+        _close(server, thread)
+
+
+def test_spec726_model_effort_update_repairs_referencing_routes_atomically(tmp_path):
+    server, thread = _server(tmp_path, FakeCli())
+    service = server.RequestHandlerClass.settings_service
+    try:
+        _, initial = _request(server, "GET", "/api/settings")
+        model = initial["model_catalog"]["models"][0]
+        routing = service.configs.load("model_routing")
+        for row in routing["routes"].values():
+            row["primary"] = {
+                "model_id": model["id"],
+                "reasoning_effort": "medium",
+            }
+            row["backups"] = [
+                {
+                    "model_id": model["id"],
+                    "reasoning_effort": "medium",
+                },
+                None,
+            ]
+        service.configs.save("model_routing", routing)
+
+        status, saved = _request(
+            server,
+            "POST",
+            "/api/settings/model-catalog",
+            body=json.dumps({
+                "revision": initial["model_catalog"]["revision"],
+                "entity": "model",
+                "action": "update",
+                "id": model["id"],
+                "values": {
+                    "alias": "DeepSeek Flash",
+                    "connection_id": model["connection_id"],
+                    "model": "deepseek-v4-flash",
+                    "context_window": 1000000,
+                    "detected_context_window": 1000000,
+                    "context_window_source": "registry",
+                    "reasoning_supported": ["high", "max"],
+                    "reasoning_default": "high",
+                    "streaming_enabled": True,
+                    "streaming_include_usage": True,
+                    "request_overrides": {},
+                },
+            }),
+            headers=_json_headers(server),
+        )
+
+        assert status == 200
+        updated = saved["model_catalog"]["models"][0]
+        assert updated["model"] == "deepseek-v4-flash"
+        assert updated["reasoning"] == {
+            "supported": ["high", "max"],
+            "default": "high",
+        }
+        routes = saved["persona"]["model_routing"]["values"]["routes"]
+        assert {
+            row["primary"]["reasoning_effort"] for row in routes.values()
+        } == {"high"}
+        assert {
+            row["backups"][0]["reasoning_effort"] for row in routes.values()
+        } == {"high"}
+        assert service.configs.resolve_model_routes()["phases"]["reaction"][0][
+            "reasoning_effort"
+        ] == "high"
+    finally:
+        _close(server, thread)
+
+
+def test_spec726_model_effort_update_rolls_back_catalog_and_routes(tmp_path, monkeypatch):
+    server, thread = _server(tmp_path, FakeCli())
+    service = server.RequestHandlerClass.settings_service
+    try:
+        _, initial = _request(server, "GET", "/api/settings")
+        model = initial["model_catalog"]["models"][0]
+        old_catalog = service.configs.load("models")
+        old_routing = service.configs.load("model_routing")
+        monkeypatch.setattr(
+            service.configs,
+            "resolve_model_routes",
+            lambda: (_ for _ in ()).throw(ValueError("forced_resolution_failure")),
+        )
+
+        status, rejected = _request(
+            server,
+            "POST",
+            "/api/settings/model-catalog",
+            body=json.dumps({
+                "revision": initial["model_catalog"]["revision"],
+                "entity": "model",
+                "action": "update",
+                "id": model["id"],
+                "values": {
+                    "alias": "Rejected Draft",
+                    "connection_id": model["connection_id"],
+                    "model": "deepseek-v4-flash",
+                    "context_window": 1000000,
+                    "detected_context_window": 1000000,
+                    "context_window_source": "registry",
+                    "reasoning_supported": ["high", "max"],
+                    "reasoning_default": "high",
+                    "streaming_enabled": True,
+                    "streaming_include_usage": True,
+                    "request_overrides": {},
+                },
+            }),
+            headers=_json_headers(server),
+        )
+
+        assert status == 400
+        assert rejected["error"] == "forced_resolution_failure"
+        assert service.configs.load("models") == old_catalog
+        assert service.configs.load("model_routing") == old_routing
+    finally:
+        _close(server, thread)
+
+
+def test_spec725_context_prefix_diff_route_is_read_only_and_strict(tmp_path):
+    server, thread = _server(tmp_path, FakeCli())
+    try:
+        assert _request(
+            server,
+            "GET",
+            "/api/context/request-prefix-diff?round=1",
+        )[0] == 400
+        status, payload = _request(
+            server,
+            "GET",
+            "/api/context/request-prefix-diff?round=1&frame_id=R000001%3Areaction%3A1",
+        )
+        assert status == 200
+        assert payload == {
+            "schema_version": "seed_gui_request_prefix_diff.v1",
+            "state": "unavailable",
+            "reason": "frame_not_found",
+        }
+    finally:
+        _close(server, thread)
+
+
+def test_spec725_context_prefix_diff_frontend_is_selection_scoped():
+    source = _gui_ts_source(
+        "contracts.ts", "state.ts", "runtime.ts", "events.ts", "view.ts")
+    css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
+
+    assert "seed_gui_request_prefix_diff.v1" in source
+    assert "./api/context/request-prefix-diff?round=" in source
+    assert "contextPrefixDiffController?.abort()" in source
+    assert "|| runtimeProjection.contextPrefixDiffError" in source
+    assert "data-context-diff-jump" in source
+    assert "data-context-diff-anchor" in source
+    assert "请求体前缀不等同于 provider 实际缓存命中" in source
+    assert "grid-template-columns: 190px 28px minmax(0, 1fr)" in css_source
+
+
+def test_spec723_model_context_resolution_uses_anthropic_metadata(tmp_path):
+    requests = []
+
+    class MetadataHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append((self.path, dict(self.headers)))
+            body = json.dumps({
+                "id": "claude-test-exact",
+                "max_input_tokens": 200000,
+            }).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            return
+
+    metadata = ThreadingHTTPServer(("127.0.0.1", 0), MetadataHandler)
+    metadata_thread = threading.Thread(target=metadata.serve_forever, daemon=True)
+    metadata_thread.start()
+    server, thread = _server(tmp_path, FakeCli())
+    service = server.RequestHandlerClass.settings_service
+    catalog = service.configs.load("models")
+    connection = catalog["connections"][0]
+    connection.update({
+        "protocol": "anthropic_messages",
+        "url": f"http://127.0.0.1:{metadata.server_address[1]}/v1/messages",
+        "api_key": "local-secret",
+    })
+    service.configs.save("models", catalog)
+    try:
+        status, result = _request(
+            server, "POST", "/api/settings/model-context-window/resolve",
+            body=json.dumps({
+                "connection_id": "conn_test",
+                "model": "claude-test-exact",
+            }),
+            headers=_json_headers(server),
+        )
+
+        assert status == 200
+        assert result["detected_context_window"] == 200000
+        assert result["source"] == "provider"
+        assert "local-secret" not in json.dumps(result)
+        assert requests[0][0] == "/v1/models/claude-test-exact"
+        assert {
+            key.lower(): value for key, value in requests[0][1].items()
+        }["x-api-key"] == "local-secret"
+    finally:
+        _close(server, thread)
+        metadata.shutdown()
+        metadata.server_close()
+        metadata_thread.join(timeout=5)
+
+
+def test_spec723_model_context_resolution_registry_is_exact_and_fail_soft(tmp_path):
+    server, thread = _server(tmp_path, FakeCli())
+    try:
+        exact_status, exact = _request(
+            server, "POST", "/api/settings/model-context-window/resolve",
+            body=json.dumps({
+                "connection_id": "conn_test", "model": "gpt-5.6-terra",
+            }),
+            headers=_json_headers(server),
+        )
+        alias_status, alias = _request(
+            server, "POST", "/api/settings/model-context-window/resolve",
+            body=json.dumps({
+                "connection_id": "conn_test", "model": "relay/gpt-5.6-terra",
+            }),
+            headers=_json_headers(server),
+        )
+        anthropic_status, anthropic = _request(
+            server, "POST", "/api/settings/model-context-window/resolve",
+            body=json.dumps({
+                "connection_id": "conn_test", "model": "claude-opus-5",
+            }),
+            headers=_json_headers(server),
+        )
+
+        assert exact_status == alias_status == anthropic_status == 200
+        assert exact["source"] == "registry"
+        assert exact["detected_context_window"] == 1050000
+        assert alias["source"] == "unknown"
+        assert alias["detected_context_window"] is None
+        assert anthropic["source"] == "registry"
+        assert anthropic["detected_context_window"] == 1000000
+    finally:
+        _close(server, thread)
+
+
+def test_spec723_model_metadata_failures_are_non_blocking(tmp_path):
+    class MetadataHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            model = self.path.rsplit("/", 1)[-1]
+            if model == "slow-model":
+                time.sleep(1.2)
+                body = b'{}'
+            elif model == "large-model":
+                body = b"x" * (256 * 1024 + 1)
+            elif model == "wrong-id":
+                body = b'{"id":"other","max_input_tokens":200000}'
+            elif model == "list-model":
+                body = b'[{"id":"list-model","max_input_tokens":200000}]'
+            elif model == "compat-model":
+                body = b'{"id":"compat-model","context_window":200000}'
+            else:
+                body = b"not-json"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, *_args):
+            return
+
+    metadata = ThreadingHTTPServer(("127.0.0.1", 0), MetadataHandler)
+    metadata_thread = threading.Thread(target=metadata.serve_forever, daemon=True)
+    metadata_thread.start()
+    server, thread = _server(tmp_path, FakeCli())
+    service = server.RequestHandlerClass.settings_service
+    catalog = service.configs.load("models")
+    catalog["connections"][0].update({
+        "protocol": "anthropic_messages",
+        "url": f"http://127.0.0.1:{metadata.server_address[1]}/v1/messages",
+        "api_key": "local-secret",
+    })
+    catalog["transport"]["handshake"]["timeout_seconds"] = 1
+    service.configs.save("models", catalog)
+    try:
+        for model in (
+                "invalid-model", "large-model", "slow-model", "wrong-id",
+                "list-model", "compat-model"):
+            status, result = _request(
+                server, "POST", "/api/settings/model-context-window/resolve",
+                body=json.dumps({"connection_id": "conn_test", "model": model}),
+                headers=_json_headers(server),
+            )
+            assert status == 200
+            assert result["source"] == "unknown"
+            assert result["detected_context_window"] is None
+    finally:
+        _close(server, thread)
+        metadata.shutdown()
+        metadata.server_close()
+        metadata_thread.join(timeout=5)
+
+
 def _task_guide():
     return {
         "guide_id": "task:T-001",
@@ -2160,6 +2516,42 @@ def test_spec720_guarded_send_and_tool_approval_endpoint(tmp_path, monkeypatch):
         _close(server, thread)
 
 
+def test_spec725_active_round_permission_endpoint_is_separate_from_send_lock(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("UPSP_TEST_KEY", "test-only-key")
+    fake_cli = FakeCli()
+    server, thread = _server(tmp_path, fake_cli)
+    try:
+        body = json.dumps({
+            "permission_level": "unlimited",
+            "unlimited_confirmed": True,
+        })
+        status, receipt = _request(
+            server,
+            "POST",
+            "/api/runtime/execution-permission",
+            body=body,
+            headers=_json_headers(server),
+        )
+        assert status == 200
+        assert receipt["schema_version"] == "seed_gui_execution_permission_receipt.v1"
+        assert receipt["permission_level"] == "unlimited"
+        assert fake_cli.calls == [
+            (["resident", "execution-permission", "unlimited"], {}),
+        ]
+    finally:
+        _close(server, thread)
+
+
+def test_spec725_gui_changes_active_permission_without_unlocking_message_input():
+    source = _gui_ts_source("view.ts", "runtime.ts", "events.ts")
+
+    assert '"./api/runtime/execution-permission"' in source
+    assert "els.permissionLevel.disabled = pending" not in source
+    assert 'stage.startsWith("cleanup")' in source
+    assert "els.messageInput.readOnly = pending" in source
+
+
 def test_spec704_stop_without_round_is_conflict(tmp_path):
     server, thread = _server(tmp_path, FakeCli())
     try:
@@ -2265,7 +2657,7 @@ def test_spec705_desktop_environment_and_ready_record(tmp_path, monkeypatch):
             "process_id": os.getpid(),
             "session_id": "b" * 32,
             "origin": f"http://127.0.0.1:{server.server_address[1]}",
-            "product_version": "0.1.0-alpha.7",
+            "product_version": "0.1.0-alpha.8",
         }
     finally:
         _close(server, thread)
@@ -2823,19 +3215,26 @@ def test_spec696_rich_markdown_uses_one_sanitized_typed_pipeline():
     assert len(list((GUI_ROOT / "assets" / "markdown").glob("*.woff2"))) == 20
 
 
-def test_spec697_context_review_reuses_rich_markdown_without_restructuring():
+def test_spec723_context_review_renders_exact_blocks_without_parsing_boundaries():
     view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
     markdown_source = (GUI_ROOT / "src" / "markdown.ts").read_text(encoding="utf-8")
     context_renderer = view_source.split("function contextPaneMarkdown", 1)[1].split(
         "function renderRuntimeAuditPage", 1
     )[0]
+    block_renderer = context_renderer.split(
+        "function renderContextPaneDetail", 1
+    )[1].split("const contextInstrumentPaneIds", 1)[0]
 
     assert 'pane?.content_md || pane?.content_raw || ""' in context_renderer
     assert '["00_call_header", "01_tool_header", "02_generation_config"]' in context_renderer
     assert "JSON.parse(raw)" in context_renderer
-    assert '`context:${round}:${frame.frame_id}:${pane?.id || "empty"}`' in context_renderer
+    assert "const blocks = pane.content_blocks || [];" in context_renderer
+    assert "blocks.map((block) =>" in context_renderer
+    assert "function renderContextBlock(" in context_renderer
+    assert "contextPaneMarkdown(pane)" in context_renderer
     assert "renderMarkdownDocument(" in context_renderer
-    assert "content_blocks" not in context_renderer
+    assert ".split(" not in block_renderer
+    assert "match(" not in block_renderer
     assert "hydrateMarkdownDocuments(contextScroll, contextScroll)" in view_source
     assert ".runtime-context-workspace article" in markdown_source
 
@@ -2904,7 +3303,7 @@ def test_spec704_context_round_selector_and_tool_annotations():
     assert "runtimeProjection.conversationRoundOrder" in view_source
     assert ".filter((round) => round !== latest).reverse()" in view_source
     assert "data-context-round" in view_source
-    assert 'context:${round}:${frame.frame_id}:${pane?.id || "empty"}' in view_source
+    assert 'context:${round}:${frame.frame_id}:${pane.id}' in view_source
     assert "record.description" in view_source
     assert "contextToolAnnotations" in view_source
 
@@ -3008,7 +3407,7 @@ def test_spec708_tool_header_uses_chinese_summary_instruments():
     assert '[t("工具数量"), `${Array.isArray(data.tool_names) ? data.tool_names.length' in view_source
     assert '[t("权限级别"), data.permission_level === "limited" ? t("只读")' in view_source
     assert '[t("终端工具"), data.terminal_tool === "reaction_finalize" ? t("反应阶段收束")' in view_source
-    assert 'toolSummary ? "" : renderMarkdownDocument' in view_source
+    assert '${toolSummary}${renderContextToolIndex(pane)}' in view_source
     assert ".context-tool-summary dl" in css_source
     assert "grid-template-columns: repeat(4, minmax(0, 1fr))" in css_source
 
@@ -3097,6 +3496,33 @@ def test_spec717_provider_errors_are_localized_without_replacing_technical_detai
     assert '"技术详情": "Technical details"' in i18n_source
 
 
+def test_spec723_context_usage_and_model_capacity_frontend_contract():
+    view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+    events_source = (GUI_ROOT / "src" / "events.ts").read_text(encoding="utf-8")
+    index_source = (GUI_ROOT / "index.html").read_text(encoding="utf-8")
+    styles = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="contextUsage"' in index_source
+    assert "frameContextUsage(reportedFrame, true)" in view_source
+    assert "frameContextUsage(frame)" in view_source
+    assert "context-usage-ring" in styles
+    assert "context-usage-spin" not in styles
+    assert "tokenizer" not in view_source.lower()
+    assert 'preserveOnFailure && result.source === "unknown"' in events_source
+
+
+def test_spec724_temporal_projection_frontend_contract():
+    contracts = (GUI_ROOT / "src" / "contracts.ts").read_text(encoding="utf-8")
+    view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+
+    assert "created_at?: string" in contracts
+    assert "current_overview_updated_at?: string" in contracts
+    selector_source = view_source.split("function contextSelectors", 1)[1].split("function frameContextUsage", 1)[0]
+    assert "renderFullTime(frame.created_at" in selector_source
+    assert "provenance.timestamp" in view_source
+    assert "new Date()" not in view_source.split("function fullLocalTime", 1)[1].split("}", 1)[0]
+
+
 def test_spec700_global_settings_and_persona_routing_frontend_contract():
     contracts = (GUI_ROOT / "src" / "contracts.ts").read_text(encoding="utf-8")
     state_source = (GUI_ROOT / "src" / "state.ts").read_text(encoding="utf-8")
@@ -3131,6 +3557,9 @@ def test_spec700_global_settings_and_persona_routing_frontend_contract():
     assert 'fetchRuntimeJson<SettingsPayload>("./api/settings"' in runtime_source
     assert 'fetchRuntimeJson<AboutPayload>("./api/about"' in runtime_source
     assert 'fetchRuntimeJson<SettingsPayload>("./api/settings/model-catalog"' in runtime_source
+    assert "refreshModelCatalogMutationUi(entity, id);" in runtime_source
+    assert "if (saved) refreshSettingsUi();" in runtime_source
+    assert 'data-settings-feedback role="status"' in view_source
     assert 'fetchRuntimeJson<SettingsPayload>("./api/settings/provider-key"' in runtime_source
     assert 'data-settings-form' in view_source
     assert 'data-routing-settings-form' in view_source
@@ -3325,7 +3754,7 @@ def test_seed_gui_model_capability_switches_are_aligned():
     assert '.catalog-editor > .settings-switch input[type="checkbox"]' in styles
 
 
-def test_seed_gui_provider_url_editor_owns_protocol_suffix():
+def test_seed_gui_provider_url_editor_allows_protocol_path_override():
     view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
     events_source = (GUI_ROOT / "src" / "events.ts").read_text(encoding="utf-8")
     styles = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
@@ -3334,7 +3763,12 @@ def test_seed_gui_provider_url_editor_owns_protocol_suffix():
     assert 'openai_responses: "/v1/responses"' in view_source
     assert 'anthropic_messages: "/v1/messages"' in view_source
     assert 'name="url_base"' in view_source
+    assert 'name="url_path"' in view_source
+    assert 'data-provider-url-path' in view_source
+    assert '请求路径会按协议给出默认值；如服务商端点不同，可直接修改覆盖。' in view_source
     assert "providerBaseUrl(connection?.url || \"\")" in view_source
-    assert 'url: providerRequestUrl(text("url_base"), text("protocol"))' in events_source
+    assert 'providerRequestPath(connection?.url || "", protocol)' in view_source
+    assert 'url: providerRequestUrl(text("url_base"), text("url_path"))' in events_source
     assert '"[data-provider-protocol]"' in events_source
+    assert "path.value = providerUrlSuffix(selector.value)" in events_source
     assert ".provider-url-editor" in styles

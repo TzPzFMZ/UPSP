@@ -68,6 +68,116 @@ def test_spec593_task_bootstrap_visible_schema_contains_minimal_ledger_shape(tmp
     assert "items=[{item_id, title, requirement_refs:[...]}]" in message
     assert "acceptance=[{acceptance_id, description, item_refs:[...]}]" in message
     assert "source_ref 必须来自已读来源" in message
+    assert "reason/evidence_refs 属于每条 submission 外层" in message
+    assert "每个 item_id 都必须至少被一条 acceptance.item_refs 覆盖" in message
+
+
+@pytest.mark.parametrize("reason,details", [
+    ("invalid_guide_submission", {"field": "submissions"}),
+    ("guide_not_active", {"active_guide": "task_bootstrap"}),
+    ("guide_item_not_found", {
+        "item_id": "invented",
+        "expected": [{"item_id": "build_initial_task_guide", "option_ids": ["submit_initial_guide"]}],
+    }),
+    ("guide_option_not_found", {
+        "item_id": "item_01",
+        "option_id": "invented",
+        "expected": {"item_id": "item_01", "option_ids": ["complete"]},
+    }),
+    ("missing_guide_fields", {"fields": ["items"]}),
+    ("undeclared_guide_fields", {"fields": ["reason"], "allowed_fields": ["items"]}),
+    ("bootstrap_wait_for_tool_results", {"current_tool_ids": ["file_read"]}),
+    ("bootstrap_source_not_read", {"missing_source_refs": ["task.md"], "prior_source_refs": []}),
+    ("bootstrap_source_requirements_required", {"source_refs": ["task.md"]}),
+    ("bootstrap_invalid_source_requirements", {"invalid_requirements": [{"requirement_id": "req_01"}]}),
+    ("bootstrap_source_requirement_ref_unknown", {"unknown_source_refs": ["future/output.md"], "source_refs": ["task.md"]}),
+    ("bootstrap_item_requirement_refs_required", {"items": ["item_01"]}),
+    ("bootstrap_unknown_requirement_refs", {"requirement_refs": ["req_x"], "known_requirements": ["req_01"]}),
+    ("bootstrap_source_requirement_coverage_missing", {"requirement_ids": ["req_01"]}),
+    ("bootstrap_acceptance_refs_required", {"acceptance": ["acc_01"]}),
+    ("bootstrap_acceptance_refs_unknown", {"item_refs": ["item_x"], "known_items": ["item_01"]}),
+    ("bootstrap_item_acceptance_coverage_missing", {"items": ["item_01"]}),
+    ("unsupported_task_bootstrap_submission", {
+        "item_id": "x",
+        "option_id": "y",
+        "legal_coordinates": [{"item_id": "build_initial_task_guide", "option_ids": ["submit_initial_guide"]}],
+    }),
+    ("unsupported_task_guide_submission", {
+        "item_id": "x",
+        "option_id": "y",
+        "legal_coordinates": [{"item_id": "task_01", "option_ids": ["complete"]}],
+    }),
+    ("pending_interaction_first", {"pending_input_ids": ["input_01"]}),
+    ("relay_task_guidance_not_pending_input", {"task_id": "T-1"}),
+    ("task_guidance_already_active", {"work_guide": "task_bootstrap"}),
+    ("missing_pending_input_ids", {"pending_inputs": ["pending_inputs[1]"]}),
+    ("unknown_pending_inputs", {"pending_inputs": ["input_x"]}),
+    ("invalid_pending_input_status", {"pending_inputs": ["input_01"]}),
+    ("task_status_update_empty", {"expected_fields": {"items": {}}}),
+    ("missing_task_guide_record_ids", {"items": ["items[1]"]}),
+    ("unknown_task_guide_records", {"items": ["item_x"]}),
+    ("task_completion_evidence_required", {"missing_evidence_refs": ["items:item_01"]}),
+    ("task_completion_evidence_not_found", {"unknown_evidence_refs": ["EV-X"]}),
+    ("task_blocked_reason_required", {
+        "missing_reasons": ["items:item_01"],
+        "blocker_evidence_items": [{"ref": "call:call_failed"}],
+    }),
+    ("task_blocked_evidence_required", {
+        "missing_evidence_refs": ["items:item_01"],
+        "blocker_evidence_items": [{"ref": "call:call_failed"}],
+    }),
+    ("task_blocked_evidence_not_found", {
+        "unknown_evidence_refs": ["call:invented"],
+        "blocker_evidence_items": [{"ref": "call:call_failed"}],
+    }),
+    ("duplicate_task_guide_record_ids", {"message": "duplicate item_01"}),
+    ("rhythm_guide_backend_not_applied", {}),
+    ("unsupported_rhythm_guide_kind", {}),
+    ("unsupported_rhythm_guide_option", {}),
+])
+def test_spec727_handled_guide_rejections_have_actionable_source_hint(reason, details):
+    from logic.guide_submit import _guide_error_hint
+
+    hint = _guide_error_hint(reason, details)
+
+    assert set(hint) == {
+        "kind", "retry", "attempted", "current", "expected", "next_action"
+    }
+    assert hint["kind"] != "unknown_internal"
+    assert hint["retry"]
+    assert hint["next_action"]
+    if "expected" in hint["next_action"]:
+        assert hint["expected"]
+
+
+def test_spec727_undeclared_outer_fields_keep_raw_details_and_explain_repair(tmp_path):
+    from data.workbench import WorkbenchStore
+    from logic.guide_submit import apply_guide_submit
+    from logic.task_guide import create_task_bootstrap_guide
+
+    store = WorkbenchStore(root_dir=str(tmp_path / "workbench"))
+    create_task_bootstrap_guide(store, reason="spec727")
+    receipt = apply_guide_submit(store, {
+        "guide_id": "task_bootstrap",
+        "submissions": [{
+            "item_id": "build_initial_task_guide",
+            "option_id": "submit_initial_guide",
+            "fields": {
+                "task_title": "测试任务",
+                "items": [],
+                "acceptance": [],
+                "reason": "错误地放在 fields",
+            },
+        }],
+    })
+
+    assert receipt["reason"] == "undeclared_guide_fields"
+    assert receipt["details"] == {"fields": ["reason"]}
+    assert receipt["error_hint"]["kind"] == "validation"
+    assert receipt["error_hint"]["attempted"]["fields"] == [
+        "acceptance", "items", "reason", "task_title"
+    ]
+    assert "submission 外层" in receipt["error_hint"]["next_action"]
 
 
 class _StateStoreStub:
@@ -3384,6 +3494,7 @@ def test_spec613_task_acceptance_marks_evidenced_blocked_ledger_terminal(tmp_pat
                     "item_id": "item_memory",
                     "required": True,
                     "status": "blocked",
+                    "reason": "identity unresolved",
                     "evidence_refs": ["EV-identity-unresolved"],
                 },
             ],
@@ -3398,6 +3509,7 @@ def test_spec613_task_acceptance_marks_evidenced_blocked_ledger_terminal(tmp_pat
                     "acceptance_id": "acc_memory",
                     "required": True,
                     "status": "blocked",
+                    "reason": "identity unresolved",
                     "evidence_refs": ["EV-identity-unresolved"],
                 },
             ],
@@ -3411,6 +3523,10 @@ def test_spec613_task_acceptance_marks_evidenced_blocked_ledger_terminal(tmp_pat
     assert result["reason"] == "task_acceptance_blocked"
     assert result["terminal_blocked"] is True
     assert result["blockers"] == ["item_memory", "acc_memory"]
+    continued = validate_task_closeout(store, {"closeout_decision": "continue"})
+    assert continued["allowed"] is False
+    assert continued["terminal_blocked"] is True
+    assert continued["ledger_state"] == result["ledger_state"]
 
 
 def test_spec613_blocked_without_evidence_is_not_terminal(tmp_path):
@@ -3440,6 +3556,279 @@ def test_spec613_blocked_without_evidence_is_not_terminal(tmp_path):
 
     assert result["allowed"] is False
     assert result["terminal_blocked"] is False
+
+
+def test_spec729_blocked_status_requires_real_call_evidence_and_reason(tmp_path):
+    from data.workbench import WorkbenchStore
+    from engines.reaction_protocol_tool_execution import _safe_error_hint_value
+    from logic.guide_submit import apply_guide_submit
+    from logic.task_guide import materialize_initial_task_guide
+
+    store = WorkbenchStore(root_dir=str(tmp_path / "workbench"))
+    task_id = materialize_initial_task_guide(store, {
+        "task_title": "阻塞证据合同",
+        "items": [
+            {"item_id": "item_01", "title": "读取官方来源"},
+            {"item_id": "item_02", "title": "复核已取得结果"},
+        ],
+        "acceptance": [{"acceptance_id": "acc_01", "description": "来源可用"}],
+    })
+    failed = {
+        "tool_id": "web_fetch",
+        "call_id": "call_fetch_failed",
+        "status": "not_found",
+        "reason": "web_backend_exhausted",
+        "url": "https://example.invalid/pricing",
+    }
+    unregistered_artifact = tmp_path / "output" / "unregistered.txt"
+    unregistered_artifact.parent.mkdir()
+    unregistered_artifact.write_text("not in the task evidence ledger", encoding="utf-8")
+    evidence_context = {
+        "artifact_roots": [str(unregistered_artifact.parent)],
+        "write_paths": [str(unregistered_artifact.parent)],
+        "prior_general_tool_results": [
+            failed,
+            {
+                "tool_id": "file_read",
+                "call_id": "call_read_ok",
+                "status": "ok",
+                "path": "output/check.txt",
+            },
+        ]
+    }
+
+    def submit(fields):
+        return apply_guide_submit(store, {
+            "guide_id": f"task:{task_id}",
+            "submissions": [{
+                "item_id": "task_progress",
+                "option_id": "update_task_status",
+                "fields": fields,
+            }],
+        }, evidence_context=evidence_context)
+
+    missing_reason = submit({"items": {
+        "item_01": {"status": "blocked", "evidence_refs": ["call:call_fetch_failed"]}
+    }})
+    assert missing_reason["reason"] == "task_blocked_reason_required"
+    assert missing_reason["error_hint"]["kind"] == "validation"
+    assert missing_reason["error_hint"]["expected"]["blocker_evidence_items"][0]["ref"]
+    safe_expected = _safe_error_hint_value(
+        missing_reason["error_hint"]["expected"])
+    assert safe_expected["blocker_evidence_items"][0] == {
+        "ref": "call:call_fetch_failed",
+        "tool_id": "web_fetch",
+        "status": "not_found",
+        "reason": "web_backend_exhausted",
+        "summary": "web_fetch not_found: web_backend_exhausted",
+    }
+    assert safe_expected["correction_example"]["items"][0] == {
+        "item_id": "item_01",
+        "status": "blocked",
+        "reason": "说明可复核的阻塞事实",
+        "evidence_refs": ["call:call_fetch_failed"],
+    }
+
+    missing_ref = submit({"items": {
+        "item_01": {"status": "blocked", "reason": "官方来源不可访问"}
+    }})
+    assert missing_ref["reason"] == "task_blocked_evidence_required"
+
+    unknown_ref = submit({"items": {
+        "item_01": {
+            "status": "blocked",
+            "reason": "官方来源不可访问",
+            "evidence_refs": ["call:invented"],
+        }
+    }})
+    assert unknown_ref["reason"] == "task_blocked_evidence_not_found"
+    assert unknown_ref["error_hint"]["attempted"]["evidence_refs"] == ["call:invented"]
+
+    grant_path_is_not_blocker_evidence = submit({"items": {
+        "item_01": {
+            "status": "blocked",
+            "reason": "不能拿 grant 内路径冒充真实调用",
+            "evidence_refs": [str(unregistered_artifact)],
+        }
+    }})
+    assert grant_path_is_not_blocker_evidence["reason"] == (
+        "task_blocked_evidence_not_found")
+
+    no_evidence_context = apply_guide_submit(store, {
+        "guide_id": f"task:{task_id}",
+        "submissions": [{
+            "item_id": "task_progress",
+            "option_id": "update_task_status",
+            "fields": {"items": {
+                "item_01": {
+                    "status": "blocked",
+                    "reason": "不能在缺少证据账本时放行",
+                    "evidence_refs": ["call:call_fetch_failed"],
+                }
+            }},
+        }],
+    })
+    assert no_evidence_context["reason"] == "task_blocked_evidence_not_found"
+
+    failed_as_success = submit({"items": {
+        "item_01": {"status": "done", "evidence_refs": ["call:call_fetch_failed"]}
+    }})
+    assert failed_as_success["reason"] == "task_completion_evidence_not_found"
+
+    accepted = submit({
+        "items": {
+            "item_01": {
+                "status": "blocked",
+                "reason": "官方来源不可访问",
+                "evidence_refs": ["call:call_fetch_failed"],
+            },
+            "item_02": {
+                "status": "blocked",
+                "reason": "成功检查证明目标条件不成立",
+                "evidence_refs": ["call:call_read_ok"],
+            },
+        },
+        "acceptance": {
+            "acc_01": {
+                "status": "blocked",
+                "reason": "同一失败调用支持相关验收",
+                "evidence_refs": ["call:call_fetch_failed"],
+            }
+        },
+    })
+    assert accepted["status"] == "accepted"
+    guide = store.load_task_guide(task_id)
+    assert guide["items"][0]["evidence_refs"] == ["call:call_fetch_failed"]
+    assert guide["acceptance"][0]["evidence_refs"] == ["call:call_fetch_failed"]
+    assert "evidence_handle" not in failed
+
+
+def test_spec729_blocker_evidence_is_scoped_to_task_creation_round(tmp_path):
+    from data.workbench import WorkbenchStore
+    from logic.guide_submit import apply_guide_submit
+    from logic.task_guide import materialize_initial_task_guide
+
+    old_failure = {
+        "tool_id": "web_fetch",
+        "call_id": "old_failure",
+        "status": "failed",
+        "reason": "web_backend_exhausted",
+    }
+    current_failure = {
+        "tool_id": "web_fetch",
+        "call_id": "current_failure",
+        "status": "failed",
+        "reason": "web_backend_exhausted",
+    }
+
+    class ContextStore:
+        @staticmethod
+        def get_lately_entries():
+            return [
+                {"loc": {"round": 9}, "tool_result": old_failure},
+                {"loc": {"round": 10}, "tool_result": current_failure},
+            ]
+
+        @staticmethod
+        def get_now_entries():
+            return []
+
+    store = WorkbenchStore(root_dir=str(tmp_path / "scoped"))
+    task_id = materialize_initial_task_guide(
+        store,
+        {
+            "task_title": "当前任务",
+            "items": [{"item_id": "item_01", "title": "读取来源"}],
+            "acceptance": [],
+        },
+        round_num=10,
+    )
+    evidence_context = {"context_store": ContextStore()}
+
+    def submit(ref):
+        return apply_guide_submit(
+            store,
+            {
+                "guide_id": f"task:{task_id}",
+                "submissions": [{
+                    "item_id": "task_progress",
+                    "option_id": "update_task_status",
+                    "fields": {"items": {
+                        "item_01": {
+                            "status": "blocked",
+                            "reason": "网页不可访问",
+                            "evidence_refs": [ref],
+                        }
+                    }},
+                }],
+            },
+            evidence_context=evidence_context,
+        )
+
+    rejected = submit("call:old_failure")
+    assert rejected["reason"] == "task_blocked_evidence_not_found"
+    assert [
+        item["ref"]
+        for item in rejected["error_hint"]["expected"]["blocker_evidence_items"]
+    ] == ["call:current_failure"]
+    assert store.load_task_guide(task_id)["created_round"] == 10
+    assert submit("call:current_failure")["status"] == "accepted"
+
+
+def test_spec729_legacy_task_without_creation_round_does_not_scan_cache_failures(
+    tmp_path,
+):
+    from data.workbench import WorkbenchStore
+    from logic.guide_submit import apply_guide_submit
+    from logic.task_guide import materialize_initial_task_guide
+
+    class ContextStore:
+        @staticmethod
+        def get_lately_entries():
+            return [{
+                "loc": {"round": 10},
+                "tool_result": {
+                    "tool_id": "web_fetch",
+                    "call_id": "cached_failure",
+                    "status": "failed",
+                    "reason": "web_backend_exhausted",
+                },
+            }]
+
+        @staticmethod
+        def get_now_entries():
+            return []
+
+    store = WorkbenchStore(root_dir=str(tmp_path / "legacy"))
+    task_id = materialize_initial_task_guide(
+        store,
+        {
+            "task_title": "旧任务",
+            "items": [{"item_id": "item_01", "title": "读取来源"}],
+            "acceptance": [],
+        },
+    )
+    result = apply_guide_submit(
+        store,
+        {
+            "guide_id": f"task:{task_id}",
+            "submissions": [{
+                "item_id": "task_progress",
+                "option_id": "update_task_status",
+                "fields": {"items": {
+                    "item_01": {
+                        "status": "blocked",
+                        "reason": "网页不可访问",
+                        "evidence_refs": ["call:cached_failure"],
+                    }
+                }},
+            }],
+        },
+        evidence_context={"context_store": ContextStore()},
+    )
+
+    assert result["reason"] == "task_blocked_evidence_not_found"
+    assert result["error_hint"]["expected"]["blocker_evidence_items"] == []
 
 
 def test_spec436_task_bootstrap_blocks_finish_until_guide_submitted(tmp_path):

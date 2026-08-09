@@ -5,7 +5,7 @@ DDS §9 记忆体系 + §9.2 记忆编号 + §10 LTM降格
 四个关联文件：
   memory.md  — 记忆条目正文（追加式，## MEM-TTTTTNNN 段）
   heat.json  — 热度值（脚本独占管理）
-  meta.json  — 20字段元数据（key=mem_id）
+  meta.json  — 21字段元数据（key=mem_id）
   keywords.json — 倒排索引（关键词→条目ID列表）
   index.md   — 索引行表格（人类可读）
 """
@@ -93,7 +93,7 @@ def default_heat_json():
 
 
 # ============================================================
-# meta.json 20字段元数据（DDS §9.2 + Spec193）
+# meta.json 21字段元数据（DDS §9.2 + Spec193 + Spec724）
 # ============================================================
 
 META_ENTRY_FIELDS = {
@@ -112,6 +112,7 @@ META_ENTRY_FIELDS = {
     "access":               ("str",    "§9.2", "public/private"),
     "recalled":             ("bool",   "§9.2", "是否经过召回补全正文重写"),
     "current_overview":     ("str",    "Spec193", "最新容器挂接语境下的现状概况"),
+    "current_overview_updated_at": ("str", "Spec724", "现状概况最后真实变化时间；未知为空"),
     "tags":                 ("list",   "§9.2", "语义标签（软链接）"),
     "linked_containers":    ("list",   "§9.2", "关联工作容器编号（硬链接）"),
     "decay_period_days":    ("int",    "§9.2", "衰减总周期天数"),
@@ -121,7 +122,7 @@ META_ENTRY_FIELDS = {
 
 
 def default_meta_entry(mem_id, title="", weight=2, subject=None, model=""):
-    """返回全新的 meta.json 条目（20字段）"""
+    """返回全新的 meta.json 条目（21字段）"""
     now = local_now().isoformat()
     return {
         "id": mem_id,
@@ -139,6 +140,7 @@ def default_meta_entry(mem_id, title="", weight=2, subject=None, model=""):
         "access": "public",
         "recalled": False,
         "current_overview": "",
+        "current_overview_updated_at": "",
         "tags": [],
         "linked_containers": [],
         "decay_period_days": 30,
@@ -148,7 +150,7 @@ def default_meta_entry(mem_id, title="", weight=2, subject=None, model=""):
 
 
 def default_meta_json():
-    return {"_comment": "STM 元数据（20字段/条目）"}
+    return {"_comment": "STM 元数据（21字段/条目）"}
 
 
 # ============================================================

@@ -142,6 +142,7 @@ class ConfigStore:
         for model in result.get("models") or []:
             if isinstance(model, dict):
                 model["prompt_cache"] = deepcopy(AUTOMATIC_PROMPT_CACHE)
+                model.pop("context_window_checked_at", None)
         return result
 
     def revision(self, name):
@@ -290,6 +291,25 @@ class ConfigStore:
                     or not 0 <= context_window <= 100000000
                 ):
                     raise ValueError("invalid model context_window")
+                detection_fields = {"detected_context_window", "context_window_source"}
+                if detection_fields.intersection(item):
+                    if not detection_fields.issubset(item):
+                        raise ValueError("incomplete model context window detection")
+                    detected = item.get("detected_context_window")
+                    source = str(item.get("context_window_source") or "")
+                    if (
+                        isinstance(detected, bool)
+                        or not isinstance(detected, int)
+                        or not 0 <= detected <= 100000000
+                        or source not in {
+                            "provider", "registry", "legacy_manual", "unknown",
+                        }
+                    ):
+                        raise ValueError("invalid model context window detection")
+                    if (source in {"provider", "registry"}) != (detected > 0):
+                        raise ValueError("invalid detected model context window")
+                    if detected > 0 and context_window > detected:
+                        raise ValueError("model context_window exceeds detected capacity")
                 reasoning = item.get("reasoning") or {}
                 supported = reasoning.get("supported") or []
                 default = str(reasoning.get("default") or "")

@@ -108,11 +108,19 @@ export interface CallFrame {
   phase?: string;
   iteration?: number | null;
   call_channel?: string;
+  model_profile_id?: string;
+  created_at?: string;
   layer_source?: string;
   event_start_index?: number | null;
   event_end_index?: number | null;
   historical?: boolean;
   context_panes?: ContextPane[];
+  context_usage?: {
+    chars: number;
+    input_tokens: number | null;
+    window_tokens: number | null;
+    state: "pending" | "reported" | "unavailable";
+  };
   manifest?: JsonObject;
 }
 
@@ -123,6 +131,44 @@ export interface ContextPane {
   raw_chars?: number;
   content_md?: string;
   content_raw?: string;
+  content_blocks?: ContextContentBlock[];
+}
+
+export interface ContextContentBlock {
+  block_id: string;
+  title?: string;
+  chars?: number;
+  raw_chars?: number;
+  content_md?: string;
+  content_raw?: string;
+  tone?: string;
+  source_block_id?: string;
+  provenance?: JsonObject;
+}
+
+export interface RequestPrefixDiffTarget {
+  pane_id: string;
+  block_id: string;
+  placement: "layer_start" | "layer_inside" | "layer_boundary" | "block_inside" | "block_boundary" | "layer_end" | "request_end";
+  change_kind: "insert" | "delete" | "replace";
+  source_offset: number;
+  block_offset?: number;
+  request_path: string;
+  source_mapping?: "identity" | "derived";
+}
+
+export interface RequestPrefixDiffPayload {
+  schema_version: "seed_gui_request_prefix_diff.v1";
+  state: "ready" | "identical" | "unavailable";
+  reason?: string;
+  current?: { round: number; frame_id: string; wire_body_sha256: string };
+  previous?: { round: number; frame_id: string; wire_body_sha256: string };
+  common_prefix_bytes?: number;
+  current_wire_bytes?: number;
+  previous_wire_bytes?: number;
+  prefix_ratio?: number;
+  changed_suffix_bytes?: number;
+  target?: RequestPrefixDiffTarget;
 }
 
 export interface RoundLifecycle {
@@ -191,6 +237,12 @@ export interface RuntimeStatus {
     requested_at?: string;
     details?: JsonObject;
   } | null;
+  execution_permission?: {
+    permission_level?: PermissionLevel;
+    permission_label?: string;
+    pending_level?: PermissionLevel | null;
+    requested_at?: string | null;
+  };
   cli?: {
     ok?: boolean;
     command?: string;
@@ -370,9 +422,13 @@ export interface DepositionItem {
   prefix?: string;
   type?: string;
   current_overview?: string;
+  current_overview_updated_at?: string;
   focus?: boolean;
   category?: string;
   created_round?: number | null;
+  last_recalled_round?: number | null;
+  created_at?: string;
+  last_recalled_at?: string;
   entries?: ContainerEntry[];
 }
 
@@ -425,6 +481,7 @@ export interface RuntimeProjection {
   awaitingProjection: boolean;
   submitBaseline: { round: number | null; eventIndex: number } | null;
   unlimitedConfirmed: boolean;
+  permissionChanging: boolean;
   approvalSubmitting: string;
   approvalFeedback: string;
   fullRefreshNeeded: boolean;
@@ -435,6 +492,10 @@ export interface RuntimeProjection {
   conversationHistoryLatest: number | null;
   conversationHistoryError: string;
   conversationHistoryVersion: number;
+  contextPrefixDiff: RequestPrefixDiffPayload | null;
+  contextPrefixDiffKey: string;
+  contextPrefixDiffLoading: boolean;
+  contextPrefixDiffError: string;
 }
 
 export interface DepositionProjection {
@@ -511,6 +572,8 @@ export interface ModelProfile {
   connection_id: string;
   model: string;
   context_window: number;
+  detected_context_window?: number;
+  context_window_source?: "provider" | "registry" | "legacy_manual" | "unknown";
   reasoning: ModelReasoningConfig;
   streaming: { enabled?: boolean; protocol?: string; include_usage?: boolean };
   prompt_cache: { profile?: string };
@@ -556,6 +619,14 @@ export interface SettingsProjection {
   error: string;
   feedback: string;
   renderKey: string;
+}
+
+export interface ModelContextResolution {
+  schema_version: "seed_gui_model_context_resolution.v1";
+  model: string;
+  detected_context_window: number | null;
+  source: "provider" | "registry" | "unknown";
+  source_ref?: string;
 }
 
 export interface AboutPayload {
@@ -741,6 +812,7 @@ export interface Elements {
   stopButton: HTMLButtonElement;
   configureModelButton: HTMLButtonElement;
   sendFeedback: HTMLElement;
+  contextUsage: HTMLOutputElement;
   ledgerRound: HTMLElement;
   ledgerContext: HTMLElement;
   ledgerFrame: HTMLElement;

@@ -53,6 +53,17 @@ ALERT_FLAG_NAMES = {
 }
 
 
+def _inherit_ltm_memory_meta(entry, source, round_num):
+    for key in (
+        "created_at", "last_recalled_at", "linked_containers",
+        "current_overview", "current_overview_updated_at",
+    ):
+        if key in source:
+            entry[key] = source[key]
+    entry["created_round"] = source.get("created_round", round_num)
+    entry["last_recalled_round"] = source.get("last_recalled_round", round_num)
+
+
 class CleanupPipeline(EngineComponent):
     _PROGRESS_STATUSES = {
         "accepted", "applied", "ok", "success", "completed", "passed",
@@ -1588,12 +1599,7 @@ class CleanupPipeline(EngineComponent):
                     mem_id, title=mem_meta.get("title", mem_id),
                     weight=5, subject=mem_meta.get("subject", ""),
                     model=mem_meta.get("model", ""))
-                if mem_meta.get("created_at"):
-                    fm[mem_id]["created_at"] = mem_meta["created_at"]
-                if mem_meta.get("last_recalled_at"):
-                    fm[mem_id]["last_recalled_at"] = mem_meta["last_recalled_at"]
-                fm[mem_id]["created_round"] = round_num
-                fm[mem_id]["last_recalled_round"] = round_num
+                _inherit_ltm_memory_meta(fm[mem_id], mem_meta, round_num)
                 tmp = LTM_FULL_META_JSON + ".tmp"
                 with open(tmp, "w", encoding="utf-8") as f:
                     _json.dump(fm, f, ensure_ascii=False, indent=2)
@@ -1803,12 +1809,7 @@ class CleanupPipeline(EngineComponent):
         am[mem_id]["type"] = "A"
         if tags_text:
             am[mem_id]["tags"] = [t.strip() for t in tags_text.split(",") if t.strip()]
-        if mem_meta.get("created_at"):
-            am[mem_id]["created_at"] = mem_meta["created_at"]
-        if mem_meta.get("last_recalled_at"):
-            am[mem_id]["last_recalled_at"] = mem_meta["last_recalled_at"]
-        am[mem_id]["created_round"] = round_num
-        am[mem_id]["last_recalled_round"] = round_num
+        _inherit_ltm_memory_meta(am[mem_id], mem_meta, round_num)
         tmp = LTM_ABSTRACT_META_JSON + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             _json.dump(am, f, ensure_ascii=False, indent=2)
@@ -1861,12 +1862,7 @@ class CleanupPipeline(EngineComponent):
         sm[mem_id]["type"] = "S"
         if tags_text:
             sm[mem_id]["tags"] = [t.strip() for t in tags_text.split(",") if t.strip()]
-        if mem_meta.get("created_at"):
-            sm[mem_id]["created_at"] = mem_meta["created_at"]
-        if mem_meta.get("last_recalled_at"):
-            sm[mem_id]["last_recalled_at"] = mem_meta["last_recalled_at"]
-        sm[mem_id]["created_round"] = mem_meta.get("created_round", round_num)
-        sm[mem_id]["last_recalled_round"] = round_num
+        _inherit_ltm_memory_meta(sm[mem_id], mem_meta, round_num)
         tmp = LTM_SUMMARY_META_JSON + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             _json.dump(sm, f, ensure_ascii=False, indent=2)

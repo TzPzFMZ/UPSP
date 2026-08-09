@@ -222,6 +222,7 @@ class TestAPIExecutor:
                         "url": self.url or urls[provider],
                         "model": self.model or f"unit-{provider}",
                         "provider": provider,
+                        "context_window": 123456,
                         "api_key": "secret-key",
                         "extra_body": self.extra_body or {
                             "seed": 422,
@@ -289,6 +290,7 @@ class TestAPIExecutor:
         assert envelope["call"]["step"] == "reaction"
         assert envelope["call"]["channel"] == "reaction.loop"
         assert envelope["provider"]["provider"] == provider
+        assert envelope["context_window_tokens"] == 123456
         assert envelope["request_body"] == sent["payload"]
         assert envelope["request_body"]["seed"] == 422
         assert "tool_choice" not in envelope["request_body"]
@@ -300,6 +302,13 @@ class TestAPIExecutor:
             separators=(",", ":"),
         ).encode("utf-8")
         assert envelope["request_body_sha256"] == hashlib.sha256(canonical).hexdigest()
+        assert envelope["wire_body_encoding"] == "canonical_json_utf8.v1"
+        assert envelope["wire_body_sha256"] == envelope["request_body_sha256"]
+        assert envelope["wire_body_bytes"] == len(canonical)
+        assert envelope["request_body_source_map"]["wire_body_sha256"] == (
+            envelope["wire_body_sha256"]
+        )
+        assert "request_body_source_map" not in envelope["request_body"]
 
         for filename in [
             "00_call_header.json",
@@ -359,6 +368,169 @@ class TestAPIExecutor:
         assert "layer popup truth" in body_text
         assert "runtime system must not be payload truth" not in body_text
         assert "runtime message must not be payload truth" not in body_text
+
+    def test_spec725_pre_send_wire_verification_rejects_mutated_payload(
+            self, tmp_path, monkeypatch):
+        from engines.executor import APIExecutor
+
+        executor = APIExecutor(
+            self._PayloadTruthConfig("openai_chat"),
+            connectivity_store=NoopConnectivity(),
+            context_dir=str(tmp_path / "context"),
+        )
+        executor._provider_call_interval_seconds = 0
+        prepared = executor.prepare_provider_request(
+            "reaction",
+            "system",
+            [{"role": "user", "content": "hello"}],
+        )
+        prepared["payload"]["temperature"] = 0.8
+        calls = []
+        monkeypatch.setattr(
+            executor,
+            "_send_request",
+            lambda *_args: calls.append(True),
+        )
+        with pytest.raises(ValueError, match="provider_request_wire_mismatch"):
+            executor.call_prepared_once(prepared)
+        assert calls == []
+
+    @pytest.mark.parametrize(
+        "provider", ["openai_chat", "openai_responses", "anthropic_messages"])
+    def test_spec723_block_index_never_changes_provider_body(
+            self, provider, tmp_path):
+        from data.audit_store import AuditStore
+        from engines.executor import APIExecutor
+
+        context_dir = tmp_path / "context"
+        store = AuditStore(reaction_dir=str(context_dir / "reaction"))
+        layers = {
+            "permanent": "CORE\n\nRULE",
+            "periodic": "",
+            "lately": [],
+            "high_freq": "HIGH",
+            "now": [],
+            "statusbar": "STATUS",
+            "popup": "POPUP",
+            "full_system": "rendered audit only",
+        }
+        store.write_audit("reaction", layers)
+        executor = APIExecutor(
+            self._PayloadTruthConfig(provider),
+            connectivity_store=NoopConnectivity(),
+            context_dir=str(context_dir),
+        )
+        before = executor.prepare_provider_request(
+            "reaction", "ignored", [{"role": "user", "content": "ignored"}])
+
+        store.write_audit("reaction", {
+            **layers,
+            "permanent_block_index": [
+                {"block_id": "core", "title": "Core", "char_start": 0, "char_end": 4},
+                {"block_id": "rule", "title": "Rule", "char_start": 6, "char_end": 10},
+            ],
+        })
+        after = executor.prepare_provider_request(
+            "reaction", "ignored", [{"role": "user", "content": "ignored"}])
+
+        assert after["payload"] == before["payload"]
+        assert (
+            after["provider_request_envelope"]["request_body_sha256"]
+            == before["provider_request_envelope"]["request_body_sha256"]
+        )
+        assert "block_index" not in json.dumps(after["payload"], ensure_ascii=False)
+        assert after["provider_request_envelope"]["created_at"]
+        assert "created_at" not in after["payload"]
+
+    @pytest.mark.parametrize(
+        ("provider", "expected_roles", "marker"),
+        [
+            ("openai_chat", ["user", "assistant", "system"], "prompt_cache_breakpoint"),
+            ("openai_responses", ["user", "assistant", "system"], "prompt_cache_breakpoint"),
+            ("anthropic_messages", ["user", "assistant", "user"], "cache_control"),
+        ],
+    )
+    def test_spec723_lately_blocks_reach_each_provider_in_order_with_b1(
+            self, provider, expected_roles, marker, tmp_path, monkeypatch):
+        from data.audit_store import AuditStore
+        from engines.executor import APIExecutor
+
+        lately = [
+            {
+                "role": "user",
+                "kind": "interaction",
+                "active_corpus_id": "C-00101",
+                "content": "【历史交互】\n语料短ID：C-00101。\n" + "甲" * 4100,
+            },
+            {
+                "role": "assistant",
+                "kind": "dialogue_progress",
+                "active_corpus_id": "C-00102",
+                "content": "【轮中进展记录】\n语料短ID：C-00102。\nLATELY_SECOND",
+            },
+            {
+                "role": "system",
+                "kind": "tool_fact",
+                "active_corpus_id": "C-00103",
+                "content": "【历史工具事实摘要】\n语料短ID：C-00103。\nLATELY_THIRD",
+            },
+        ]
+        context_dir = tmp_path / "context"
+        store = AuditStore(reaction_dir=str(context_dir / "reaction"))
+        store.write_audit("reaction", {
+            "permanent": "permanent truth",
+            "periodic": "",
+            "lately": lately,
+            "lately_markdown": "\n".join(entry["content"] for entry in lately),
+            "high_freq": "",
+            "now": [{"role": "user", "content": "NOW_DYNAMIC"}],
+            "statusbar": "",
+            "popup": "",
+            "full_system": "rendered audit only",
+        })
+        sent = {}
+        ex = APIExecutor(
+            self._PayloadTruthConfig(provider, model="gpt-5.6-test"),
+            connectivity_store=NoopConnectivity(),
+            context_dir=str(context_dir),
+        )
+        ex._provider_call_interval_seconds = 0
+
+        def fake_send(_url, _api_key, payload):
+            sent["payload"] = payload
+            return self._fake_response_for_provider(provider)
+
+        monkeypatch.setattr(ex, "_send_request", fake_send)
+        ex.call("reaction", "ignored", [{"role": "user", "content": "ignored"}])
+
+        envelope = json.loads(
+            (context_dir / "reaction" / "step.json").read_text(encoding="utf-8")
+        )
+        layer = json.loads(
+            (context_dir / "reaction" / "layers" / "30_lately.json")
+            .read_text(encoding="utf-8")
+        )
+        wire = sent["payload"].get("input") or sent["payload"]["messages"]
+
+        def text_of(message):
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            return "".join(
+                str(block.get("text") or "")
+                for block in content or []
+                if isinstance(block, dict)
+            )
+
+        lately_wire = [message for message in wire if "语料短ID：C-001" in text_of(message)]
+        assert layer["content"] == lately
+        assert [message["role"] for message in lately_wire] == expected_roles
+        assert [f"C-0010{index}" in text_of(message) for index, message in enumerate(
+            lately_wire, start=1,
+        )] == [True, True, True]
+        assert marker not in str(lately_wire[-2]["content"])
+        assert marker in str(lately_wire[-1]["content"])
+        assert envelope["request_body"] == sent["payload"]
 
     def test_spec491_openai_chat_expands_reasoning_context_native_replay(
             self, tmp_path, monkeypatch):
@@ -1368,6 +1540,8 @@ class TestAPIExecutor:
         assert started_envelope["endpoint"]["tier"] == "fallback"
         assert started_envelope["provider"]["model"] == "actual-fallback"
         assert started_envelope["request_body_sha256"] == output_envelope["request_body_sha256"]
+        assert "request_body_source_map" not in started_envelope
+        assert "request_body_source_map" not in output_envelope
 
     def test_spec425_round_audit_records_started_for_send_failure_fallback(
             self, tmp_path, monkeypatch):
@@ -2162,6 +2336,70 @@ class TestAPIExecutor:
         assert ex.call("reaction", "system", [{"role": "user", "content": "go"}])["response"] == "ok"
         assert len(sends) == 3
 
+    def test_provider_response_connection_reset_is_structured_transient(self, monkeypatch):
+        from engines.executor import APIExecutor
+        from errors import APIBridgeError
+
+        ex = APIExecutor(self._RetryConfig(), connectivity_store=NoopConnectivity())
+
+        class ResettingResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                raise ConnectionResetError(10054, "peer reset")
+
+        monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: ResettingResponse())
+
+        with pytest.raises(APIBridgeError) as caught:
+            ex._send_request("https://api.example/v1/chat/completions", "key", {})
+
+        assert caught.value.transient is True
+        assert "provider_transport_error:ConnectionResetError" in str(caught.value)
+
+    def test_provider_worker_preserves_transient_transport_flag(self, monkeypatch):
+        from engines.executor import APIExecutor, _provider_transport_worker
+        from errors import APIBridgeError
+
+        class Connection:
+            def __init__(self):
+                self.messages = []
+
+            def send(self, payload):
+                self.messages.append(payload)
+
+            def close(self):
+                pass
+
+        def reset(*_args, **_kwargs):
+            raise APIBridgeError(
+                "https://api.example/v1/chat/completions",
+                "provider_transport_error:ConnectionResetError: peer reset",
+                transient=True,
+            )
+
+        monkeypatch.setattr(APIExecutor, "_send_request", reset)
+        connection = Connection()
+        _provider_transport_worker(connection, {
+            "url": "https://api.example/v1/chat/completions",
+            "api_key": "key",
+            "payload": {},
+            "provider": "openai",
+            "timeouts": {
+                "request_timeout": 180,
+                "first_chunk_timeout": 30,
+                "idle_timeout": 60,
+                "content_overrun_chars": 4096,
+            },
+        })
+
+        terminal = connection.messages[-1]
+        assert terminal["kind"] == "api"
+        assert terminal["transient"] is True
+
     @pytest.mark.parametrize("status_code", [401, 403])
     def test_permanent_auth_status_fails_once(self, monkeypatch, status_code):
         from engines.executor import APIExecutor
@@ -2492,6 +2730,7 @@ class TestAPIExecutor:
         captured = {}
 
         def fake_urlopen(req, timeout=None):
+            captured["body_bytes"] = req.data
             captured["body"] = req.data.decode("utf-8")
             captured["timeout"] = timeout
             return FakeStreamResponse()
@@ -2499,14 +2738,18 @@ class TestAPIExecutor:
         monkeypatch.setattr("engines.executor.urllib.request.urlopen", fake_urlopen)
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
+        payload = {"model": "unit", "messages": [], "stream": True}
+        wire_body = APIExecutor._canonical_json_bytes(payload)
         response = ex._send_request(
             "https://api.example/v1/chat/completions",
             "unit-key",
-            {"model": "unit", "messages": [], "stream": True},
+            payload,
+            wire_body=wire_body,
         )
 
         assert captured["timeout"] == 120
-        assert '"stream": true' in captured["body"]
+        assert captured["body_bytes"] == wire_body
+        assert '"stream":true' in captured["body"]
         assert response["choices"][0]["message"]["content"] == "hello"
         assert response["usage"]["completion_tokens"] == 1
 

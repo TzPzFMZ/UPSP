@@ -355,6 +355,7 @@ def validate_natural_final_reply_candidate(
             "blockers": task_acceptance.get("blockers", []),
             "guide_id": task_acceptance.get("guide_id", ""),
             "task_id": task_acceptance.get("task_id", ""),
+            "ledger_state": task_acceptance.get("ledger_state", {}),
             "feedback": task_acceptance_feedback(task_acceptance),
         }
 
@@ -615,6 +616,16 @@ def runtime_auto_blocked_final_response(settlement_ledgers=None):
             f"未结算项：{shown}。\n\n"
             "Runtime 检测到旧收束协议连续无效；"
             "本轮按 blocked 收束并保留现场，等待后续修复或继续处理。"
+        )
+    if reason == "blocked/task_guide_correction_exhausted":
+        return (
+            "Runtime 已阻止本轮继续空转，任务引导账本仍未合法更新。\n\n"
+            "原因：task_guide_correction_exhausted。\n"
+            f"最近三次拒绝：{shown}。\n\n"
+            "guide_submit 连续三次校验失败且没有产生新工具证据；"
+            "Runtime 已在本地阻止第四次 provider 调用。"
+            "用户原始任务、已读证据、活动任务和未完成状态均保留，"
+            "本轮不计为成功，修正当前任务引导后可继续。"
         )
     return (
         "Runtime auto-blocked 本轮，不能把本轮说成成功完成。\n\n"

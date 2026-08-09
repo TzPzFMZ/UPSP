@@ -1,5 +1,7 @@
 """Task acceptance helpers for Runtime terminal-state handling."""
 
+import json
+
 from logic.closeout_copy import closeout_final_reply_reminder
 from logic.task_progress_copy import task_acceptance_checkpoint_text
 
@@ -62,6 +64,7 @@ def task_acceptance_feedback(result):
         f"{task_acceptance_checkpoint_text()}"
         f"{closeout_final_reply_reminder(task_delivery=True)}"
         "确实无法继续的项标 blocked 并写 reason；账本闭合后直接自然回复用户。"
+        "blocked 还必须引用 Runtime 已登记的 call:<call_id> 或成功证据；失败调用不能冒充 EV-*。"
         "只有需要跨轮继续时，才调用 reaction_finalize(handoff_text)。"
         "全部必需项证据通过后，Runtime 会自动撤下任务清单。"
     )
@@ -77,8 +80,17 @@ def task_acceptance_block_signature(result):
         blockers = [str(
             (result or {}).get("reason") or "task_acceptance_blocked"
         ).strip()]
-    return "|".join((
+    parts = [
         str((result or {}).get("reason") or "task_acceptance_blocked").strip(),
         str((result or {}).get("guide_id") or (result or {}).get("task_id") or "").strip(),
         *blockers,
-    ))
+    ]
+    ledger_state = (result or {}).get("ledger_state")
+    if isinstance(ledger_state, dict):
+        parts.append(json.dumps(
+            ledger_state,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ))
+    return "|".join(parts)

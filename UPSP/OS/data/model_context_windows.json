@@ -1,0 +1,76 @@
+{
+  "schema_version": "model_context_window_registry.v1",
+  "updated_at": "2026-08-05",
+  "models": {
+    "gpt-5.6": {
+      "context_window": 1050000,
+      "source_url": "https://developers.openai.com/api/docs/models",
+      "verified_at": "2026-08-05"
+    },
+    "gpt-5.6-sol": {
+      "context_window": 1050000,
+      "source_url": "https://developers.openai.com/api/docs/models",
+      "verified_at": "2026-08-05"
+    },
+    "gpt-5.6-terra": {
+      "context_window": 1050000,
+      "source_url": "https://developers.openai.com/api/docs/models",
+      "verified_at": "2026-08-05"
+    },
+    "gpt-5.6-luna": {
+      "context_window": 1050000,
+      "source_url": "https://developers.openai.com/api/docs/models",
+      "verified_at": "2026-08-05"
+    },
+    "gpt-5.2": {
+      "context_window": 400000,
+      "source_url": "https://developers.openai.com/api/docs/models/gpt-5.2",
+      "verified_at": "2026-08-05"
+    },
+    "gpt-5.2-2025-12-11": {
+      "context_window": 400000,
+      "source_url": "https://developers.openai.com/api/docs/models/gpt-5.2",
+      "verified_at": "2026-08-05"
+    },
+    "deepseek-v4-flash": {
+      "context_window": 1000000,
+      "source_url": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "verified_at": "2026-08-05"
+    },
+    "deepseek-v4-pro": {
+      "context_window": 1000000,
+      "source_url": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "verified_at": "2026-08-05"
+    },
+    "claude-fable-5": {
+      "context_window": 1000000,
+      "source_url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "verified_at": "2026-08-05"
+    },
+    "claude-opus-4-8": {
+      "context_window": 1000000,
+      "source_url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "verified_at": "2026-08-05"
+    },
+    "claude-opus-5": {
+      "context_window": 1000000,
+      "source_url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "verified_at": "2026-08-06"
+    },
+    "claude-sonnet-5": {
+      "context_window": 1000000,
+      "source_url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "verified_at": "2026-08-05"
+    },
+    "claude-haiku-4-5": {
+      "context_window": 200000,
+      "source_url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "verified_at": "2026-08-05"
+    },
+    "claude-haiku-4-5-20251001": {
+      "context_window": 200000,
+      "source_url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "verified_at": "2026-08-05"
+    }
+  }
+}

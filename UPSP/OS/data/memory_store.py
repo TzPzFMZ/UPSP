@@ -12,7 +12,6 @@ DDS §9 记忆体系
 import json
 import os
 import re
-from datetime import datetime
 
 from data.atomic_write import atomic_write_json
 from utils.content_ranges import apply_explicit_range, range_kwargs_from_request
@@ -28,7 +27,7 @@ from schemas.memory import (
     MEMORY_ENTRY_TEMPLATE, INDEX_HEADER, INDEX_SEPARATOR,
 )
 from errors import EntryNotFoundError, WriteError, ReadError
-from constants import local_now
+from constants import local_now, normalize_iso_timestamp
 
 
 def _overview_text(value):
@@ -44,6 +43,72 @@ def _overview_text(value):
 
 def _dream_text(value):
     return "是" if bool(value) else "否"
+
+
+def _normalise_meta_entry(value):
+    entry = dict(value) if isinstance(value, dict) else {}
+    entry.setdefault("current_overview_updated_at", "")
+    return entry
+
+
+def _round_ref(value):
+    return f"R{value:06d}" if isinstance(value, int) and not isinstance(value, bool) else "未记录"
+
+
+def project_memory_body(body, meta):
+    """Replace stale mutable body fields with the latest metadata truth."""
+    entry = _normalise_meta_entry(meta)
+    facts = [
+        f"**入库轮次**：{_round_ref(entry.get('created_round'))}",
+        f"**入库时间**：{normalize_iso_timestamp(entry.get('created_at')) or '未记录'}",
+        f"**最近调用轮次**：{_round_ref(entry.get('last_recalled_round'))}",
+        f"**最近调用时间**：{normalize_iso_timestamp(entry.get('last_recalled_at')) or '未记录'}",
+        f"**挂接备注**：{str(entry.get('current_overview') or '').strip() or '无'}",
+        "**挂接备注更新时间**："
+        f"{normalize_iso_timestamp(entry.get('current_overview_updated_at')) or '未记录'}",
+        "**关联容器**：" + ", ".join(
+            str(item).strip() for item in entry.get("linked_containers") or []
+            if str(item).strip()
+        ) or "**关联容器**：无",
+    ]
+    header_prefixes = (
+        "**入库**：", "**最后调用**：", "现状概况：", "入库时间：", "关联容器：",
+        "**入库轮次**：", "**入库时间**：", "**最近调用轮次**：",
+        "**最近调用时间**：", "**挂接备注**：", "**挂接备注更新时间**：",
+        "**关联容器**：",
+    )
+    lines = str(body or "").splitlines()
+    heading = next((
+        index for index, line in enumerate(lines)
+        if line.lstrip().startswith("## MEM-")
+    ), None)
+    if heading is None:
+        return "\n".join(facts + lines).strip()
+
+    content_prefixes = ("**内容**", "**摘要**", "**正文**", "**梗概**")
+    content_start = next((
+        index for index in range(heading + 1, len(lines))
+        if lines[index].strip().startswith(content_prefixes)
+    ), len(lines))
+    drop = {
+        index for index in range(heading + 1, content_start)
+        if lines[index].strip().startswith(header_prefixes)
+    }
+    if content_start < len(lines):
+        for prefix in ("入库时间：", "关联容器："):
+            match = next((
+                index for index in range(len(lines) - 1, content_start, -1)
+                if lines[index].strip().startswith(prefix)
+            ), None)
+            if match is not None:
+                drop.add(match)
+    lines = [line for index, line in enumerate(lines) if index not in drop]
+    heading = next(
+        index for index, line in enumerate(lines)
+        if line.lstrip().startswith("## MEM-")
+    )
+    lines[heading + 1:heading + 1] = facts
+    return "\n".join(lines).strip()
 
 
 def _body_limit_for_weight(weight):
@@ -78,7 +143,12 @@ class MemoryStore:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             raise ReadError(path, cause=e)
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            key: _normalise_meta_entry(value) if isinstance(value, dict) else value
+            for key, value in data.items()
+        }
 
     def _read_entry_from_file(self, path, mem_id):
         if not os.path.isfile(path):
@@ -173,6 +243,21 @@ class MemoryStore:
         layer, meta, _body_path = self._resolve_read_target(mem_id)
         meta["_memory_layer"] = layer
         return meta
+
+    def mark_recalled(self, mem_id, round_num=None, recalled_at=None):
+        """Update recall coordinates in the active metadata layer."""
+        for _layer, meta_path, _body_path in self._active_read_layers():
+            meta = self._read_json_file(meta_path)
+            if not isinstance(meta.get(mem_id), dict):
+                continue
+            entry = dict(meta[mem_id])
+            entry["last_recalled_at"] = recalled_at or local_now().isoformat()
+            if round_num is not None:
+                entry["last_recalled_round"] = round_num
+            meta[mem_id] = entry
+            atomic_write_json(meta_path, meta)
+            return entry
+        raise EntryNotFoundError(mem_id)
 
     # ==============================================================
     # memory.md 读写
@@ -368,11 +453,7 @@ class MemoryStore:
         """读取 meta.json 全量"""
         if not os.path.isfile(META_JSON):
             return default_meta_json()
-        try:
-            with open(META_JSON, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            raise ReadError(META_JSON, cause=e)
+        return self._read_json_file(META_JSON)
 
     def save_meta(self, meta):
         """写入 meta.json（原子）"""
@@ -501,7 +582,11 @@ class MemoryStore:
 
         entry["linked_containers"] = updated_refs
         if current_overview is not None:
-            entry["current_overview"] = _overview_text(current_overview)
+            overview = _overview_text(current_overview)
+            if overview != str(entry.get("current_overview") or "").strip():
+                entry["current_overview_updated_at"] = local_now().isoformat()
+            entry["current_overview"] = overview
+        entry = _normalise_meta_entry(entry)
         meta[mem_id] = entry
         self.save_meta(meta)
         self._update_memory_linked_containers(mem_id, updated_refs)

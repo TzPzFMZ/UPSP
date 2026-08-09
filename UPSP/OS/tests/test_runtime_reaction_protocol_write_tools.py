@@ -2,6 +2,8 @@ import json
 import os
 import sys
 
+import pytest
+
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TESTS_DIR)
 sys.path.insert(0, os.path.join(TESTS_DIR, ".."))
@@ -135,6 +137,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
                         "item_id": "item_memory",
                         "required": True,
                         "status": "blocked",
+                        "reason": "identity unresolved",
                         "evidence_refs": ["EV-identity-unresolved"],
                     },
                 ],
@@ -149,6 +152,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
                         "acceptance_id": "acc_memory",
                         "required": True,
                         "status": "blocked",
+                        "reason": "identity unresolved",
                         "evidence_refs": ["EV-identity-unresolved"],
                     },
                 ],
@@ -189,6 +193,61 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert ledger["closeout_decision"] == "blocked"
         assert ledger["runtime_derived_blocked"] is True
         assert ledger["blockers"] == ["item_memory", "acc_memory"]
+
+    def test_spec729_terminal_blocked_rejects_continue_without_relay(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        monkeypatch.setattr(
+            rt.reaction_loop_runner,
+            "_task_closeout_acceptance",
+            lambda form: {
+                "allowed": False,
+                "reason": "task_acceptance_blocked",
+                "task_id": "T-729",
+                "guide_id": "task:T-729",
+                "blockers": ["item_02", "acc_01"],
+                "terminal_blocked": True,
+                "ledger_state": {
+                    "items": [{"id": "item_02", "status": "blocked", "evidence_refs": ["call:fetch"]}],
+                    "acceptance": [{"id": "acc_01", "status": "blocked", "evidence_refs": ["call:fetch"]}],
+                    "pending_inputs": [],
+                },
+            },
+        )
+        helper = self
+
+        class ContinueExecutor:
+            def __init__(self):
+                self.calls = 0
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                assert _logical_step(step, active_protocol_tool_guides) == "reaction"
+                self.calls += 1
+                if self.calls > 1:
+                    raise AssertionError("terminal blocked continue must not relay")
+                return {
+                    "response": "",
+                    "tool_call_envelopes": [helper._native_reaction_finalize(
+                        call_id="call_spec729_continue",
+                        handoff_text="说明阻塞事实与未完成项",
+                    )],
+                }
+
+        executor = ContinueExecutor()
+        rt.executor = executor
+        result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
+
+        assert executor.calls == 1
+        assert result["_settlement_ledgers"][-1]["closeout_decision"] == "blocked"
+        assert result["_settlement_ledgers"][-1]["runtime_derived_blocked"] is True
+        assert result["_closeout_relay_receipts"] == []
+        assert rt.sm.get_flags().get("continue_requested") is not True
+        assert result["response"]
+        assert result["aborted"] is False
 
     def test_spec497_finish_uses_same_response_text_without_final_reply_call(
             self, tmp_path, monkeypatch):
@@ -4453,3 +4512,333 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             ("state_update", "unknown_tool_id"),
             ("relation_content_read", "unknown_tool_id"),
         ]
+
+    def test_spec727_third_bootstrap_rejection_blocks_before_fourth_provider_call(
+            self, tmp_path, monkeypatch):
+        from logic.task_guide import create_task_bootstrap_guide
+
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        create_task_bootstrap_guide(rt.workbench, reason="spec727")
+        helper = self
+
+        class RejectedBootstrapExecutor:
+            def __init__(self):
+                self.calls = 0
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                assert _logical_step(step, active_protocol_tool_guides) == "reaction"
+                self.calls += 1
+                if self.calls > 3:
+                    raise AssertionError("Spec727 must block before a fourth provider call")
+                submission = {
+                    "item_id": "build_initial_task_guide",
+                    "option_id": "submit_initial_guide",
+                    "fields": {
+                        "task_title": "12 项测试",
+                        "items": [],
+                        "acceptance": [],
+                        "reason": "misplaced",
+                    },
+                }
+                if self.calls == 2:
+                    submission["fields"] = {
+                        "task_title": "12 项测试",
+                        "items": [],
+                    }
+                elif self.calls == 3:
+                    submission["item_id"] = "invented_item"
+                return {
+                    "response": "",
+                    "tool_call_envelopes": [helper._native_tool_envelope(
+                        "guide_submit",
+                        {
+                            "guide_id": "task_bootstrap",
+                            "submissions": [submission],
+                        },
+                        call_id=f"call_spec727_reject_{self.calls}",
+                        tool_family="protocol_tool",
+                        tool_class="sync_tool",
+                    )],
+                }
+
+        executor = RejectedBootstrapExecutor()
+        rt.executor = executor
+
+        result = rt._run_reaction_loop(
+            rt.sm.load(),
+            "interactive",
+            [],
+            interaction_meta=self._confirmed_meta(),
+        )
+
+        assert executor.calls == 3
+        assert result["aborted"] is True
+        assert result["error"] == "blocked/task_guide_correction_exhausted"
+        assert result["_local_blocked_reason"] == (
+            "blocked/task_guide_correction_exhausted"
+        )
+        assert len(result["_guide_submit_receipts"]) == 3
+        assert [
+            receipt["reason"] for receipt in result["_guide_submit_receipts"]
+        ] == [
+            "undeclared_guide_fields",
+            "missing_guide_fields",
+            "guide_item_not_found",
+        ]
+        assert all(
+            receipt["error_hint"]["kind"] == "validation"
+            for receipt in result["_guide_submit_receipts"]
+        )
+        ledger = result["_settlement_ledgers"][-1]
+        assert ledger["blocked_reason"] == "blocked/task_guide_correction_exhausted"
+        assert len(ledger["error_hints"]) == 3
+        assert result["response"]
+        assert "第四次 provider 调用" in result["response"]
+        assert rt.workbench.get("base.active_task") in (None, "")
+        assert rt.workbench.current_active_guide_id() == "task_bootstrap"
+
+    def test_spec729_multiple_rejections_in_one_frame_count_as_one_correction(
+            self, tmp_path, monkeypatch):
+        from logic.task_guide import create_task_bootstrap_guide
+
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        create_task_bootstrap_guide(rt.workbench, reason="spec729 frame budget")
+        helper = self
+
+        class MultiRejectExecutor:
+            def __init__(self):
+                self.calls = 0
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                assert _logical_step(step, active_protocol_tool_guides) == "reaction"
+                self.calls += 1
+                if self.calls > 3:
+                    raise AssertionError("three rejected frames must stop before call 4")
+                count = 3 if self.calls == 1 else 1
+                envelopes = []
+                for index in range(count):
+                    envelopes.append(helper._native_tool_envelope(
+                        "guide_submit",
+                        {
+                            "guide_id": "task_bootstrap",
+                            "submissions": [{
+                                "item_id": "build_initial_task_guide",
+                                "option_id": "submit_initial_guide",
+                                "fields": {
+                                    "task_title": "测试",
+                                    "items": [],
+                                    "acceptance": [],
+                                    "reason": f"misplaced-{self.calls}-{index}",
+                                },
+                            }],
+                        },
+                        call_id=f"call_multi_{self.calls}_{index}",
+                        tool_family="protocol_tool",
+                        tool_class="sync_tool",
+                    ))
+                return {"response": "", "tool_call_envelopes": envelopes}
+
+        executor = MultiRejectExecutor()
+        rt.executor = executor
+        result = rt._run_reaction_loop(
+            rt.sm.load(), "interactive", [], interaction_meta=self._confirmed_meta()
+        )
+
+        assert executor.calls == 3
+        assert len(result["_guide_submit_receipts"]) == 5
+        guard = next(
+            item for item in result["_reaction_loop_guard_receipts"]
+            if item.get("status") == "task_guide_correction_exhausted_auto_blocked"
+        )
+        assert guard["rejection_count"] == 3
+        assert guard["rejected_receipt_count"] == 3
+
+    def test_spec729_only_new_terminal_tool_fact_resets_guide_correction_budget(
+            self):
+        from engines.reaction_loop_main import _new_blocker_evidence_refs
+
+        duplicate = {
+            "tool_id": "file_read",
+            "call_id": "call_duplicate",
+            "status": "rejected",
+            "reason": "duplicate_tool_failure_repeated",
+        }
+        validation = {
+            "tool_id": "file_read",
+            "call_id": "call_validation",
+            "status": "rejected",
+            "reason": "invalid_line_start",
+        }
+        terminal = {
+            "tool_id": "web_fetch",
+            "call_id": "call_terminal",
+            "status": "not_found",
+            "reason": "find_text_not_found",
+        }
+
+        assert _new_blocker_evidence_refs(set(), [duplicate, validation]) == set()
+        assert _new_blocker_evidence_refs(set(), [terminal]) == {
+            "call:call_terminal"
+        }
+        assert _new_blocker_evidence_refs(
+            {"call:call_terminal"}, [terminal]
+        ) == set()
+
+    @pytest.mark.parametrize("evidence_status", ["ok", "not_found"])
+    def test_spec729_new_tool_evidence_resets_bootstrap_rejection_count(
+            self, tmp_path, monkeypatch, evidence_status):
+        from engines.general_tool_dispatcher import GeneralToolDispatcher
+        from logic.task_guide import create_task_bootstrap_guide
+
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        create_task_bootstrap_guide(rt.workbench, reason="spec727 reset")
+        helper = self
+
+        class ResetExecutor:
+            def __init__(self):
+                self.calls = 0
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                assert _logical_step(step, active_protocol_tool_guides) == "reaction"
+                self.calls += 1
+                if self.calls > 5:
+                    raise AssertionError("third post-evidence rejection must stop the loop")
+                if self.calls == 2:
+                    envelope = helper._native_tool_envelope(
+                        "file_read",
+                        {"path": "task.md", "reason": "new evidence"},
+                        call_id="call_spec727_read",
+                    )
+                else:
+                    envelope = helper._native_tool_envelope(
+                        "guide_submit",
+                        {
+                            "guide_id": "task_bootstrap",
+                            "submissions": [{
+                                "item_id": "build_initial_task_guide",
+                                "option_id": "submit_initial_guide",
+                                "fields": {
+                                    "task_title": "测试",
+                                    "items": [],
+                                    "acceptance": [],
+                                    "reason": "misplaced",
+                                },
+                            }],
+                        },
+                        call_id=f"call_spec727_reset_reject_{self.calls}",
+                        tool_family="protocol_tool",
+                        tool_class="sync_tool",
+                    )
+                return {"response": "", "tool_call_envelopes": [envelope]}
+
+        rt.executor = ResetExecutor()
+        rt.general_tool_dispatcher = GeneralToolDispatcher(execute_fn=lambda request: {
+            "tool_id": "file_read",
+            "tool_family": "general_tool",
+            "tool_class": "read_tool",
+            "status": evidence_status,
+            "reason": "source unavailable" if evidence_status == "not_found" else "",
+            "source": "general_tool_call",
+            "result_kind": "general_tool_result",
+            "path": request.get("path"),
+            "content": "new evidence",
+        })
+
+        result = rt._run_reaction_loop(
+            rt.sm.load(), "interactive", [], interaction_meta=self._confirmed_meta()
+        )
+
+        assert rt.executor.calls == 5
+        assert result["_local_blocked_reason"] == (
+            "blocked/task_guide_correction_exhausted"
+        )
+        assert len(result["_guide_submit_receipts"]) == 4
+        assert len(result["_settlement_ledgers"][-1]["error_hints"]) == 3
+
+    def test_spec729_third_post_bootstrap_rejection_blocks_before_fourth_call(
+            self, tmp_path, monkeypatch):
+        from logic.task_guide import materialize_initial_task_guide
+
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        task_id = materialize_initial_task_guide(rt.workbench, {
+            "task_title": "已建立任务的纠错止损",
+            "items": [{"item_id": "item_01", "title": "完成任务"}],
+            "acceptance": [{"acceptance_id": "acc_01", "description": "完成验收"}],
+        })
+        helper = self
+
+        class RejectedTaskUpdateExecutor:
+            def __init__(self):
+                self.calls = 0
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                assert _logical_step(step, active_protocol_tool_guides) == "reaction"
+                self.calls += 1
+                if self.calls > 3:
+                    raise AssertionError("post-bootstrap correction must stop before call 4")
+                fields = {}
+                if self.calls == 2:
+                    fields = {"items": {
+                        "invented": {"status": "done", "evidence_refs": ["EV-invented"]}
+                    }}
+                elif self.calls == 3:
+                    fields = {"items": {
+                        "item_01": {"status": "blocked", "reason": "provider unavailable"}
+                    }}
+                return {
+                    "response": "",
+                    "tool_call_envelopes": [helper._native_tool_envelope(
+                        "guide_submit",
+                        {
+                            "guide_id": f"task:{task_id}",
+                            "submissions": [{
+                                "item_id": "task_progress",
+                                "option_id": "update_task_status",
+                                "fields": fields,
+                            }],
+                        },
+                        call_id=f"call_spec729_reject_{self.calls}",
+                        tool_family="protocol_tool",
+                        tool_class="sync_tool",
+                    )],
+                }
+
+        executor = RejectedTaskUpdateExecutor()
+        rt.executor = executor
+        result = rt._run_reaction_loop(
+            rt.sm.load(), "interactive", [], interaction_meta=self._confirmed_meta()
+        )
+
+        assert executor.calls == 3
+        assert result["_local_blocked_reason"] == (
+            "blocked/task_guide_correction_exhausted"
+        )
+        assert [
+            receipt["reason"] for receipt in result["_guide_submit_receipts"]
+        ] == [
+            "task_status_update_empty",
+            "unknown_task_guide_records",
+            "task_blocked_evidence_required",
+        ]
+        assert rt.workbench.get("base.active_task") == task_id
+        assert "任务引导账本仍未合法更新" in result["response"]

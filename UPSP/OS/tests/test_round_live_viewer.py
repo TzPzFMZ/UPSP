@@ -63,6 +63,13 @@ def _layers_snapshot(projections=None, **contents):
     }
 
 
+def _layers_manifest(snapshot):
+    return {"layers": [
+        {key: layer[key] for key in ("layer_key", "chars")}
+        for layer in snapshot["layers"]
+    ]}
+
+
 def test_live_viewer_prefers_explicit_frame_id():
     event = _event(1, "llm_call_started", {}, phase="reaction", iteration=3)
     event["frame_id"] = "R000614:reaction:explicit-3"
@@ -1140,7 +1147,7 @@ def test_live_projection_recovers_unmarked_lately_and_now_by_message_position():
     assert "GUIDE｜指南" not in panes["50_now"]["content_md"]
 
 
-def test_spec507_live_projection_exposes_corpus_blocks_for_pane_cards():
+def test_spec723_string_layers_are_not_guessed_into_corpus_blocks():
     events = [
         _event(1, "step_input_snapshot", {
             "layers_snapshot": _layers_snapshot(
@@ -1163,23 +1170,74 @@ def test_spec507_live_projection_exposes_corpus_blocks_for_pane_cards():
     blocks = panes["50_now"]["content_blocks"]
 
     assert panes["01_tool_header"]["content_blocks"] == []
-    assert [block["title"] for block in blocks] == [
-        "本轮工具事实",
-        "本轮资料",
-        "轮中进展记录",
-    ]
-    assert [block["index"] for block in blocks] == [1, 2, 3]
-    assert blocks[0]["block_id"] == "50_now:B01"
-    assert blocks[0]["tone"] != blocks[1]["tone"]
-    assert "file_read 已读取" in blocks[0]["content_md"]
-    assert "12 项 agent 日常能力测试" in blocks[1]["content_md"]
-    assert "模型正在创建任务清单" in blocks[2]["content_md"]
+    assert blocks == []
+
+
+def test_spec723_string_layer_indexes_project_exact_cards_and_corruption_falls_back():
+    snapshot = _layers_snapshot()
+    string_panes = ("10_permanent", "20_periodic", "40_high_freq", "60_statusbar", "99_popup")
+    for layer in snapshot["layers"]:
+        if layer["layer_key"] not in string_panes:
+            continue
+        pane_id = layer["layer_key"]
+        first = f"{pane_id}:A"
+        second = f"{pane_id}:B"
+        content = f"{first}\n--\n{second}"
+        second_start = content.index(second)
+        layer["content"] = content
+        layer["block_index"] = [
+            {
+                "block_id": f"{pane_id}:a",
+                "title": "模块 A",
+                "char_start": 0,
+                "char_end": len(first),
+                "kind": "unit",
+                "source_block_id": "source-a",
+            },
+            {
+                "block_id": f"{pane_id}:b",
+                "title": "模块 B",
+                "char_start": second_start,
+                "char_end": len(content),
+                "kind": "unit",
+                "source_block_id": "source-b",
+            },
+        ]
+
+    state = build_live_state([_event(1, "step_input_snapshot", {
+        "layers_snapshot": snapshot,
+    }, phase="reaction", iteration=1)])
+    panes = {pane["id"]: pane for pane in state["context_panes"]}
+    for pane_id in string_panes:
+        assert [block["title"] for block in panes[pane_id]["content_blocks"]] == [
+            "模块 A", "模块 B"]
+        assert [block["content_raw"] for block in panes[pane_id]["content_blocks"]] == [
+            f"{pane_id}:A", f"{pane_id}:B"]
+
+    permanent = next(
+        layer for layer in snapshot["layers"]
+        if layer["layer_key"] == "10_permanent")
+    permanent["block_index"][1]["char_start"] = 1
+    fallback = build_live_state([_event(1, "step_input_snapshot", {
+        "layers_snapshot": snapshot,
+    }, phase="reaction", iteration=1)])
+    fallback_panes = {pane["id"]: pane for pane in fallback["context_panes"]}
+    assert fallback_panes["10_permanent"]["content_blocks"] == []
+
+    permanent["block_index"][1]["char_start"] = permanent["content"].index(
+        "10_permanent:B")
+    permanent["block_index"][0]["title"] = 123
+    malformed = build_live_state([_event(1, "step_input_snapshot", {
+        "layers_snapshot": snapshot,
+    }, phase="reaction", iteration=1)])
+    malformed_panes = {pane["id"]: pane for pane in malformed["context_panes"]}
+    assert malformed_panes["10_permanent"]["content_blocks"] == []
 
 
 def test_spec508_live_projection_uses_layer_json_entries_for_cards():
     snapshot = _layers_snapshot()
     for layer in snapshot["layers"]:
-        if layer["layer_key"] != "50_now":
+        if layer["layer_key"] not in {"30_lately", "50_now"}:
             continue
         layer["content"] = [
             {
@@ -1190,11 +1248,13 @@ def test_spec508_live_projection_uses_layer_json_entries_for_cards():
             {
                 "role": "user",
                 "kind": "interaction",
+                "timestamp": "2026-08-06T11:22:33+08:00",
                 "content": "【本轮交互】\n我是 Codex。请读取任务文件。",
             },
             {
                 "role": "system",
                 "kind": "setup_fact",
+                "timestamp": "not-a-time",
                 "content": "【本轮起手事实】\n起手确认存在任务型交互。",
             },
         ]
@@ -1212,15 +1272,72 @@ def test_spec508_live_projection_uses_layer_json_entries_for_cards():
 
     state = build_live_state(events)
     panes = {pane["id"]: pane for pane in state["context_panes"]}
-    blocks = panes["50_now"]["content_blocks"]
+    for pane_id in ("30_lately", "50_now"):
+        blocks = panes[pane_id]["content_blocks"]
+        assert [block["title"] for block in blocks] == [
+            "Runtime 调用占位",
+            "本轮交互",
+            "本轮起手事实",
+        ]
+        assert "我是 Codex" in blocks[1]["content_md"]
+        assert blocks[1]["provenance"]["timestamp"] == "2026-08-06T11:22:33+08:00"
+        assert "timestamp" not in blocks[2]["provenance"]
+        assert "起手确认" in blocks[2]["content_md"]
 
-    assert [block["title"] for block in blocks] == [
-        "Runtime 调用占位",
-        "本轮交互",
-        "本轮起手事实",
+
+def test_spec723_live_projection_keeps_304_exact_lately_blocks_in_order():
+    snapshot = _layers_snapshot()
+    entries = [
+        {
+            "role": "user" if index % 2 else "assistant",
+            "kind": "interaction" if index % 2 else "assistant_reply",
+            "active_corpus_id": f"C-{index:05d}",
+            "content": f"【历史语料 {index:03d}】\n语料短ID：C-{index:05d}。\n正文 {index:03d}",
+        }
+        for index in range(1, 305)
     ]
-    assert "我是 Codex" in blocks[1]["content_md"]
-    assert "起手确认" in blocks[2]["content_md"]
+    for layer in snapshot["layers"]:
+        if layer["layer_key"] == "30_lately":
+            layer["content"] = entries
+            layer["content_markdown"] = "\n".join(item["content"] for item in entries)
+        elif layer["layer_key"] == "10_permanent":
+            layer["content"] = [{"role": "system", "content": "永固内容"}]
+            layer["content_markdown"] = "永固内容"
+        elif layer["layer_key"] == "40_high_freq":
+            layer["content"] = "【看起来像标题】\n但这是完整字符串层。"
+
+    state = build_live_state([_event(1, "step_input_snapshot", {
+        "layers_snapshot": snapshot,
+        "provider_request_envelope": {
+            "layers_manifest": _layers_manifest(snapshot),
+        },
+    }, phase="reaction", iteration=1)])
+    panes = {pane["id"]: pane for pane in state["context_panes"]}
+    blocks = panes["30_lately"]["content_blocks"]
+
+    assert len(blocks) == 304
+    assert [block["block_id"] for block in blocks] == [
+        f"C-{index:05d}" for index in range(1, 305)
+    ]
+    assert blocks[0]["title"] == "历史语料 001"
+    assert blocks[-1]["title"] == "历史语料 304"
+    assert "C-00304" in blocks[-1]["content_raw"]
+    assert panes["30_lately"]["chars"] == len(
+        next(
+            layer["content_markdown"]
+            for layer in snapshot["layers"]
+            if layer["layer_key"] == "30_lately"
+        )
+    )
+    assert panes["30_lately"]["raw_chars"] > panes["30_lately"]["chars"]
+    assert state["call_frames"][0]["context_usage"]["chars"] == sum(
+        len(layer["content_markdown"])
+        if isinstance(layer.get("content_markdown"), str)
+        else layer["chars"]
+        for layer in snapshot["layers"]
+    )
+    assert panes["10_permanent"]["content_blocks"] == []
+    assert panes["40_high_freq"]["content_blocks"] == []
 
 
 def test_live_projection_does_not_treat_popup_word_in_tool_fact_as_popup_marker():
@@ -1441,6 +1558,125 @@ def test_events_after_can_return_lightweight_no_state_payload_when_no_new_events
     assert payload["events"] == []
     assert payload["last_event_index"] == 2
     assert payload["state"] is None
+
+
+def test_spec723_frame_context_usage_uses_manifest_and_full_anthropic_input():
+    snapshot = _layers_snapshot()
+    manifest = _layers_manifest(snapshot)
+    events = [
+        _event(1, "step_input_snapshot", {
+            "layers_snapshot": snapshot,
+            "provider_request_envelope": {
+                "created_at": "2026-08-06T12:34:56+08:00",
+                "context_window_tokens": 200000,
+                "layers_manifest": manifest,
+                "provider": {
+                    "provider": "anthropic_messages",
+                    "model": "claude-test-exact",
+                    "profile_id": "model_claude_test",
+                },
+            },
+        }, phase="reaction", iteration=1),
+        _event(2, "llm_output_raw", {
+            "raw_usage": {
+                "input_tokens": 100,
+                "cache_creation_input_tokens": 20,
+                "cache_read_input_tokens": 30,
+            },
+        }, phase="reaction", iteration=1),
+    ]
+
+    frame = build_live_state(events)["call_frames"][0]
+    usage = frame["context_usage"]
+
+    assert usage == {
+        "chars": sum(layer["chars"] for layer in manifest["layers"]),
+        "input_tokens": 150,
+        "window_tokens": 200000,
+        "state": "reported",
+    }
+    assert frame["model_profile_id"] == "model_claude_test"
+    assert frame["created_at"] == "2026-08-06T12:34:56+08:00"
+    assert "model" not in frame and "connection_id" not in frame
+
+
+def test_spec723_frame_context_usage_pending_and_historical_compatibility():
+    snapshot = _layers_snapshot()
+    manifest = _layers_manifest(snapshot)
+    pending = build_live_state([_event(1, "step_input_snapshot", {
+        "layers_snapshot": snapshot,
+        "provider_request_envelope": {
+            "created_at": "not-a-time",
+            "layers_manifest": manifest,
+        },
+    }, phase="setup", iteration=1)])["call_frames"][0]
+    historical = build_live_state([_event(1, "step_input_snapshot", {
+        "layers_snapshot": snapshot,
+    }, phase="setup", iteration=1)])["call_frames"][0]
+
+    assert pending["context_usage"]["state"] == "pending"
+    assert pending["context_usage"]["input_tokens"] is None
+    assert pending["context_usage"]["window_tokens"] is None
+    assert "created_at" not in pending
+    assert "context_usage" not in historical
+
+
+def test_spec723_terminal_round_cannot_leave_context_usage_pending():
+    snapshot = _layers_snapshot()
+    manifest = _layers_manifest(snapshot)
+    events = [
+        _event(1, "step_input_snapshot", {
+            "layers_snapshot": snapshot,
+            "provider_request_envelope": {"layers_manifest": manifest},
+        }, phase="setup", iteration=1),
+        _event(2, "round_unsettled", {
+            "status": "unsettled",
+            "reason": "runtime_process_interrupted",
+        }),
+    ]
+
+    usage = build_live_state(events)["call_frames"][0]["context_usage"]
+
+    assert usage["state"] == "unavailable"
+    assert usage["input_tokens"] is None
+
+
+def test_spec723_latest_frame_recovers_redacted_window_from_matching_step(tmp_path):
+    from data.audit_store import AuditStore
+
+    context = tmp_path / "context"
+    audit = AuditStore(reaction_dir=str(context / "reaction"))
+    audit.write_audit("reaction", {
+        "permanent": "p", "periodic": "", "lately": "l",
+        "high_freq": "h", "now": "n", "statusbar": "s",
+        "popup": "", "full_system": "full",
+    })
+    statuses = audit.write_call_layers(
+        "reaction",
+        call={}, provider={}, endpoint={}, tool_header={}, generation_config={},
+    )
+    audit.write_compiled_provider_request("reaction", {
+        "schema": "provider_request.v1",
+        "request_body": {},
+        "request_body_sha256": "same-request",
+        "context_window_tokens": 1_000_000,
+    }, call_layer_statuses=statuses)
+    snapshot = _layers_snapshot()
+    manifest = _layers_manifest(snapshot)
+    events = [_event(1, "step_input_snapshot", {
+        "layers_snapshot": snapshot,
+        "provider_request_envelope": {
+            "request_body_sha256": "same-request",
+            "context_window_tokens": "[redacted]",
+            "layers_manifest": manifest,
+        },
+    }, phase="reaction", iteration=1)]
+
+    frame = build_live_state(
+        events, live_context_root=str(context), use_live_layers=True,
+    )["call_frames"][0]
+
+    assert frame["context_usage"]["window_tokens"] == 1_000_000
 
 
 def test_latest_event_index_reads_round_jsonl_last_event(tmp_path):

@@ -17,7 +17,8 @@ import uuid
 import webbrowser
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse, urlsplit
+from urllib import request as urllib_request
+from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_ROOT = REPO_ROOT / "tools"
@@ -40,8 +41,9 @@ from initialization.persona_initializer import PersonaInitializationError  # noq
 from assembly.statusbar import StatusBarBuilder  # noqa: E402
 from data.container_store import ContainerStore  # noqa: E402
 from data.config_store import API_CONFIG_OVERRIDE_ENV, ConfigStore  # noqa: E402
-from data.memory_store import MemoryStore  # noqa: E402
+from data.memory_store import MemoryStore, project_memory_body  # noqa: E402
 from data.relation_store import AXIS_NAMES, RelationStore  # noqa: E402
+from data.request_prefix_diff import build_request_prefix_diff  # noqa: E402
 from data.state_store import StateStore  # noqa: E402
 from data.workbench import WorkbenchStore  # noqa: E402
 from engines.resident_runtime import (  # noqa: E402
@@ -63,6 +65,10 @@ MAX_REQUEST_BYTES = 1024 * 1024
 MAX_DEPOSITION_CONTENT_CHARS = 64 * 1024
 MAX_PROTOCOL_DOCUMENT_BYTES = 1024 * 1024
 MAX_PERSONA_CORE_BYTES = 1024 * 1024
+MAX_MODEL_METADATA_BYTES = 256 * 1024
+MODEL_CONTEXT_WINDOW_REGISTRY_PATH = (
+    PROGRAM_OS_ROOT / "data" / "model_context_windows.json"
+)
 DESKTOP_CONTROL_TOKEN_ENV = "UPSP_DESKTOP_CONTROL_TOKEN"
 DESKTOP_SESSION_ID_ENV = "UPSP_DESKTOP_SESSION_ID"
 DESKTOP_CONTROL_HEADER = "X-UPSP-Desktop-Control"
@@ -352,6 +358,122 @@ class SettingsService:
             return "config"
         return "missing"
 
+    @classmethod
+    def _provider_context_window(
+            cls, connection: dict, model: str, timeout: int) -> tuple[int, str] | None:
+        env_name = _text(connection.get("api_key_env")).strip()
+        key = _text(
+            (os.environ.get(env_name) if env_name else "") or connection.get("api_key")
+        ).strip()
+        if connection.get("protocol") != "anthropic_messages" or not key:
+            return None
+        base_url = _text(connection.get("url")).strip().rstrip("/")
+        if not base_url.endswith("/v1/messages"):
+            return None
+        base_url = base_url.removesuffix("/v1/messages")
+        parsed = urlsplit(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        exact_url = f"{base_url}/v1/models/{quote(model, safe='')}"
+        try:
+            request = urllib_request.Request(exact_url, headers={
+                "Accept": "application/json",
+                "User-Agent": "UPSP-Base/2.0",
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+            })
+            with urllib_request.urlopen(request, timeout=timeout) as response:
+                body = response.read(MAX_MODEL_METADATA_BYTES + 1)
+            if len(body) > MAX_MODEL_METADATA_BYTES:
+                return None
+            payload = json.loads(body.decode("utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        capacity = payload.get("max_input_tokens")
+        if (
+                payload.get("id") != model
+                or isinstance(capacity, bool)
+                or not isinstance(capacity, int)
+                or not 0 < capacity <= 100000000):
+            return None
+        return capacity, exact_url
+
+    @staticmethod
+    def _registry_context_window(model: str) -> tuple[int, str] | None:
+        try:
+            registry = json.loads(MODEL_CONTEXT_WINDOW_REGISTRY_PATH.read_text(encoding="utf-8"))
+            if (
+                    not isinstance(registry, dict)
+                    or registry.get("schema_version") != "model_context_window_registry.v1"):
+                return None
+            item = (registry.get("models") or {}).get(model)
+            if not isinstance(item, dict):
+                return None
+            capacity = item.get("context_window")
+            source_ref = _text(item.get("source_url")).strip()
+            if (
+                isinstance(capacity, bool)
+                or not isinstance(capacity, int)
+                or not 0 < capacity <= 100000000
+                or not source_ref.startswith("https://")
+            ):
+                return None
+            return capacity, source_ref
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def resolve_model_context_window(
+            self, connection_id: object, model: object) -> dict:
+        connection_id = _text(connection_id).strip()
+        model = _text(model).strip()
+        if not connection_id or len(connection_id) > 160 or not model or len(model) > 512:
+            raise SettingsValidationError("model_context_resolution_invalid")
+        catalog = self.configs.load("models")
+        connection = next(
+            (
+                item for item in catalog.get("connections", [])
+                if item.get("id") == connection_id
+            ),
+            None,
+        )
+        if connection is None:
+            raise SettingsNotFoundError("model_connection_not_found")
+        handshake = (catalog.get("transport") or {}).get("handshake") or {}
+        try:
+            timeout = max(1, min(5, int(handshake.get("timeout_seconds") or 5)))
+        except (TypeError, ValueError, OverflowError):
+            timeout = 5
+        provider = self._provider_context_window(
+            connection, model, timeout
+        )
+        if provider is not None:
+            capacity, source_ref = provider
+            return {
+                "schema_version": "seed_gui_model_context_resolution.v1",
+                "model": model,
+                "detected_context_window": capacity,
+                "source": "provider",
+                "source_ref": source_ref,
+            }
+        registry = self._registry_context_window(model)
+        if registry is not None:
+            capacity, source_ref = registry
+            return {
+                "schema_version": "seed_gui_model_context_resolution.v1",
+                "model": model,
+                "detected_context_window": capacity,
+                "source": "registry",
+                "source_ref": source_ref,
+            }
+        return {
+            "schema_version": "seed_gui_model_context_resolution.v1",
+            "model": model,
+            "detected_context_window": None,
+            "source": "unknown",
+        }
+
     @staticmethod
     def _public_route_resolution(resolved: dict) -> dict:
         phases = {}
@@ -549,6 +671,7 @@ class SettingsService:
             raise SettingsValidationError("model_catalog_values_invalid")
         allowed = {
             "alias", "model", "connection_id", "context_window",
+            "detected_context_window", "context_window_source",
             "reasoning_supported", "reasoning_default", "streaming_enabled",
             "streaming_include_usage", "request_overrides",
         }
@@ -563,9 +686,19 @@ class SettingsService:
             result["connection_id"] = _text(values["connection_id"]).strip()
         if "context_window" in values:
             value = values["context_window"]
-            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100000000:
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100000000:
                 raise SettingsValidationError("model_context_window_invalid")
             result["context_window"] = value
+        if "detected_context_window" in values:
+            value = values["detected_context_window"]
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100000000:
+                raise SettingsValidationError("model_detected_context_window_invalid")
+            result["detected_context_window"] = value
+        if "context_window_source" in values:
+            source = _text(values["context_window_source"]).strip()
+            if source not in {"provider", "registry", "legacy_manual", "unknown"}:
+                raise SettingsValidationError("model_context_window_source_invalid")
+            result["context_window_source"] = source
         supported = values.get("reasoning_supported", MISSING)
         default = values.get("reasoning_default", MISSING)
         if supported is not MISSING or default is not MISSING:
@@ -595,6 +728,11 @@ class SettingsService:
             result["request_overrides"] = deepcopy(values["request_overrides"])
         result["prompt_cache"] = {"profile": "automatic_tiered"}
         result.setdefault("request_overrides", {})
+        if "detected_context_window" not in result:
+            result["detected_context_window"] = 0
+            result["context_window_source"] = (
+                "legacy_manual" if result.get("context_window") else "unknown"
+            )
         if not result.get("alias") or not result.get("model") or not result.get("connection_id"):
             raise SettingsValidationError("model_profile_invalid")
         return result
@@ -632,6 +770,19 @@ class SettingsService:
             if entity == "connection":
                 item["api_key"] = existing.get("api_key", "")
             collection[collection.index(existing)] = item
+            if entity == "model":
+                supported = (item.get("reasoning") or {}).get("supported") or []
+                fallback = _text((item.get("reasoning") or {}).get("default"))
+                if supported:
+                    for row in (new_routing.get("routes") or {}).values():
+                        slots = [row.get("primary"), *(row.get("backups") or [])]
+                        for slot in slots:
+                            if (
+                                isinstance(slot, dict)
+                                and slot.get("model_id") == item_id
+                                and _text(slot.get("reasoning_effort")) not in supported
+                            ):
+                                slot["reasoning_effort"] = fallback
         else:
             if entity == "connection" and any(
                 model.get("connection_id") == item_id for model in catalog["models"]
@@ -657,6 +808,8 @@ class SettingsService:
                         "reasoning_effort": _text((profile.get("reasoning") or {}).get("default")),
                     }
                     self.configs.save("model_routing", new_routing)
+            elif new_routing != old_routing:
+                self.configs.save("model_routing", new_routing)
             self.configs.resolve_model_routes()
         except (ValueError, ReadError, WriteError) as exc:
             try:
@@ -967,6 +1120,9 @@ class DepositionReader:
             "subject": _text(raw.get("subject")),
             "access": "public",
             "current_overview": _text(raw.get("current_overview")),
+            "current_overview_updated_at": _text(
+                raw.get("current_overview_updated_at")
+            ),
             "tags": _string_list(raw.get("tags")),
             "linked_containers": _string_list(raw.get("linked_containers")),
             "created_round": raw.get("created_round"),
@@ -1220,7 +1376,7 @@ class DepositionReader:
                 raise KeyError(item_id)
             item = {
                 **summary,
-                "body": _text(raw.get("body")),
+                "body": project_memory_body(raw.get("body"), meta),
                 "total_lines": raw.get("total_lines"),
                 "total_chars": raw.get("total_chars"),
             }
@@ -1436,14 +1592,16 @@ class SeedGuiHandler(RoundLiveHandler):
 
     def _runtime_status(self) -> None:
         try:
-            import upsp_cli
-            upsp_cli._configure_active_paths()
-            data, warnings = upsp_cli.command_status(None)
             service = self.runtime_service.status()
         except Exception as exc:
             self._error(503, "runtime_host_failed", str(exc))
             return
         runtime = service["runtime"]
+        data = service.get("cli_data") or {
+            "active_flags": [],
+            "round_type": runtime.get("round_type"),
+            "active_guides": {"rhythm": "", "work": ""},
+        }
         self._send_json(200, {
             "schema_version": "seed_gui_runtime_status.v2",
             "host": {
@@ -1475,7 +1633,7 @@ class SeedGuiHandler(RoundLiveHandler):
                 "ok": True,
                 "command": "status",
                 "data": data,
-                "warnings": warnings,
+                "warnings": [],
             },
         })
 
@@ -1547,6 +1705,28 @@ class SeedGuiHandler(RoundLiveHandler):
             return
         except Exception:
             self._error(503, "protocol_document_read_failed")
+            return
+        self._send_json(200, payload)
+
+    def _context_request_prefix_diff(self) -> None:
+        query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+        if set(query) != {"round", "frame_id"} or any(
+                len(values) != 1 for values in query.values()):
+            self._error(400, "invalid_context_diff_request")
+            return
+        raw_round = query["round"][0].strip()
+        frame_id = query["frame_id"][0].strip()
+        if not raw_round.isdigit() or not frame_id or len(frame_id) > 128:
+            self._error(400, "invalid_context_diff_request")
+            return
+        try:
+            payload = build_request_prefix_diff(
+                self.round_dir,
+                int(raw_round),
+                frame_id,
+            )
+        except Exception:
+            self._error(503, "context_diff_read_failed")
             return
         self._send_json(200, payload)
 
@@ -1648,6 +1828,9 @@ class SeedGuiHandler(RoundLiveHandler):
                 return
             self._send_json(200, payload)
             return
+        if path == "/api/context/request-prefix-diff":
+            self._context_request_prefix_diff()
+            return
         detail_kind = {
             "/api/deposition/memory": "memory",
             "/api/deposition/container": "container",
@@ -1685,11 +1868,13 @@ class SeedGuiHandler(RoundLiveHandler):
             "/api/runtime/send",
             "/api/runtime/stop",
             "/api/runtime/tool-approval",
+            "/api/runtime/execution-permission",
             "/api/runtime/relay",
             "/api/runtime/tick",
             "/api/container/focus",
             "/api/settings",
             "/api/settings/model-catalog",
+            "/api/settings/model-context-window/resolve",
             "/api/settings/provider-key",
         }:
             self._error(404, "not_found")
@@ -1710,6 +1895,9 @@ class SeedGuiHandler(RoundLiveHandler):
         if path == "/api/settings/model-catalog":
             self._model_catalog_update()
             return
+        if path == "/api/settings/model-context-window/resolve":
+            self._model_context_window_resolve()
+            return
         if path == "/api/settings/provider-key":
             self._provider_key_update()
             return
@@ -1718,6 +1906,9 @@ class SeedGuiHandler(RoundLiveHandler):
             return
         if path == "/api/runtime/tool-approval":
             self._runtime_tool_approval()
+            return
+        if path == "/api/runtime/execution-permission":
+            self._runtime_execution_permission()
             return
         if not self.bootstrap_service.initializer.status()["ready"]:
             self._discard_bounded_request_body()
@@ -1913,6 +2104,21 @@ class SeedGuiHandler(RoundLiveHandler):
                 self._error(503, "runtime_stop_failed", code)
             return
         self._send_json(200, receipt)
+
+    def _runtime_execution_permission(self) -> None:
+        permission_payload = self._permission_payload()
+        if permission_payload is None:
+            return
+        permission, _confirmed = permission_payload
+        try:
+            receipt = self.runtime_service.update_execution_permission(permission)
+        except RuntimeServiceError as exc:
+            self._error(409, str(exc))
+            return
+        self._send_json(200, {
+            "schema_version": "seed_gui_execution_permission_receipt.v1",
+            **receipt,
+        })
 
     def _runtime_pending(self, kind: str) -> None:
         permission_payload = self._permission_payload()
@@ -2138,6 +2344,25 @@ class SeedGuiHandler(RoundLiveHandler):
             self._send_json(200, response)
         else:
             self._error(status, error)
+
+    def _model_context_window_resolve(self) -> None:
+        payload = self._json_object({"connection_id", "model"})
+        if payload is None:
+            return
+        try:
+            response = self.settings_service.resolve_model_context_window(
+                payload.get("connection_id"), payload.get("model")
+            )
+        except SettingsNotFoundError as exc:
+            self._error(404, str(exc) or "model_connection_not_found")
+            return
+        except SettingsValidationError as exc:
+            self._error(400, str(exc) or "model_context_resolution_invalid")
+            return
+        except ReadError:
+            self._error(503, "model_catalog_read_failed")
+            return
+        self._send_json(200, response)
 
 
 class SeedGuiServer(ThreadingHTTPServer):

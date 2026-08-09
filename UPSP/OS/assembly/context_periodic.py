@@ -5,23 +5,29 @@ The assembler keeps the public instance methods as compatibility wrappers; this
 module owns the structured periodic mount projection and budget trimming rules.
 """
 
+from assembly.context_helpers import join_layer_blocks
+
 
 def build_periodic(assembler, state, step, round_type):
     """Build the DDS §19.5 periodic memory projection."""
+    return build_periodic_with_block_index(assembler, state, step, round_type)[0]
+
+
+def build_periodic_with_block_index(assembler, state, step, round_type):
     try:
         from data.periodic_mount_store import PeriodicMountStore
 
         mounts = PeriodicMountStore().load()
         limits = periodic_limits(getattr(assembler, "config_store", None))
-        structured = render_structured_periodic(
+        structured = render_structured_periodic_with_block_index(
             mounts,
             limits["periodic_memory_items_chars"],
         )
-        if structured is not None:
+        if structured[0] is not None:
             return structured
     except Exception:
         pass
-    return ""
+    return "", []
 
 
 def periodic_limits(config_store=None):
@@ -42,19 +48,29 @@ def periodic_limits(config_store=None):
 
 
 def render_structured_periodic(mounts, memory_limit):
+    return render_structured_periodic_with_block_index(mounts, memory_limit)[0]
+
+
+def render_structured_periodic_with_block_index(mounts, memory_limit):
     if "periodic_memory_items" not in mounts:
-        return None
+        return None, []
     memory_items = mounts.get("periodic_memory_items", [])
+    selected = select_periodic_items(memory_items, memory_limit)
+    blocks = []
+    for index, (item, text) in enumerate(selected, 1):
+        ident = item.get("id") or item.get("name") or item.get("title") if isinstance(item, dict) else ""
+        title = item.get("title") or item.get("name") or ident if isinstance(item, dict) else ""
+        blocks.append({
+            "block_id": f"periodic:{index:02d}:{ident or index}",
+            "title": str(title or ident or f"定期记忆 {index}"),
+            "kind": "periodic_memory",
+            "source_block_id": str(ident or ""),
+            "content": ("## 定期记忆投影\n" if index == 1 else "") + text,
+        })
+    return join_layer_blocks(blocks)
 
-    parts = []
-    memory_texts = select_periodic_texts(memory_items, memory_limit)
-    if memory_texts:
-        parts.append("## 定期记忆投影\n" + "\n\n".join(memory_texts))
 
-    return "\n\n".join(parts)
-
-
-def select_periodic_texts(items, limit):
+def select_periodic_items(items, limit):
     selected = []
     used = 0
     for item in items or []:
@@ -64,9 +80,13 @@ def select_periodic_texts(items, limit):
         size = len(text)
         if size > limit or used + size > limit:
             continue
-        selected.append(text)
+        selected.append((item, text))
         used += size
     return selected
+
+
+def select_periodic_texts(items, limit):
+    return [text for _item, text in select_periodic_items(items, limit)]
 
 
 def periodic_item_text(item):

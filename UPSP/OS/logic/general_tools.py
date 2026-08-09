@@ -6,13 +6,14 @@ import json
 import locale
 import os
 import re
+import socket
 import subprocess
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path, PureWindowsPath
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, quote_plus, unquote, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from constants import local_now
 from paths import (
@@ -140,6 +141,7 @@ WEB_LOGIN_FRAGMENTS = (
 )
 WEB_HIDDEN_TAGS = {"script", "style", "noscript", "svg", "canvas"}
 WEB_MAX_BYTES = 250_000
+WEB_FIND_TEXT_MAX_CHARS = 256
 DEFAULT_FILE_READ_WINDOW_CHARS = 16384
 DEFAULT_WEB_FETCH_WINDOW_CHARS = 4096
 DEFAULT_WEB_SEARCH_WINDOW_RESULTS = 5
@@ -1787,6 +1789,51 @@ def _url_denial(raw_url, missing_reason="missing_url"):
     return "", url
 
 
+class _UnsafeWebTargetError(ValueError):
+    def __init__(self, reason, url):
+        self.reason = str(reason or "unsafe_web_target")
+        self.url = str(url or "")
+        super().__init__(f"{self.reason}:{self.url}")
+
+
+def _resolved_url_denial(raw_url):
+    denial, url = _url_denial(raw_url)
+    if denial:
+        return denial, url
+    parsed = urlparse(url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(
+                parsed.hostname,
+                port,
+                type=socket.SOCK_STREAM,
+            )
+            if item and len(item) > 4 and item[4]
+        }
+    except OSError:
+        return "host_resolution_failed", url
+    if not addresses:
+        return "host_resolution_failed", url
+    if any(_is_private_or_local_host(address) for address in addresses):
+        return "local_or_private_host_denied", url
+    return "", url
+
+
+def _require_public_web_target(raw_url):
+    denial, url = _resolved_url_denial(raw_url)
+    if denial:
+        raise _UnsafeWebTargetError(denial, url)
+    return url
+
+
+class _PublicWebRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        safe_url = _require_public_web_target(urljoin(req.full_url, newurl))
+        return super().redirect_request(req, fp, code, msg, headers, safe_url)
+
+
 def _decode_body(body_bytes, content_type):
     content_type = content_type or ""
     match = re.search(r"charset=([\w.-]+)", content_type, flags=re.I)
@@ -1807,6 +1854,7 @@ def _extract_visible_text(raw_text, content_type):
 
 def _default_fetch_url(url, timeout_ms):
     timeout = _bounded_int(timeout_ms, 5000, 500, 15000) / 1000
+    url = _require_public_web_target(url)
     request = Request(
         url,
         headers={
@@ -1814,13 +1862,15 @@ def _default_fetch_url(url, timeout_ms):
             "Accept": "text/html,text/plain;q=0.9,*/*;q=0.1",
         },
     )
-    with urlopen(request, timeout=timeout) as response:
+    opener = build_opener(_PublicWebRedirectHandler())
+    with opener.open(request, timeout=timeout) as response:
+        final_url = _require_public_web_target(response.geturl() or url)
         content_type = response.headers.get("Content-Type", "")
         body = response.read(WEB_MAX_BYTES + 1)
         return {
             "status_code": getattr(response, "status", response.getcode()),
             "content_type": content_type,
-            "final_url": response.geturl(),
+            "final_url": final_url,
             "body_bytes": body[:WEB_MAX_BYTES],
             "source_bytes_incomplete": len(body) > WEB_MAX_BYTES,
         }
@@ -1916,7 +1966,69 @@ def _execute_web_fetch(request, web_fetch_fn=None):
         result = _base_result(tool_id="web_fetch", status="rejected", reason=str(exc))
         result["url"] = url
         return result
+    raw_find_text = request.get("find_text")
+    find_text = str(raw_find_text or "").strip()
+    if raw_find_text is not None and not find_text:
+        result = _base_result(
+            tool_id="web_fetch", status="rejected", reason="invalid_find_text"
+        )
+        result["url"] = url
+        return result
+    if char_start is not None and find_text:
+        result = _base_result(
+            tool_id="web_fetch",
+            status="rejected",
+            reason="char_start_find_text_conflict",
+        )
+        result["url"] = url
+        return result
+    if char_start is not None and char_start < 1:
+        result = _base_result(
+            tool_id="web_fetch", status="rejected", reason="char_start_out_of_range"
+        )
+        result["url"] = url
+        return result
+    if len(find_text) > WEB_FIND_TEXT_MAX_CHARS:
+        result = _base_result(
+            tool_id="web_fetch", status="rejected", reason="find_text_too_long"
+        )
+        result.update({"url": url, "find_text_max_chars": WEB_FIND_TEXT_MAX_CHARS})
+        return result
+    expected_content_sha256 = str(
+        request.get("source_content_sha256") or ""
+    ).strip().lower()
+    if expected_content_sha256 and not re.fullmatch(
+            r"[0-9a-f]{64}", expected_content_sha256):
+        result = _base_result(
+            tool_id="web_fetch",
+            status="rejected",
+            reason="invalid_source_content_sha256",
+        )
+        result["url"] = url
+        return result
+    if char_start is not None and not expected_content_sha256:
+        result = _base_result(
+            tool_id="web_fetch",
+            status="rejected",
+            reason="source_content_sha256_required_for_continuation",
+        )
+        result["url"] = url
+        return result
     timeout_ms = _bounded_int(request.get("timeout_ms"), 5000, 500, 15000)
+    if web_fetch_fn is None:
+        network_denial, _ = _resolved_url_denial(url)
+        if network_denial:
+            result = _base_result(
+                tool_id="web_fetch",
+                status=(
+                    "rejected"
+                    if network_denial == "local_or_private_host_denied"
+                    else "failed"
+                ),
+                reason=network_denial,
+            )
+            result["url"] = url
+            return result
     window_chars = _general_tool_window_params()["web_fetch_window_chars"]
     backend_functions = _web_fetch_backend_functions(web_fetch_fn=web_fetch_fn)
     skip_backend_ids = request.get("_web_skip_backend_ids") or []
@@ -1949,6 +2061,14 @@ def _execute_web_fetch(request, web_fetch_fn=None):
             continue
         try:
             raw_payload = fetch_fn(url, timeout_ms)
+        except _UnsafeWebTargetError as exc:
+            result = _base_result(
+                tool_id="web_fetch",
+                status="rejected",
+                reason=exc.reason,
+            )
+            result["url"] = exc.url or url
+            return result
         except HTTPError as exc:
             before, after = _record_web_backend_hard_fail(
                 health,
@@ -2023,11 +2143,96 @@ def _execute_web_fetch(request, web_fetch_fn=None):
         return result
 
     content = payload["content"]
+    source_content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    source_bytes_incomplete = bool(payload["source_bytes_incomplete"])
+    if (
+            expected_content_sha256
+            and expected_content_sha256 != source_content_sha256):
+        result = _base_result(
+            tool_id="web_fetch", status="source_changed", reason="source_changed"
+        )
+        result.update({
+            "url": url,
+            "source_url": payload["source_url"],
+            "selected_backend": selected_backend,
+            "backend_attempts": attempts,
+            "title": payload["title"],
+            "status_code": payload["status_code"],
+            "content_type": payload["content_type"],
+            "source_content_sha256": source_content_sha256,
+            "expected_source_content_sha256": expected_content_sha256,
+            "source_bytes_incomplete": source_bytes_incomplete,
+            "has_more": False,
+            "next_char_start": None,
+            "fetched_at": result["executed_at"],
+            "evidence_refs": [],
+        })
+        if char_start is not None:
+            result["char_start"] = char_start
+        if find_text:
+            result["find_text"] = find_text
+        return result
     total_lines = len(content.splitlines())
     total_chars = len(content)
+    if char_start is not None and char_start > total_chars:
+        result = _base_result(
+            tool_id="web_fetch",
+            status="rejected",
+            reason="char_start_out_of_range",
+        )
+        result.update({
+            "url": url,
+            "source_url": payload["source_url"],
+            "selected_backend": selected_backend,
+            "backend_attempts": attempts,
+            "source_content_sha256": source_content_sha256,
+            "source_bytes_incomplete": source_bytes_incomplete,
+            "total_chars": total_chars,
+            "char_start": char_start,
+            "has_more": False,
+            "next_char_start": None,
+            "evidence_refs": [],
+        })
+        return result
     if char_start is not None:
         window = _char_bounded_window(content, char_start, len(content), window_chars)
         range_requested = {"type": "char_cursor", "char_start": max(1, char_start)}
+    elif find_text:
+        match = re.search(re.escape(find_text), content, flags=re.IGNORECASE)
+        if match is None:
+            result = _base_result(
+                tool_id="web_fetch", status="not_found", reason="find_text_not_found"
+            )
+            result.update({
+                "url": url,
+                "source_url": payload["source_url"],
+                "selected_backend": selected_backend,
+                "backend_attempts": attempts,
+                "title": payload["title"],
+                "status_code": payload["status_code"],
+                "content_type": payload["content_type"],
+                "find_text": find_text,
+                "match_found": False,
+                "source_content_sha256": source_content_sha256,
+                "source_bytes_incomplete": source_bytes_incomplete,
+                "has_more": False,
+                "next_char_start": None,
+                "fetched_at": result["executed_at"],
+                "evidence_refs": [],
+            })
+            return result
+        line_start = content.rfind("\n", 0, match.start()) + 1
+        if match.end() - line_start > window_chars:
+            line_start = match.start()
+        window = _char_bounded_window(
+            content, line_start + 1, len(content), window_chars
+        )
+        range_requested = {
+            "type": "find_text",
+            "find_text": find_text,
+            "match_char_start": match.start() + 1,
+            "match_char_end": match.end(),
+        }
     else:
         window = _line_bounded_window(
             content,
@@ -2036,7 +2241,6 @@ def _execute_web_fetch(request, web_fetch_fn=None):
             window_chars,
         )
         range_requested = None
-    source_bytes_incomplete = bool(payload["source_bytes_incomplete"])
     applied_char_start = window["char_start"]
     applied_char_end = window["char_end"]
     next_char_start = window["next_char_start"]
@@ -2074,9 +2278,10 @@ def _execute_web_fetch(request, web_fetch_fn=None):
         "window_boundary": window["window_boundary"],
         "returned_chars": len(window["content"]),
         "window_chars": window_chars,
-        "has_more": bool(window["has_more"] or source_bytes_incomplete),
+        "has_more": next_char_start not in (None, ""),
         "total_lines": total_lines,
         "total_chars": total_chars,
+        "source_content_sha256": source_content_sha256,
         "source_bytes_incomplete": source_bytes_incomplete,
         "content_quality": content_quality,
         "content_quality_reason": content_quality_reason,
@@ -2102,6 +2307,13 @@ def _execute_web_fetch(request, web_fetch_fn=None):
         "fetched_at": result["executed_at"],
         "evidence_refs": evidence_refs,
     })
+    if find_text:
+        result.update({
+            "find_text": find_text,
+            "match_found": True,
+            "match_char_start": range_requested["match_char_start"],
+            "match_char_end": range_requested["match_char_end"],
+        })
     return result
 
 
@@ -2455,7 +2667,9 @@ def execute_general_tool_call(
         )
     if tool_id == "web_fetch":
         return attach_evidence_handle(
-            _execute_web_fetch(request, web_fetch_fn=web_fetch_fn)
+            _with_web_fetch_error_hint(
+                _execute_web_fetch(request, web_fetch_fn=web_fetch_fn)
+            )
         )
     if tool_id == "web_search":
         return attach_evidence_handle(
@@ -2474,6 +2688,95 @@ def execute_general_tool_call(
     return attach_evidence_handle(
         _base_result(tool_id=tool_id, status="rejected", reason="handler_missing")
     )
+
+
+def _with_web_fetch_error_hint(result):
+    """Attach the executable correction contract at the web-fetch producer."""
+    result = dict(result or {})
+    reason = str(result.get("reason") or "").strip()
+    if reason == "source_changed":
+        current_hash = str(result.get("source_content_sha256") or "").strip()
+        result["error_hint"] = {
+            "kind": "state_conflict",
+            "retry": "after_correction",
+            "attempted": {
+                key: result.get(key)
+                for key in (
+                    "url", "char_start", "find_text",
+                    "expected_source_content_sha256",
+                )
+                if result.get(key) not in (None, "")
+            },
+            "current": {
+                "url": result.get("url"),
+                "source_content_sha256": current_hash,
+                "source_bytes_incomplete": bool(
+                    result.get("source_bytes_incomplete")
+                ),
+            },
+            "expected": {
+                "url": result.get("url"),
+                "source_content_sha256": current_hash,
+                "fields": ["url", "source_content_sha256"],
+            },
+            "next_action": (
+                "使用相同 URL 和 current.source_content_sha256，且不带 "
+                "char_start/find_text，重新读取首窗。"
+            ),
+        }
+    elif reason == "find_text_not_found":
+        current_hash = str(result.get("source_content_sha256") or "").strip()
+        result["error_hint"] = {
+            "kind": "validation",
+            "retry": "after_correction",
+            "attempted": {
+                "url": result.get("url"),
+                "find_text": result.get("find_text"),
+                "source_content_sha256": current_hash,
+            },
+            "current": {
+                "source_content_sha256": current_hash,
+                "source_bytes_incomplete": bool(
+                    result.get("source_bytes_incomplete")
+                ),
+            },
+            "expected": {
+                "fields": ["url", "find_text", "source_content_sha256"],
+                "source_content_sha256": current_hash,
+            },
+            "next_action": (
+                "不要原样重复定位词；改用另一字面定位词、其他公开来源，"
+                "或基于已取得证据继续。"
+            ),
+        }
+    elif reason in {"web_backend_exhausted", "host_resolution_failed"}:
+        result["error_hint"] = {
+            "kind": "transient_external",
+            "retry": "later",
+            "attempted": {
+                "url": result.get("url"),
+                "backend_ids": [
+                    str(item.get("backend_id") or "")
+                    for item in result.get("backend_attempts") or []
+                    if isinstance(item, dict) and item.get("backend_id")
+                ],
+            },
+            "current": {"reason": reason},
+            "expected": {},
+            "next_action": (
+                "保留失败事实，稍后重试或改用其他公开来源；不要声称已读取成功。"
+            ),
+        }
+    elif reason == "local_or_private_host_denied":
+        result["error_hint"] = {
+            "kind": "permission_security",
+            "retry": "never_without_new_evidence",
+            "attempted": {"url": result.get("url")},
+            "current": {"reason": reason},
+            "expected": {"next_state": "public_http_or_https_url"},
+            "next_action": "停止访问该目标；只使用可公开解析的 HTTP(S) 地址。",
+        }
+    return result
 
 
 def format_general_tool_result(result):
@@ -2502,6 +2805,8 @@ def format_general_tool_result(result):
             "task_goal",
             "url",
             "source_url",
+            "source_content_sha256",
+            "expected_source_content_sha256",
             "query",
             "title",
             "status_code",
@@ -2525,6 +2830,11 @@ def format_general_tool_result(result):
             "next_line_start",
             "next_char_start",
             "next_char_end",
+            "find_text",
+            "match_found",
+            "match_char_start",
+            "match_char_end",
+            "source_bytes_incomplete",
             "risk_level",
             "change_summary",
             "lines_added",
@@ -2703,6 +3013,8 @@ def _status_label(status):
         "denied": "被拒绝",
         "rejected": "被拒绝",
         "invalid": "无效",
+        "not_found": "未找到",
+        "source_changed": "来源正文已变化",
         "unknown": "未知",
     }.get(value, str(status or "未知"))
 
@@ -2928,6 +3240,11 @@ def _format_general_tool_fact_body(result):
                 lines.append(f"读取后端：{result.get('selected_backend')}。")
             if result.get("title"):
                 lines.append(f"标题：{result.get('title')}。")
+            if result.get("source_content_sha256"):
+                lines.append(
+                    "正文身份：source_content_sha256="
+                    f"{result.get('source_content_sha256')}。"
+                )
             content_quality = str(result.get("content_quality") or "ok").strip()
             if content_quality and content_quality != "ok":
                 reason = str(result.get("content_quality_reason") or "").strip()
@@ -2961,16 +3278,53 @@ def _format_general_tool_fact_body(result):
                     lines.append(f"字符范围：{char_start}-{char_end}。")
             if result.get("source_bytes_incomplete"):
                 lines.append("底层来源字节未完全返回；上述总量仅表示本次已取得正文。")
+            if result.get("match_found"):
+                lines.append(
+                    f"定位词 {result.get('find_text')!r} 命中字符 "
+                    f"{result.get('match_char_start')}-{result.get('match_char_end')}。"
+                )
             if result.get("has_more"):
-                lines.append("本次网页正文仍有后续 bounded 窗口或底层来源字节未完全返回。")
-                if result.get("next_char_start") not in (None, ""):
-                    lines.append(
-                        "本轮如需继续，应调用 web_fetch 并传 "
-                        f"char_start={result.get('next_char_start')}。"
-                    )
+                lines.append("当前已取得正文仍有可执行的后续 bounded 窗口。")
+                lines.append(
+                    "本轮如需继续，应调用 web_fetch 并同时传 "
+                    f"char_start={result.get('next_char_start')}、"
+                    "source_content_sha256="
+                    f"{result.get('source_content_sha256')}。"
+                )
             else:
                 lines.append("当前已取得正文读取已到末尾。")
+                if result.get("source_bytes_incomplete"):
+                    lines.extend([
+                        "当前抓取结果已经没有可继续的字符游标；不要重复最后一个 char_start。",
+                        "底层来源不完整，因此不能据此断言原网页已经完整读完。",
+                        "如仍需定位内容，请改用 find_text、其他公开来源，或基于已取得证据继续。",
+                    ])
             lines.append("这是网页正文窗口，不代表整页、整站或外部事实已经完整读取。")
+            return "\n".join(lines)
+        if status == "source_changed":
+            lines.extend([
+                f"网页正文已变化：{result.get('source_url') or result.get('url') or '未记录'}。",
+                "旧定位参数绑定的正文哈希与本次重新抓取结果不一致，未使用旧坐标读取新正文。",
+                "请使用相同 URL、当前 source_content_sha256，且不带 char_start/find_text，重新读取首窗。",
+            ])
+            if result.get("source_content_sha256"):
+                lines.append(
+                    "当前正文身份：source_content_sha256="
+                    f"{result.get('source_content_sha256')}。"
+                )
+            return "\n".join(lines)
+        if status == "not_found":
+            lines.append(
+                f"网页正文中未找到字面文本 {result.get('find_text')!r}。"
+            )
+            if result.get("source_content_sha256"):
+                lines.append(
+                    "本次检索正文身份：source_content_sha256="
+                    f"{result.get('source_content_sha256')}。"
+                )
+            if result.get("source_bytes_incomplete"):
+                lines.append("底层来源字节未完全返回；本次未命中不等于原网页不存在该文本。")
+            lines.append("请更换定位词、改用其他公开来源，或基于已取得证据继续。")
             return "\n".join(lines)
         lines.extend([
             f"本轮尝试读取网页：{result.get('url') or '未记录'}。",
@@ -2979,6 +3333,16 @@ def _format_general_tool_fact_body(result):
         reason = str(result.get("reason") or result.get("detail") or "").strip()
         if reason:
             lines.append(f"失败原因：{reason}。")
+        if reason == "source_content_sha256_required_for_continuation":
+            lines.append("续读必须同时原样复制上一结果的 source_content_sha256。")
+        elif reason == "char_start_find_text_conflict":
+            lines.append("char_start 与 find_text 只能选择一种定位方式。")
+        elif reason == "find_text_too_long":
+            lines.append(f"请把 find_text 缩短到 {WEB_FIND_TEXT_MAX_CHARS} 个字符以内。")
+        elif reason == "char_start_out_of_range":
+            lines.append("当前游标不在本次正文范围内；请从首窗重新读取或改用 find_text。")
+        elif reason == "invalid_source_content_sha256":
+            lines.append("请原样使用上一结果给出的 64 位 source_content_sha256。")
         if result.get("backend_attempts"):
             lines.append(f"后端尝试：{_web_attempt_summary(result.get('backend_attempts'))}。")
         lines.append("这不能作为已读取网页正文证据。")

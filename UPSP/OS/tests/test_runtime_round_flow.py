@@ -433,6 +433,85 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
         assert not rt.sm.get("base.runtime.work_intent_debt")
         assert not rt.workbench.get("base.active_guides.work")
 
+    def test_spec729_terminal_blocked_round_calls_api_cleanup_once_and_closes(
+            self, tmp_path, monkeypatch):
+        from engines.round_context import SetupResult
+        from logic.task_guide import materialize_initial_task_guide
+
+        rt = self._make_runtime(tmp_path)
+        task_id = materialize_initial_task_guide(rt.workbench, {
+            "task_title": "保留阻塞任务",
+            "items": [{"item_id": "item_01", "title": "取得官方来源"}],
+            "acceptance": [{
+                "acceptance_id": "acc_01",
+                "description": "官方来源可访问",
+            }],
+        })
+        guide = rt.workbench.load_task_guide(task_id)
+        for record in (guide["items"][0], guide["acceptance"][0]):
+            record.update({
+                "status": "blocked",
+                "reason": "官方网页当前不可访问",
+                "evidence_refs": ["call:call_fetch_failed"],
+            })
+        rt.workbench.save_task_guide(task_id, guide)
+
+        setup_result = SetupResult(
+            raw_result={"response": ""},
+            intent={"security_verdict": "pass", "mount_requests": []},
+            interaction_meta=self._confirmed_meta(),
+            user_input_text="完成任务，无法访问时登记阻塞。",
+            setup_messages=[],
+            internal_handoff=[],
+        )
+        monkeypatch.setattr(rt.setup_runner, "run", lambda context: setup_result)
+        monkeypatch.setattr(rt, "_run_reaction_loop", lambda *args, **kwargs: {
+            "aborted": False,
+            "response": "官方网页不可访问；阻塞项和证据已登记，任务保留待恢复。",
+            "_reaction_finalize_validated": True,
+            "_final_reply_done": True,
+            "_interaction_meta": self._confirmed_meta(),
+            "_settlement_ledgers": [{
+                "closeout_decision": "blocked",
+                "blocked_reason": "task_acceptance_blocked",
+                "blockers": ["item_01", "acc_01"],
+            }],
+        })
+        cleanup_calls = []
+
+        def fake_cleanup_provider(*args, **kwargs):
+            cleanup_calls.append((args, kwargs))
+            return {
+                "response": "",
+                "tool_call_envelopes": [self._native_tool_envelope(
+                    "cleanup_finalize",
+                    {},
+                    tool_family="substrate_tool",
+                    tool_class="sync_tool",
+                )],
+            }
+
+        monkeypatch.setattr(rt, "_call_llm_with_round_audit", fake_cleanup_provider)
+        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "")
+        monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None)
+        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
+        monkeypatch.setattr(rt, "_process_evolution_set", lambda *a, **kw: None)
+        monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
+        monkeypatch.setattr(rt.hb, "pause", lambda: None)
+        monkeypatch.setattr(rt.hb, "resume", lambda: None)
+
+        result = rt._run_one_round(
+            "interactive",
+            rt.sm.load(),
+            {"user_message_waiting": True},
+        )
+
+        assert len(cleanup_calls) == 1
+        assert result["_settlement"]["status"] == "settled", result["_settlement"]
+        assert result["response"]
+        assert rt.workbench.get("base.active_task") == task_id
+        assert rt.sm.get("base.heartbeat_flags.continue_requested") is not True
+
     def test_spec448_coalesced_rhythm_does_not_default_to_relay_with_active_task(
             self, tmp_path, monkeypatch):
         from engines.round_context import SetupResult

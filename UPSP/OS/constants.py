@@ -21,6 +21,25 @@ def local_fromtimestamp(timestamp):
     return datetime.fromtimestamp(timestamp).astimezone()
 
 
+def normalize_iso_timestamp(value):
+    """Return an offset-aware ISO timestamp unchanged, otherwise empty."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return text if parsed.tzinfo is not None else ""
+
+
+def corpus_entry_timestamp(entry):
+    if not isinstance(entry, dict):
+        return ""
+    loc = entry.get("loc") if isinstance(entry.get("loc"), dict) else {}
+    return normalize_iso_timestamp(entry.get("timestamp") or loc.get("time"))
+
+
 # 仅保留给历史外部 import；生产时间戳必须调用 local_now/local_fromtimestamp。
 TZ_SHANGHAI = local_now().tzinfo
 

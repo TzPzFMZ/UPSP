@@ -380,7 +380,20 @@ TOOL_ARGUMENT_SCHEMAS = {
     }, required=("path", "content", "purpose")),
     "web_fetch": _closed_parameters({
         "url": _string(),
-        "char_start": _integer("bounded 网页正文续读游标；工具事实给出 next_char_start 时填写。窗口大小由系统配置决定。"),
+        "char_start": _integer(
+            "bounded 网页正文续读游标；工具事实给出 next_char_start 时填写，"
+            "并同时原样复制 source_content_sha256。"
+        ),
+        "find_text": {
+            **_string(
+                "在本次抽取正文中进行大小写不敏感的字面定位；与 char_start 互斥。"
+            ),
+            "maxLength": 256,
+        },
+        "source_content_sha256": _string(
+            "正文身份哈希；带 char_start 续读时必须原样复制上一结果中的值；"
+            "source_changed 后可只带相同 URL 与新哈希、不带定位参数，重新读取首窗。"
+        ),
         "reason": _string(),
     }, required=("url",)),
     "web_search": _closed_parameters({
@@ -1725,7 +1738,10 @@ def _tool_schema(tool_id, meta, active_protocol_tool_guides=None):
     elif tool_id == "web_fetch":
         description = (
             "UPSP 通用网页读取工具；读取公开网页正文的配置驱动 bounded 字符窗口。"
-            "窗口大小由系统配置决定；工具事实会标注 returned_chars、window_chars、has_more 与 next_char_start。"
+            "窗口大小由系统配置决定；工具事实会标注正文哈希、has_more 与 next_char_start。"
+            "续读必须同时复制 next_char_start 和 source_content_sha256；"
+            "source_changed 后用相同 URL 与当前哈希、不带定位参数重新读取首窗；"
+            "也可用 find_text 对当前抽取正文做字面定位，但不能与 char_start 同时使用。"
         )
     elif tool_id == "web_search":
         description = (

@@ -1728,6 +1728,11 @@
     "\u4F4D\u683C\u81EA\u8FF0\u4E0D\u5F97\u8D85\u8FC7 200 \u5B57\u3002": "The persona statement cannot exceed 200 characters.",
     "\u516D\u8F74\u70B9\u6570\u5FC5\u987B\u6070\u597D\u4E3A 60\u3002": "Axis allocation must equal exactly 60.",
     "\u5F53\u524D\u6A21\u578B": "Current model",
+    "\u8C03\u7528\u7F16\u8BD1\u65F6\u95F4": "Call compiled at",
+    "\u8BED\u6599\u65F6\u95F4": "Corpus time",
+    "\u5165\u5E93\u65F6\u95F4": "Stored at",
+    "\u6700\u8FD1\u8C03\u7528\u65F6\u95F4": "Last recalled at",
+    "\u6302\u63A5\u5907\u6CE8\u66F4\u65B0\u65F6\u95F4": "Mount note updated at",
     "\u8FDE\u63A5": "Connection",
     "\u6A21\u578B\u5C1A\u672A\u901A\u8FC7\u672C\u6B21\u521D\u59CB\u5316\u6D4B\u8BD5\u3002": "The model has not passed the current initialization test.",
     "\u786E\u8BA4\u6863\u6848\u4E0E\u6A21\u578B\u540E\uFF0C\u5BBF\u4E3B\u4F1A\u4E00\u6B21\u6027\u539F\u5B50\u521B\u5EFA\u4F4D\u683C\u3002": "After review, the host atomically creates the persona in one step.",
@@ -1770,6 +1775,9 @@
     "\u5F53\u524D\u5BF9\u8BDD": "Current conversation",
     "\u4EA4\u4E92\u8F93\u5165": "Interaction input",
     "\u6267\u884C\u6743\u9650\uFF1A": "Execution permission:",
+    "\u5DF2\u4FDD\u6301\u5F53\u524D\u6267\u884C\u6743\u9650\u3002": "The current execution permission was kept.",
+    "\u6267\u884C\u6743\u9650\u5C06\u5728\u4E0B\u4E00\u5E27\u8FB9\u754C\u751F\u6548\u3002": "The execution permission will take effect at the next Frame boundary.",
+    "\u6267\u884C\u6743\u9650\u5207\u6362\u5931\u8D25": "Execution permission change failed",
     "\u53D7\u9650": "Limited",
     "\u5B8C\u6574": "Full",
     "\u53D1\u9001": "Send",
@@ -1834,11 +1842,28 @@
     "\u5907\u6CE8\u540D": "Display name",
     "\u534F\u8BAE": "Protocol",
     "\u63A5\u53E3\u5730\u5740": "Endpoint URL",
+    "\u57FA\u7840\u5730\u5740": "Base URL",
+    "\u8BF7\u6C42\u8DEF\u5F84": "Request path",
+    "\u8BF7\u6C42\u8DEF\u5F84\u4F1A\u6309\u534F\u8BAE\u7ED9\u51FA\u9ED8\u8BA4\u503C\uFF1B\u5982\u670D\u52A1\u5546\u7AEF\u70B9\u4E0D\u540C\uFF0C\u53EF\u76F4\u63A5\u4FEE\u6539\u8986\u76D6\u3002": "The protocol supplies a default request path. Edit it when the provider uses a different endpoint.",
     "\u53D6\u6D88": "Cancel",
     "\u4FDD\u5B58": "Save",
     "\u670D\u52A1\u8FDE\u63A5": "Service connections",
     "\u8BF7\u9009\u62E9": "Select",
     "\u6A21\u578B ID": "Model ID",
+    "\u8BC6\u522B\u5BB9\u91CF": "Detected capacity",
+    "\u8FD0\u884C\u4E0A\u9650": "Runtime limit",
+    "\u91CD\u65B0\u8BC6\u522B": "Detect again",
+    "\u6A21\u578B\u670D\u52A1\u5143\u6570\u636E": "Provider metadata",
+    "\u5185\u7F6E\u5B98\u65B9\u6A21\u578B\u8868": "Built-in official model registry",
+    "\u65E7\u914D\u7F6E\u624B\u52A8\u503C": "Legacy manual value",
+    "\u672A\u8BC6\u522B": "Unknown",
+    "\u5C1A\u672A\u8BC6\u522B": "Not detected",
+    "\u6B63\u5728\u8BC6\u522B\u6A21\u578B\u5BB9\u91CF": "Detecting model capacity",
+    "\u8BC6\u522B\u4E2D": "Detecting",
+    "\u8BF7\u9009\u62E9\u8FDE\u63A5\u5E76\u586B\u5199\u6A21\u578B ID\u3002": "Select a connection and enter a model ID.",
+    "\u5DF2\u8BC6\u522B\u6A21\u578B\u5BB9\u91CF\uFF0C\u5DF2\u6709\u8FD0\u884C\u4E0A\u9650\u4E0D\u4F1A\u88AB\u8986\u76D6\u3002": "Model capacity detected. The existing runtime limit was not overwritten.",
+    "\u672A\u8BC6\u522B\u6A21\u578B\u5BB9\u91CF\uFF0C\u8BF7\u624B\u52A8\u586B\u5199\u8FD0\u884C\u4E0A\u9650\u3002": "Model capacity is unknown. Enter the runtime limit manually.",
+    "\u6A21\u578B\u5BB9\u91CF\u8BC6\u522B\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u586B\u5199\u8FD0\u884C\u4E0A\u9650\u3002": "Model capacity detection failed. Enter the runtime limit manually.",
     "\u652F\u6301\u7684\u63A8\u7406\u5F3A\u5EA6": "Supported reasoning efforts",
     "\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6": "Default reasoning effort",
     "\u517C\u5BB9\u8BF7\u6C42\u53C2\u6570": "Compatibility request parameters",
@@ -1846,6 +1871,7 @@
     "\u5220\u9664": "Delete",
     "\u8FDE\u63A5\u7F3A\u5931": "Connection missing",
     "\u4E0A\u4E0B\u6587\u7A97\u53E3\uFF1A{size}\uFF1B\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6\uFF1A{effort}": "Context window: {size}; default reasoning: {effort}",
+    "\u8BC6\u522B\u5BB9\u91CF\uFF1A{detected}\uFF1B\u8FD0\u884C\u4E0A\u9650\uFF1A{limit}\uFF1B\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6\uFF1A{effort}": "Detected capacity: {detected}; runtime limit: {limit}; default reasoning: {effort}",
     "\u4F20\u8F93\u4E0E\u5BB9\u707E": "Transport and failover",
     "\u5F53\u524D\u5BBF\u4E3B\u4F7F\u7528\u8FDB\u7A0B\u73AF\u5883\u8986\u76D6\uFF1B\u6A21\u578B\u5E93\u4ECD\u53EF\u7BA1\u7406\uFF0C\u4F46\u5F53\u524D\u8FDB\u7A0B\u4EE5\u8986\u76D6\u94FE\u4E3A\u51C6\u3002": "This host uses a process override. The model catalog remains editable, while the current process follows the override chain.",
     "\u670D\u52A1\u8FDE\u63A5\u4FDD\u5B58\u5730\u5740\u4E0E\u5171\u4EAB\u5BC6\u94A5\uFF1B\u6A21\u578B\u914D\u7F6E\u4FDD\u5B58\u6A21\u578B\u80FD\u529B\u3002\u540C\u4E00\u8FDE\u63A5\u53EF\u4F9B\u591A\u4E2A\u6A21\u578B\u590D\u7528\u3002": "Service connections store endpoints and shared keys; model profiles store model capabilities. Multiple models can reuse one connection.",
@@ -1912,6 +1938,10 @@
     "\u5BC6\u94A5\u73AF\u5883\u53D8\u91CF": "API key environment variable",
     "\u534F\u8BAE\u9002\u914D\u5668": "Protocol adapter",
     "\u4E0A\u4E0B\u6587\u7A97\u53E3": "Context window",
+    "\u5B57\u7B26": "Characters",
+    "\u7B49\u5F85\u6A21\u578B\u56DE\u6267": "Awaiting provider usage",
+    "\u5E27 {frame}\uFF1A\u5B57\u7B26 {chars}\uFF1B\u8F93\u5165 Tokens {tokens} / {window}\uFF1B\u8BC6\u522B\u5BB9\u91CF {detected}\uFF1BRuntime \u8FD0\u884C\u4E0A\u9650 {window}": "Frame {frame}: characters {chars}; input tokens {tokens} / {window}; detected capacity {detected}; Runtime limit {window}",
+    "\u5B57\u7B26\u6765\u81EA\u5341\u5C42\u5FEB\u7167\uFF1BTokens \u6765\u81EA\u6A21\u578B\u670D\u52A1\u8F93\u5165\u7528\u91CF\uFF1B\u8BC6\u522B\u5BB9\u91CF {detected}\uFF1BRuntime \u8FD0\u884C\u4E0A\u9650 {limit}\u3002": "Characters come from the ten-layer snapshot; tokens come from provider input usage; detected capacity {detected}; Runtime limit {limit}.",
     "\u63A8\u7406\u5F3A\u5EA6": "Reasoning effort",
     "\u7CFB\u7EDF\u9ED8\u8BA4": "System default",
     "\u6D41\u5F0F\u8F93\u51FA": "Streaming",
@@ -2221,6 +2251,16 @@
     "\u88C5\u914D\u8BE6\u60C5": "Assembly details",
     "\u8C03\u7528\u5934\u4EEA\u8868": "Call header instruments",
     "\u4E0A\u4E0B\u6587\u5341\u5C42": "Ten context layers",
+    "\u8BF7\u6C42\u4F53\u524D\u7F00\u5DEE\u5206\u8F68\u9053": "Request-body prefix diff rail",
+    "\u6B63\u5728\u8BA1\u7B97\u8BF7\u6C42\u4F53\u524D\u7F00\u5DEE\u5206": "Calculating request-body prefix diff",
+    "\u4E0E\u6700\u8FD1\u517C\u5BB9\u5E27\u7684\u8BF7\u6C42\u4F53\u5B8C\u5168\u76F8\u540C": "The request body is identical to the nearest compatible frame",
+    "\u6CA1\u6709\u53EF\u7528\u7684\u8BF7\u6C42\u4F53\u524D\u7F00\u5DEE\u5206": "No request-body prefix diff is available",
+    "\u65B0\u589E": "Insert",
+    "\u66FF\u6362": "Replace",
+    "\u8BF7\u6C42\u4F53\u53D8\u5316\u540E\u7F00\u4ECE\u8FD9\u91CC\u5F00\u59CB": "The changed request-body suffix starts here",
+    "\u53D8\u5316\u4ECE\u5757\u5185\u7B2C {offset} \u5B57\u7B26\u5F00\u59CB": "The change starts at character {offset} within this block",
+    "\u53D8\u5316\u53D1\u751F\u5728\u8BE5\u5757\u7F16\u8BD1\u51FA\u7684\u534F\u8BAE\u7247\u6BB5": "The change is in the protocol fragment compiled from this block",
+    "\u4E0E {frame} \u6BD4\u8F83\uFF1A\u516C\u5171\u524D\u7F00 {bytes} \u5B57\u8282\uFF08{ratio}\uFF09\uFF1B\u76EE\u6807 {pane}{block}\uFF1B\u53D8\u5316\u7C7B\u578B {change}\u3002\u8BF7\u6C42\u4F53\u524D\u7F00\u4E0D\u7B49\u540C\u4E8E provider \u5B9E\u9645\u7F13\u5B58\u547D\u4E2D\u3002": "Compared with {frame}: common prefix {bytes} bytes ({ratio}); target {pane}{block}; change type {change}. A request-body prefix is not proof of an actual provider cache hit.",
     "\u7A7A\u5C42": "Empty layer",
     "\u5DE5\u5177\u8BE6\u60C5\u76EE\u5F55": "Tool details",
     "\u67E5\u770B\u8BE6\u60C5": "View details",
@@ -2813,6 +2853,7 @@
     awaitingProjection: false,
     submitBaseline: null,
     unlimitedConfirmed: false,
+    permissionChanging: false,
     approvalSubmitting: "",
     approvalFeedback: "",
     fullRefreshNeeded: true,
@@ -2822,7 +2863,11 @@
     conversationHistoryInitialized: false,
     conversationHistoryLatest: null,
     conversationHistoryError: "",
-    conversationHistoryVersion: 0
+    conversationHistoryVersion: 0,
+    contextPrefixDiff: null,
+    contextPrefixDiffKey: "",
+    contextPrefixDiffLoading: false,
+    contextPrefixDiffError: ""
   };
   var depositionProjection = {
     index: null,
@@ -2980,6 +3025,7 @@
     stopButton: requiredElement("#stopButton"),
     configureModelButton: requiredElement("#configureModelButton"),
     sendFeedback: requiredElement("#sendFeedback"),
+    contextUsage: requiredElement("#contextUsage"),
     ledgerRound: requiredElement("#ledgerRound"),
     ledgerContext: requiredElement("#ledgerContext"),
     ledgerFrame: requiredElement("#ledgerFrame"),
@@ -46983,6 +47029,18 @@
     }).format(date)), "</time>") : "";
     return '<div class="chat-item-meta">\n    '.concat(copyReply ? '<button class="chat-item-copy" type="button" data-markdown-document-copy="true" aria-label="'.concat(t("\u590D\u5236\u6700\u7EC8\u56DE\u590D"), '">').concat(t("\u590D\u5236"), "</button>") : "", "\n    ").concat(time, "\n  </div>");
   }
+  function fullLocalTime(value) {
+    const source2 = String(value || "").trim();
+    const date = new Date(source2);
+    if (!source2 || Number.isNaN(date.getTime())) return null;
+    const pad2 = (part) => String(part).padStart(2, "0");
+    const label = "".concat(date.getFullYear(), "-").concat(pad2(date.getMonth() + 1), "-").concat(pad2(date.getDate()), " ").concat(pad2(date.getHours()), ":").concat(pad2(date.getMinutes()), ":").concat(pad2(date.getSeconds()));
+    return { source: source2, label, title: "".concat(label, " \xB7 ").concat(source2) };
+  }
+  function renderFullTime(value, className = "") {
+    const time = fullLocalTime(value);
+    return time ? '<time class="'.concat(escapeHtml2(className), '" datetime="').concat(escapeHtml2(time.source), '" title="').concat(escapeHtml2(time.title), '">').concat(escapeHtml2(time.label), "</time>") : "";
+  }
   function renderChatTraceStep(step, groupKey, position3) {
     const key2 = "".concat(groupKey, ":step:").concat(step.key, ":").concat(position3);
     const open2 = state.conversationDisclosure.has(key2) ? state.conversationDisclosure.get(key2) : false;
@@ -47180,6 +47238,9 @@
       }
     }
     restoreStageScroll(scrollSnapshots);
+    const contextNav = els.stagePage.querySelector(".runtime-context-workspace > nav");
+    const contextRail = els.stagePage.querySelector(".context-diff-rail");
+    if (contextNav && contextRail) contextRail.scrollTop = contextNav.scrollTop;
   }
   function renderStageAndFocus(pageId, selector) {
     renderSourceState();
@@ -47417,8 +47478,74 @@
     return '<section class="context-tool-summary" aria-label="'.concat(t("\u5DE5\u5177\u8C03\u7528\u603B\u89C8"), '"><header><span class="hud-label">').concat(t("\u5DE5\u5177\u8C03\u7528\u603B\u89C8"), "</span><strong>").concat(t("\u5F53\u524D\u5E27\u6B21"), "</strong></header><dl>").concat(values.map(([label, value]) => "<div><dt>".concat(escapeHtml2(label), "</dt><dd>").concat(escapeHtml2(value), "</dd></div>")).join(""), "</dl></section>");
   }
   function renderContextPaneDetail(round, frame, pane) {
+    const diffTarget = contextPrefixDiffFor(round, frame)?.target;
+    const paneTarget = diffTarget?.pane_id === pane?.id ? diffTarget : null;
     const toolSummary = renderContextToolSummary(pane);
-    return "".concat(toolSummary).concat(renderContextToolIndex(pane)).concat(toolSummary ? "" : renderMarkdownDocument("context:".concat(round, ":").concat(frame.frame_id, ":").concat(pane?.id || "empty"), contextPaneMarkdown(pane)));
+    if (toolSummary) {
+      return "".concat(paneTarget ? renderContextDiffSeam(paneTarget) : "").concat(toolSummary).concat(renderContextToolIndex(pane));
+    }
+    if (!pane) return "";
+    const blocks = pane.content_blocks || [];
+    if (!blocks.length) {
+      const content3 = renderContextBlock(
+        "context:".concat(round, ":").concat(frame.frame_id, ":").concat(pane.id),
+        contextPaneLabel(pane.id),
+        contextPaneMarkdown(pane),
+        pane.chars ?? pane.raw_chars ?? 0,
+        "",
+        "",
+        "",
+        paneTarget && ["block_inside", "layer_inside"].includes(paneTarget.placement) ? paneTarget : null
+      );
+      return paneTarget && !["block_inside", "layer_inside"].includes(paneTarget.placement) ? "".concat(paneTarget.placement === "layer_start" || paneTarget.placement === "layer_boundary" ? renderContextDiffSeam(paneTarget) : "").concat(content3).concat(paneTarget.placement !== "layer_start" && paneTarget.placement !== "layer_boundary" ? renderContextDiffSeam(paneTarget) : "") : content3;
+    }
+    const targetBlockPresent = Boolean(
+      paneTarget?.block_id && blocks.some((block) => block.block_id === paneTarget.block_id)
+    );
+    const cards = blocks.map((block) => {
+      const provenance = block.provenance || {};
+      const meta = [
+        block.source_block_id ? "".concat(t("\u6765\u6E90"), " ").concat(block.source_block_id) : "",
+        provenance.kind,
+        provenance.round ? "".concat(t("\u8F6E\u6B21"), " ").concat(provenance.round) : "",
+        provenance.step,
+        provenance.iter != null ? "".concat(t("\u5E27\u6B21"), " ").concat(provenance.iter) : ""
+      ].filter(Boolean).map(escapeHtml2).join(" \xB7 ");
+      const timestamp = String(provenance.timestamp || "");
+      const before = paneTarget && paneTarget.placement === "block_boundary" && block.block_id === paneTarget.block_id ? renderContextDiffSeam(paneTarget) : "";
+      const card = renderContextBlock(
+        "context:".concat(round, ":").concat(frame.frame_id, ":").concat(pane.id, ":").concat(block.block_id),
+        block.title || contextPaneLabel(pane.id),
+        block.content_md || block.content_raw || "",
+        block.chars ?? block.raw_chars ?? 0,
+        block.tone,
+        meta,
+        timestamp,
+        paneTarget && block.block_id === paneTarget.block_id && ["block_inside", "layer_inside"].includes(paneTarget.placement) ? paneTarget : null
+      );
+      return "".concat(before).concat(card);
+    }).join("");
+    const beforeStack = paneTarget && ["layer_start", "layer_boundary"].includes(paneTarget.placement) ? renderContextDiffSeam(paneTarget) : "";
+    const afterStack = paneTarget && (["layer_end", "request_end"].includes(paneTarget.placement) || paneTarget.placement === "block_boundary" && !targetBlockPresent) ? renderContextDiffSeam(paneTarget) : "";
+    return '<div class="context-block-stack">'.concat(beforeStack).concat(cards).concat(afterStack, "</div>");
+  }
+  function renderContextDiffSeam(target) {
+    return '<div class="context-diff-seam" data-context-diff-anchor tabindex="-1"><span>'.concat(escapeHtml2(contextDiffLocationLabel(target)), "</span></div>");
+  }
+  function contextDiffLocationLabel(target) {
+    if (target.source_mapping === "derived") {
+      return t("\u53D8\u5316\u53D1\u751F\u5728\u8BE5\u5757\u7F16\u8BD1\u51FA\u7684\u534F\u8BAE\u7247\u6BB5");
+    }
+    if (target.placement === "block_inside") {
+      return t("\u53D8\u5316\u4ECE\u5757\u5185\u7B2C {offset} \u5B57\u7B26\u5F00\u59CB", {
+        offset: Number(target.block_offset ?? target.source_offset).toLocaleString(state.locale)
+      });
+    }
+    return t("\u8BF7\u6C42\u4F53\u53D8\u5316\u540E\u7F00\u4ECE\u8FD9\u91CC\u5F00\u59CB");
+  }
+  function renderContextBlock(documentId, title, content3, chars, tone = "", meta = "", timestamp = "", diffTarget = null) {
+    const time = renderFullTime(timestamp, "context-block-time");
+    return '<section class="context-block-card'.concat(diffTarget ? " context-diff-block" : "", '" data-tone="').concat(escapeHtml2(tone), '"><header><b>').concat(escapeHtml2(title), "</b><span>").concat(escapeHtml2(chars.toLocaleString(state.locale)), " ").concat(t("\u5B57\u7B26")).concat(meta ? " \xB7 ".concat(meta) : "").concat(time ? " \xB7 ".concat(t("\u8BED\u6599\u65F6\u95F4"), " ").concat(time) : "", "</span>").concat(diffTarget ? '<em class="context-diff-block-marker" data-context-diff-anchor tabindex="-1">'.concat(escapeHtml2(contextDiffLocationLabel(diffTarget)), "</em>") : "", '</header><div class="context-block-body">').concat(renderMarkdownDocument(documentId, content3 || "\u2014"), "</div></section>");
   }
   var contextInstrumentPaneIds = ["00_call_header", "01_tool_header", "02_generation_config"];
   var contextPaneLabels = {
@@ -47436,6 +47563,47 @@
   function contextPaneLabel(paneId) {
     const label = contextPaneLabels[paneId];
     return label ? t(label) : paneId;
+  }
+  function contextPrefixDiffFor(round, frame) {
+    const payload = runtimeProjection.contextPrefixDiff;
+    return runtimeProjection.contextPrefixDiffKey === "".concat(round, ":").concat(frame.frame_id) && payload?.state === "ready" && payload.current?.round === round && payload.current?.frame_id === frame.frame_id && payload.target ? payload : null;
+  }
+  function contextDiffTooltip(diff2) {
+    const target = diff2.target;
+    const ratio = "".concat(((Number(diff2.prefix_ratio) || 0) * 100).toFixed(1), "%");
+    const change = target?.change_kind === "insert" ? t("\u65B0\u589E") : target?.change_kind === "delete" ? t("\u5220\u9664") : t("\u66FF\u6362");
+    return t("\u4E0E {frame} \u6BD4\u8F83\uFF1A\u516C\u5171\u524D\u7F00 {bytes} \u5B57\u8282\uFF08{ratio}\uFF09\uFF1B\u76EE\u6807 {pane}{block}\uFF1B\u53D8\u5316\u7C7B\u578B {change}\u3002\u8BF7\u6C42\u4F53\u524D\u7F00\u4E0D\u7B49\u540C\u4E8E provider \u5B9E\u9645\u7F13\u5B58\u547D\u4E2D\u3002", {
+      frame: diff2.previous?.frame_id || "\u2014",
+      bytes: Number(diff2.common_prefix_bytes || 0).toLocaleString(state.locale),
+      ratio,
+      pane: target ? contextPaneLabel(target.pane_id) : "\u2014",
+      block: target?.block_id ? " / ".concat(target.block_id) : "",
+      change
+    });
+  }
+  function renderContextDiffRail(panes, round, frame) {
+    const diff2 = contextPrefixDiffFor(round, frame);
+    const target = diff2?.target;
+    const railLabel = runtimeProjection.contextPrefixDiffLoading ? t("\u6B63\u5728\u8BA1\u7B97\u8BF7\u6C42\u4F53\u524D\u7F00\u5DEE\u5206") : runtimeProjection.contextPrefixDiff?.state === "identical" ? t("\u4E0E\u6700\u8FD1\u517C\u5BB9\u5E27\u7684\u8BF7\u6C42\u4F53\u5B8C\u5168\u76F8\u540C") : runtimeProjection.contextPrefixDiff?.state === "unavailable" || runtimeProjection.contextPrefixDiffError ? t("\u6CA1\u6709\u53EF\u7528\u7684\u8BF7\u6C42\u4F53\u524D\u7F00\u5DEE\u5206") : t("\u8BF7\u6C42\u4F53\u524D\u7F00\u5DEE\u5206\u8F68\u9053");
+    const alignment = target && ["layer_start", "layer_boundary"].includes(target.placement) ? "at-start" : target && ["layer_end", "request_end"].includes(target.placement) ? "at-end" : "at-center";
+    const tooltip = diff2 ? contextDiffTooltip(diff2) : "";
+    return '<div class="context-diff-rail" aria-label="'.concat(escapeHtml2(railLabel), '" aria-busy="').concat(runtimeProjection.contextPrefixDiffLoading ? "true" : "false", '">\n    ').concat(panes.map((pane) => '<div class="context-diff-slot">'.concat(target?.pane_id === pane.id ? '<button type="button" class="context-diff-cursor '.concat(alignment, '" data-context-diff-jump title="').concat(escapeHtml2(tooltip), '" aria-label="').concat(escapeHtml2(tooltip), '"><span aria-hidden="true"></span></button>') : "", "</div>")).join(""), "\n  </div>");
+  }
+  function jumpToContextPrefixDiff() {
+    const target = runtimeProjection.contextPrefixDiff?.target;
+    if (!target || runtimeProjection.contextPrefixDiff?.state !== "ready") return;
+    state.activeRuntimePane = target.pane_id;
+    renderStage("context");
+    window.requestAnimationFrame(() => {
+      const article = els.stagePage.querySelector(".runtime-context-workspace article");
+      const anchor = article?.querySelector("[data-context-diff-anchor]");
+      if (!article || !anchor) return;
+      const articleRect = article.getBoundingClientRect();
+      const anchorRect = anchor.getBoundingClientRect();
+      const targetTop = article.scrollTop + anchorRect.top - articleRect.top - Math.min(96, article.clientHeight * 0.2);
+      article.scrollTop = Math.max(0, targetTop);
+      anchor.focus({ preventScroll: true });
+    });
   }
   function renderContextInstrument(pane) {
     let data = {};
@@ -47467,7 +47635,7 @@
       secondary = t("\u6E29\u5EA6 {value}", { value: text10(data.temperature, t("\u672A\u6807\u8BB0")) });
     }
     const paneLabel = contextPaneLabel(pane.id);
-    return '<button class="context-instrument '.concat(kind, '" data-runtime-pane="').concat(escapeHtml2(pane.id), '" aria-label="').concat(escapeHtml2(t("\u67E5\u770B {title} \u5C42\u771F\u5B9E\u5185\u5BB9", { title: paneLabel })), '">\n    <span class="context-instrument-top"><b>').concat(escapeHtml2(paneLabel), '</b></span>\n    <span class="context-instrument-readout"><strong>').concat(escapeHtml2(primary), "</strong><small>").concat(escapeHtml2(secondary), '</small></span>\n    <span class="context-instrument-foot"><em>').concat(escapeHtml2(pane.raw_chars ?? pane.chars ?? 0), " CH</em></span>\n  </button>");
+    return '<button class="context-instrument '.concat(kind, '" data-runtime-pane="').concat(escapeHtml2(pane.id), '" aria-label="').concat(escapeHtml2(t("\u67E5\u770B {title} \u5C42\u771F\u5B9E\u5185\u5BB9", { title: paneLabel })), '">\n    <span class="context-instrument-top"><b>').concat(escapeHtml2(paneLabel), '</b></span>\n    <span class="context-instrument-readout"><strong>').concat(escapeHtml2(primary), "</strong><small>").concat(escapeHtml2(secondary), '</small></span>\n    <span class="context-instrument-foot"><em>').concat(escapeHtml2(pane.chars ?? pane.raw_chars ?? 0), " CH</em></span>\n  </button>");
   }
   function contextSelection() {
     const rounds = runtimeProjection.conversationRoundOrder;
@@ -47498,7 +47666,31 @@
     return '<label class="protocol-round-select context-frame-select"><span>'.concat(t("\u9009\u62E9\u5E27\u6B21"), '</span><select data-context-frame>\n    <option value="latest" ').concat(state.selectedContextFrame === null ? "selected" : "", ">").concat(t("\u6700\u65B0"), " \xB7 ").concat(escapeHtml2(label(frames.at(-1) || selectedFrame)), "</option>\n    ").concat(historical.map((frame) => '<option value="'.concat(escapeHtml2(frame.frame_id), '" ').concat(state.selectedContextFrame === frame.frame_id ? "selected" : "", ">").concat(escapeHtml2(label(frame)), "</option>")).join(""), "\n  </select></label>");
   }
   function contextSelectors(round, live, frame) {
-    return '<div class="context-selectors">'.concat(contextRoundSelector(round)).concat(contextFrameSelector(live.call_frames || [], frame), "</div>");
+    const frameTime = renderFullTime(frame.created_at, "context-frame-time");
+    return '<div class="context-selectors">'.concat(contextRoundSelector(round)).concat(contextFrameSelector(live.call_frames || [], frame)).concat(frameTime ? '<p class="context-frame-created">'.concat(t("\u8C03\u7528\u7F16\u8BD1\u65F6\u95F4"), " \xB7 ").concat(frameTime, "</p>") : "", "</div>");
+  }
+  function frameContextUsage(frame, ring = false) {
+    const usage = frame?.context_usage;
+    const chars = usage ? formattedInteger(usage.chars) : "\u2014";
+    const inputTokens = usage?.state === "pending" ? t("\u7B49\u5F85\u6A21\u578B\u56DE\u6267") : usage?.state === "reported" ? formattedInteger(usage.input_tokens) : "\u2014";
+    const windowTokens = formattedInteger(usage?.window_tokens);
+    const ratio = usage?.state === "reported" && Number(usage.input_tokens) >= 0 && Number(usage.window_tokens) > 0 ? Math.min(1, Number(usage.input_tokens) / Number(usage.window_tokens)) : 0;
+    const stateClass = usage?.state || "unavailable";
+    const frameId = frame?.frame_id || t("\u5C1A\u65E0\u5E27\u6B21");
+    const models = settingsProjection.data?.model_catalog.models || [];
+    const detectedModel = models.find((item) => item.id === frame?.model_profile_id);
+    const detected = formattedInteger(
+      detectedModel?.detected_context_window
+    );
+    const accessible = t("\u5E27 {frame}\uFF1A\u5B57\u7B26 {chars}\uFF1B\u8F93\u5165 Tokens {tokens} / {window}\uFF1B\u8BC6\u522B\u5BB9\u91CF {detected}\uFF1BRuntime \u8FD0\u884C\u4E0A\u9650 {window}", {
+      frame: frameId,
+      chars,
+      tokens: inputTokens,
+      window: windowTokens,
+      detected
+    });
+    const values = ring ? "" : '\n    <span class="context-usage-value"><b>'.concat(t("\u5B57\u7B26"), "</b> ").concat(escapeHtml2(chars), '</span>\n    <span class="context-usage-value"><b>Tokens</b> ').concat(escapeHtml2(inputTokens), " / ").concat(escapeHtml2(windowTokens), "</span>");
+    return '<span class="frame-context-usage '.concat(escapeHtml2(stateClass), '" aria-label="').concat(escapeHtml2(accessible), '" title="').concat(escapeHtml2(accessible), '">\n    ').concat(ring ? '<span class="context-usage-ring" style="--context-usage-angle:'.concat(escapeHtml2((ratio * 360).toFixed(2)), 'deg" aria-hidden="true"></span>') : "").concat(values, "\n  </span>");
   }
   function renderRuntimeContextPage() {
     if (runtimeProjection.host !== "connected") return renderRuntimeEmpty(t("\u4E0A\u4E0B\u6587"), t("\u672C\u5730\u5BBF\u4E3B\u672A\u8FDE\u63A5"), runtimeProjection.error || t("\u65E0\u6CD5\u8BFB\u53D6\u8FD0\u884C\u65F6\u6295\u5F71\u3002"), "runtime");
@@ -47510,10 +47702,10 @@
     const panes = frame.context_panes || [];
     const tab2 = getActivePageTab("context");
     if (tab2 === "guide") {
-      return '<div class="runtime-context-guide">\n      <header class="ledger-title compact"><div><span class="hud-label">'.concat(t("\u4E0A\u4E0B\u6587\u5341\u5C42"), " \xB7 ").concat(t("\u8F6E\u6B21"), " ").concat(escapeHtml2(round), "</span><h2>").concat(escapeHtml2(frame.frame_id), '</h2></div><div class="context-head-actions"><p>').concat(escapeHtml2(panes.length), " ").concat(t("\u5C42"), " \xB7 ").concat(escapeHtml2(t("\u6765\u6E90 {source}", { source: frame.layer_source || "none" })), "</p>").concat(contextSelectors(round, live, frame), '</div></header>\n      <div class="context-guide-scroll" data-stage-scroll-key="').concat(escapeHtml2("context:guide:".concat(round, ":").concat(frame.frame_id)), '">\n        <section class="context-instrument-cluster" aria-label="').concat(t("\u8C03\u7528\u5934\u4EEA\u8868"), '">').concat(panes.slice(0, 3).map(renderContextInstrument).join(""), '</section>\n        <div class="layer-ledger">').concat(panes.slice(3).map((pane) => '\n          <button class="layer-ledger-row" data-runtime-pane="'.concat(escapeHtml2(pane.id), '" aria-label="').concat(escapeHtml2(t("\u67E5\u770B {title} \u5C42\u771F\u5B9E\u5185\u5BB9", { title: contextPaneLabel(pane.id) })), '">\n            <div><b>').concat(escapeHtml2(contextPaneLabel(pane.id)), "</b><small>").concat(escapeHtml2((pane.content_md || pane.content_raw || "").slice(0, 96) || t("\u7A7A\u5C42")), "</small></div><em>").concat(escapeHtml2(pane.raw_chars ?? pane.chars ?? 0), "</em>\n          </button>\n        ")).join(""), '</div>\n      </div>\n      <details class="runtime-assembly context-assembly-details"><summary>').concat(t("\u88C5\u914D\u8BE6\u60C5"), "</summary>").concat(renderRuntimeFrames([frame]), "<pre>").concat(escapeHtml2(JSON.stringify(frame.manifest || {}, null, 2)), "</pre></details>\n    </div>");
+      return '<div class="runtime-context-guide">\n      <header class="ledger-title compact"><div><span class="hud-label">'.concat(t("\u4E0A\u4E0B\u6587\u5341\u5C42"), " \xB7 ").concat(t("\u8F6E\u6B21"), " ").concat(escapeHtml2(round), "</span><h2>").concat(escapeHtml2(frame.frame_id), "</h2>").concat(frameContextUsage(frame), '</div><div class="context-head-actions"><p>').concat(escapeHtml2(panes.length), " ").concat(t("\u5C42"), " \xB7 ").concat(escapeHtml2(t("\u6765\u6E90 {source}", { source: frame.layer_source || "none" })), "</p>").concat(contextSelectors(round, live, frame), '</div></header>\n      <div class="context-guide-scroll" data-stage-scroll-key="').concat(escapeHtml2("context:guide:".concat(round, ":").concat(frame.frame_id)), '">\n        <section class="context-instrument-cluster" aria-label="').concat(t("\u8C03\u7528\u5934\u4EEA\u8868"), '">').concat(panes.slice(0, 3).map(renderContextInstrument).join(""), '</section>\n        <div class="layer-ledger">').concat(panes.slice(3).map((pane) => '\n          <button class="layer-ledger-row" data-runtime-pane="'.concat(escapeHtml2(pane.id), '" aria-label="').concat(escapeHtml2(t("\u67E5\u770B {title} \u5C42\u771F\u5B9E\u5185\u5BB9", { title: contextPaneLabel(pane.id) })), '">\n            <div><b>').concat(escapeHtml2(contextPaneLabel(pane.id)), "</b><small>").concat(escapeHtml2((pane.content_md || pane.content_raw || "").slice(0, 96) || t("\u7A7A\u5C42")), "</small></div><em>").concat(escapeHtml2(pane.chars ?? pane.raw_chars ?? 0), "</em>\n          </button>\n        ")).join(""), '</div>\n      </div>\n      <details class="runtime-assembly context-assembly-details"><summary>').concat(t("\u88C5\u914D\u8BE6\u60C5"), "</summary>").concat(renderRuntimeFrames([frame]), "<pre>").concat(escapeHtml2(JSON.stringify(frame.manifest || {}, null, 2)), "</pre></details>\n    </div>");
     }
     const selected = panes.find((pane) => pane.id === state.activeRuntimePane) || panes[0];
-    return '<div class="runtime-context-workspace">\n    <nav aria-label="'.concat(t("\u4E0A\u4E0B\u6587\u5341\u5C42"), '" data-stage-scroll-key="').concat(escapeHtml2("context:content:".concat(round, ":").concat(frame.frame_id, ":nav")), '">').concat(panes.map((pane) => '<button class="'.concat(pane.id === selected?.id ? "active" : "", '" data-runtime-pane="').concat(escapeHtml2(pane.id), '"><b>').concat(escapeHtml2(contextPaneLabel(pane.id)), "</b><span>").concat(escapeHtml2(pane.raw_chars ?? pane.chars ?? 0), "</span></button>")).join(""), '</nav>\n    <article data-stage-scroll-key="').concat(escapeHtml2("context:content:".concat(round, ":").concat(frame.frame_id, ":").concat(selected?.id || "none")), '"><header class="context-detail-head"><div><span class="hud-label">').concat(t("\u5185\u5BB9\u8BE6\u60C5"), " \xB7 ").concat(t("\u8F6E\u6B21"), " ").concat(escapeHtml2(round), " \xB7 ").concat(t("\u5E27\u6B21"), " ").concat(escapeHtml2(frame.frame_id), "</span><h2>").concat(escapeHtml2(selected ? contextPaneLabel(selected.id) : t("\u7A7A\u5C42")), "</h2></div>").concat(contextSelectors(round, live, frame), "</header>").concat(renderContextPaneDetail(round, frame, selected), "</article>\n  </div>");
+    return '<div class="runtime-context-workspace">\n    <nav aria-label="'.concat(t("\u4E0A\u4E0B\u6587\u5341\u5C42"), '" data-stage-scroll-key="').concat(escapeHtml2("context:content:".concat(round, ":").concat(frame.frame_id, ":nav")), '">').concat(panes.map((pane) => '<button class="'.concat(pane.id === selected?.id ? "active" : "", '" data-runtime-pane="').concat(escapeHtml2(pane.id), '"><b>').concat(escapeHtml2(contextPaneLabel(pane.id)), "</b><span>").concat(escapeHtml2(pane.chars ?? pane.raw_chars ?? 0), "</span></button>")).join(""), "</nav>\n    ").concat(renderContextDiffRail(panes, round, frame), '\n    <article data-stage-scroll-key="').concat(escapeHtml2("context:content:".concat(round, ":").concat(frame.frame_id, ":").concat(selected?.id || "none")), '"><header class="context-detail-head"><div><span class="hud-label">').concat(t("\u5185\u5BB9\u8BE6\u60C5"), " \xB7 ").concat(t("\u8F6E\u6B21"), " ").concat(escapeHtml2(round), " \xB7 ").concat(t("\u5E27\u6B21"), " ").concat(escapeHtml2(frame.frame_id), "</span><h2>").concat(escapeHtml2(selected ? contextPaneLabel(selected.id) : t("\u7A7A\u5C42")), "</h2></div>").concat(contextSelectors(round, live, frame), "</header>").concat(renderContextPaneDetail(round, frame, selected), "</article>\n  </div>");
   }
   var protocolCategoryLabels = {
     permanent: "\u5168\u6587\u5E38\u9A7B",
@@ -47907,8 +48099,7 @@
   }
   function settingsFeedback() {
     const message = settingsProjection.error || settingsProjection.feedback;
-    if (!message) return "";
-    return '<p class="settings-feedback '.concat(settingsProjection.error ? "warn" : "", '" role="status">').concat(escapeHtml2(message), "</p>");
+    return '<p class="settings-feedback '.concat(settingsProjection.error ? "warn" : "", '" data-settings-feedback role="status" ').concat(message ? "" : "hidden", ">").concat(escapeHtml2(message), "</p>");
   }
   function settingsActions() {
     const pending = settingsProjection.pending ? "disabled" : "";
@@ -48000,25 +48191,45 @@
   function providerUrlSuffix(protocol) {
     return providerUrlSuffixes[protocol] || "";
   }
-  function providerBaseUrl(url) {
+  function providerUrlParts(url) {
     const normalized = url.trim().replace(/\/+$/, "");
-    const suffix = Object.values(providerUrlSuffixes).find((candidate) => normalized.endsWith(candidate));
-    if (suffix) return normalized.slice(0, -suffix.length);
-    return normalized.endsWith("/v1") ? normalized.slice(0, -3) : normalized;
+    const paths = [.../* @__PURE__ */ new Set([...Object.values(providerUrlSuffixes), "/chat/completions", "/responses", "/messages"])].sort((left, right) => right.length - left.length);
+    const path3 = paths.find((candidate) => normalized.endsWith(candidate)) || "";
+    return path3 ? [normalized.slice(0, -path3.length), path3] : [normalized, ""];
   }
-  function providerRequestUrl(baseUrl, protocol) {
-    return "".concat(baseUrl.trim().replace(/\/+$/, "")).concat(providerUrlSuffix(protocol));
+  function providerBaseUrl(url) {
+    return providerUrlParts(url)[0];
+  }
+  function providerRequestPath(url, protocol) {
+    return url ? providerUrlParts(url)[1] : providerUrlSuffix(protocol);
+  }
+  function providerRequestUrl(baseUrl, requestPath) {
+    const base = baseUrl.trim().replace(/\/+$/, "");
+    const path3 = requestPath.trim();
+    return path3 ? "".concat(base, "/").concat(path3.replace(/^\/+/, "")) : base;
   }
   function connectionEditor(connection) {
     const id = connection?.id || "";
     const protocol = connection?.protocol || "openai_chat";
-    return '<form class="catalog-editor" data-model-catalog-form="connection" data-model-catalog-id="'.concat(escapeHtml2(id), '" autocomplete="off">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(connection?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u534F\u8BAE"), '</span><select name="protocol" data-provider-protocol><option value="openai_chat" ').concat(protocol === "openai_chat" ? "selected" : "", '>OpenAI Chat</option><option value="openai_responses" ').concat(protocol === "openai_responses" ? "selected" : "", '>OpenAI Responses</option><option value="anthropic_messages" ').concat(protocol === "anthropic_messages" ? "selected" : "", '>Anthropic Messages</option></select></label>\n    <label class="wide"><span>').concat(t("\u63A5\u53E3\u5730\u5740"), '</span><div class="provider-url-editor"><input name="url_base" type="url" value="').concat(escapeHtml2(providerBaseUrl(connection?.url || "")), '" required><span data-provider-url-suffix>').concat(providerUrlSuffix(protocol), '</span></div></label>\n    <label class="wide"><span>').concat(t("\u5BC6\u94A5\u73AF\u5883\u53D8\u91CF"), '</span><input name="api_key_env" value="').concat(escapeHtml2(connection?.api_key_env || ""), '" pattern="[A-Za-z_][A-Za-z0-9_]*"></label>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
+    return '<form class="catalog-editor" data-model-catalog-form="connection" data-model-catalog-id="'.concat(escapeHtml2(id), '" autocomplete="off">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(connection?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u534F\u8BAE"), '</span><select name="protocol" data-provider-protocol><option value="openai_chat" ').concat(protocol === "openai_chat" ? "selected" : "", '>OpenAI Chat</option><option value="openai_responses" ').concat(protocol === "openai_responses" ? "selected" : "", '>OpenAI Responses</option><option value="anthropic_messages" ').concat(protocol === "anthropic_messages" ? "selected" : "", '>Anthropic Messages</option></select></label>\n    <label class="wide"><span>').concat(t("\u57FA\u7840\u5730\u5740"), '</span><div class="provider-url-editor"><input name="url_base" type="url" value="').concat(escapeHtml2(providerBaseUrl(connection?.url || "")), '" required aria-label="').concat(t("\u57FA\u7840\u5730\u5740"), '"><input name="url_path" value="').concat(escapeHtml2(providerRequestPath(connection?.url || "", protocol)), '" data-provider-url-path aria-label="').concat(t("\u8BF7\u6C42\u8DEF\u5F84"), '"></div><small>').concat(t("\u8BF7\u6C42\u8DEF\u5F84\u4F1A\u6309\u534F\u8BAE\u7ED9\u51FA\u9ED8\u8BA4\u503C\uFF1B\u5982\u670D\u52A1\u5546\u7AEF\u70B9\u4E0D\u540C\uFF0C\u53EF\u76F4\u63A5\u4FEE\u6539\u8986\u76D6\u3002"), '</small></label>\n    <label class="wide"><span>').concat(t("\u5BC6\u94A5\u73AF\u5883\u53D8\u91CF"), '</span><input name="api_key_env" value="').concat(escapeHtml2(connection?.api_key_env || ""), '" pattern="[A-Za-z_][A-Za-z0-9_]*"></label>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
+  }
+  function formattedInteger(value) {
+    return Number.isInteger(value) && Number(value) >= 0 ? Number(value).toLocaleString(state.locale) : "\u2014";
+  }
+  function modelContextSourceLabel(model) {
+    const source2 = model?.context_window_source || (model?.context_window ? "legacy_manual" : "unknown");
+    if (source2 === "provider") return t("\u6A21\u578B\u670D\u52A1\u5143\u6570\u636E");
+    if (source2 === "registry") return t("\u5185\u7F6E\u5B98\u65B9\u6A21\u578B\u8868");
+    if (source2 === "legacy_manual") return t("\u65E7\u914D\u7F6E\u624B\u52A8\u503C");
+    return t("\u5C1A\u672A\u8BC6\u522B");
   }
   function modelEditor(model) {
     const data = settingsProjection.data;
     if (!data) return "";
     const supported = (model?.reasoning.supported || []).join(", ");
-    return '<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="'.concat(escapeHtml2(model?.id || ""), '" autocomplete="off">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(model?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u670D\u52A1\u8FDE\u63A5"), '</span><select name="connection_id" required><option value="">').concat(t("\u8BF7\u9009\u62E9"), "</option>").concat(data.model_catalog.connections.map((item) => '<option value="'.concat(escapeHtml2(item.id), '" ').concat(model?.connection_id === item.id ? "selected" : "", ">").concat(escapeHtml2(item.alias), "</option>")).join(""), "</select></label>\n    <label><span>").concat(t("\u6A21\u578B ID"), '</span><input name="model" value="').concat(escapeHtml2(model?.model || ""), '" required></label>\n    <label><span>').concat(t("\u4E0A\u4E0B\u6587\u7A97\u53E3"), '</span><input name="context_window" type="number" min="0" max="100000000" value="').concat(escapeHtml2(model?.context_window ?? 0), '" required></label>\n    <label><span>').concat(t("\u652F\u6301\u7684\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_supported" value="').concat(escapeHtml2(supported), '" placeholder="low, medium, high"></label>\n    <label><span>').concat(t("\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_default" value="').concat(escapeHtml2(model?.reasoning.default || ""), '"></label>\n    <div class="settings-switch"><span>').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '</span><input name="streaming_enabled" type="checkbox" aria-label="').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '" ').concat(model?.streaming.enabled !== false ? "checked" : "", '></div>\n    <div class="settings-switch"><span>').concat(t("\u8FD4\u56DE\u7528\u91CF"), '</span><input name="streaming_include_usage" type="checkbox" aria-label="').concat(t("\u8FD4\u56DE\u7528\u91CF"), '" ').concat(model?.streaming.include_usage !== false ? "checked" : "", '></div>\n    <details class="wide"><summary>').concat(t("\u517C\u5BB9\u8BF7\u6C42\u53C2\u6570"), '</summary><label><span>JSON</span><textarea name="request_overrides" rows="6">').concat(escapeHtml2(JSON.stringify(model?.request_overrides || {}, null, 2)), '</textarea></label></details>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
+    const detected = Number(model?.detected_context_window || 0);
+    const source2 = model?.context_window_source || (model?.context_window ? "legacy_manual" : "unknown");
+    return '<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="'.concat(escapeHtml2(model?.id || ""), '" autocomplete="off">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(model?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u670D\u52A1\u8FDE\u63A5"), '</span><select name="connection_id" data-model-context-input required><option value="">').concat(t("\u8BF7\u9009\u62E9"), "</option>").concat(data.model_catalog.connections.map((item) => '<option value="'.concat(escapeHtml2(item.id), '" ').concat(model?.connection_id === item.id ? "selected" : "", ">").concat(escapeHtml2(item.alias), "</option>")).join(""), "</select></label>\n    <label><span>").concat(t("\u6A21\u578B ID"), '</span><input name="model" data-model-context-input value="').concat(escapeHtml2(model?.model || ""), '" required></label>\n    <label><span>').concat(t("\u8BC6\u522B\u5BB9\u91CF"), '</span><div class="model-context-detection"><output data-model-context-detected>').concat(escapeHtml2(detected > 0 ? formattedInteger(detected) : modelContextSourceLabel(model)), '</output><button type="button" data-resolve-model-context>').concat(t("\u91CD\u65B0\u8BC6\u522B"), "</button></div></label>\n    <label><span>").concat(t("\u8FD0\u884C\u4E0A\u9650"), '</span><input name="context_window" type="number" min="1" max="').concat(escapeHtml2(detected > 0 ? detected : 1e8), '" value="').concat(escapeHtml2(model?.context_window || ""), '" required></label>\n    <input name="detected_context_window" type="hidden" value="').concat(escapeHtml2(detected), '">\n    <input name="context_window_source" type="hidden" value="').concat(escapeHtml2(source2), '">\n    <p class="model-context-feedback wide" data-model-context-feedback>').concat(escapeHtml2(modelContextSourceLabel(model)), "</p>\n    <label><span>").concat(t("\u652F\u6301\u7684\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_supported" value="').concat(escapeHtml2(supported), '" placeholder="low, medium, high"></label>\n    <label><span>').concat(t("\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_default" value="').concat(escapeHtml2(model?.reasoning.default || ""), '"></label>\n    <div class="settings-switch"><span>').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '</span><input name="streaming_enabled" type="checkbox" aria-label="').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '" ').concat(model?.streaming.enabled !== false ? "checked" : "", '></div>\n    <div class="settings-switch"><span>').concat(t("\u8FD4\u56DE\u7528\u91CF"), '</span><input name="streaming_include_usage" type="checkbox" aria-label="').concat(t("\u8FD4\u56DE\u7528\u91CF"), '" ').concat(model?.streaming.include_usage !== false ? "checked" : "", '></div>\n    <details class="wide"><summary>').concat(t("\u517C\u5BB9\u8BF7\u6C42\u53C2\u6570"), '</summary><label><span>JSON</span><textarea name="request_overrides" rows="6">').concat(escapeHtml2(JSON.stringify(model?.request_overrides || {}, null, 2)), '</textarea></label></details>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
   }
   function renderConnectionCard(connection) {
     const disabled = settingsProjection.pending ? "disabled" : "";
@@ -48029,7 +48240,7 @@
   }
   function renderModelCard(model) {
     const connection = settingsProjection.data?.model_catalog.connections.find((item) => item.id === model.connection_id);
-    return '<article class="catalog-item">\n    <header><div><strong>'.concat(escapeHtml2(model.alias), "</strong><span>").concat(escapeHtml2(model.model), " \xB7 ").concat(escapeHtml2(connection?.alias || t("\u8FDE\u63A5\u7F3A\u5931")), '</span></div><div><button type="button" data-edit-catalog="model" data-catalog-id="').concat(escapeHtml2(model.id), '">').concat(t("\u7F16\u8F91"), '</button><button type="button" data-delete-catalog="model" data-catalog-id="').concat(escapeHtml2(model.id), '">').concat(t("\u5220\u9664"), "</button></div></header>\n    <p>").concat(t("\u4E0A\u4E0B\u6587\u7A97\u53E3\uFF1A{size}\uFF1B\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6\uFF1A{effort}", { size: model.context_window, effort: model.reasoning.default || t("\u7CFB\u7EDF\u9ED8\u8BA4") }), "</p>\n    ").concat(state.editingModelId === model.id ? modelEditor(model) : "", "\n  </article>");
+    return '<article class="catalog-item">\n    <header><div><strong>'.concat(escapeHtml2(model.alias), "</strong><span>").concat(escapeHtml2(model.model), " \xB7 ").concat(escapeHtml2(connection?.alias || t("\u8FDE\u63A5\u7F3A\u5931")), '</span></div><div><button type="button" data-edit-catalog="model" data-catalog-id="').concat(escapeHtml2(model.id), '">').concat(t("\u7F16\u8F91"), '</button><button type="button" data-delete-catalog="model" data-catalog-id="').concat(escapeHtml2(model.id), '">').concat(t("\u5220\u9664"), "</button></div></header>\n    <p>").concat(t("\u8BC6\u522B\u5BB9\u91CF\uFF1A{detected}\uFF1B\u8FD0\u884C\u4E0A\u9650\uFF1A{limit}\uFF1B\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6\uFF1A{effort}", { detected: formattedInteger(model.detected_context_window), limit: formattedInteger(model.context_window), effort: model.reasoning.default || t("\u7CFB\u7EDF\u9ED8\u8BA4") }), "</p>\n    ").concat(state.editingModelId === model.id ? modelEditor(model) : "", "\n  </article>");
   }
   function objectValue(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -48175,7 +48386,9 @@
     if (!retry) rememberDetailFocus();
     const detail = depositionDetail("memory", itemId);
     const sourceRound = detail?.created_round ?? item.created_round;
-    const sourceRef = "".concat(itemId, " \xB7 ").concat(sourceRound == null ? t("\u8F6E\u6B21\u672A\u8BB0\u5F55") : "".concat(t("\u5F53\u524D\u8F6E"), " R").concat(sourceRound), " \xB7 ").concat((item.linked_containers || []).length, " ").concat(t("\u4E2A\u6302\u63A5"));
+    const created = fullLocalTime(detail?.created_at ?? item.created_at)?.label || t("\u672A\u8BB0\u5F55");
+    const recalled = fullLocalTime(detail?.last_recalled_at ?? item.last_recalled_at)?.label || t("\u672A\u8BB0\u5F55");
+    const sourceRef = "".concat(itemId, " \xB7 ").concat(sourceRound == null ? t("\u8F6E\u6B21\u672A\u8BB0\u5F55") : "".concat(t("\u5F53\u524D\u8F6E"), " R").concat(sourceRound), " \xB7 ").concat(t("\u5165\u5E93\u65F6\u95F4"), " ").concat(created, " \xB7 ").concat(t("\u6700\u8FD1\u8C03\u7528\u65F6\u95F4"), " ").concat(recalled, " \xB7 ").concat((detail?.linked_containers || item.linked_containers || []).length, " ").concat(t("\u4E2A\u6302\u63A5"));
     if (detail) {
       showDetail({
         sourceType: "MEMORY",
@@ -48376,15 +48589,28 @@
     const roundActive = Boolean(
       inFlight || relayInFlight || canStop || stage === "cleanup_local" || stopRequested && runtimeProjection.status?.current_round != null
     );
+    const projectedPermission = runtimeProjection.status?.execution_permission?.pending_level || runtimeProjection.status?.execution_permission?.permission_level;
+    if (roundActive && !runtimeProjection.permissionChanging && projectedPermission) {
+      els.permissionLevel.value = projectedPermission;
+    }
     const connected = runtimeProjection.host === "connected";
     const pending = inFlight || relayInFlight || runtimeProjection.awaitingProjection;
     const modelReady = settingsProjection.data?.persona.setup_model_ready === true;
+    const frames = runtimeProjection.live?.call_frames || [];
+    const latestFrame = frames.find((frame) => frame.frame_id === runtimeProjection.live?.latest_frame_id) || frames.at(-1) || null;
+    const reportedFrame = latestFrame?.context_usage?.state === "reported" ? latestFrame : [...frames].reverse().find((frame) => frame.context_usage?.state === "reported") || [...runtimeProjection.conversationRoundOrder].reverse().flatMap((round) => [
+      ...runtimeProjection.conversationRounds.get(round)?.call_frames || []
+    ].reverse()).find((frame) => frame.context_usage?.state === "reported") || latestFrame;
+    const contextUsageHtml = frameContextUsage(reportedFrame, true);
+    if (els.contextUsage.innerHTML !== contextUsageHtml) {
+      els.contextUsage.innerHTML = contextUsageHtml;
+    }
     els.configureModelButton.hidden = modelReady;
     els.sendButton.hidden = !modelReady || roundActive;
     els.stopButton.hidden = !roundActive;
     els.stopButton.disabled = runtimeProjection.stopping || !stopAvailable;
     els.sendButton.disabled = !connected || pending || !modelReady;
-    els.permissionLevel.disabled = pending;
+    els.permissionLevel.disabled = runtimeProjection.permissionChanging || stage.startsWith("cleanup");
     els.messageInput.readOnly = pending;
     els.runtimeComposer.setAttribute("aria-busy", String(pending));
     if (!modelReady) {
@@ -48744,6 +48970,7 @@
   }
 
   // src/runtime.ts
+  var contextPrefixDiffController = null;
   var RuntimeRequestError = class extends Error {
     status;
     code;
@@ -48822,10 +49049,73 @@
     renderOverview();
     renderChat();
     if (runtimePages.has(state.activePage)) renderStage(state.activePage);
+    if (state.activePage === "context" && getActivePageTab("context") === "content") {
+      void pollContextPrefixDiffForSelection();
+    }
   }
   function validateLiveState(statePayload) {
     if (statePayload !== null && statePayload?.schema_version !== "round_live_state.v2") {
       throw new Error("round_live_state_schema_mismatch");
+    }
+  }
+  function selectedContextDiffRef() {
+    const rounds = runtimeProjection.conversationRoundOrder;
+    const selectedRound = state.selectedContextRound;
+    const round = selectedRound !== null && runtimeProjection.conversationRounds.has(selectedRound) ? selectedRound : runtimeProjection.round ?? rounds.at(-1) ?? null;
+    if (round === null) return null;
+    const live = round === runtimeProjection.round ? runtimeProjection.live : runtimeProjection.conversationRounds.get(round) || null;
+    const frames = live?.call_frames || [];
+    const frame = state.selectedContextFrame === null ? frames.at(-1) : frames.find((item) => item.frame_id === state.selectedContextFrame);
+    return frame ? { round, frameId: frame.frame_id } : null;
+  }
+  function validContextPrefixDiff(payload, ref) {
+    if (payload.schema_version !== "seed_gui_request_prefix_diff.v1" || !["ready", "identical", "unavailable"].includes(payload.state)) return false;
+    if (payload.state === "unavailable") return true;
+    return payload.current?.round === ref.round && payload.current?.frame_id === ref.frameId && typeof payload.previous?.frame_id === "string" && Number.isInteger(payload.common_prefix_bytes) && Number.isInteger(payload.current_wire_bytes) && (payload.state === "identical" || Boolean(payload.target?.pane_id));
+  }
+  async function pollContextPrefixDiffForSelection({ force = false } = {}) {
+    const ref = selectedContextDiffRef();
+    if (!ref) {
+      contextPrefixDiffController?.abort();
+      runtimeProjection.contextPrefixDiffKey = "";
+      runtimeProjection.contextPrefixDiff = null;
+      runtimeProjection.contextPrefixDiffLoading = false;
+      runtimeProjection.contextPrefixDiffError = "";
+      return;
+    }
+    const key2 = "".concat(ref.round, ":").concat(ref.frameId);
+    if (!force && runtimeProjection.contextPrefixDiffKey === key2 && (runtimeProjection.contextPrefixDiffLoading || runtimeProjection.contextPrefixDiff || runtimeProjection.contextPrefixDiffError)) return;
+    contextPrefixDiffController?.abort();
+    const controller = new AbortController();
+    contextPrefixDiffController = controller;
+    runtimeProjection.contextPrefixDiffKey = key2;
+    runtimeProjection.contextPrefixDiff = null;
+    runtimeProjection.contextPrefixDiffLoading = true;
+    runtimeProjection.contextPrefixDiffError = "";
+    try {
+      const payload = await fetchRuntimeJson(
+        "./api/context/request-prefix-diff?round=".concat(ref.round, "&frame_id=").concat(encodeURIComponent(ref.frameId)),
+        { signal: controller.signal }
+      );
+      if (!validContextPrefixDiff(payload, ref)) {
+        throw new Error("context_prefix_diff_schema_mismatch");
+      }
+      if (runtimeProjection.contextPrefixDiffKey === key2) {
+        runtimeProjection.contextPrefixDiff = payload;
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError") && runtimeProjection.contextPrefixDiffKey === key2) {
+        const failure = errorView(error);
+        runtimeProjection.contextPrefixDiffError = failure.code || failure.message || "unknown";
+      }
+    } finally {
+      if (runtimeProjection.contextPrefixDiffKey === key2) {
+        runtimeProjection.contextPrefixDiffLoading = false;
+        if (state.activePage === "context" && getActivePageTab("context") === "content") {
+          renderStage("context");
+        }
+      }
+      if (contextPrefixDiffController === controller) contextPrefixDiffController = null;
     }
   }
   function cacheLatestConversation(round, liveState) {
@@ -49053,6 +49343,25 @@
     if (state.globalSettingsOpen) renderGlobalSettings();
     renderComposerState();
   }
+  function refreshModelCatalogMutationUi(entity, id) {
+    const selector = '[data-model-catalog-form="'.concat(entity, '"][data-model-catalog-id="').concat(CSS.escape(id || ""), '"]');
+    const submit = els.globalSettingsContent.querySelector(
+      "".concat(selector, ' button[type="submit"]')
+    );
+    if (submit) {
+      submit.disabled = settingsProjection.pending;
+      submit.textContent = settingsProjection.pending ? t("\u4FDD\u5B58\u4E2D") : t("\u4FDD\u5B58");
+    }
+    const feedback = els.globalSettingsContent.querySelector(
+      "[data-settings-feedback]"
+    );
+    if (feedback) {
+      const message = settingsProjection.error || settingsProjection.feedback;
+      feedback.textContent = message;
+      feedback.hidden = !message;
+      feedback.classList.toggle("warn", Boolean(settingsProjection.error));
+    }
+  }
   function refreshPersonaUi() {
     if (state.systemWindowOpen && state.activePage === "persona") renderStage("persona");
   }
@@ -49217,7 +49526,8 @@
     settingsProjection.pending = true;
     settingsProjection.error = "";
     settingsProjection.feedback = t("\u6B63\u5728\u4FDD\u5B58\u8BBE\u7F6E");
-    refreshSettingsUi();
+    refreshModelCatalogMutationUi(entity, id);
+    let saved = false;
     try {
       const payload = await fetchRuntimeJson("./api/settings/model-catalog", {
         method: "POST",
@@ -49234,6 +49544,7 @@
       settingsProjection.feedback = t("\u8BBE\u7F6E\u5DF2\u4FDD\u5B58");
       state.editingConnectionId = null;
       state.editingModelId = null;
+      saved = true;
     } catch (error) {
       const failure = errorView(error);
       settingsProjection.error = failure.status === 409 ? t("\u8BBE\u7F6E\u5DF2\u88AB\u5176\u4ED6\u64CD\u4F5C\u66F4\u65B0\uFF0C\u8BF7\u91CD\u65B0\u8F7D\u5165\u540E\u518D\u8BD5") : "".concat(t("\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
@@ -49241,7 +49552,8 @@
     } finally {
       settingsProjection.pending = false;
     }
-    refreshSettingsUi();
+    if (saved) refreshSettingsUi();
+    else refreshModelCatalogMutationUi(entity, id);
   }
   function depositionPage(kind) {
     return kind === "memory" ? "mem" : kind === "container" ? "containers" : "relations";
@@ -49432,6 +49744,52 @@
       runtimeProjection.sending = false;
       await pollRuntime({ forceFull: true, ignoreVisibility: true });
     }
+  }
+  async function submitRuntimePermissionChange() {
+    const status = runtimeProjection.status;
+    if (!status?.current_round || !status.can_stop || runtimeProjection.permissionChanging) return;
+    const projected = status.execution_permission?.pending_level || status.execution_permission?.permission_level || "guarded";
+    const permissionLevel = els.permissionLevel.value;
+    if (!confirmUnlimitedPermission(permissionLevel)) {
+      els.permissionLevel.value = projected;
+      runtimeProjection.sendFeedback = t("\u5DF2\u4FDD\u6301\u5F53\u524D\u6267\u884C\u6743\u9650\u3002");
+      refreshRuntimeUi();
+      return;
+    }
+    runtimeProjection.permissionChanging = true;
+    runtimeProjection.sendFeedback = t("\u6267\u884C\u6743\u9650\u5C06\u5728\u4E0B\u4E00\u5E27\u8FB9\u754C\u751F\u6548\u3002");
+    refreshRuntimeUi();
+    try {
+      await fetchRuntimeJson("./api/runtime/execution-permission", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          permission_level: permissionLevel,
+          unlimited_confirmed: permissionLevel === "unlimited" && runtimeProjection.unlimitedConfirmed
+        })
+      });
+    } catch (error) {
+      els.permissionLevel.value = projected;
+      const failure = errorView(error);
+      runtimeProjection.sendFeedback = "".concat(t("\u6267\u884C\u6743\u9650\u5207\u6362\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
+    } finally {
+      runtimeProjection.permissionChanging = false;
+      await pollRuntime({ forceFull: true, ignoreVisibility: true });
+    }
+  }
+  async function resolveModelContextWindow(connectionId, model) {
+    const payload = await fetchRuntimeJson(
+      "./api/settings/model-context-window/resolve",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connection_id: connectionId, model })
+      }
+    );
+    if (payload.schema_version !== "seed_gui_model_context_resolution.v1" || payload.model !== model || !["provider", "registry", "unknown"].includes(payload.source)) {
+      throw new Error("model_context_resolution_schema_mismatch");
+    }
+    return payload;
   }
   async function submitToolApproval(approvalId, decision) {
     if (!approvalId || runtimeProjection.approvalSubmitting) return;
@@ -49653,6 +50011,75 @@
   function eventElement(event) {
     return event.target instanceof Element ? event.target : null;
   }
+  function requestContextPrefixDiffIfVisible() {
+    if (state.activePage === "context" && getActivePageTab("context") === "content") {
+      void pollContextPrefixDiffForSelection();
+    }
+  }
+  async function detectModelContextWindow(form, preserveOnFailure = false) {
+    const connectionId = form.querySelector("[name='connection_id']")?.value.trim() || "";
+    const model = form.querySelector("[name='model']")?.value.trim() || "";
+    const button = form.querySelector("[data-resolve-model-context]");
+    const output = form.querySelector("[data-model-context-detected]");
+    const feedback = form.querySelector("[data-model-context-feedback]");
+    const requestId = Number(form.dataset.modelContextRequest || "0") + 1;
+    form.dataset.modelContextRequest = String(requestId);
+    const detectedInput = form.querySelector("[name='detected_context_window']");
+    const sourceInput = form.querySelector("[name='context_window_source']");
+    const limitInput = form.querySelector("[name='context_window']");
+    if (!connectionId || !model) {
+      if (detectedInput) detectedInput.value = "0";
+      if (sourceInput) sourceInput.value = "unknown";
+      if (limitInput) limitInput.max = "100000000";
+      if (output) output.textContent = t("\u672A\u8BC6\u522B");
+      if (feedback) feedback.textContent = t("\u8BF7\u9009\u62E9\u8FDE\u63A5\u5E76\u586B\u5199\u6A21\u578B ID\u3002");
+      if (button) button.disabled = false;
+      return;
+    }
+    if (!preserveOnFailure) {
+      if (detectedInput) detectedInput.value = "0";
+      if (sourceInput) sourceInput.value = "unknown";
+      if (limitInput) limitInput.max = "100000000";
+      if (output) {
+        output.textContent = t("\u8BC6\u522B\u4E2D");
+        output.title = "";
+      }
+    }
+    if (button) button.disabled = true;
+    if (feedback) feedback.textContent = t("\u6B63\u5728\u8BC6\u522B\u6A21\u578B\u5BB9\u91CF");
+    try {
+      const result = await resolveModelContextWindow(connectionId, model);
+      const currentConnection = form.querySelector("[name='connection_id']")?.value.trim() || "";
+      const currentModel = form.querySelector("[name='model']")?.value.trim() || "";
+      if (form.dataset.modelContextRequest !== String(requestId) || currentConnection !== connectionId || currentModel !== model) return;
+      if (preserveOnFailure && result.source === "unknown") {
+        if (feedback) feedback.textContent = t("\u6A21\u578B\u5BB9\u91CF\u8BC6\u522B\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u586B\u5199\u8FD0\u884C\u4E0A\u9650\u3002");
+        return;
+      }
+      const detected = result.detected_context_window || 0;
+      if (detectedInput) detectedInput.value = String(detected);
+      if (sourceInput) sourceInput.value = result.source;
+      if (output) {
+        output.textContent = detected > 0 ? detected.toLocaleString(state.locale) : t("\u672A\u8BC6\u522B");
+        output.title = result.source_ref || "";
+      }
+      if (limitInput) {
+        limitInput.max = String(detected > 0 ? detected : 1e8);
+        if ((!limitInput.value || limitInput.value === "0") && detected > 0) {
+          limitInput.value = String(detected);
+        }
+      }
+      if (feedback) {
+        feedback.textContent = detected > 0 ? t("\u5DF2\u8BC6\u522B\u6A21\u578B\u5BB9\u91CF\uFF0C\u5DF2\u6709\u8FD0\u884C\u4E0A\u9650\u4E0D\u4F1A\u88AB\u8986\u76D6\u3002") : t("\u672A\u8BC6\u522B\u6A21\u578B\u5BB9\u91CF\uFF0C\u8BF7\u624B\u52A8\u586B\u5199\u8FD0\u884C\u4E0A\u9650\u3002");
+      }
+    } catch {
+      if (form.dataset.modelContextRequest === String(requestId)) {
+        if (feedback) feedback.textContent = t("\u6A21\u578B\u5BB9\u91CF\u8BC6\u522B\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u586B\u5199\u8FD0\u884C\u4E0A\u9650\u3002");
+      }
+    } finally {
+      if (form.dataset.modelContextRequest === String(requestId) && button) button.disabled = false;
+    }
+  }
   function settingValues(root6) {
     const values = {};
     root6.querySelectorAll("[data-setting-key]").forEach((input) => {
@@ -49672,6 +50099,11 @@
     return values;
   }
   function initEvents() {
+    document.addEventListener("scroll", (event) => {
+      const nav = event.target instanceof HTMLElement ? event.target.closest(".runtime-context-workspace > nav") : null;
+      const rail = nav?.parentElement?.querySelector(".context-diff-rail");
+      if (nav && rail) rail.scrollTop = nav.scrollTop;
+    }, true);
     els.chatThread.addEventListener("click", (event) => {
       const button = eventElement(event)?.closest("[data-tool-approval-decision]");
       if (!button) return;
@@ -49888,6 +50320,7 @@
         setPage(pageId, tabId);
         if (pageId === "persona") void pollPersonaProjection();
         loadActiveDepositionDetail(pageId);
+        requestContextPrefixDiffIfVisible();
         if (fromSurfaceNav) {
           window.requestAnimationFrame(() => {
             const selector = tabId ? '[data-page="'.concat(CSS.escape(pageId), '"][data-tab="').concat(CSS.escape(tabId), '"]') : '[data-page="'.concat(CSS.escape(pageId), '"]:not([data-tab])');
@@ -49902,6 +50335,12 @@
         renderStageAndFocus(state.activePage, '[data-page-tab="'.concat(CSS.escape(state.activeTabs[state.activePage]), '"]'));
         if (state.activePage === "persona") void pollPersonaProjection();
         loadActiveDepositionDetail(state.activePage);
+        requestContextPrefixDiffIfVisible();
+        return;
+      }
+      const contextDiffButton = target.closest("[data-context-diff-jump]");
+      if (contextDiffButton) {
+        jumpToContextPrefixDiff();
         return;
       }
       const runtimePaneButton = target.closest("[data-runtime-pane]");
@@ -49909,6 +50348,7 @@
         state.activeRuntimePane = runtimePaneButton.dataset.runtimePane || "";
         setActivePageTab("context", "content");
         renderStageAndFocus("context", '[data-runtime-pane="'.concat(CSS.escape(state.activeRuntimePane), '"]'));
+        requestContextPrefixDiffIfVisible();
         return;
       }
       const focusButton = target.closest("[data-container-focus-action]");
@@ -50033,7 +50473,7 @@
           values = {
             alias: text10("alias"),
             protocol: text10("protocol"),
-            url: providerRequestUrl(text10("url_base"), text10("protocol")),
+            url: providerRequestUrl(text10("url_base"), text10("url_path")),
             api_key_env: text10("api_key_env")
           };
         } else {
@@ -50052,6 +50492,8 @@
             connection_id: text10("connection_id"),
             model: text10("model"),
             context_window: Number.parseInt(text10("context_window"), 10),
+            detected_context_window: Number.parseInt(text10("detected_context_window") || "0", 10),
+            context_window_source: text10("context_window_source") || "unknown",
             reasoning_supported: text10("reasoning_supported").split(",").map((item) => item.trim()).filter(Boolean),
             reasoning_default: text10("reasoning_default"),
             streaming_enabled: fields.get("streaming_enabled") === "on",
@@ -50102,15 +50544,31 @@
     });
     els.permissionLevel.addEventListener("change", () => {
       if (els.permissionLevel.value !== "unlimited") runtimeProjection.unlimitedConfirmed = false;
+      if (runtimeProjection.status?.current_round && runtimeProjection.status.can_stop) {
+        void submitRuntimePermissionChange();
+        return;
+      }
       runtimeProjection.sendFeedback = els.permissionLevel.value === "unlimited" ? t("\u653E\u884C\u6743\u9650\u5C06\u5728\u63D0\u4EA4\u65F6\u8981\u6C42\u660E\u786E\u786E\u8BA4\u3002") : "";
       refreshRuntimeUi();
       if (state.activePage === "run" && getActivePageTab("run") === "tools") renderStage("run");
     });
     document.addEventListener("change", (event) => {
+      const input = eventElement(event)?.closest("[data-model-context-input]");
+      const form = input?.closest("[data-model-catalog-form='model']");
+      if (form) void detectModelContextWindow(form);
+    });
+    document.addEventListener("click", (event) => {
+      const button = eventElement(event)?.closest("[data-resolve-model-context]");
+      const form = button?.closest("[data-model-catalog-form='model']");
+      if (!form) return;
+      event.preventDefault();
+      void detectModelContextWindow(form, true);
+    });
+    document.addEventListener("change", (event) => {
       const selector = eventElement(event)?.closest("[data-provider-protocol]");
       if (!selector) return;
-      const suffix = selector.closest("[data-model-catalog-form]")?.querySelector("[data-provider-url-suffix]");
-      if (suffix) suffix.textContent = providerUrlSuffix(selector.value);
+      const path3 = selector.closest("[data-model-catalog-form]")?.querySelector("[data-provider-url-path]");
+      if (path3) path3.value = providerUrlSuffix(selector.value);
     });
     document.addEventListener("change", (event) => {
       const selector = eventElement(event)?.closest("[data-route-model]");
@@ -50137,12 +50595,14 @@
       state.selectedContextRound = selector.value === "latest" ? null : Number(selector.value);
       state.selectedContextFrame = null;
       renderStageAndFocus("context", "[data-context-round]");
+      requestContextPrefixDiffIfVisible();
     });
     document.addEventListener("change", (event) => {
       const selector = eventElement(event)?.closest("[data-context-frame]");
       if (!selector) return;
       state.selectedContextFrame = selector.value === "latest" ? null : selector.value;
       renderStageAndFocus("context", "[data-context-frame]");
+      requestContextPrefixDiffIfVisible();
     });
     document.addEventListener("change", (event) => {
       const selector = eventElement(event)?.closest("[data-task-round]");
@@ -50254,6 +50714,7 @@
       setActivePageTab(state.activePage, nextTab.dataset.pageTab || "");
       renderStageAndFocus(state.activePage, '[data-page-tab="'.concat(CSS.escape(state.activeTabs[state.activePage]), '"]'));
       if (state.activePage === "persona") void pollPersonaProjection();
+      requestContextPrefixDiffIfVisible();
     }
   }
 

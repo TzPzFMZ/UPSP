@@ -5,7 +5,11 @@
 """
 import os
 
-from assembly.context_helpers import format_round_id, hide_empty_memory_annotation
+from assembly.context_helpers import (
+    format_round_id,
+    hide_empty_memory_annotation,
+    join_layer_blocks,
+)
 from data.relation_store import relation_public_name
 
 def _mount_marker(current_round=None, meta=None):
@@ -93,52 +97,83 @@ def _mount_payload(req):
 
 
 def build_mounted_content(assembler, mount_ids, current_round=None):
-    parts = ["## CONTENT（已挂载正文）"]
-    loaded = 0
-    for req in mount_ids:
+    return join_layer_blocks(
+        build_mounted_content_blocks(assembler, mount_ids, current_round),
+    )[0]
+
+
+def build_mounted_content_blocks(assembler, mount_ids, current_round=None):
+    blocks = []
+    for req in mount_ids or []:
         req_type = req.get("type", "")
         ids = req.get("ids", "")
+        content = ""
+        title = ""
         if req_type == "memory":
-            content = _mount_payload(req) or assembler._load_memory_content(ids)
+            from data.memory_store import project_memory_body
+            meta = assembler._memory_mount_meta(ids)
+            snapshot = _mount_payload(req)
+            content = (
+                project_memory_body(snapshot, meta)
+                if snapshot else assembler._load_memory_content(ids)
+            )
             if content:
-                marker = _mount_marker(current_round, assembler._memory_mount_meta(ids))
-                parts.append("\n".join(
-                    item for item in (f"### 记忆 {ids}", marker, content) if item))
-                loaded += 1
+                marker = _mount_marker(current_round, meta)
+                title = f"记忆 {ids}"
+                content = "\n".join(
+                    item for item in (f"### {title}", marker, content) if item)
         elif req_type == "container":
             container_content = _mount_payload(req) or assembler._load_container_content(ids)
             if container_content:
                 target = str(req.get("target_file") or "").strip()
-                title = f"### 容器 {ids}" + (f" / {target}" if target else "")
+                title = f"容器 {ids}" + (f" / {target}" if target else "")
                 marker = _mount_marker(current_round, {})
-                parts.append("\n".join(
-                    item for item in (title, marker, container_content)
-                    if item))
-                loaded += 1
+                content = "\n".join(
+                    item for item in (f"### {title}", marker, container_content)
+                    if item)
         elif req_type == "relation":
             rel_content = _mount_payload(req) or assembler._load_relation_content(ids)
             if rel_content:
                 marker = _mount_marker(current_round, {})
-                title = relation_public_name(
+                visible_title = relation_public_name(
                     req.get("title")
                     or req.get("subject")
                     or ids
                 )
-                parts.append("\n".join(
-                    item for item in (f"### 关系卡 {title}", marker, rel_content)
-                    if item))
-                loaded += 1
+                title = f"关系卡 {visible_title}"
+                content = "\n".join(
+                    item for item in (f"### {title}", marker, rel_content)
+                    if item)
         elif req_type == "skill":
             skill_content = assembler._load_skill_content(ids)
             if skill_content:
                 marker = _mount_marker(current_round, {})
-                parts.append("\n".join(
-                    item for item in (f"### 技能 {ids}", marker, skill_content)
-                    if item))
-                loaded += 1
-    if loaded == 0:
-        parts.append("（无内容被挂载）")
-    return "\n".join(parts)
+                title = f"技能 {ids}"
+                content = "\n".join(
+                    item for item in (f"### {title}", marker, skill_content)
+                    if item)
+        if not content:
+            continue
+        if not blocks:
+            content = "## CONTENT（已挂载正文）\n" + content
+        block = {
+            "block_id": f"mount:{req_type}:{ids}:{len(blocks) + 1}",
+            "title": title,
+            "kind": f"{req_type}_mount",
+            "source_block_id": str(ids or ""),
+            "content": content,
+        }
+        if blocks:
+            block["separator_before"] = "\n"
+        blocks.append(block)
+    if not blocks:
+        blocks.append({
+            "block_id": "mount:empty",
+            "title": "已挂载正文",
+            "kind": "mounted_content_empty",
+            "content": "## CONTENT（已挂载正文）\n（无内容被挂载）",
+        })
+    return blocks
 
 
 def load_relation_content(relation_id):
@@ -179,15 +214,22 @@ def load_skill_content(skill_id):
 
 
 def load_memory_content(assembler, mem_ids_str):
-    from data.memory_store import MemoryStore
+    from data.memory_store import MemoryStore, project_memory_body
     ms = MemoryStore()
     ids = [s.strip() for s in mem_ids_str.split(",")]
     parts = []
     for mem_id in ids:
         try:
-            if not assembler._memory_meta_visible(ms.get_meta(mem_id)):
+            try:
+                meta = ms.read_meta_by_id(mem_id)
+            except Exception:
+                meta = ms.get_meta(mem_id)
+            if not assembler._memory_meta_visible(meta):
                 continue
-            parts.append(hide_empty_memory_annotation(ms.read_entry(mem_id)))
+            parts.append(project_memory_body(
+                hide_empty_memory_annotation(ms.read_entry(mem_id)),
+                meta,
+            ))
         except Exception:
             pass
     return "\n\n".join(parts)
@@ -200,10 +242,15 @@ def memory_mount_meta(mem_ids_str):
     merged = {}
     for mem_id in ids:
         try:
-            meta = ms.get_meta(mem_id)
+            meta = ms.read_meta_by_id(mem_id)
         except Exception:
             continue
-        for key in ("source_round", "created_round", "last_recalled_round"):
+        for key in (
+            "source_round", "created_round", "created_at",
+            "last_recalled_round", "last_recalled_at",
+            "current_overview", "current_overview_updated_at",
+            "linked_containers",
+        ):
             if key in meta and key not in merged:
                 merged[key] = meta.get(key)
     return merged

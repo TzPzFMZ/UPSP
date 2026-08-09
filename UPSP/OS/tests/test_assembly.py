@@ -12,6 +12,15 @@ from UPSP.OS.tests.runtime_test_helpers import ConfigStoreStub
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 
+def _assert_exact_block_index(text, block_index):
+    assert len({item["block_id"] for item in block_index}) == len(block_index)
+    previous_end = 0
+    for item in block_index:
+        assert previous_end <= item["char_start"] < item["char_end"] <= len(text)
+        assert text[item["char_start"]:item["char_end"]]
+        previous_end = item["char_end"]
+
+
 def test_spec462_rendered_corpus_entries_get_visible_short_ids_without_mutating_source():
     from assembly.context_helpers import render_corpus_entries_for_context
 
@@ -185,6 +194,7 @@ def test_spec286_corpus_headers_are_kind_specific_chinese_and_hide_audit_fields(
         )
         text = rendered["content"]
         assert expected_title in text
+        assert "语料时间：2026-06-13T10:00:00+08:00。" in text
         if entry["kind"] == "assistant_reply":
             assert rendered["role"] == "system"
         if entry["kind"] == "cache_summary" and entry.get("compact_reason") == "round_retention_settlement":
@@ -965,6 +975,76 @@ def test_spec508_now_layer_json_always_keeps_separate_entries(
     assert now_md.index("【本轮交互】") < now_md.index("【本轮起手事实】")
 
 
+def test_spec723_lately_layer_json_keeps_rendered_entries_and_source_unchanged(
+        tmp_path, monkeypatch):
+    from assembly.context import ContextAssembler
+    from data.context_store import ContextStore
+
+    source = [
+        {
+            "round": 722,
+            "role": "user",
+            "kind": "interaction",
+            "active_corpus_id": "C-00041",
+            "content": "请继续核对缓存语义。",
+        },
+        {
+            "round": 723,
+            "role": "assistant",
+            "kind": "dialogue_progress",
+            "iter": 1,
+            "active_corpus_id": "C-00042",
+            "content": "正在读取资料并准备下一步。",
+        },
+        {
+            "round": 723,
+            "role": "system",
+            "kind": "tool_fact",
+            "active_corpus_id": "C-00043",
+            "content": "file_read 已完成。",
+        },
+    ]
+    before = json.loads(json.dumps(source, ensure_ascii=False))
+    store = ContextStore(
+        cache_dir=str(tmp_path / "cache"),
+        raw_log_jsonl=str(tmp_path / "buffer" / "raw_log.jsonl"),
+        raw_log_md=str(tmp_path / "buffer" / "raw_log.md"),
+    )
+    assembler = ContextAssembler(
+        context_dir=str(tmp_path / "context"),
+        context_store=store,
+    )
+    monkeypatch.setattr(assembler, "_get_lately_entries", lambda _step: source)
+    monkeypatch.setattr(assembler, "_get_now_entries", lambda: [])
+    monkeypatch.setattr(assembler, "_build_permanent", lambda *args: "永固")
+    monkeypatch.setattr(assembler, "_build_periodic", lambda *args: "定期")
+    monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "高频")
+    monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+
+    assembler.assemble_reaction(
+        {"base": {"meta": {"total_round": 723}}, "runtime": {"total_round": 723}},
+        "interactive",
+        current_reaction_iteration=4,
+    )
+
+    layer_dir = tmp_path / "context" / "reaction" / "layers"
+    lately_json = json.loads((layer_dir / "30_lately.json").read_text(encoding="utf-8"))
+    content = lately_json["content"]
+    assert [entry["role"] for entry in content] == ["user", "assistant", "system"]
+    assert [entry["active_corpus_id"] for entry in content] == [
+        "C-00041", "C-00042", "C-00043",
+    ]
+    assert all(corpus_id in entry["content"] for corpus_id, entry in zip(
+        ("C-00041", "C-00042", "C-00043"), content,
+    ))
+    assert "正在读取资料并准备下一步" not in content[1]["content"]
+    assert 'corpus_read(corpus_id="C-00042")' in content[1]["content"]
+    assert lately_json["content_markdown"] == (
+        layer_dir / "30_lately.md"
+    ).read_text(encoding="utf-8")
+    assert source == before
+
+
 def test_spec408_now_layer_keeps_cache_conveyor_order_except_runtime_request(
         tmp_path, monkeypatch):
     from assembly.context import ContextAssembler
@@ -1098,6 +1178,44 @@ def test_permanent_rules_only_load_permanent_registry(monkeypatch, tmp_path):
     assert "PERMANENT_RULES" in text
     assert "<!-- [RULES:permanent+step] -->" in text
 
+
+def test_spec723_permanent_cache_keeps_file_boundaries(monkeypatch, tmp_path):
+    from assembly.context import ContextAssembler
+    from data.state_store import StateStore
+
+    state_store = StateStore(str(tmp_path / "state.json"))
+    state_store.init_if_missing()
+    assembler = ContextAssembler(
+        context_dir=str(tmp_path / "context"), state_store=state_store)
+    assembler._registry = {"permanent": [
+        {"path": "protocol/base/security.md", "file": "security.md"},
+        {"path": "protocol/base/memory.md", "file": "memory.md"},
+    ]}
+    monkeypatch.setattr(assembler, "_load_core_identity", lambda: "CORE")
+    monkeypatch.setattr(
+        assembler, "_load_rule_file", lambda path: f"RULE:{path}")
+
+    first = assembler._cached_or_build(
+        "setup", "permanent", True,
+        lambda: assembler._build_permanent({}, "setup", "interactive"),
+    )
+    first_index = assembler._current_layer_block_index["permanent"]
+    assembler._current_layer_block_index = {}
+    second = assembler._cached_or_build(
+        "setup", "permanent", False, lambda: "must not rebuild")
+
+    assert second == first
+    assert assembler._current_layer_block_index["permanent"] == first_index
+    assert [item["block_id"] for item in first_index] == [
+        "permanent:core_identity",
+        "rule:protocol/base/security.md",
+        "rule:protocol/base/memory.md",
+    ]
+    assert [item.get("source_block_id") for item in first_index[1:]] == [
+        "protocol/base/security.md", "protocol/base/memory.md"]
+    _assert_exact_block_index(first, first_index)
+
+
 def test_spec405_internal_handoff_is_not_model_visible(tmp_path, monkeypatch):
     from assembly.context import ContextAssembler
 
@@ -1147,6 +1265,33 @@ def test_spec287_step_guide_popup_is_plain_chinese_without_structure_fields(tmp_
 # ============================================================
 # StatusBar 测试
 # ============================================================
+
+
+def test_spec723_statusbar_blocks_are_exact_source_slices():
+    from assembly.statusbar import StatusBarBuilder
+
+    projection = {
+        "round": {"id": "R000723", "progress": "运行中", "type": "interactive"},
+        "time": {"text": "2026-08-06 12:00 UTC+08:00"},
+        "mode": "实践",
+        "workhood": "标准运作",
+        "dynamic": "稳定",
+        "interaction": {"display_name": "Codex", "registration_status": "bound"},
+        "supplemental_sections": ["补充甲", "补充乙"],
+        "relation_cards": [
+            {"id": "REL-A", "name": "A", "category": "ours", "summary": "甲"},
+            {"id": "REL-B", "name": "B", "category": "them", "summary": "乙"},
+        ],
+    }
+
+    text, block_index = StatusBarBuilder.render_with_block_index(projection)
+
+    assert StatusBarBuilder.render(projection) == text
+    assert [item["kind"] for item in block_index] == [
+        "status_summary", "status_supplemental", "status_supplemental",
+        "status_relation_card", "status_relation_card",
+    ]
+    _assert_exact_block_index(text, block_index)
 
 
 
@@ -1257,7 +1402,7 @@ class TestPopup:
     def test_spec201_popup_policy_renders_four_modules_and_hides_fields(self):
         from logic.popup_policy import PopupPolicy
 
-        rendered = PopupPolicy().combine([
+        rendered, block_index = PopupPolicy().combine_with_block_index([
             (
                 "- kind: native_tool_result\n"
                 "  tier: warning\n"
@@ -1328,6 +1473,8 @@ class TestPopup:
         assert "### 原生工具调用警告" in rendered
         assert "文件读取工具调用失败。" in rendered
         assert "下一次调用必须填写该字段：`path`。" in rendered
+        assert len(block_index) == 4
+        _assert_exact_block_index(rendered, block_index)
 
     def test_spec623_popup_budget_always_preserves_resident_memory_card(self):
         from logic.popup_policy import MAX_POPUP_CHARS, PopupPolicy
@@ -1347,12 +1494,16 @@ class TestPopup:
             f"    {'G' * (MAX_POPUP_CHARS * 2)}"
         )
 
-        rendered = PopupPolicy().combine([oversized_guide, memory, memory])
+        rendered, block_index = PopupPolicy().combine_with_block_index(
+            [oversized_guide] * 4 + [memory, memory])
 
         assert len(rendered) <= MAX_POPUP_CHARS
         assert rendered.count("### 记忆提醒") == 1
         assert rendered.count("资料正文由 material/最近缓存承载") == 1
         assert "只有 `MEM-*` 回执才算写入成功" in rendered
+        assert [item["block_id"] for item in block_index] == [
+            "popup:budget_capped"]
+        _assert_exact_block_index(rendered, block_index)
 
     def test_step_output_schema_popup_template_exists(self):
         from assembly.popup import PopupManager
@@ -1409,7 +1560,8 @@ class TestAudit:
 
         layers = {
             "permanent": "p", "periodic": "P", "high_freq": "h",
-            "lately": "lat", "now": "now",
+            "lately": [{"role": "user", "content": "lat"}],
+            "lately_markdown": "lat", "now": "now",
             "statusbar": "status",
             "popup": "pop",
             "full_system": "full",
@@ -4351,6 +4503,55 @@ class TestContextAssembler:
         assert "memory-a" in periodic
         assert "memory-b-overflow" not in periodic
         assert "定期技能工具索引" not in periodic
+        block_index = assembler._current_layer_block_index["periodic"]
+        assert [item["source_block_id"] for item in block_index] == ["MEM-A"]
+        _assert_exact_block_index(periodic, block_index)
+
+    def test_spec723_high_freq_blocks_follow_real_modules_and_mounts(
+            self, monkeypatch):
+        from assembly.context import ContextAssembler
+
+        assembler = ContextAssembler()
+        monkeypatch.setattr(assembler, "_high_freq_index_limits", lambda: {})
+        for name, value in (
+            ("_build_container_index", "CONTAINERS"),
+            ("_build_ltm_heat_index", "LTM_HEAT"),
+            ("_build_stm_heat_index", "STM_HEAT"),
+            ("_build_association_index", "ASSOCIATION"),
+            ("_build_relation_inverted_index", "RELATION_INVERTED"),
+            ("_build_relation_domain_index", "RELATION_DOMAIN"),
+            ("_build_task_board_projection", "TASK_BOARD"),
+            ("_build_step_toolbelt_index", "TOOLBELT"),
+            ("_build_workbench_focus_projection", "WORKBENCH"),
+        ):
+            monkeypatch.setattr(assembler, name, lambda *args, _value=value, **kwargs: _value)
+        monkeypatch.setattr(
+            assembler, "_build_keyword_index",
+            lambda source, *_args, **_kwargs: f"KEYWORD:{source}")
+        monkeypatch.setattr(
+            assembler, "_content_mounts_with_triple_hits",
+            lambda *_args: [
+                {"type": "memory", "ids": "MEM-1"},
+                {"type": "container", "ids": "CTR-1"},
+            ])
+        monkeypatch.setattr(assembler, "_load_memory_content", lambda _ids: "MEMORY")
+        monkeypatch.setattr(assembler, "_memory_mount_meta", lambda _ids: {})
+        monkeypatch.setattr(assembler, "_load_container_content", lambda _ids: "CONTAINER")
+
+        text = assembler._build_high_freq(
+            self._make_state(), "reaction", "interactive", True, [],
+            input_keywords=[],
+            runtime_focus_entries=[
+                {"source_block_id": "same", "title": "焦点甲", "content": "FOCUS_A"},
+                {"source_block_id": "same", "title": "焦点乙", "content": "FOCUS_B"},
+            ],
+        )
+        block_index = assembler._current_layer_block_index["high_freq"]
+
+        assert [item["kind"] for item in block_index[-4:]] == [
+            "runtime_focus", "runtime_focus", "memory_mount", "container_mount"]
+        assert block_index[-4]["block_id"] != block_index[-3]["block_id"]
+        _assert_exact_block_index(text, block_index)
 
     def test_periodic_layer_ignores_retired_skill_tool_projection(self, monkeypatch):
         from assembly.context import ContextAssembler
@@ -4575,17 +4776,24 @@ class TestContextAssembler:
         manifest_path = tmp_path / "reaction" / "manifest.json"
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
-        assert manifest["layers"]["lately"]["chars"] == len("最近缓存机器源")
+        lately_json = json.loads(
+            (tmp_path / "reaction" / "layers" / "30_lately.json")
+            .read_text(encoding="utf-8")
+        )
+        assert isinstance(lately_json["content"], list)
+        assert manifest["layers"]["lately"]["model_visible_chars"] == len(
+            lately_json["content_markdown"])
+        assert manifest["layers"]["lately"]["chars"] == len(json.dumps(
+            lately_json["content"], ensure_ascii=False, sort_keys=True))
         now_json = json.loads(
             (tmp_path / "reaction" / "layers" / "50_now.json")
             .read_text(encoding="utf-8")
         )
         assert isinstance(now_json["content"], list)
+        assert manifest["layers"]["now"]["model_visible_chars"] == len(
+            now_json["content_markdown"])
         assert manifest["layers"]["now"]["chars"] == len(json.dumps(
-            now_json["content"],
-            ensure_ascii=False,
-            sort_keys=True,
-        ))
+            now_json["content"], ensure_ascii=False, sort_keys=True))
         assert manifest["layers"]["statusbar"]["chars"] == len("## STATUSBAR\n状态栏层\n\n## 关系卡摘要\nTzPz")
 
         high_freq_layer = (tmp_path / "reaction" / "layers" / "40_high_freq.md").read_text(
@@ -4745,17 +4953,20 @@ class TestContextAssembler:
         manifest_path = tmp_path / "setup" / "manifest.json"
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
-        assert manifest["layers"]["lately"]["chars"] == len("最近缓存机器源")
+        lately_json = json.loads(
+            (tmp_path / "setup" / "layers" / "30_lately.json")
+            .read_text(encoding="utf-8")
+        )
+        assert isinstance(lately_json["content"], list)
+        assert manifest["layers"]["lately"]["model_visible_chars"] == len(
+            lately_json["content_markdown"])
         now_json = json.loads(
             (tmp_path / "setup" / "layers" / "50_now.json")
             .read_text(encoding="utf-8")
         )
         assert isinstance(now_json["content"], list)
-        assert manifest["layers"]["now"]["chars"] == len(json.dumps(
-            now_json["content"],
-            ensure_ascii=False,
-            sort_keys=True,
-        ))
+        assert manifest["layers"]["now"]["model_visible_chars"] == len(
+            now_json["content_markdown"])
 
     def test_high_freq_does_not_include_feeling_vocabulary_by_default(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler

@@ -32,7 +32,7 @@ def validate_mem_id(mem_id):
 
 # 元数据模板生成 —— 保留到 logic/ 因为它是纯计算（不需要读文件）
 def make_meta_template(mem_id, title="", weight=2, subject=None, model=""):
-    """创建 20 字段元数据 dict"""
+    """创建 21 字段元数据 dict"""
     now = local_now().isoformat()
     return {
         "id": mem_id,
@@ -50,6 +50,7 @@ def make_meta_template(mem_id, title="", weight=2, subject=None, model=""):
         "access": "public",
         "recalled": False,
         "current_overview": "",
+        "current_overview_updated_at": "",
         "tags": [],
         "linked_containers": [],
         "decay_period_days": 30,

@@ -87,6 +87,27 @@ def _isolated_store(module, monkeypatch, tmp_path, *, catalog=None, routing=None
     return module.ConfigStore(use_api_environment=False), paths
 
 
+def test_spec723_context_detection_preserves_legacy_and_caps_runtime_limit():
+    module = _load_config_store()
+    legacy = _catalog(module)
+
+    module.ConfigStore._validate("models", legacy)
+
+    detected = _catalog(module)
+    detected["models"][0].update({
+        "detected_context_window": 200000,
+        "context_window_source": "provider",
+        "context_window_checked_at": "2026-08-06T00:00:00+00:00",
+    })
+    detected = module.ConfigStore._normalise_models(detected)
+    assert "context_window_checked_at" not in detected["models"][0]
+    module.ConfigStore._validate("models", detected)
+    detected["models"][0]["context_window"] = 200001
+
+    with pytest.raises(ValueError, match="exceeds detected capacity"):
+        module.ConfigStore._validate("models", detected)
+
+
 def test_spec700_api_override_is_process_only_and_normalized(monkeypatch, tmp_path):
     module = _load_config_store()
     store, _paths = _isolated_store(module, monkeypatch, tmp_path)

@@ -32,7 +32,7 @@ EXPECTED_META_FIELDS = (
     "id", "type", "weight", "title", "dream", "created_at",
     "last_recalled_at", "created_round", "last_recalled_round",
     "source", "model", "subject", "access", "recalled",
-    "current_overview", "tags", "linked_containers",
+    "current_overview", "current_overview_updated_at", "tags", "linked_containers",
     "decay_period_days", "decay_countdown_days", "media",
 )
 
@@ -208,7 +208,10 @@ def meta_field_shape_report(path: Path) -> dict[str, list[str]]:
     for key, value in data.items():
         if str(key).startswith("_") or not isinstance(value, dict):
             continue
-        if list(value.keys()) != expected:
+        keys = list(value.keys())
+        if "current_overview_updated_at" not in keys and "current_overview" in keys:
+            keys.insert(keys.index("current_overview") + 1, "current_overview_updated_at")
+        if keys != expected:
             result[canonical_id(key)] = list(value.keys())
     return result
 

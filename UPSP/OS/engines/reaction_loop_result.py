@@ -9,6 +9,7 @@ class ReactionLoopResultState:
     provider_call_hard_stop: dict = field(default_factory=dict)
     single_round_probe_hard_stop: dict = field(default_factory=dict)
     required_context_failure: dict = field(default_factory=dict)
+    local_blocked_reason: str = ""
     final_response: str = ""
     mounted_mem_ids: list = field(default_factory=list)
     preselection_evidence: list = field(default_factory=list)
@@ -93,16 +94,19 @@ def build_reaction_loop_result(state):
     provider_hard_stop = state.provider_call_hard_stop or {}
     probe_hard_stop = state.single_round_probe_hard_stop or {}
     context_failure = state.required_context_failure or {}
+    local_blocked_reason = str(state.local_blocked_reason or "").strip()
     return {
-        "aborted": bool(provider_hard_stop or context_failure),
+        "aborted": bool(provider_hard_stop or context_failure or local_blocked_reason),
         "response": state.final_response,
         "error": (
             provider_hard_stop.get("reason")
             or context_failure.get("reason")
+            or local_blocked_reason
         ),
         "_provider_call_hard_stop": provider_hard_stop,
         "_single_round_probe_hard_stop": probe_hard_stop,
         "_required_context_failure": context_failure,
+        "_local_blocked_reason": local_blocked_reason,
         "_mounted_memories": state.mounted_mem_ids,
         "_preselection_evidence": state.preselection_evidence,
         "_created_containers": list(dict.fromkeys(state.all_created_containers)),

@@ -111,6 +111,60 @@ class TestNativeToolCallAdapter:
         assert denied["error_hint"]["kind"] == "permission_security"
         assert denied["error_hint"]["retry"] == "after_authorization"
 
+    def test_spec727_processor_hint_is_identical_in_tool_result_and_popup(self):
+        from engines.reaction_helpers import format_native_tool_failure_feedback
+        from engines.reaction_protocol_tool_execution import minimal_native_tool_result_content
+
+        receipt = {
+            "tool_id": "guide_submit",
+            "call_id": "call_spec727",
+            "status": "rejected",
+            "reason": "undeclared_guide_fields",
+            "error_hint": {
+                "kind": "validation",
+                "retry": "after_correction",
+                "attempted": {"fields": ["reason"]},
+                "current": {},
+                "expected": {"allowed_fields": ["task_title", "items", "acceptance"]},
+                "next_action": "把 reason 移到 submission 外层后重提。",
+            },
+        }
+
+        payload = json.loads(minimal_native_tool_result_content(receipt))
+        hint = payload["error_hint"]
+        popup = format_native_tool_failure_feedback(receipt, receipt["reason"])
+
+        assert f"next_action: {hint['next_action']}" in popup
+        assert f"kind={hint['kind']}" in popup
+        assert f"retry={hint['retry']}" in popup
+        for key in ("attempted", "current", "expected"):
+            encoded = json.dumps(hint[key], ensure_ascii=False)
+            assert f"{key}={encoded}" in popup
+        assert f"next_action={hint['next_action']}" in popup
+
+    def test_spec727_processor_hint_projection_drops_sensitive_or_oversized_facts(self):
+        from engines.reaction_protocol_tool_execution import minimal_native_tool_result_content
+
+        secret = "sk-secret-value"
+        payload_text = minimal_native_tool_result_content({
+            "tool_id": "guide_submit",
+            "status": "rejected",
+            "reason": "invalid_guide_submission",
+            "error_hint": {
+                "kind": "validation",
+                "retry": "after_correction",
+                "attempted": {"command": secret, "field": "fields"},
+                "current": {},
+                "expected": {"summary": "x" * 800},
+                "next_action": "修正字段",
+            },
+        })
+        payload = json.loads(payload_text)
+
+        assert secret not in payload_text
+        assert payload["error_hint"]["attempted"] == {"field": "fields"}
+        assert len(payload["error_hint"]["expected"]["summary"]) == 500
+
     def test_responses_function_call_becomes_tool_call_envelope(self):
         from logic.native_tool_calls import extract_tool_call_envelopes
 
@@ -396,12 +450,12 @@ class TestNativeToolCallAdapter:
         assert _description_chars(tools) <= 7400
 
         expected_structure_sha = {
-            ("openai_responses", "limited"): "69a7b3148e8ce993714240097ec9332e916c14e3baa2681bf25f886968bd336f",
-            ("openai_responses", "unlimited"): "8ec54ed46308a612d036886fa2ba7ebd5488fee9eb897432347399d6b72c3104",
-            ("openai_chat", "limited"): "678a89e6a37af528864cc05e095974179e12fee952bc423caef33c15781b0bbf",
-            ("openai_chat", "unlimited"): "47611c0b6feb28061bfebeb43d2ea55362e5d50edd3a24dc4ec4aca6f47f4fc3",
-            ("anthropic_messages", "limited"): "0d983cac4139ca27646d7339becb9c36f1996c3b83f43368ff44e893e52331eb",
-            ("anthropic_messages", "unlimited"): "ae29c34da139d316449976a62e7422872bf8b0d033645b206351c53450057ede",
+            ("openai_responses", "limited"): "f2c297642e6b4a0fe21e15b1a2dfe1bb21f5122357d1d547d3f3e15f6af8263d",
+            ("openai_responses", "unlimited"): "4531e446a8a3a5c11890e708176829ce220f4ef456dc2c9d87757ca29ada8ae0",
+            ("openai_chat", "limited"): "66d7230700871b3c69b7fc970ac54ae325d1e8a0b9163ef5b8f2771171f0f3cf",
+            ("openai_chat", "unlimited"): "3105cee5ed10069be3a5df48991977a222c76e9791a455086a4b6836cdf78eff",
+            ("anthropic_messages", "limited"): "ee975e53418da4391ad1f5592582de9c603b04e230e0129403cb994ebc8ae676",
+            ("anthropic_messages", "unlimited"): "8f42e475ca1d535abb0fd5a90372e1e20d1db9fffda407ac7df4157d56a11a0b",
         }
         for (provider, permission), expected_sha in expected_structure_sha.items():
             provider_tools = export_provider_tool_schemas(
@@ -5463,9 +5517,12 @@ class TestNativeToolCallExecutorAndAudit:
 
         web_fetch_props = by_name["web_fetch"]["parameters"]["properties"]
         assert "max_chars" not in web_fetch_props
-        assert set(web_fetch_props) == {"url", "char_start", "reason"}
+        assert set(web_fetch_props) == {
+            "url", "char_start", "find_text", "source_content_sha256", "reason",
+        }
         assert {"backend", "provider", "strategy", "retry"}.isdisjoint(web_fetch_props)
         assert "配置" in by_name["web_fetch"]["description"]
+        assert "同时复制" in by_name["web_fetch"]["description"]
 
         web_search_props = by_name["web_search"]["parameters"]["properties"]
         assert "max_results" not in web_search_props

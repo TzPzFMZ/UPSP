@@ -6,6 +6,8 @@ POPUP 仍是 messages 绝对末位；本模块只负责 POPUP 内部片段的分
 """
 import re
 
+from assembly.context_helpers import join_layer_blocks
+
 
 POPUP_TIER_ORDER = ("guide", "reminder", "warning")
 POPUP_TIER_TITLES = {
@@ -121,6 +123,9 @@ class PopupPolicy:
         return [fragment for fragment in fragments if fragment]
 
     def combine(self, fragments):
+        return self.combine_with_block_index(fragments)[0]
+
+    def combine_with_block_index(self, fragments):
         groups = {tier: [] for tier in POPUP_TIER_ORDER}
         for item in self._dedupe_items(
                 self._parse_fragment(fragment)
@@ -134,12 +139,25 @@ class PopupPolicy:
             else 1
         )
 
-        rendered = []
+        blocks = []
+        block_number = 0
         for tier in POPUP_TIER_ORDER:
             items = groups.get(tier) or []
             if not items:
                 continue
-            rendered.append(self._render_tier(tier, items))
+            for index, item in enumerate(items, 1):
+                block_number += 1
+                title = self._item_title(tier, item)
+                content = self._render_item(tier, item)
+                if index == 1:
+                    content = f"## {POPUP_TIER_TITLES.get(tier, tier.upper())}\n\n{content}"
+                blocks.append({
+                    "block_id": f"popup:{tier}:{item.get('kind') or 'item'}:{block_number}",
+                    "title": title,
+                    "kind": str(item.get("kind") or tier),
+                    "content": content,
+                })
+        rendered, block_index = join_layer_blocks(blocks)
         protected = ""
         memory_items = [
             item for item in reminder_items
@@ -147,10 +165,18 @@ class PopupPolicy:
         ]
         if memory_items:
             protected = self._render_tier("reminder", [memory_items[0]])
-        return self._cap_rendered_popup(
-            "\n\n".join(rendered),
+        capped = self._cap_rendered_popup(
+            rendered,
             protected_block=protected,
         )
+        if capped == rendered:
+            return capped, block_index
+        return join_layer_blocks([{
+            "block_id": "popup:budget_capped",
+            "title": "POPUP 内容预算",
+            "kind": "popup_budget_capped",
+            "content": capped,
+        }])
 
     def _dedupe_items(self, items):
         deduped = []

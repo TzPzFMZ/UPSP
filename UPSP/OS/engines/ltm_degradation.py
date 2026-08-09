@@ -193,6 +193,7 @@ class LTMDegradationManager:
         entry["type"] = dest_type
         for key in (
             "tags", "access", "linked_containers", "current_overview",
+            "current_overview_updated_at",
             "dream", "media",
         ):
             if key in source_info:

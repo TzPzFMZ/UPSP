@@ -10,6 +10,52 @@ from engines.reaction_protocol_tool_execution import apply_corpus_read_requests
 
 
 class TestRuntimeReactionReadTools(RuntimeTestMixin):
+    def test_spec724_ltm_mount_updates_its_recall_coordinates(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+        calls = []
+
+        class MemoryStore:
+            def mark_recalled(self, mem_id, round_num=None):
+                calls.append((mem_id, round_num))
+
+        rt.memory_store = MemoryStore()
+        rt._boost_mounted_memory_once(
+            "MEM-ABCDEF12",
+            724,
+            set(),
+            "LTM/Summary",
+        )
+
+        assert calls == [("MEM-ABCDEF12", 724)]
+
+    def test_spec724_setup_preselection_updates_ltm_recall(self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        monkeypatch.setattr(rt.assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(rt.assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(rt.assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(rt.assembler.popup, "read_popup", lambda: "")
+        calls = []
+
+        class MemoryStore:
+            def list_entries(self):
+                return []
+
+            def read_meta_by_id(self, mem_id):
+                return {"id": mem_id, "_memory_layer": "LTM/Summary"}
+
+            def mark_recalled(self, mem_id, round_num=None):
+                calls.append((mem_id, round_num))
+
+        rt.memory_store = MemoryStore()
+        rt.executor = ScriptedExecutor({"response": "done"})
+        rt._run_reaction_loop(rt.sm.load(), "interactive", [{
+            "type": "memory",
+            "ids": "MEM-ABCDEF12",
+            "source": "setup_mount",
+        }])
+
+        assert calls == [("MEM-ABCDEF12", rt.sm.get_total_round())]
+
     def test_natural_language_container_declaration_no_longer_creates_focus(
             self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)

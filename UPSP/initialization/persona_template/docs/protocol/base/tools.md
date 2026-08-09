@@ -41,7 +41,7 @@
 | container_focus | focus_tool | workbench | open/close/restore 焦点卫生 | 不承载正文 create/write |
 | mount_cancel | sync_tool | context_mount | 取消 focus/resident_list/instant_list 挂载 | 不删除源正文，不改变通用工具结果 |
 | pending_cancel | sync_tool | write_settlement | 取消 `memory_write` 反复失败后的写入意图 | 只对 `memory_write` 第三次仍失败后显式开放的 open pending 生效；已补写或不存在的提醒返回“未发现此提醒或已结清” |
-| guide_submit | sync_tool | workbench | 按当前 active guide 选择选项并提交字段 | 只使用 Runtime 当前显示的 `guide_id/item_id/option_id/fields`；任务 progress 只能更新已声明 `item_XX/acc_XX` 的结构状态，不接受 `notes`；全部 required 记录通过 `update_task_status` 完成且证据通过后，Runtime 自动撤下任务清单；之后完成就自然语言回复，跨轮继续才 `reaction_finalize(handoff_text)`，不要把 `guide_submit` 当成普通任务第一动作 |
+| guide_submit | sync_tool | workbench | 按当前 active guide 选择选项并提交字段 | 只使用 Runtime 当前显示的 `guide_id/item_id/option_id/fields`；任务 progress 只能更新已声明 `item_XX/acc_XX` 的结构状态，不接受 `notes`；done/passed 必须引用成功证据，blocked 必须同时写 reason 与 Runtime 登记的成功证据或失败 `call:<call_id>`；全部 required 记录有证据完成后 Runtime 自动撤下任务清单，完整阻塞终态则直接善后并保留任务；之后完成就自然语言回复，跨轮继续才 `reaction_finalize(handoff_text)`，不要把 `guide_submit` 当成普通任务第一动作 |
 | setup_finalize | sync_tool | runtime | 起手步终端收束 | 只在 setup channel 作为 provider-native 终端工具暴露；`native_only + step_terminal` |
 | reaction_finalize | sync_tool | runtime | 跨轮中继交接 | 只在需要跨轮继续时单独调用；只接受 `handoff_text`；完成时直接自然语言回复用户 |
 | cleanup_finalize | sync_tool | runtime | 善后步终端收束 | 只在 cleanup channel 作为 provider-native 终端工具暴露；`native_only + step_terminal` |

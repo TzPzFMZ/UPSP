@@ -6,6 +6,9 @@ import os
 import re
 from copy import deepcopy
 
+from constants import corpus_entry_timestamp, normalize_iso_timestamp
+from data.prompt_cache_telemetry import total_input_tokens
+
 
 SCHEMA_VERSION = "round_live_state.v2"
 
@@ -136,6 +139,11 @@ def build_live_state(events, live_context_root=None, use_live_layers=False):
     conversation = _dedupe_conversation_cards(conversation)
     conversation = _drop_superseded_streaming_cards(conversation)
     lifecycle = _round_lifecycle(ordered)
+    if lifecycle.get("state") in {"settled", "closed", "unsettled"}:
+        for frame in frames:
+            usage = frame.get("context_usage")
+            if isinstance(usage, dict) and usage.get("state") == "pending":
+                usage["state"] = "unavailable"
     _annotate_streaming_cards(conversation, lifecycle)
 
     latest_frame = frames[-1] if frames else None
@@ -590,6 +598,8 @@ def _new_frame(event):
         "phase": phase,
         "iteration": iteration,
         "call_channel": call_channel,
+        "model_profile_id": "",
+        "created_at": "",
         "label": _frame_label(round_num, call_channel, iteration),
         "event_start_index": int(event.get("event_index") or 0),
         "event_end_index": int(event.get("event_index") or 0),
@@ -597,6 +607,11 @@ def _new_frame(event):
         "_layers": _empty_layers(),
         "layer_source": "",
         "historical": False,
+        "_context_chars": None,
+        "_input_tokens": None,
+        "_usage_state": "unavailable",
+        "_window_tokens": None,
+        "_request_body_sha256": "",
     }
 
 
@@ -606,13 +621,33 @@ def _apply_event_to_frame(frame, event):
     frame["event_end_index"] = max(frame["event_end_index"], event_index)
     event_type = event.get("event_type")
     payload = event.get("payload") or {}
+    envelope = _provider_request_envelope_for_event(event)
+    provider = envelope.get("provider")
+    if isinstance(provider, dict):
+        frame["model_profile_id"] = str(provider.get("profile_id") or "")
+    created_at = normalize_iso_timestamp(envelope.get("created_at"))
+    if created_at and not frame.get("created_at"):
+        frame["created_at"] = created_at
+    window_tokens = _int_or_none(envelope.get("context_window_tokens"), 1)
+    if window_tokens is not None:
+        frame["_window_tokens"] = window_tokens
+    request_body_sha256 = str(envelope.get("request_body_sha256") or "").strip()
+    if request_body_sha256:
+        frame["_request_body_sha256"] = request_body_sha256
     call_channel = _call_channel_for_event(event)
     if call_channel:
         frame["call_channel"] = call_channel
         frame["label"] = _frame_label(frame.get("round"), call_channel, frame.get("iteration"))
     if event_type == "step_input_snapshot":
         frame["manifest"] = deepcopy(payload.get("manifest") or {})
-        snapshot_layers = _layers_from_snapshot(payload.get("layers_snapshot"))
+        snapshot = payload.get("layers_snapshot")
+        context_chars = _layers_manifest_chars(envelope.get("layers_manifest"))
+        if context_chars is not None:
+            context_chars = _layers_snapshot_chars(snapshot) or context_chars
+        if context_chars is not None:
+            frame["_context_chars"] = context_chars
+        frame["_usage_state"] = "pending"
+        snapshot_layers = _layers_from_snapshot(snapshot)
         if snapshot_layers is not None:
             frame["_layers"] = snapshot_layers
             frame["layer_source"] = "layers_snapshot"
@@ -624,6 +659,17 @@ def _apply_event_to_frame(frame, event):
             )
             frame["layer_source"] = "legacy_messages_fallback"
             frame["historical"] = True
+    if event_type == "llm_output_raw":
+        input_tokens = total_input_tokens(payload.get("raw_usage"))
+        if input_tokens is None:
+            frame["_input_tokens"] = None
+            frame["_usage_state"] = "unavailable"
+        else:
+            frame["_input_tokens"] = input_tokens
+            frame["_usage_state"] = "reported"
+    elif event_type in {"llm_error", "round_unsettled"}:
+        if frame.get("_usage_state") != "reported":
+            frame["_usage_state"] = "unavailable"
     if event_type in {"llm_call_started", "llm_output_raw"}:
         tool_md, tool_raw = _format_tool_header_pair(event)
         if tool_md or tool_raw:
@@ -633,6 +679,13 @@ def _apply_event_to_frame(frame, event):
 def _finalize_frame(frame):
     layers = frame.pop("_layers", _empty_layers())
     tool_header_fallback = frame.pop("_tool_header_fallback", None)
+    context_chars = frame.pop("_context_chars", None)
+    input_tokens = frame.pop("_input_tokens", None)
+    usage_state = frame.pop("_usage_state", "unavailable")
+    window_tokens = frame.pop("_window_tokens", None)
+    frame.pop("_request_body_sha256", None)
+    if not frame.get("created_at"):
+        frame.pop("created_at", None)
     if (
             not layers.get("01_tool_header")
             and isinstance(tool_header_fallback, tuple)
@@ -642,6 +695,13 @@ def _finalize_frame(frame):
         _pane_from_layer_value(pane_id, title, layers.get(pane_id, ""))
         for pane_id, title in CONTEXT_PANES
     ]
+    if context_chars is not None:
+        frame["context_usage"] = {
+            "chars": context_chars,
+            "input_tokens": input_tokens,
+            "window_tokens": window_tokens,
+            "state": usage_state,
+        }
     return frame
 
 
@@ -735,6 +795,65 @@ def _layers_from_snapshot(snapshot):
     return result if found else None
 
 
+def _int_or_none(value, minimum=0):
+    return value if (
+        isinstance(value, int) and not isinstance(value, bool) and value >= minimum
+    ) else None
+
+
+def _layers_manifest_chars(manifest):
+    if not isinstance(manifest, dict):
+        return None
+    layers = manifest.get("layers")
+    if not isinstance(layers, list):
+        return None
+    chars_by_key = {}
+    valid_keys = {pane_id for pane_id, _title in CONTEXT_PANES}
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        layer_key = str(layer.get("layer_key") or "").strip()
+        if layer_key not in valid_keys or layer_key in chars_by_key:
+            continue
+        chars = _int_or_none(layer.get("model_visible_chars"))
+        if chars is None:
+            chars = _int_or_none(layer.get("chars"))
+        if chars is None:
+            return None
+        chars_by_key[layer_key] = chars
+    if set(chars_by_key) != valid_keys:
+        return None
+    return sum(chars_by_key.values())
+
+
+def _layers_snapshot_chars(snapshot):
+    if not isinstance(snapshot, dict):
+        return None
+    layers = snapshot.get("layers")
+    if not isinstance(layers, list):
+        return None
+    chars_by_key = {}
+    valid_keys = {pane_id for pane_id, _title in CONTEXT_PANES}
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        layer_key = str(layer.get("layer_key") or "").strip()
+        if layer_key not in valid_keys or layer_key in chars_by_key:
+            continue
+        content_markdown = layer.get("content_markdown")
+        chars = _int_or_none(layer.get("model_visible_chars"))
+        if chars is None and isinstance(content_markdown, str):
+            chars = len(content_markdown)
+        if chars is None:
+            chars = _int_or_none(layer.get("chars"))
+        if chars is None:
+            return None
+        chars_by_key[layer_key] = chars
+    if set(chars_by_key) != valid_keys:
+        return None
+    return sum(chars_by_key.values())
+
+
 def _legacy_layers_from_messages(messages, manifest=None):
     legacy = _extract_context_layers(messages, manifest=manifest)
     result = _empty_layers()
@@ -755,6 +874,17 @@ def _apply_live_layers_to_frame(frame, live_context_root):
         layers = store.read_context_layers(context_step)
     except Exception:
         return
+    try:
+        live_envelope = store.read_provider_request(context_step)
+    except Exception:
+        live_envelope = {}
+    if (
+            frame.get("_request_body_sha256")
+            and frame.get("_request_body_sha256")
+            == str(live_envelope.get("request_body_sha256") or "").strip()):
+        live_window = _int_or_none(live_envelope.get("context_window_tokens"), 1)
+        if live_window is not None:
+            frame["_window_tokens"] = live_window
     live_layers = _layers_from_snapshot({
         "schema": "context_layers_snapshot.v1",
         "source": f"context/{context_step}/layers",
@@ -794,7 +924,23 @@ def _format_layer_payload_for_pane(layer, pane_id=""):
         return {
             "content_md": content_md,
             "content_raw": _format_layer_content(content),
-            "content_blocks": _content_blocks_from_layer_entries(pane_id, content),
+            "content_blocks": (
+                _content_blocks_from_layer_entries(pane_id, content)
+                if pane_id in {"30_lately", "50_now"}
+                else []
+            ),
+        }
+    if isinstance(content, str) and isinstance(layer.get("block_index"), list):
+        return {
+            "content_md": (
+                content_markdown
+                if isinstance(content_markdown, str)
+                else content
+            ),
+            "content_raw": content,
+            "content_blocks": _content_blocks_from_string_index(
+                content, layer.get("block_index")
+            ),
         }
     if isinstance(content_markdown, str):
         return content_markdown
@@ -816,9 +962,6 @@ def _pane_from_layer_value(pane_id, title, layer_value):
 def _pane(pane_id, title, content_md, content_raw=None, content_blocks=None):
     content_md = str(content_md or "").strip()
     content_raw = str(content_raw if content_raw is not None else content_md).strip()
-    if content_blocks is None:
-        content_blocks = _content_blocks_for_pane(
-            pane_id, title, content_md, content_raw)
     return {
         "id": pane_id,
         "title": title,
@@ -841,18 +984,68 @@ def _content_blocks_from_layer_entries(pane_id, entries):
             continue
         index = len(blocks) + 1
         title, body = _corpus_entry_title_and_body(entry, content)
+        source_block_id = _entry_source_block_id(entry)
         blocks.append({
-            "block_id": f"{pane_id}:B{index:02d}",
-            "index": index,
+            "block_id": str(
+                source_block_id
+                or entry.get("active_corpus_id")
+                or f"{pane_id}:B{index:02d}"
+            ),
             "title": title,
             "content_md": body,
             "content_raw": content,
             "chars": len(body),
             "raw_chars": len(content),
             "tone": CORPUS_BLOCK_TONES[(index - 1) % len(CORPUS_BLOCK_TONES)],
-            "source_block_id": _entry_source_block_id(entry),
+            "source_block_id": source_block_id,
             "provenance": _entry_provenance(entry),
         })
+    return blocks
+
+
+def _content_blocks_from_string_index(content, block_index):
+    blocks = []
+    seen = set()
+    previous_end = 0
+    for item in block_index or []:
+        if not isinstance(item, dict):
+            return []
+        block_id = item.get("block_id")
+        start = item.get("char_start")
+        end = item.get("char_end")
+        if (
+                not isinstance(block_id, str)
+                or not block_id
+                or block_id in seen
+                or not isinstance(start, int)
+                or isinstance(start, bool)
+                or not isinstance(end, int)
+                or isinstance(end, bool)
+                or start < previous_end
+                or start < 0
+                or end <= start
+                or end > len(content)
+                or not isinstance(item.get("title"), str)
+                or any(
+                    field in item and not isinstance(item.get(field), str)
+                    for field in ("kind", "source_block_id")
+                )):
+            return []
+        body = content[start:end]
+        block = {
+            "block_id": block_id,
+            "title": str(item.get("title") or block_id),
+            "content_md": body,
+            "content_raw": body,
+            "chars": len(body),
+            "raw_chars": len(body),
+            "tone": CORPUS_BLOCK_TONES[len(blocks) % len(CORPUS_BLOCK_TONES)],
+            "source_block_id": str(item.get("source_block_id") or ""),
+            "provenance": {"kind": str(item.get("kind") or "")},
+        }
+        blocks.append(block)
+        seen.add(block_id)
+        previous_end = end
     return blocks
 
 
@@ -872,17 +1065,16 @@ def _entry_provenance(entry):
     if not isinstance(entry, dict):
         return {}
     loc = entry.get("loc") if isinstance(entry.get("loc"), dict) else {}
-    ref = entry.get("ref") if isinstance(entry.get("ref"), dict) else {}
-    return {
-        "source_block_id": _entry_source_block_id(entry),
+    result = {
         "kind": str(entry.get("kind") or ""),
         "round": entry.get("round") or loc.get("round"),
         "step": entry.get("step") or loc.get("step"),
         "iter": entry.get("iter") if entry.get("iter") is not None else loc.get("iter"),
-        "timestamp": entry.get("timestamp") or loc.get("time") or "",
-        "raw_log_key": entry.get("raw_log_key") or ref.get("raw_log_key") or "",
-        "renderer": "round_live_viewer._content_blocks_from_layer_entries",
     }
+    timestamp = corpus_entry_timestamp(entry)
+    if timestamp:
+        result["timestamp"] = timestamp
+    return result
 
 
 def _corpus_entry_title_and_body(entry, content):
@@ -904,54 +1096,6 @@ def _corpus_entry_title_and_body(entry, content):
         "reasoning_context": "本轮推理上下文",
     }
     return title_by_kind.get(kind, "内容"), content
-
-
-def _content_blocks_for_pane(pane_id, title, content_md, content_raw):
-    md_parts = _split_corpus_block_parts(content_md, default_title=title)
-    raw_parts = _split_corpus_block_parts(content_raw, default_title=title)
-    if not md_parts:
-        return []
-    if len(raw_parts) != len(md_parts):
-        raw_parts = md_parts
-    blocks = []
-    for index, md_part in enumerate(md_parts, start=1):
-        raw_part = raw_parts[index - 1]
-        block_title = md_part.get("title") or raw_part.get("title") or title
-        content_md_part = str(md_part.get("body") or "").strip()
-        content_raw_part = str(raw_part.get("body") or content_md_part).strip()
-        blocks.append({
-            "block_id": f"{pane_id}:B{index:02d}",
-            "index": index,
-            "title": block_title,
-            "content_md": content_md_part,
-            "content_raw": content_raw_part,
-            "chars": len(content_md_part),
-            "raw_chars": len(content_raw_part),
-            "tone": CORPUS_BLOCK_TONES[(index - 1) % len(CORPUS_BLOCK_TONES)],
-        })
-    return blocks
-
-
-def _split_corpus_block_parts(content, default_title="内容"):
-    text = str(content or "").strip()
-    if not text:
-        return []
-    matches = list(CORPUS_BLOCK_HEADING_RE.finditer(text))
-    if not matches:
-        return []
-    parts = []
-    if matches[0].start() > 0:
-        prefix = text[:matches[0].start()].strip()
-        if prefix:
-            parts.append({"title": str(default_title or "内容"), "body": prefix})
-    for index, match in enumerate(matches):
-        next_start = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        body = text[match.end():next_start].strip()
-        parts.append({
-            "title": _normalize_corpus_block_title(match.group("title")),
-            "body": body,
-        })
-    return parts
 
 
 def _normalize_corpus_block_title(title):

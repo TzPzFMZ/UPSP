@@ -8,11 +8,13 @@ import type {
   LiveEventsPayload,
   LivePayload,
   LiveState,
+  ModelContextResolution,
   PageId,
   PermissionLevel,
   PersonaCorePayload,
   PersonaStatePayload,
   ProtocolCatalogPayload,
+  RequestPrefixDiffPayload,
   RoundListPayload,
   RuntimeStatus,
   SettingValue,
@@ -49,6 +51,8 @@ import {
   renderStageAndFocus,
   selectDepositionItem,
 } from "./view";
+
+let contextPrefixDiffController: AbortController | null = null;
 
 class RuntimeRequestError extends Error {
   status: number;
@@ -137,11 +141,105 @@ export function refreshRuntimeUi(): void {
   renderOverview();
   renderChat();
   if (runtimePages.has(state.activePage)) renderStage(state.activePage);
+  if (state.activePage === "context" && getActivePageTab("context") === "content") {
+    void pollContextPrefixDiffForSelection();
+  }
 }
 
 function validateLiveState(statePayload: LiveState | null): void {
   if (statePayload !== null && statePayload?.schema_version !== "round_live_state.v2") {
     throw new Error("round_live_state_schema_mismatch");
+  }
+}
+
+function selectedContextDiffRef(): { round: number; frameId: string } | null {
+  const rounds = runtimeProjection.conversationRoundOrder;
+  const selectedRound = state.selectedContextRound;
+  const round = selectedRound !== null && runtimeProjection.conversationRounds.has(selectedRound)
+    ? selectedRound
+    : runtimeProjection.round ?? rounds.at(-1) ?? null;
+  if (round === null) return null;
+  const live = round === runtimeProjection.round
+    ? runtimeProjection.live
+    : runtimeProjection.conversationRounds.get(round) || null;
+  const frames = live?.call_frames || [];
+  const frame = state.selectedContextFrame === null
+    ? frames.at(-1)
+    : frames.find((item) => item.frame_id === state.selectedContextFrame);
+  return frame ? { round, frameId: frame.frame_id } : null;
+}
+
+function validContextPrefixDiff(
+  payload: RequestPrefixDiffPayload,
+  ref: { round: number; frameId: string },
+): boolean {
+  if (
+    payload.schema_version !== "seed_gui_request_prefix_diff.v1"
+    || !["ready", "identical", "unavailable"].includes(payload.state)
+  ) return false;
+  if (payload.state === "unavailable") return true;
+  return payload.current?.round === ref.round
+    && payload.current?.frame_id === ref.frameId
+    && typeof payload.previous?.frame_id === "string"
+    && Number.isInteger(payload.common_prefix_bytes)
+    && Number.isInteger(payload.current_wire_bytes)
+    && (payload.state === "identical" || Boolean(payload.target?.pane_id));
+}
+
+export async function pollContextPrefixDiffForSelection(
+  { force = false }: { force?: boolean } = {},
+): Promise<void> {
+  const ref = selectedContextDiffRef();
+  if (!ref) {
+    contextPrefixDiffController?.abort();
+    runtimeProjection.contextPrefixDiffKey = "";
+    runtimeProjection.contextPrefixDiff = null;
+    runtimeProjection.contextPrefixDiffLoading = false;
+    runtimeProjection.contextPrefixDiffError = "";
+    return;
+  }
+  const key = `${ref.round}:${ref.frameId}`;
+  if (
+    !force
+    && runtimeProjection.contextPrefixDiffKey === key
+    && (
+      runtimeProjection.contextPrefixDiffLoading
+      || runtimeProjection.contextPrefixDiff
+      || runtimeProjection.contextPrefixDiffError
+    )
+  ) return;
+  contextPrefixDiffController?.abort();
+  const controller = new AbortController();
+  contextPrefixDiffController = controller;
+  runtimeProjection.contextPrefixDiffKey = key;
+  runtimeProjection.contextPrefixDiff = null;
+  runtimeProjection.contextPrefixDiffLoading = true;
+  runtimeProjection.contextPrefixDiffError = "";
+  try {
+    const payload = await fetchRuntimeJson<RequestPrefixDiffPayload>(
+      `./api/context/request-prefix-diff?round=${ref.round}&frame_id=${encodeURIComponent(ref.frameId)}`,
+      { signal: controller.signal },
+    );
+    if (!validContextPrefixDiff(payload, ref)) {
+      throw new Error("context_prefix_diff_schema_mismatch");
+    }
+    if (runtimeProjection.contextPrefixDiffKey === key) {
+      runtimeProjection.contextPrefixDiff = payload;
+    }
+  } catch (error: unknown) {
+    if (!(error instanceof DOMException && error.name === "AbortError")
+        && runtimeProjection.contextPrefixDiffKey === key) {
+      const failure = errorView(error);
+      runtimeProjection.contextPrefixDiffError = failure.code || failure.message || "unknown";
+    }
+  } finally {
+    if (runtimeProjection.contextPrefixDiffKey === key) {
+      runtimeProjection.contextPrefixDiffLoading = false;
+      if (state.activePage === "context" && getActivePageTab("context") === "content") {
+        renderStage("context");
+      }
+    }
+    if (contextPrefixDiffController === controller) contextPrefixDiffController = null;
   }
 }
 
@@ -419,6 +517,29 @@ function refreshSettingsUi(): void {
   renderComposerState();
 }
 
+function refreshModelCatalogMutationUi(
+  entity: "connection" | "model",
+  id: string | null,
+): void {
+  const selector = `[data-model-catalog-form="${entity}"][data-model-catalog-id="${CSS.escape(id || "")}"]`;
+  const submit = els.globalSettingsContent.querySelector<HTMLButtonElement>(
+    `${selector} button[type="submit"]`,
+  );
+  if (submit) {
+    submit.disabled = settingsProjection.pending;
+    submit.textContent = settingsProjection.pending ? t("保存中") : t("保存");
+  }
+  const feedback = els.globalSettingsContent.querySelector<HTMLElement>(
+    "[data-settings-feedback]",
+  );
+  if (feedback) {
+    const message = settingsProjection.error || settingsProjection.feedback;
+    feedback.textContent = message;
+    feedback.hidden = !message;
+    feedback.classList.toggle("warn", Boolean(settingsProjection.error));
+  }
+}
+
 function refreshPersonaUi(): void {
   if (state.systemWindowOpen && state.activePage === "persona") renderStage("persona");
 }
@@ -626,7 +747,8 @@ export async function submitModelCatalog(
   settingsProjection.pending = true;
   settingsProjection.error = "";
   settingsProjection.feedback = t("正在保存设置");
-  refreshSettingsUi();
+  refreshModelCatalogMutationUi(entity, id);
+  let saved = false;
   try {
     const payload = await fetchRuntimeJson<SettingsPayload>("./api/settings/model-catalog", {
       method: "POST",
@@ -643,6 +765,7 @@ export async function submitModelCatalog(
     settingsProjection.feedback = t("设置已保存");
     state.editingConnectionId = null;
     state.editingModelId = null;
+    saved = true;
   } catch (error: unknown) {
     const failure = errorView(error);
     settingsProjection.error = failure.status === 409
@@ -652,7 +775,8 @@ export async function submitModelCatalog(
   } finally {
     settingsProjection.pending = false;
   }
-  refreshSettingsUi();
+  if (saved) refreshSettingsUi();
+  else refreshModelCatalogMutationUi(entity, id);
 }
 
 export function depositionPage(kind: DepositionKind): PageId {
@@ -864,6 +988,63 @@ export async function submitRuntimeMessage(event: SubmitEvent): Promise<void> {
     runtimeProjection.sending = false;
     await pollRuntime({ forceFull: true, ignoreVisibility: true });
   }
+}
+
+export async function submitRuntimePermissionChange(): Promise<void> {
+  const status = runtimeProjection.status;
+  if (!status?.current_round || !status.can_stop || runtimeProjection.permissionChanging) return;
+  const projected = status.execution_permission?.pending_level
+    || status.execution_permission?.permission_level
+    || "guarded";
+  const permissionLevel = els.permissionLevel.value as PermissionLevel;
+  if (!confirmUnlimitedPermission(permissionLevel)) {
+    els.permissionLevel.value = projected;
+    runtimeProjection.sendFeedback = t("已保持当前执行权限。");
+    refreshRuntimeUi();
+    return;
+  }
+  runtimeProjection.permissionChanging = true;
+  runtimeProjection.sendFeedback = t("执行权限将在下一帧边界生效。");
+  refreshRuntimeUi();
+  try {
+    await fetchRuntimeJson<JsonObject>("./api/runtime/execution-permission", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        permission_level: permissionLevel,
+        unlimited_confirmed: permissionLevel === "unlimited" && runtimeProjection.unlimitedConfirmed,
+      }),
+    });
+  } catch (error: unknown) {
+    els.permissionLevel.value = projected;
+    const failure = errorView(error);
+    runtimeProjection.sendFeedback = `${t("执行权限切换失败")}：${failure.code || failure.message}`;
+  } finally {
+    runtimeProjection.permissionChanging = false;
+    await pollRuntime({ forceFull: true, ignoreVisibility: true });
+  }
+}
+
+export async function resolveModelContextWindow(
+  connectionId: string,
+  model: string,
+): Promise<ModelContextResolution> {
+  const payload = await fetchRuntimeJson<ModelContextResolution>(
+    "./api/settings/model-context-window/resolve",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connection_id: connectionId, model }),
+    },
+  );
+  if (
+    payload.schema_version !== "seed_gui_model_context_resolution.v1"
+    || payload.model !== model
+    || !["provider", "registry", "unknown"].includes(payload.source)
+  ) {
+    throw new Error("model_context_resolution_schema_mismatch");
+  }
+  return payload;
 }
 
 export async function submitToolApproval(

@@ -345,6 +345,48 @@ def test_spec721_resident_restart_falls_back_to_guarded(tmp_path):
         resident.close()
 
 
+def test_spec729_resident_status_projects_small_runtime_truth(tmp_path):
+    class State:
+        @staticmethod
+        def load():
+            return {
+                "base": {
+                    "meta": {"total_round": 638},
+                    "heartbeat_flags": {"user_message_waiting": True},
+                    "runtime": {"phase": "main"},
+                }
+            }
+
+    class Workbench:
+        @staticmethod
+        def active_guide_slots():
+            return {"rhythm": "", "work": "task:T-729"}
+
+        @staticmethod
+        def get(key):
+            return "T-729" if key == "base.active_task" else None
+
+    runtime = FakeRuntime()
+    runtime.sm = State()
+    runtime.workbench = Workbench()
+    resident = service(tmp_path / "runtime", runtime)
+
+    resident.start()
+    try:
+        data = resident.status()["cli_data"]
+        assert data["total_round"] == 638
+        assert data["active_flags"] == ["user_message_waiting"]
+        assert data["round_type"] == "interactive"
+        assert data["phase"] == "main"
+        assert data["active_guides"] == {
+            "rhythm": "",
+            "work": "task:T-729",
+        }
+        assert data["active_task"] == "T-729"
+    finally:
+        resident.close()
+
+
 def test_spec704_corrupt_supervisor_is_preserved_and_fails_closed(tmp_path):
     runtime_dir = tmp_path / "runtime"
     runtime_dir.mkdir()

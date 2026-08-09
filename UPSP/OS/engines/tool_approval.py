@@ -115,7 +115,7 @@ def request_runtime_tool_approval(runtime, payload):
             phase="reaction",
         )
 
-    runtime._set_active_stage("tool_approval")
+    runtime.control.set_stage("tool_approval")
     try:
         return runtime.tool_approval.request(
             payload,
@@ -126,4 +126,4 @@ def request_runtime_tool_approval(runtime, payload):
         )
     finally:
         if runtime.control.snapshot(runtime.hb).get("stage") == "tool_approval":
-            runtime._set_active_stage("reaction")
+            runtime.control.set_stage("reaction")

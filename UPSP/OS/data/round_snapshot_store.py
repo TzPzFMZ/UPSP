@@ -191,7 +191,8 @@ class RoundSnapshotStore:
         if provider_request_envelope is not None:
             payload["provider_request_envelope"] = (
                 self._sanitize_provider_request_envelope(
-                    provider_request_envelope))
+                    provider_request_envelope,
+                    include_source_map=True))
         if layers_snapshot is not None:
             payload["layers_snapshot"] = self._sanitize_layers_snapshot(
                 layers_snapshot)
@@ -440,11 +441,25 @@ class RoundSnapshotStore:
         return {key: copy.deepcopy(audit.get(key)) for key in allowed if key in audit}
 
     @staticmethod
-    def _sanitize_provider_request_envelope(envelope):
+    def _sanitize_provider_request_envelope(
+            envelope, *, include_source_map=False):
         if not isinstance(envelope, dict):
             return {}
         cleaned, _redacted = RoundSnapshotStore._redact_value(
             copy.deepcopy(envelope))
+        if include_source_map and isinstance(cleaned, dict):
+            cleaned["request_body"], _ = (
+                RoundSnapshotStore._redact_provider_request_body(
+                    copy.deepcopy(envelope.get("request_body"))))
+        context_window = envelope.get("context_window_tokens")
+        if (
+                isinstance(cleaned, dict)
+                and isinstance(context_window, int)
+                and not isinstance(context_window, bool)
+                and context_window > 0):
+            cleaned["context_window_tokens"] = context_window
+        if isinstance(cleaned, dict) and not include_source_map:
+            cleaned.pop("request_body_source_map", None)
         return cleaned if isinstance(cleaned, dict) else {}
 
     @staticmethod
@@ -555,6 +570,44 @@ class RoundSnapshotStore:
     @staticmethod
     def _is_high_risk_native_redact_key(key):
         return str(key or "").lower() in HIGH_RISK_NATIVE_REDACT_KEYS
+
+    @staticmethod
+    def _redact_provider_request_body(value, key_name=""):
+        key = str(key_name or "").lower()
+        if (
+                key in {
+                    "api_key", "apikey", "authorization", "credential",
+                    "credentials", "password", "secret", "access_token",
+                    "refresh_token", "bearer_token",
+                }
+                or key.endswith((
+                    "_api_key", "_authorization", "_credential",
+                    "_password", "_secret",
+                ))):
+            return "[redacted]", True
+        if isinstance(value, dict):
+            redacted = False
+            result = {}
+            for child_key, item in value.items():
+                result[child_key], item_redacted = (
+                    RoundSnapshotStore._redact_provider_request_body(
+                        item, child_key))
+                redacted = redacted or item_redacted
+            return result, redacted
+        if isinstance(value, list):
+            redacted = False
+            result = []
+            for item in value:
+                cleaned, item_redacted = (
+                    RoundSnapshotStore._redact_provider_request_body(
+                        item, key_name))
+                result.append(cleaned)
+                redacted = redacted or item_redacted
+            return result, redacted
+        if isinstance(value, str):
+            cleaned = RoundSnapshotStore._redact_secret_like_text(value)
+            return cleaned, cleaned != value
+        return value, False
 
     @staticmethod
     def _redact_value(value, key_name=""):

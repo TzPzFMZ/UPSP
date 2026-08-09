@@ -33,6 +33,7 @@ from datetime import datetime
 from data.config_store import ConfigStore
 from data.connectivity_store import ConnectivityStore
 from data.audit_store import AuditStore
+from data.prompt_cache_telemetry import total_input_tokens
 from constants import local_now
 from errors import APIBridgeError, APITimeoutError, ProviderCallCancelled
 from logic.native_tool_calls import (
@@ -49,6 +50,13 @@ from logic.runtime_channels import (
     CALL_CHANNELS,
     STEP_TERMINAL_TOOLS,
     channel_for_step,
+)
+from data.provider_request_wire import (
+    WIRE_BODY_ENCODING,
+    build_request_body_source_map,
+    provider_request_body_sha256,
+    serialize_provider_request_body,
+    verified_provider_request_wire,
 )
 from engines.prompt_cache_planner import apply_explicit_breakpoints, profile_settings
 from paths import ACTIVE_PID
@@ -105,6 +113,7 @@ def _provider_transport_worker(connection, request):
             request["url"],
             request["api_key"],
             request["payload"],
+            wire_body=request.get("wire_body"),
         )
         connection.send({"type": "result", "response": response})
     except APITimeoutError as exc:
@@ -122,6 +131,7 @@ def _provider_transport_worker(connection, request):
             "message": str(exc),
             "endpoint": str(getattr(exc, "endpoint", "") or ""),
             "status_code": getattr(exc, "status_code", None),
+            "transient": bool(getattr(exc, "transient", False)),
         })
     except Exception as exc:
         connection.send({
@@ -715,16 +725,11 @@ class APIExecutor:
 
     @staticmethod
     def _canonical_json_bytes(value):
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
+        return serialize_provider_request_body(value)
 
     @classmethod
     def _request_body_sha256(cls, request_body):
-        return hashlib.sha256(cls._canonical_json_bytes(request_body)).hexdigest()
+        return provider_request_body_sha256(request_body)
 
     def _provider_request_envelope(
             self,
@@ -738,6 +743,7 @@ class APIExecutor:
             endpoint_config,
             payload,
             request_contract_audit,
+            request_body_source_map=None,
             attempt=None):
         endpoint = {
             "tier": tier,
@@ -747,7 +753,9 @@ class APIExecutor:
             endpoint["api_format"] = endpoint_config.get("api_format")
             endpoint["provider_hint"] = endpoint_config.get("provider")
         request_body = payload if isinstance(payload, dict) else {}
-        return {
+        wire_body = serialize_provider_request_body(request_body)
+        wire_body_sha256 = hashlib.sha256(wire_body).hexdigest()
+        envelope = {
             "schema": "provider_request.v1",
             "created_at": local_now().isoformat(),
             "call": {
@@ -760,12 +768,28 @@ class APIExecutor:
             "provider": {
                 "provider": provider,
                 "model": model_name,
+                "profile_id": str((endpoint_config or {}).get("profile_id") or ""),
+                "connection_id": str((endpoint_config or {}).get("connection_id") or ""),
             },
             "endpoint": endpoint,
             "request_contract_audit": request_contract_audit,
             "request_body": request_body,
-            "request_body_sha256": self._request_body_sha256(request_body),
+            "request_body_sha256": wire_body_sha256,
+            "wire_body_encoding": WIRE_BODY_ENCODING,
+            "wire_body_sha256": wire_body_sha256,
+            "wire_body_bytes": len(wire_body),
         }
+        if request_body_source_map is not None:
+            envelope["request_body_source_map"] = request_body_source_map
+        try:
+            context_window_tokens = int(
+                (endpoint_config or {}).get("context_window") or 0
+            )
+        except (TypeError, ValueError, OverflowError):
+            context_window_tokens = 0
+        if context_window_tokens > 0:
+            envelope["context_window_tokens"] = context_window_tokens
+        return envelope
 
     def _call_header_for_layers(self, step, channel, attempt):
         return {
@@ -1272,6 +1296,10 @@ class APIExecutor:
             prompt_cache_scope=prompt_cache_scope,
         )
         payload = self._apply_streaming_config_to_payload(payload, ep, provider)
+        request_body_source_map = build_request_body_source_map(
+            payload,
+            self.audit_store.read_context_layers(context_step),
+        )
         request_contract_audit = self._request_contract_audit(
             step,
             provider,
@@ -1293,6 +1321,7 @@ class APIExecutor:
             endpoint_config=ep,
             payload=payload,
             request_contract_audit=request_contract_audit,
+            request_body_source_map=request_body_source_map,
             attempt=attempt,
         )
         provider_request_envelope = self.audit_store.write_compiled_provider_request(
@@ -1301,6 +1330,7 @@ class APIExecutor:
             call_layer_statuses=call_layer_statuses,
         )
         payload = self.audit_store.read_provider_request_body(context_step)
+        verified_provider_request_wire(provider_request_envelope, payload)
         return {
             "step": step,
             "system_prompt": system_prompt,
@@ -1367,7 +1397,7 @@ class APIExecutor:
             provider=provider,
             endpoint_config=ep,
             step="setup",
-            prompt_cache_scope=None,
+            prompt_cache_scope=False,
         )
         if provider == "openai_responses":
             payload["max_output_tokens"] = 64
@@ -1512,6 +1542,12 @@ class APIExecutor:
                     max_attempts=max_attempts,
                     payload=payload,
                 )
+                wire_body = None
+                if provider_request_envelope:
+                    wire_body = verified_provider_request_wire(
+                        provider_request_envelope,
+                        payload,
+                    )
                 self._log_api_progress(
                     "start",
                     step=step,
@@ -1523,12 +1559,24 @@ class APIExecutor:
                     payload=payload,
                 )
                 try:
-                    response_data = self._send_request_cancellable(
-                        request_url,
-                        api_key,
-                        payload,
-                        provider,
-                    )
+                    send = self._send_request_cancellable
+                    if (
+                            getattr(send, "__func__", None)
+                            is APIExecutor._send_request_cancellable):
+                        response_data = send(
+                            request_url,
+                            api_key,
+                            payload,
+                            provider,
+                            wire_body=wire_body,
+                        )
+                    else:
+                        response_data = send(
+                            request_url,
+                            api_key,
+                            payload,
+                            provider,
+                        )
                 finally:
                     self._mark_provider_call_finished()
                 latency_ms = int((time.time() - start_time) * 1000)
@@ -2047,6 +2095,8 @@ class APIExecutor:
     def _is_transient_provider_error(cls, exc):
         if cls._is_api_timeout_error(exc):
             return True
+        if getattr(exc, "transient", False) is True:
+            return True
         try:
             status_code = int(getattr(exc, "status_code", None))
         except (TypeError, ValueError):
@@ -2237,6 +2287,8 @@ class APIExecutor:
     def _prompt_cache_settings(cls, step, provider, endpoint_config=None,
                                prompt_cache_scope=None,
                                model_name=""):
+        if prompt_cache_scope is False:
+            return {}
         if not isinstance(endpoint_config, dict):
             endpoint_config = {}
         raw = endpoint_config.get("prompt_cache")
@@ -2645,15 +2697,19 @@ class APIExecutor:
 
     def _usage_input_tokens(self, response_data):
         usage = response_data.get("usage", {}) or {}
-        return usage.get("prompt_tokens", usage.get("input_tokens", 0))
+        return total_input_tokens(usage)
 
     def _usage_output_tokens(self, response_data):
         usage = response_data.get("usage", {}) or {}
         return usage.get("completion_tokens", usage.get("output_tokens", 0))
 
-    def _send_request(self, url, api_key, payload):
+    def _send_request(self, url, api_key, payload, *, wire_body=None):
         """发送 HTTP POST 请求到 API"""
-        data = json.dumps(payload).encode("utf-8")
+        data = (
+            bytes(wire_body)
+            if isinstance(wire_body, (bytes, bytearray))
+            else serialize_provider_request_body(payload)
+        )
         req = urllib.request.Request(url, data=data, method="POST")
         req.add_header("Content-Type", "application/json; charset=utf-8")
         req.add_header("Accept-Charset", "utf-8")
@@ -2727,10 +2783,17 @@ class APIExecutor:
                 f"API request timed out after {timeout} seconds: {e}",
                 timeout_seconds=timeout,
             ) from e
+        except (ConnectionError, OSError) as e:
+            raise APIBridgeError(
+                url,
+                f"provider_transport_error:{type(e).__name__}: {e}",
+                transient=True,
+            ) from e
         except json.JSONDecodeError:
             raise APIBridgeError(url, "JSON 解析失败")
 
-    def _send_request_cancellable(self, url, api_key, payload, provider=None):
+    def _send_request_cancellable(
+            self, url, api_key, payload, provider=None, *, wire_body=None):
         """Use a worker only for the unmodified production transport method.
 
         Existing deterministic tests and adapters that replace ``_send_request``
@@ -2744,6 +2807,7 @@ class APIExecutor:
             "url": str(url or ""),
             "api_key": str(api_key or ""),
             "payload": payload,
+            "wire_body": wire_body,
             "provider": str(provider or provider_for_url(url)),
             "timeouts": {
                 "request_timeout": self.cfg.get_request_timeout(),
@@ -2806,6 +2870,7 @@ class APIExecutor:
                 terminal.get("endpoint") or url,
                 terminal.get("message") or "provider_transport_worker_failed",
                 status_code=terminal.get("status_code"),
+                transient=terminal.get("transient") is True,
             )
         finally:
             with self._transport_lock:

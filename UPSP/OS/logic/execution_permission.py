@@ -1,6 +1,9 @@
 """Execution permission levels for general tools."""
 
 import os
+import threading
+
+from constants import local_now
 
 
 EXECUTION_PERMISSION_ENV = "UPSP_EXECUTION_PERMISSION_LEVEL"
@@ -120,6 +123,75 @@ class ExecutionPermissionChain:
             else None
         )
         return self.apply(DEFAULT_LEVEL)
+
+
+class RuntimePermissionUpdates:
+    """Apply GUI permission changes only at audited Frame boundaries."""
+
+    def __init__(self, chain, audit, control, heartbeat):
+        self.chain = chain
+        self.audit = audit
+        self.control = control
+        self.heartbeat = heartbeat
+        self._lock = threading.Lock()
+        self._pending = None
+
+    def request(self, level):
+        with self._lock:
+            status = self.control.snapshot(self.heartbeat)
+            if not status.get("round_in_flight"):
+                raise ValueError("no_round_in_flight")
+            if str(status.get("stage") or "").startswith("cleanup"):
+                raise ValueError("permission_change_too_late")
+            update = {
+                "permission_level": normalize_execution_permission_level(level),
+                "requested_at": local_now().isoformat(),
+            }
+            self._pending = update
+        return {
+            "status": "pending",
+            **execution_permission_audit(update["permission_level"]),
+            "effective_after": "next_frame_boundary",
+            "requested_at": update["requested_at"],
+        }
+
+    def attach_status(self, status):
+        with self._lock:
+            pending = dict(self._pending or {})
+        status["execution_permission"] = {
+            **execution_permission_audit(self.chain.current),
+            "pending_level": pending.get("permission_level"),
+            "requested_at": pending.get("requested_at"),
+        }
+        return status
+
+    def apply(self, round_num, phase, iteration):
+        with self._lock:
+            update = self._pending
+        if not update:
+            return None
+        previous = self.chain.current
+        current = normalize_execution_permission_level(update["permission_level"])
+        frame_id = f"R{int(round_num):06d}:{phase}:{int(iteration)}"
+        payload = {
+            "previous": execution_permission_audit(previous),
+            "current": execution_permission_audit(current),
+            "requested_at": update["requested_at"],
+            "applied_at": local_now().isoformat(),
+            "effective_frame_id": frame_id,
+        }
+        self.audit.get_store().append_event(
+            round_num,
+            "execution_permission_changed",
+            payload,
+            phase=phase,
+            iteration=iteration,
+        )
+        self.chain.apply(current)
+        with self._lock:
+            if self._pending is update:
+                self._pending = None
+        return payload
 
 
 def render_execution_permission_status(level=None):

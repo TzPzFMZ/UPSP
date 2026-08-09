@@ -21,12 +21,15 @@ import {
   pollPersonaState,
   pollProtocolCatalog,
   pollRuntime,
+  pollContextPrefixDiffForSelection,
   pollSettings,
   pollTaskProjection,
   refreshRuntimeUi,
   retryProjection,
+  resolveModelContextWindow,
   submitContainerFocus,
   submitRuntimeMessage,
+  submitRuntimePermissionChange,
   submitRuntimeRelay,
   submitRuntimeStop,
   submitToolApproval,
@@ -41,6 +44,7 @@ import {
   closeSystemWindow,
   collapseNavNow,
   getActivePageTab,
+  jumpToContextPrefixDiff,
   openManual,
   openGlobalSettings,
   openMemoryDetail,
@@ -69,6 +73,83 @@ function eventElement(event: Event): Element | null {
   return event.target instanceof Element ? event.target : null;
 }
 
+function requestContextPrefixDiffIfVisible(): void {
+  if (state.activePage === "context" && getActivePageTab("context") === "content") {
+    void pollContextPrefixDiffForSelection();
+  }
+}
+
+async function detectModelContextWindow(
+  form: HTMLFormElement,
+  preserveOnFailure = false,
+): Promise<void> {
+  const connectionId = form.querySelector<HTMLSelectElement>("[name='connection_id']")?.value.trim() || "";
+  const model = form.querySelector<HTMLInputElement>("[name='model']")?.value.trim() || "";
+  const button = form.querySelector<HTMLButtonElement>("[data-resolve-model-context]");
+  const output = form.querySelector<HTMLOutputElement>("[data-model-context-detected]");
+  const feedback = form.querySelector<HTMLElement>("[data-model-context-feedback]");
+  const requestId = Number(form.dataset.modelContextRequest || "0") + 1;
+  form.dataset.modelContextRequest = String(requestId);
+  const detectedInput = form.querySelector<HTMLInputElement>("[name='detected_context_window']");
+  const sourceInput = form.querySelector<HTMLInputElement>("[name='context_window_source']");
+  const limitInput = form.querySelector<HTMLInputElement>("[name='context_window']");
+  if (!connectionId || !model) {
+    if (detectedInput) detectedInput.value = "0";
+    if (sourceInput) sourceInput.value = "unknown";
+    if (limitInput) limitInput.max = "100000000";
+    if (output) output.textContent = t("未识别");
+    if (feedback) feedback.textContent = t("请选择连接并填写模型 ID。");
+    if (button) button.disabled = false;
+    return;
+  }
+  if (!preserveOnFailure) {
+    if (detectedInput) detectedInput.value = "0";
+    if (sourceInput) sourceInput.value = "unknown";
+    if (limitInput) limitInput.max = "100000000";
+    if (output) {
+      output.textContent = t("识别中");
+      output.title = "";
+    }
+  }
+  if (button) button.disabled = true;
+  if (feedback) feedback.textContent = t("正在识别模型容量");
+  try {
+    const result = await resolveModelContextWindow(connectionId, model);
+    const currentConnection = form.querySelector<HTMLSelectElement>("[name='connection_id']")?.value.trim() || "";
+    const currentModel = form.querySelector<HTMLInputElement>("[name='model']")?.value.trim() || "";
+    if (form.dataset.modelContextRequest !== String(requestId)
+        || currentConnection !== connectionId || currentModel !== model) return;
+    if (preserveOnFailure && result.source === "unknown") {
+      if (feedback) feedback.textContent = t("模型容量识别失败，请手动填写运行上限。");
+      return;
+    }
+    const detected = result.detected_context_window || 0;
+    if (detectedInput) detectedInput.value = String(detected);
+    if (sourceInput) sourceInput.value = result.source;
+    if (output) {
+      output.textContent = detected > 0 ? detected.toLocaleString(state.locale) : t("未识别");
+      output.title = result.source_ref || "";
+    }
+    if (limitInput) {
+      limitInput.max = String(detected > 0 ? detected : 100000000);
+      if ((!limitInput.value || limitInput.value === "0") && detected > 0) {
+        limitInput.value = String(detected);
+      }
+    }
+    if (feedback) {
+      feedback.textContent = detected > 0
+        ? t("已识别模型容量，已有运行上限不会被覆盖。")
+        : t("未识别模型容量，请手动填写运行上限。");
+    }
+  } catch {
+    if (form.dataset.modelContextRequest === String(requestId)) {
+      if (feedback) feedback.textContent = t("模型容量识别失败，请手动填写运行上限。");
+    }
+  } finally {
+    if (form.dataset.modelContextRequest === String(requestId) && button) button.disabled = false;
+  }
+}
+
 function settingValues(root: ParentNode): Record<string, SettingValue> {
   const values: Record<string, SettingValue> = {};
   root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-setting-key]").forEach((input) => {
@@ -89,6 +170,13 @@ function settingValues(root: ParentNode): Record<string, SettingValue> {
 }
 
 export function initEvents(): void {
+  document.addEventListener("scroll", (event) => {
+    const nav = event.target instanceof HTMLElement
+      ? event.target.closest<HTMLElement>(".runtime-context-workspace > nav")
+      : null;
+    const rail = nav?.parentElement?.querySelector<HTMLElement>(".context-diff-rail");
+    if (nav && rail) rail.scrollTop = nav.scrollTop;
+  }, true);
   els.chatThread.addEventListener("click", (event) => {
     const button = eventElement(event)?.closest<HTMLButtonElement>("[data-tool-approval-decision]");
     if (!button) return;
@@ -338,6 +426,7 @@ export function initEvents(): void {
       setPage(pageId, tabId);
       if (pageId === "persona") void pollPersonaProjection();
       loadActiveDepositionDetail(pageId);
+      requestContextPrefixDiffIfVisible();
       if (fromSurfaceNav) {
         window.requestAnimationFrame(() => {
           const selector = tabId
@@ -355,6 +444,13 @@ export function initEvents(): void {
       renderStageAndFocus(state.activePage, `[data-page-tab="${CSS.escape(state.activeTabs[state.activePage])}"]`);
       if (state.activePage === "persona") void pollPersonaProjection();
       loadActiveDepositionDetail(state.activePage);
+      requestContextPrefixDiffIfVisible();
+      return;
+    }
+
+    const contextDiffButton = target.closest<HTMLElement>("[data-context-diff-jump]");
+    if (contextDiffButton) {
+      jumpToContextPrefixDiff();
       return;
     }
 
@@ -363,6 +459,7 @@ export function initEvents(): void {
       state.activeRuntimePane = runtimePaneButton.dataset.runtimePane || "";
       setActivePageTab("context", "content");
       renderStageAndFocus("context", `[data-runtime-pane="${CSS.escape(state.activeRuntimePane)}"]`);
+      requestContextPrefixDiffIfVisible();
       return;
     }
 
@@ -500,7 +597,7 @@ export function initEvents(): void {
         values = {
           alias: text("alias"),
           protocol: text("protocol"),
-          url: providerRequestUrl(text("url_base"), text("protocol")),
+          url: providerRequestUrl(text("url_base"), text("url_path")),
           api_key_env: text("api_key_env"),
         };
       } else {
@@ -519,6 +616,8 @@ export function initEvents(): void {
           connection_id: text("connection_id"),
           model: text("model"),
           context_window: Number.parseInt(text("context_window"), 10),
+          detected_context_window: Number.parseInt(text("detected_context_window") || "0", 10),
+          context_window_source: text("context_window_source") || "unknown",
           reasoning_supported: text("reasoning_supported").split(",").map((item) => item.trim()).filter(Boolean),
           reasoning_default: text("reasoning_default"),
           streaming_enabled: fields.get("streaming_enabled") === "on",
@@ -571,6 +670,10 @@ export function initEvents(): void {
   });
   els.permissionLevel.addEventListener("change", () => {
     if (els.permissionLevel.value !== "unlimited") runtimeProjection.unlimitedConfirmed = false;
+    if (runtimeProjection.status?.current_round && runtimeProjection.status.can_stop) {
+      void submitRuntimePermissionChange();
+      return;
+    }
     runtimeProjection.sendFeedback = els.permissionLevel.value === "unlimited"
       ? t("放行权限将在提交时要求明确确认。")
       : "";
@@ -578,10 +681,22 @@ export function initEvents(): void {
     if (state.activePage === "run" && getActivePageTab("run") === "tools") renderStage("run");
   });
   document.addEventListener("change", (event) => {
+    const input = eventElement(event)?.closest<HTMLInputElement | HTMLSelectElement>("[data-model-context-input]");
+    const form = input?.closest<HTMLFormElement>("[data-model-catalog-form='model']");
+    if (form) void detectModelContextWindow(form);
+  });
+  document.addEventListener("click", (event) => {
+    const button = eventElement(event)?.closest<HTMLButtonElement>("[data-resolve-model-context]");
+    const form = button?.closest<HTMLFormElement>("[data-model-catalog-form='model']");
+    if (!form) return;
+    event.preventDefault();
+    void detectModelContextWindow(form, true);
+  });
+  document.addEventListener("change", (event) => {
     const selector = eventElement(event)?.closest<HTMLSelectElement>("[data-provider-protocol]");
     if (!selector) return;
-    const suffix = selector.closest<HTMLFormElement>("[data-model-catalog-form]")?.querySelector<HTMLElement>("[data-provider-url-suffix]");
-    if (suffix) suffix.textContent = providerUrlSuffix(selector.value);
+    const path = selector.closest<HTMLFormElement>("[data-model-catalog-form]")?.querySelector<HTMLInputElement>("[data-provider-url-path]");
+    if (path) path.value = providerUrlSuffix(selector.value);
   });
   document.addEventListener("change", (event) => {
     const selector = eventElement(event)?.closest<HTMLSelectElement>("[data-route-model]");
@@ -608,12 +723,14 @@ export function initEvents(): void {
     state.selectedContextRound = selector.value === "latest" ? null : Number(selector.value);
     state.selectedContextFrame = null;
     renderStageAndFocus("context", "[data-context-round]");
+    requestContextPrefixDiffIfVisible();
   });
   document.addEventListener("change", (event) => {
     const selector = eventElement(event)?.closest<HTMLSelectElement>("[data-context-frame]");
     if (!selector) return;
     state.selectedContextFrame = selector.value === "latest" ? null : selector.value;
     renderStageAndFocus("context", "[data-context-frame]");
+    requestContextPrefixDiffIfVisible();
   });
   document.addEventListener("change", (event) => {
     const selector = eventElement(event)?.closest<HTMLSelectElement>("[data-task-round]");
@@ -732,5 +849,6 @@ function handleKeyboard(event: KeyboardEvent): void {
     setActivePageTab(state.activePage, nextTab.dataset.pageTab || "");
     renderStageAndFocus(state.activePage, `[data-page-tab="${CSS.escape(state.activeTabs[state.activePage])}"]`);
     if (state.activePage === "persona") void pollPersonaProjection();
+    requestContextPrefixDiffIfVisible();
   }
 }

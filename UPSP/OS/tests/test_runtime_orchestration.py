@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from assembly.context import ContextAssembler
 from data.context_store import ContextStore
 from data.state_store import StateStore
@@ -443,6 +445,36 @@ def test_spec721_new_user_permission_replaces_previous_chain(tmp_path):
 
     assert trigger.execution_permission_level == "limited"
     assert trigger.messages == ("new",)
+
+
+def test_spec725_active_round_permission_changes_at_next_frame_boundary(tmp_path):
+    rt = _runtime(tmp_path)
+    rt.audit.start(725, "interactive", {})
+    assert rt.control.establish_round("interactive", lambda: 725) == 725
+    rt.permission_chain.apply("guarded")
+
+    receipt = rt.permission_updates.request("unlimited")
+    assert receipt["status"] == "pending"
+    assert rt.permission_chain.current == "guarded"
+    assert rt.runtime_status()["execution_permission"]["pending_level"] == "unlimited"
+
+    applied = rt.permission_updates.apply(725, "reaction", 5)
+
+    assert applied["previous"]["permission_level"] == "guarded"
+    assert applied["current"]["permission_level"] == "unlimited"
+    assert applied["effective_frame_id"] == "R000725:reaction:5"
+    assert rt.permission_chain.current == "unlimited"
+    assert rt.reaction_loop_runner.execution_permission_level == "unlimited"
+    assert rt.runtime_status()["execution_permission"]["pending_level"] is None
+
+
+def test_spec725_active_round_permission_rejects_cleanup_change(tmp_path):
+    rt = _runtime(tmp_path)
+    assert rt.control.establish_round("interactive", lambda: 725) == 725
+    rt.control.set_stage("cleanup_model")
+
+    with pytest.raises(ValueError, match="permission_change_too_late"):
+        rt.permission_updates.request("limited")
 
 
 def test_newer_queued_trigger_discards_stale_setup_result(tmp_path):

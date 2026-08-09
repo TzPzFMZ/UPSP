@@ -123,6 +123,48 @@ class TestSpec719ApiRecoveryProbe(RuntimeTestMixin):
         assert result["tokens_input"] == 3
         assert result["tokens_output"] == 1
 
+    def test_probe_payload_disables_cache_for_every_protocol(self, monkeypatch):
+        from engines.executor import APIExecutor
+        from runtime_test_helpers import ConfigStoreStub
+
+        profiles = {
+            "chat_explicit": ("openai_chat", "gpt-5.6-terra", "chat/completions"),
+            "responses_explicit": ("openai_responses", "gpt-5.6-terra", "responses"),
+            "anthropic_explicit": ("anthropic_messages", "claude-sonnet-4-5", "messages"),
+            "chat_implicit": ("openai_chat", "gpt-4.1", "chat/completions"),
+        }
+
+        class Config(ConfigStoreStub):
+            def load(self, name):
+                if name != "api":
+                    return super().load(name)
+                return {"endpoints": {
+                    profile_id: {
+                        "url": f"https://api.example/v1/{path}",
+                        "model": model,
+                        "provider": provider,
+                        "profile_id": profile_id,
+                    }
+                    for profile_id, (provider, model, path) in profiles.items()
+                }}
+
+        executor = APIExecutor(Config())
+        prepared = []
+        monkeypatch.setattr(
+            executor,
+            "call_prepared_once",
+            lambda item: prepared.append(item) or {"response": "ok"},
+        )
+
+        for profile_id in profiles:
+            executor.probe_model_profile(profile_id, max_attempts=1)
+
+        assert len(prepared) == len(profiles)
+        for item in prepared:
+            wire = json.dumps(item["payload"], ensure_ascii=False)
+            assert "prompt_cache" not in wire
+            assert "cache_control" not in wire
+
     def test_recovery_probe_override_disables_transport_retries_and_marks_source(
             self, tmp_path, monkeypatch):
         from data.connectivity_store import ConnectivityStore

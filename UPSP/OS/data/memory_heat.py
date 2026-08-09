@@ -220,13 +220,11 @@ class MemoryHeat:
         # 同步更新 meta.json 的召回时间（P0-2 修复）
         try:
             from data.memory_store import MemoryStore
-            ms = MemoryStore()
-            meta = ms.load_meta()
-            if mem_id in meta:
-                meta[mem_id]["last_recalled_at"] = now
-                if round_num is not None:
-                    meta[mem_id]["last_recalled_round"] = round_num
-            ms.save_meta(meta)
+            MemoryStore().mark_recalled(
+                mem_id,
+                round_num=round_num,
+                recalled_at=now,
+            )
         except Exception:
             pass
 

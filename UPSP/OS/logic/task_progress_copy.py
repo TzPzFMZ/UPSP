@@ -20,6 +20,7 @@ def task_board_instruction_lines(task_id):
         "状态词：任务项只用 done / blocked；验收项只用 passed / blocked。",
         TASK_ORIGINAL_GOAL_NON_SHRINK_REMINDER,
         "done / passed 必须带 evidence_refs；已产出未登记时不要重复写文件。",
+        "blocked 必须同时写 reason 和 evidence_refs；失败调用使用 Runtime 给出的 call:<call_id>，不要猜造 EV-*。",
         "登记格式：不要只写 reason；reason 不会改变账本状态。",
         f"任务项格式：{TASK_ITEM_UPDATE_EXAMPLE}。",
         f"验收项格式：{TASK_ACCEPTANCE_UPDATE_EXAMPLE}。",
@@ -35,5 +36,6 @@ def task_acceptance_checkpoint_text():
         "任务项状态用 done/blocked；验收项状态用 passed/blocked。",
         "字段示例：任务项 status:'done'；验收项 status:'passed' 或 status:'blocked'。",
         "done/passed 必须带 evidence_refs，可引用 EV-*、输出文件路径、file:<路径>、任务根相对路径或成功 shell_command 原始命令。",
+        "blocked 必须同时带 reason 和 evidence_refs；失败调用只能引用 Runtime 已登记的 call:<call_id>。",
     ]
     return "".join(lines)

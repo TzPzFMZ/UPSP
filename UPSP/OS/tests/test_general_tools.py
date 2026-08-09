@@ -1816,6 +1816,84 @@ def test_spec455_dispatcher_rejects_same_web_params_when_backends_exhausted():
     assert calls == []
 
 
+def test_spec728_web_fetch_duplicate_signature_includes_cursor_locator_and_body_hash():
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+    dispatcher = GeneralToolDispatcher()
+    base = {
+        "tool_id": "web_fetch",
+        "url": "https://example.com/report",
+        "source_content_sha256": "a" * 64,
+    }
+    signatures = {
+        dispatcher._request_signature("web_fetch", base),
+        dispatcher._request_signature("web_fetch", {**base, "char_start": 4097}),
+        dispatcher._request_signature("web_fetch", {**base, "char_start": 8193}),
+        dispatcher._request_signature("web_fetch", {**base, "find_text": "price"}),
+        dispatcher._request_signature(
+            "web_fetch", {**base, "source_content_sha256": "b" * 64}
+        ),
+    }
+
+    assert len(signatures) == 5
+    assert dispatcher._request_signature("web_fetch", base) == (
+        dispatcher._request_signature("web_fetch", dict(base))
+    )
+
+
+def test_spec729_source_changed_first_window_recovery_is_not_duplicate_rejected():
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+    from logic.general_tools import execute_general_tool_call
+
+    bodies = ["a" * 5000, "b" * 5000, "b" * 5000]
+
+    def execute(request, **_kwargs):
+        body = bodies.pop(0)
+        return execute_general_tool_call(
+            request,
+            web_fetch_fn=lambda url, timeout_ms: {
+                "status_code": 200,
+                "content_type": "text/plain",
+                "final_url": url,
+                "content": body,
+            },
+        )
+
+    dispatcher = GeneralToolDispatcher(execute_fn=execute)
+    url = "https://example.com/changing"
+    first = dispatcher.handle_requests(
+        [{"tool_id": "web_fetch", "url": url, "call_id": "first"}],
+        active_guides=[],
+    )[0]
+    changed = dispatcher.handle_requests(
+        [{
+            "tool_id": "web_fetch",
+            "url": url,
+            "char_start": first["next_char_start"],
+            "source_content_sha256": first["source_content_sha256"],
+            "call_id": "changed",
+        }],
+        active_guides=[],
+        prior_results=[first],
+    )[0]
+    recovered = dispatcher.handle_requests(
+        [{
+            "tool_id": "web_fetch",
+            "url": url,
+            "source_content_sha256": changed["source_content_sha256"],
+            "call_id": "recovered",
+        }],
+        active_guides=[],
+        prior_results=[first, changed],
+    )[0]
+
+    assert changed["status"] == "source_changed"
+    assert recovered["status"] == "ok"
+    assert recovered["char_start"] == 1
+    assert recovered["content"].startswith("b")
+    assert bodies == []
+
+
 def test_general_tool_dispatcher_rejects_missing_backend_metadata(monkeypatch):
     from engines import general_tool_dispatcher as gtd
 

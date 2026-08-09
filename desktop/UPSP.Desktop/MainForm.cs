@@ -18,7 +18,6 @@ internal sealed class MainForm : Form
     private bool _backendFailureShown;
     private bool _lastActive;
     private int _statusRefreshInFlight;
-    private int _backendStatusFailures;
 
     internal MainForm(DesktopBackend backend)
     {
@@ -185,7 +184,6 @@ internal sealed class MainForm : Form
             var snapshot = await _backend.GetStatusAsync();
             if (!snapshot.Connected && _backend.HasExited)
             {
-                _backendStatusFailures += 1;
                 _statusItem.Text = "当前状态：后端已停止";
                 ShowBackendFailure(
                     "UPSP 本地后端进程已经退出。程序不会自动重启它，请退出后重新打开 UPSP。");
@@ -193,7 +191,6 @@ internal sealed class MainForm : Form
             }
             if (snapshot.Connected)
             {
-                _backendStatusFailures = 0;
                 _backendFailureShown = false;
             }
             _statusItem.Text = $"当前状态：{snapshot.DisplayText}";
@@ -206,14 +203,11 @@ internal sealed class MainForm : Form
         catch (Exception exc)
         {
             DesktopLog.Write(exc);
-            _backendStatusFailures += 1;
             _statusItem.Text = "当前状态：后端繁忙，正在重试";
-            if (
-                !_backendFailureShown
-                && (_backend.HasExited || _backendStatusFailures >= 3))
+            if (!_backendFailureShown && _backend.HasExited)
             {
                 ShowBackendFailure(
-                    "连续多次无法访问 UPSP 本地后端。程序不会自动重启它，请退出后重新打开 UPSP。");
+                    "UPSP 本地后端进程已经退出。程序不会自动重启它，请退出后重新打开 UPSP。");
             }
         }
         finally

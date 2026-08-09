@@ -1,4 +1,30 @@
-from data.prompt_cache_telemetry import extract_prompt_cache_telemetry
+import pytest
+
+from data.prompt_cache_telemetry import (
+    extract_prompt_cache_telemetry,
+    total_input_tokens,
+)
+
+
+@pytest.mark.parametrize(("usage", "expected"), [
+    ({"prompt_tokens": 120}, 120),
+    ({"input_tokens": 121}, 121),
+    ({"input_tokens": 100, "cache_creation_input_tokens": 20}, 120),
+    ({"input_tokens": 100, "cache_read_input_tokens": 30}, 130),
+    ({"input_tokens": 100, "cache_creation_input_tokens": 20,
+      "cache_read_input_tokens": 30}, 150),
+    ({"prompt_tokens": 150, "input_tokens": 100,
+      "cache_creation_input_tokens": 20, "cache_read_input_tokens": 30}, 150),
+    ({"prompt_cache_hit_tokens": 70, "prompt_cache_miss_tokens": 50}, 120),
+    ({"prompt_cache_hit_tokens": 70}, None),
+    ({"prompt_cache_miss_tokens": 50}, None),
+    ({"prompt_tokens": -1, "input_tokens": 120}, None),
+    ({"input_tokens": True}, None),
+    ({"input_tokens": "120"}, None),
+    (None, None),
+])
+def test_total_input_tokens_normalizes_provider_usage(usage, expected):
+    assert total_input_tokens(usage) == expected
 
 
 def test_openai_chat_reports_cache_read_and_nonzero_write():

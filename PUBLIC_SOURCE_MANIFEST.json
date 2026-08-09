@@ -1,9 +1,9 @@
 {
   "schema_version": "upsp_public_source_manifest.v1",
-  "source_commit": "129f5937e64d2572e75492b86a2f0b9cf064239f",
-  "source_tree_sha256": "e37ad134288e5ffd7258c3a4277fa72d4ff90228921797ff67b5510a63f23dd4",
-  "file_count": 505,
-  "total_bytes": 14506424,
+  "source_commit": "989e7c0fc9eecdd4e5dfe46d61214e6252ba6a61",
+  "source_tree_sha256": "45ae74c034f741b25296101eee4de33c99e9142b3297615ffe9b0445a04e8f5b",
+  "file_count": 510,
+  "total_bytes": 14900116,
   "files": [
     {
       "path": ".editorconfig",
@@ -28,12 +28,12 @@
     {
       "path": "README.en.md",
       "bytes": 14396,
-      "sha256": "b5287c594358ae068db77ab61cb6ce89e2146a33d6949fdf00c1f39b58f1bc90"
+      "sha256": "eaca67db9df9fb09c4463339efb2f60fe47b9d91ca9226c472ac74dabb15fcb7"
     },
     {
       "path": "README.md",
       "bytes": 12470,
-      "sha256": "b6d736071dedd3a1b0e49cfc8cf1e425a2fd459b209f43546f9de1b8eafd0044"
+      "sha256": "e905264203a2fa492cb2a44667ac0b3552b93d3805e06e506208cbb6505f25f8"
     },
     {
       "path": "THIRD_PARTY_NOTICES.md",
@@ -52,13 +52,13 @@
     },
     {
       "path": "UPSP/OS/assembly/context.py",
-      "bytes": 80703,
-      "sha256": "c8d0cccc7ee88e920c04375b247c49beca1c4d4a14adecd0f353291d462c7cf6"
+      "bytes": 85152,
+      "sha256": "1729200f756a34d887226eab0988e5a39ba381ce60c069dcf3f4929c4702f46d"
     },
     {
       "path": "UPSP/OS/assembly/context_helpers.py",
-      "bytes": 39295,
-      "sha256": "f65cf980c546f122bd043eac118b4bd210c828aa50bc5bd9c9683e1dd584944d"
+      "bytes": 40526,
+      "sha256": "331189838a1a477f3744ccf29a22fbb2352bc49959fc552397ca6af6f34e960e"
     },
     {
       "path": "UPSP/OS/assembly/context_indexes.py",
@@ -67,13 +67,13 @@
     },
     {
       "path": "UPSP/OS/assembly/context_mounts.py",
-      "bytes": 8272,
-      "sha256": "879e61d396a4f82fc3dba4378bc5e9fe2b9522029619ad28b2f61e0f6fd98e23"
+      "bytes": 9800,
+      "sha256": "af641d51a430686882a311b5e66278a65d421267855e312510162ba7a9233ec0"
     },
     {
       "path": "UPSP/OS/assembly/context_periodic.py",
-      "bytes": 2496,
-      "sha256": "fb7b9eb46fc0e00ad93a7ecd13523c7e0a423dea697170125b41c7a08a9ad7dd"
+      "bytes": 3536,
+      "sha256": "d3a60cfefe03b6ec82c1e0a5428b8dd8f8315a0a771d561abd5872711897c97a"
     },
     {
       "path": "UPSP/OS/assembly/popup.py",
@@ -82,8 +82,8 @@
     },
     {
       "path": "UPSP/OS/assembly/statusbar.py",
-      "bytes": 9990,
-      "sha256": "7281331bdb8cbb24163636e6c4ee52662cb48606797f0dba82e2a6dc89fa928c"
+      "bytes": 10926,
+      "sha256": "2735a22f3e598d13a3f84b9b7c7eee3421fb93bfc81c06da247eeec0a99876cb"
     },
     {
       "path": "UPSP/OS/audit/docs_workbench.html",
@@ -117,8 +117,8 @@
     },
     {
       "path": "UPSP/OS/constants.py",
-      "bytes": 7067,
-      "sha256": "30f22c32e6c43c103e73d16d33993a1990f507f615fb928235c0377461c8cdf0"
+      "bytes": 7684,
+      "sha256": "01bb09eead0adab895075271b2a94d8798500122df57402896cc44385d7269b4"
     },
     {
       "path": "UPSP/OS/data/__init__.py",
@@ -137,8 +137,8 @@
     },
     {
       "path": "UPSP/OS/data/audit_store.py",
-      "bytes": 19975,
-      "sha256": "be5f3e98832f5c6a6e3aa3ea2bccbbca8a86570b10a99d08fabf6c4201ebb5b6"
+      "bytes": 22678,
+      "sha256": "ca5c2f0fbc1c3b35c7a34eefa47e4235570259a1e277c9c0f817117e3eabf3bc"
     },
     {
       "path": "UPSP/OS/data/chronicle_store.py",
@@ -147,8 +147,8 @@
     },
     {
       "path": "UPSP/OS/data/config_store.py",
-      "bytes": 44393,
-      "sha256": "d18b87839f3a8139792c0ecfee9513bc3d4300f238f93eb171e634bfafe68f80"
+      "bytes": 45670,
+      "sha256": "2ece30dfb47b9b7a2dfccbcb1c9a30045b77a574addcc3006d5f939ee03354b0"
     },
     {
       "path": "UPSP/OS/data/connectivity_store.py",
@@ -187,8 +187,8 @@
     },
     {
       "path": "UPSP/OS/data/memory_heat.py",
-      "bytes": 10518,
-      "sha256": "774c0db010421fda07753af072b566cc3b6f9d4ebb8bfa9403d35fd21979ada4"
+      "bytes": 10373,
+      "sha256": "34c5ca3579f5577ba17d3577eef9fccf9a58f573ca8901eada0a06bf5a420acf"
     },
     {
       "path": "UPSP/OS/data/memory_index.py",
@@ -197,8 +197,13 @@
     },
     {
       "path": "UPSP/OS/data/memory_store.py",
-      "bytes": 34151,
-      "sha256": "2df3b137673f14f2b8a348b97a6b2bc229978e8083dc6f0de13d24f3528e003f"
+      "bytes": 38017,
+      "sha256": "776de8cb036a7388693ca8a7f223cb8b002e18309dda2046d67e5b76ee275d59"
+    },
+    {
+      "path": "UPSP/OS/data/model_context_windows.json",
+      "bytes": 2659,
+      "sha256": "7843cd517f1307c0c5ca45f3d1a11a203ea763a3288d5581edb95e9b5ea3b878"
     },
     {
       "path": "UPSP/OS/data/periodic_mount_store.py",
@@ -217,13 +222,23 @@
     },
     {
       "path": "UPSP/OS/data/prompt_cache_telemetry.py",
-      "bytes": 6415,
-      "sha256": "29486da54ba6dd0804fb14ba7cd9b5be911acc1dfa77833ecc764687c759caaf"
+      "bytes": 8112,
+      "sha256": "e573eb69ddbb6e2303bf9431935fd1863fffd5eff01508dbbf1be7a9b1d07622"
+    },
+    {
+      "path": "UPSP/OS/data/provider_request_wire.py",
+      "bytes": 23074,
+      "sha256": "1f762e47b83cd82aa91cb3d825902adb0ba30ac698dc65471631469b3ede9dda"
     },
     {
       "path": "UPSP/OS/data/relation_store.py",
       "bytes": 16457,
       "sha256": "13fca3ff01662b5abfddb612891d143d107a48d0744591dac62687757827ccf2"
+    },
+    {
+      "path": "UPSP/OS/data/request_prefix_diff.py",
+      "bytes": 14060,
+      "sha256": "032180b713514568ee0c5701f95f5436f9b8f27ae921c10ce259752bf76cb741"
     },
     {
       "path": "UPSP/OS/data/round_audit_static.py",
@@ -237,13 +252,13 @@
     },
     {
       "path": "UPSP/OS/data/round_live_viewer.py",
-      "bytes": 74163,
-      "sha256": "cc17db681d33c8633a63b65a2c0f3e5064fbefd37453dd5b56a307885ada7388"
+      "bytes": 79618,
+      "sha256": "2c824d294581f83dd7654a98a88b3cecec174be5db960c1ec654b932c1f47340"
     },
     {
       "path": "UPSP/OS/data/round_snapshot_store.py",
-      "bytes": 28541,
-      "sha256": "0e1957814486a3c4c2acb5dac763d6fa369098788dfe3665d5b454215a19b65a"
+      "bytes": 30921,
+      "sha256": "b6c304144ef04bb08b1d42220aed53a4ca192fd3845b07ca964f871cdbb6129b"
     },
     {
       "path": "UPSP/OS/data/rules_workbench.py",
@@ -287,18 +302,18 @@
     },
     {
       "path": "UPSP/OS/engines/cleanup_pipeline.py",
-      "bytes": 96146,
-      "sha256": "0264da8ae3118399cfdba0f9ff9fcb5fba0ccdfc43061e7f8fd269e14af034b4"
+      "bytes": 95718,
+      "sha256": "7fc571308b05f1159f760eb39c93eb11de05fcae4cb93e07dc03ed814beb01a4"
     },
     {
       "path": "UPSP/OS/engines/executor.py",
-      "bytes": 130264,
-      "sha256": "25ff60383a13925867f9b01b853b03076138e648b891abfeadefc269dd1bdbe9"
+      "bytes": 133192,
+      "sha256": "2acafad78f4441c0e8d0354e2a63c5051674a6745f4d15be2ac756e98d8ab532"
     },
     {
       "path": "UPSP/OS/engines/general_tool_dispatcher.py",
-      "bytes": 23182,
-      "sha256": "d13c06bab6ca13ed726be2c87b984f19b0eebf651a6843378e5e0d5f88cbdc8d"
+      "bytes": 23237,
+      "sha256": "8f0aa50e1bb72f3c77fb5f52835a716b7c1699c3fdf27bea474980166a03f13b"
     },
     {
       "path": "UPSP/OS/engines/heartbeat.py",
@@ -307,8 +322,8 @@
     },
     {
       "path": "UPSP/OS/engines/ltm_degradation.py",
-      "bytes": 11984,
-      "sha256": "09eb973b0e0877540f8d65297b7cc637629b6b11514ef4f5192c538142c29c7e"
+      "bytes": 12028,
+      "sha256": "061bfb1eb10f1849c7a6f05cfb1607395bfd0b6d03c296f81ee5642cbcd6e039"
     },
     {
       "path": "UPSP/OS/engines/organ_runtime.py",
@@ -332,13 +347,13 @@
     },
     {
       "path": "UPSP/OS/engines/reaction_guide_feedback.py",
-      "bytes": 12678,
-      "sha256": "f4696e8f0f705ec798cd6ee92a936620be93a21a448cb8fa6022b1f78eb5ae3d"
+      "bytes": 13054,
+      "sha256": "7f9c04948ba5dd0ab29b633bf224007a547723b80484ff88ad564efaf87b5690"
     },
     {
       "path": "UPSP/OS/engines/reaction_helpers.py",
-      "bytes": 63467,
-      "sha256": "8923da3873bf857ba438a59c03a27733dbf4bd66ead6880edd4016f750dfb80b"
+      "bytes": 63546,
+      "sha256": "ca844da792e1b8c5ae13a156b1180f40efbc69087707128f5b65944cf8596912"
     },
     {
       "path": "UPSP/OS/engines/reaction_iteration.py",
@@ -347,23 +362,23 @@
     },
     {
       "path": "UPSP/OS/engines/reaction_loop.py",
-      "bytes": 44368,
-      "sha256": "ed8bca9a50bed5629a8352ddc32f604fc999f8772ec95c6a8dedcba30214b085"
+      "bytes": 44564,
+      "sha256": "9eb5774534de2fa54bbb6eba9493793a69d1221f9c2180f2ad737536098e9b35"
     },
     {
       "path": "UPSP/OS/engines/reaction_loop_main.py",
-      "bytes": 134024,
-      "sha256": "7747658ee4a44ee41915dbe092e50ed654a24c98ae647182a1f0d67cc1c96268"
+      "bytes": 144841,
+      "sha256": "d9a6b827606c2101cc21b296ad11e6166cb74b7499df8d4160652e95674d8a1e"
     },
     {
       "path": "UPSP/OS/engines/reaction_loop_result.py",
-      "bytes": 11975,
-      "sha256": "90e428cba282a780d2802d13fc5553c79277e553948844f2637ca11b37c2e5df"
+      "bytes": 12202,
+      "sha256": "eae42d337a769a8e8d86c16388ba08c52ff82ba0f38e8b8f24633e502dd359a0"
     },
     {
       "path": "UPSP/OS/engines/reaction_protocol_tool_execution.py",
-      "bytes": 19179,
-      "sha256": "3dd3058f3205b3611e73e78762e48ec019647790457a154d828086b4be626786"
+      "bytes": 21699,
+      "sha256": "a54e9330f8fcc11a4ef4e2c6bd898ee7e78a363db29e41ff33be5aa788cec506"
     },
     {
       "path": "UPSP/OS/engines/reaction_runtime_guards.py",
@@ -372,8 +387,8 @@
     },
     {
       "path": "UPSP/OS/engines/reaction_task_acceptance.py",
-      "bytes": 4082,
-      "sha256": "aa4ceecd91b7296297e10af2b080d5f29e38132556baacab66f993ef87ae1730"
+      "bytes": 4504,
+      "sha256": "e14c8ed257c8ed1467085a17736f6b22f5ad4c4e1363247e678799d9ab1539a1"
     },
     {
       "path": "UPSP/OS/engines/reaction_terminal_correction.py",
@@ -382,18 +397,18 @@
     },
     {
       "path": "UPSP/OS/engines/reaction_terminal_state.py",
-      "bytes": 25642,
-      "sha256": "c1bad466b9e87de260b870c81c536d39502e9474c943f351b9505ca4068fe2a9"
+      "bytes": 26341,
+      "sha256": "b0e4f3380c4a055e9514a9b8c8e222154563ede69d8a26d3eb49a2a129552595"
     },
     {
       "path": "UPSP/OS/engines/reaction_tool_settlement.py",
-      "bytes": 48703,
-      "sha256": "1b985454fe5b9340bfcc31d9863a4076cb6bb07d7299fa7dbabb572045000ed5"
+      "bytes": 48682,
+      "sha256": "c4f5ccb8e2cc3b703553c97a02cbe40ffb98cd9ac4618c56310c9e76b163e07c"
     },
     {
       "path": "UPSP/OS/engines/resident_runtime.py",
-      "bytes": 23058,
-      "sha256": "f3f347bf2ce5acf49eed722d151ec34014293440b65146ccabd4b1895a5d6287"
+      "bytes": 26030,
+      "sha256": "108551cfd57e6ac788ba791019f7f6eeb7cad637704bf4da2fa25759b3a42ff7"
     },
     {
       "path": "UPSP/OS/engines/round_audit.py",
@@ -412,8 +427,8 @@
     },
     {
       "path": "UPSP/OS/engines/runtime.py",
-      "bytes": 26863,
-      "sha256": "a3316bd9c55735b23604b9bf27c1e41d47824c3916ca2c44edee967c2b6d5396"
+      "bytes": 27385,
+      "sha256": "52260e8cbb747d37b8315ffeed0b45a74b0de7b4d39509ed2c07a5bc2589367b"
     },
     {
       "path": "UPSP/OS/engines/runtime_control.py",
@@ -437,18 +452,18 @@
     },
     {
       "path": "UPSP/OS/engines/setup_runner.py",
-      "bytes": 34091,
-      "sha256": "41a908324b416edbf1da6d44b2273af9924087fceb6a8d600520e57656f97a06"
+      "bytes": 35167,
+      "sha256": "2a25a1877bba0eaff40a3a028183fe44a3ad9f2bea1fee7c13d9e733c2271e28"
     },
     {
       "path": "UPSP/OS/engines/tool_approval.py",
       "bytes": 4882,
-      "sha256": "5e18cee81e0f53d566a9880bd6811cc832c10ab5be3015f4789886e371009a69"
+      "sha256": "aea1247462f0ff08f4fb8eaa0ea3093fda1b53b80598728c126b024674bf63d7"
     },
     {
       "path": "UPSP/OS/errors.py",
-      "bytes": 3919,
-      "sha256": "79ccc47463410ccf9a2a303131707882a490516fcfc1615ec708d845bf73869e"
+      "bytes": 3981,
+      "sha256": "8c1ac69ced2e353ef81c2097da5ed26384192b4e95b89731709f9de258d83047"
     },
     {
       "path": "UPSP/OS/logic/__init__.py",
@@ -522,8 +537,8 @@
     },
     {
       "path": "UPSP/OS/logic/execution_permission.py",
-      "bytes": 5398,
-      "sha256": "5c7a2035f71dea81173af877fa4a05eb2043f9572e5ce1dfae65fa8322cbff3f"
+      "bytes": 8045,
+      "sha256": "901fafd436071dd3d6a128805e4ae8e2dd841985abe6efa9e80c40aa2a65a0c6"
     },
     {
       "path": "UPSP/OS/logic/fault_record.py",
@@ -547,8 +562,8 @@
     },
     {
       "path": "UPSP/OS/logic/general_tools.py",
-      "bytes": 113544,
-      "sha256": "e82d6d9ac8603f15d08a963204fdd2f462fe20eea5e92b165aa3ff5b5d040234"
+      "bytes": 128987,
+      "sha256": "d1ad0223dc11e5e45ec450db2bcb71879ef45f1966bbea02dbb638f80bc0234a"
     },
     {
       "path": "UPSP/OS/logic/gravity.py",
@@ -557,8 +572,8 @@
     },
     {
       "path": "UPSP/OS/logic/guide_submit.py",
-      "bytes": 89714,
-      "sha256": "77fc58a5ef4c8c48f0f17bb9753e5da3159629e9345cf53666870899587a3940"
+      "bytes": 107695,
+      "sha256": "eb9e6e2bb4b681df54f55cf38d4c8dad09ec47f5e84ae554cdff0f987a89722b"
     },
     {
       "path": "UPSP/OS/logic/handoff_prefixes.py",
@@ -577,8 +592,8 @@
     },
     {
       "path": "UPSP/OS/logic/mem_id.py",
-      "bytes": 1782,
-      "sha256": "b05e8d1110512c21ffd8933e2b141de28fccbb831720305e78dba4a360ef3474"
+      "bytes": 1826,
+      "sha256": "843c997a432705da4cd40b54ae8bbffb45e65b74c036ea52655dde6ed52005a6"
     },
     {
       "path": "UPSP/OS/logic/memory_annotation.py",
@@ -622,13 +637,13 @@
     },
     {
       "path": "UPSP/OS/logic/native_tool_calls.py",
-      "bytes": 73900,
-      "sha256": "183e7f92c602b598c0b86122269cf95005a45e77b0a0d2eaf71170b627a2d549"
+      "bytes": 74722,
+      "sha256": "ec345286e9af8d170945d26c65e0ab151e1138aea39b1f500794d68fd89ca236"
     },
     {
       "path": "UPSP/OS/logic/popup_policy.py",
-      "bytes": 14594,
-      "sha256": "72eff96c6f1570b2a72086515e15f5b6a1040c6d882afcde8eff3755c3773286"
+      "bytes": 15677,
+      "sha256": "2196b67b2cb2f1a224123f0dd5531777f2c449d6b2e3606b23d45c87d24c62d7"
     },
     {
       "path": "UPSP/OS/logic/protocol_tools.py",
@@ -707,8 +722,8 @@
     },
     {
       "path": "UPSP/OS/logic/task_acceptance.py",
-      "bytes": 5794,
-      "sha256": "774454df6e3b4d031c9d3367c399b89ec8b5f52bcd05ea3f985dc92d1fba0534"
+      "bytes": 8176,
+      "sha256": "8f299b82d39e07810b261f643daa354e91367dce6a1205b272b74eb2efe8f656"
     },
     {
       "path": "UPSP/OS/logic/task_board.py",
@@ -717,13 +732,13 @@
     },
     {
       "path": "UPSP/OS/logic/task_guide.py",
-      "bytes": 54672,
-      "sha256": "d2b45a6f15d8193e5ac77e1d856716b3da68250122cc6ad83c48e3d9ceda83c8"
+      "bytes": 64630,
+      "sha256": "ead19d31abaf49335274a107f5377a86ab47def6c9897f70326b0cdbd0bb8850"
     },
     {
       "path": "UPSP/OS/logic/task_progress_copy.py",
-      "bytes": 2122,
-      "sha256": "8b4dc42ebecfb20abecaee6d0d0f1baa0f602e04eea6421977f4b2b3a0b9d596"
+      "bytes": 2387,
+      "sha256": "a8c31888c85520caa150938024fcd5aacc9ff781a724d5f267997f2d085f6ab1"
     },
     {
       "path": "UPSP/OS/logic/tool_transaction_audit.py",
@@ -777,8 +792,8 @@
     },
     {
       "path": "UPSP/OS/schemas/memory.py",
-      "bytes": 6607,
-      "sha256": "b7939bdb6107fca1ce160484a7038865607874030cf7b947ec77f19bb35fe61a"
+      "bytes": 6772,
+      "sha256": "06b4da4e877212e145d849e94e802b4d21e9d10b115776fc3f6f8c42b147feb2"
     },
     {
       "path": "UPSP/OS/schemas/relation.py",
@@ -792,8 +807,8 @@
     },
     {
       "path": "UPSP/OS/scripts/audit_persona_memory.py",
-      "bytes": 19266,
-      "sha256": "25df51b54c7189a85011f6a1c057f6c0605de2d84f5e5df7df0b2d2fba04eb9c"
+      "bytes": 19496,
+      "sha256": "a4b0c6042bd9ac1bc23b157b7d4c91e886dd03a758791218ca6f8058b7c97eff"
     },
     {
       "path": "UPSP/OS/tests/__init__.py",
@@ -817,8 +832,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_assembly.py",
-      "bytes": 214200,
-      "sha256": "1d5e5b8f7cb5db7c4f6e9acd8093c05944d9baa82bede222a17c38a615c159bb"
+      "bytes": 223791,
+      "sha256": "1bfda124f41e8be1b3432ef1430d29a4b9f11bb59f5becc31af5888457814f74"
     },
     {
       "path": "UPSP/OS/tests/test_assembly_statusbar.py",
@@ -837,8 +852,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_config_store.py",
-      "bytes": 10089,
-      "sha256": "4f30f5468634d37acb5c3d5a4c17a4c2cc0532974d9400c3c62114a1b3ddb08b"
+      "bytes": 10900,
+      "sha256": "e46598ba3232ab2c431cf54e9ee258f2f6b63f7b374b653ba3739e6930623a53"
     },
     {
       "path": "UPSP/OS/tests/test_content_window_no_truncation.py",
@@ -862,8 +877,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_context_mount_helpers.py",
-      "bytes": 1463,
-      "sha256": "ee4d12b28979faded225c6b9fad0fc1fafeb371ddd9d2f3582d87109804d37a3"
+      "bytes": 2450,
+      "sha256": "1ce9e45b466b02c025b331f87ba5a0d3c28973225cd1f784087061dc69f9dee6"
     },
     {
       "path": "UPSP/OS/tests/test_context_periodic_helpers.py",
@@ -872,8 +887,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_data.py",
-      "bytes": 181356,
-      "sha256": "9c608f719b96e3ad7229e9b4118690f5405885771fbc8ebc799f6e79e1181c05"
+      "bytes": 187869,
+      "sha256": "3e4f62a5242599ddd5cb933dca8d1d9f0e9dc768e73e0cd7720c3a82de5ac5e4"
     },
     {
       "path": "UPSP/OS/tests/test_data_relation_focus.py",
@@ -887,8 +902,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_engines.py",
-      "bytes": 149676,
-      "sha256": "476bd00fd745bcb4ddf187cb3a1068e04aed335b0becc0c910d44257c619cc6e"
+      "bytes": 159606,
+      "sha256": "ae81718b2d46cc349cd6fd8b62107ad692efeac76466c19ebdd660c13459295f"
     },
     {
       "path": "UPSP/OS/tests/test_engines_runtime_heartbeat.py",
@@ -907,18 +922,18 @@
     },
     {
       "path": "UPSP/OS/tests/test_general_tools.py",
-      "bytes": 89049,
-      "sha256": "8c74012f9aab5c3c97bb66b156816e2f8d01f4b3fa34972d3cbde77416456a81"
+      "bytes": 91808,
+      "sha256": "773b55243c856f497c87c4ef47daaa9f695d5399965a6cb046616c3d1e37d0dd"
     },
     {
       "path": "UPSP/OS/tests/test_general_tools_web.py",
-      "bytes": 23550,
-      "sha256": "7050f7cbc13ad40bdd6a0f015aaf8d82ea1a0e42ca8b99c7a7b6dd8d6364cf7f"
+      "bytes": 36548,
+      "sha256": "2679eafb30795493398af03e835876c7835948721296369cac3b781ffa00922e"
     },
     {
       "path": "UPSP/OS/tests/test_guide_submit.py",
-      "bytes": 224231,
-      "sha256": "861e35d3be6e476cc2fc0563791c746a679aec50631a43558c95d8235dca7c19"
+      "bytes": 239986,
+      "sha256": "1791d5a5597c32235ea9579bc98772415ccda6b8c5edadd09b422c0c6b4cc9d5"
     },
     {
       "path": "UPSP/OS/tests/test_guide_submit_feedback.py",
@@ -933,7 +948,7 @@
     {
       "path": "UPSP/OS/tests/test_logic.py",
       "bytes": 84797,
-      "sha256": "9b9f4716f248202c27b928bf27cb8ff2c023888d79f85fc294f9e11964f44a1f"
+      "sha256": "9ad2be5df8a60f976d09141d427cf48304704a2d921f81540b0fcd9d608b90ed"
     },
     {
       "path": "UPSP/OS/tests/test_main.py",
@@ -982,8 +997,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_native_tool_calls.py",
-      "bytes": 244226,
-      "sha256": "82122c4c8c6d98cc0c8aaec5187efb8231413fec57474eebf16bfb67f371a26c"
+      "bytes": 246795,
+      "sha256": "e021ab276160433c9ac36f02f4e695b315db716b41ade16496a403d041729e02"
     },
     {
       "path": "UPSP/OS/tests/test_native_tool_evidence_model.py",
@@ -1017,8 +1032,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_prompt_cache_telemetry.py",
-      "bytes": 3666,
-      "sha256": "40cf8b0b5c7928916abf76d4252dd5a2a46e6d7ec9aec9e378a44020ecc4584a"
+      "bytes": 4667,
+      "sha256": "bf554a9c86c7812a32b40bbe8f8379fd1e4c02c533adaaa3af3c2556b06f6000"
     },
     {
       "path": "UPSP/OS/tests/test_prompt_prefix_cache.py",
@@ -1086,9 +1101,14 @@
       "sha256": "fb0ec06f4e28e5f68cc152f14712700f00bd9c5ca86a49306417dc5a5a1ef90d"
     },
     {
+      "path": "UPSP/OS/tests/test_request_prefix_diff.py",
+      "bytes": 23204,
+      "sha256": "da51b378f2c1bb7b2ef0f06fd51cd3fca58c3eb0b587f9b57145eb8fa0a2efcc"
+    },
+    {
       "path": "UPSP/OS/tests/test_resident_runtime.py",
-      "bytes": 21724,
-      "sha256": "5c2492426ed54697029ff5890c8a984c5910d1e06b9d42464f83956cb719ac16"
+      "bytes": 23007,
+      "sha256": "96632fbb1fd9e5b3b08bfc02e3d416292a933faad7945c710719ba863fd1a425"
     },
     {
       "path": "UPSP/OS/tests/test_round_context_acceptance.py",
@@ -1097,8 +1117,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_round_live_viewer.py",
-      "bytes": 59571,
-      "sha256": "bab1df1715937b5c02379119a78ff346b9b5a7d957384171a1d3d34b81237e5a"
+      "bytes": 69057,
+      "sha256": "0e8487530500a3ebb47ffd334d9ade870783232ce56bb14277b7793bc00bcd4e"
     },
     {
       "path": "UPSP/OS/tests/test_runtime_cleanup_artifacts.py",
@@ -1112,8 +1132,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_runtime_delegation_identity.py",
-      "bytes": 52169,
-      "sha256": "c98923c81d136ad474e264a60f728ac126f73a8cd97a6dff79386e39a8ed0316"
+      "bytes": 54734,
+      "sha256": "61d691b61b12193a3e4fdf98db0d44f13689bfcb0a4e17269a459de451cddf31"
     },
     {
       "path": "UPSP/OS/tests/test_runtime_guides.py",
@@ -1122,13 +1142,13 @@
     },
     {
       "path": "UPSP/OS/tests/test_runtime_memory_lifecycle.py",
-      "bytes": 30382,
-      "sha256": "65d12f02556eaaf98a4f32d1f175feaa563d35e463d36ffeaa02ac5bf62bbd85"
+      "bytes": 31476,
+      "sha256": "0555517ddc05ed4a106b8a31f08ffa429245e9d7e0ed8744e44273661824b7fe"
     },
     {
       "path": "UPSP/OS/tests/test_runtime_orchestration.py",
-      "bytes": 23503,
-      "sha256": "a35cbfe0b2a3b25e9e8d3f8ad434a51e55377192c47702b2436f6d92b1aee410"
+      "bytes": 24870,
+      "sha256": "a6de1700cb204ea10c569ae31f404d4814a2045676322a9fa2ae36005cc98bf7"
     },
     {
       "path": "UPSP/OS/tests/test_runtime_reaction_general_tools_read.py",
@@ -1157,13 +1177,13 @@
     },
     {
       "path": "UPSP/OS/tests/test_runtime_reaction_protocol_write_tools.py",
-      "bytes": 203019,
-      "sha256": "4688f321711ec53a629940a253d0629862486a5e89453bf87f91d7378ec1439a"
+      "bytes": 220507,
+      "sha256": "23049f70a6e76e95eea87fc57f09bd5ff78a392b7decee75780322f3acf020cd"
     },
     {
       "path": "UPSP/OS/tests/test_runtime_reaction_read_tools.py",
-      "bytes": 33737,
-      "sha256": "1f478410211822a1156a90bb48ac37c7d02cf427137e126d97e694d7055a9677"
+      "bytes": 35458,
+      "sha256": "a2b1c89646aa07c663f57e0c38fff9f8e7838b2f165216e260bb9c08ac19a20b"
     },
     {
       "path": "UPSP/OS/tests/test_runtime_rest_evolution.py",
@@ -1172,8 +1192,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_runtime_round_flow.py",
-      "bytes": 42406,
-      "sha256": "7f9fc8ee48197e26dce985528262243e2fd662ef3c97395031bb6a48ef814d81"
+      "bytes": 46008,
+      "sha256": "b0632cb8e19a54f8910b7b16be54a9136c7e9425251dce596daaf53c3d25a27b"
     },
     {
       "path": "UPSP/OS/tests/test_runtime_round_type.py",
@@ -1182,13 +1202,13 @@
     },
     {
       "path": "UPSP/OS/tests/test_schemas.py",
-      "bytes": 14162,
-      "sha256": "670566a2c1953116239a232dd46aaf9c9fcdfd445b5c3ef75d85f79be6008da0"
+      "bytes": 14264,
+      "sha256": "a305fe90c811b4ba9548de7d9c75aa21ef8f9d7a0863a5a7be7a4f75c5bc554a"
     },
     {
       "path": "UPSP/OS/tests/test_seed_gui_server.py",
-      "bytes": 144652,
-      "sha256": "1d9d587b69c0358ab1e54cd5b3f815be784433454dbb03efefbc1053391939f4"
+      "bytes": 162459,
+      "sha256": "214deff83fb5e7c266a30c6f7dc3fdaed0b7404b412be471c96950c3f96dc097"
     },
     {
       "path": "UPSP/OS/tests/test_single_agent_survival_experiment.py",
@@ -1222,8 +1242,8 @@
     },
     {
       "path": "UPSP/OS/tests/test_spec705_desktop_packaging.py",
-      "bytes": 9121,
-      "sha256": "9cc0c0781438f56edbc904cb6e52dff5418dea9c36154955f6226a33408bb7a2"
+      "bytes": 9136,
+      "sha256": "70bff53b8960579f74cd107127a2f04f70a5901959fcc29ab87758ece9599613"
     },
     {
       "path": "UPSP/OS/tests/test_spec710_streaming.py",
@@ -1237,13 +1257,13 @@
     },
     {
       "path": "UPSP/OS/tests/test_spec719_api_recovery_probe.py",
-      "bytes": 21110,
-      "sha256": "41226495b788cb7ccba3e2d0c90b9db1239c32f4858629e27c39643ed7e51ccd"
+      "bytes": 22830,
+      "sha256": "3a4008ba7257df46198c7c1960842548f2799e39a8d97b4a8aca403e9cf09ffa"
     },
     {
       "path": "UPSP/OS/tests/test_spec720_tool_approval.py",
-      "bytes": 9271,
-      "sha256": "1f559e296786d63484d1bb1ceb7528d4721ebe0d22075a16f4c2ca9137dba6c0"
+      "bytes": 11089,
+      "sha256": "7cfaf5beb7262289aa863a21a93b09f4f4f8639e0383c4a92a46fe3ec4f9f251"
     },
     {
       "path": "UPSP/OS/tests/test_state_settlement.py",
@@ -1287,8 +1307,8 @@
     },
     {
       "path": "UPSP/gui/app.js",
-      "bytes": 1761478,
-      "sha256": "b61b14f73bcd15aee22eb5ff12af09c731602df67cbfc7bc1ed637cf70d44011"
+      "bytes": 1794502,
+      "sha256": "85fea37fa7cc4e33ead885646b7d9f47ffca49cc4525de554ebb629cea57f909"
     },
     {
       "path": "UPSP/gui/assets/markdown/KaTeX_AMS-Regular.woff2",
@@ -1397,8 +1417,8 @@
     },
     {
       "path": "UPSP/gui/index.html",
-      "bytes": 9166,
-      "sha256": "97c7e90e739f5406a9aa58f0cad25af47da905731562a260089db3d36f4778f8"
+      "bytes": 9321,
+      "sha256": "22d37ec7e3df060752a09fd7d6c8bb68c531b33bf67fb32783129cc2325eba0e"
     },
     {
       "path": "UPSP/gui/manual/audit-tools.en-US.md",
@@ -1527,18 +1547,18 @@
     },
     {
       "path": "UPSP/gui/src/contracts.ts",
-      "bytes": 18613,
-      "sha256": "443a1e808f429cf8ab2dca9c213224913b6756d7e2ea355c130200fc99cee189"
+      "bytes": 20951,
+      "sha256": "77865541e61a7e8fdf1136619060e29ba6fd855af8017ccc8a506c35b23ac378"
     },
     {
       "path": "UPSP/gui/src/events.ts",
-      "bytes": 30047,
-      "sha256": "52d280094e4f7c55ee6e0d3777640b8514338984c55d439005ab9cd15e9d8eca"
+      "bytes": 35691,
+      "sha256": "e475227574304a03e2b87ade9a16aa24353fd860d130d0c695c8f40b1ae4c64f"
     },
     {
       "path": "UPSP/gui/src/i18n.ts",
-      "bytes": 63297,
-      "sha256": "0f7ab1004e2d2621b2ce1d4892a36af6c37adb101534881789530a8abc0821ed"
+      "bytes": 66807,
+      "sha256": "b77d2506c9153f1e4b77c81c048ea5245fee0adf63ffc281141d67a712f4bb09"
     },
     {
       "path": "UPSP/gui/src/markdown-mermaid.ts",
@@ -1557,23 +1577,23 @@
     },
     {
       "path": "UPSP/gui/src/runtime.ts",
-      "bytes": 43695,
-      "sha256": "34e24fe6370b889d8c5167eae2dc475e9f53715a3aa44ec495fec1aeaf0163dc"
+      "bytes": 50913,
+      "sha256": "620c8ae784a0e3d1276619f426bcb99b6f04e0532c5a4bea6147ebabe450d0d4"
     },
     {
       "path": "UPSP/gui/src/state.ts",
-      "bytes": 10863,
-      "sha256": "175ddad6ab6fcae57475127652dcb5f349b58accc261da78ddc01e8dffe1a82c"
+      "bytes": 11087,
+      "sha256": "34985e81736682c41b7e3499f5f62a2d5cd494661dab09d2a75e2ff8c5ae274f"
     },
     {
       "path": "UPSP/gui/src/view.ts",
-      "bytes": 159811,
-      "sha256": "0d700e8c3dd61477372d2d5a1e3e87c0d738beda0dc20357b63130e0445ec50f"
+      "bytes": 174699,
+      "sha256": "bf88390682f0d71a9ad5516bbc4bf8ce4c5680adb3661da74a3f0c369597e971"
     },
     {
       "path": "UPSP/gui/styles.css",
-      "bytes": 116865,
-      "sha256": "800ae8fb6d5ac5d146d5ca860535dde29c9849454b60b4297f26761d51e2475e"
+      "bytes": 121972,
+      "sha256": "fd2c648cf7a0c2cb98511cbbdd1e7e64acb8b4e7c4269eefbba77e078fda415f"
     },
     {
       "path": "UPSP/gui/tsconfig.json",
@@ -2077,8 +2097,8 @@
     },
     {
       "path": "UPSP/initialization/persona_template/docs/protocol/base/shapes.md",
-      "bytes": 6272,
-      "sha256": "8111d0cc9e2c631593cf910b1785492d605c150c0098cfedb4a8316463dce1dc"
+      "bytes": 6392,
+      "sha256": "3c28279f7cb46174491ad40bdb831b0beba9875dac275fadeef6c240a88e0998"
     },
     {
       "path": "UPSP/initialization/persona_template/docs/protocol/base/terminology.md",
@@ -2087,13 +2107,13 @@
     },
     {
       "path": "UPSP/initialization/persona_template/docs/protocol/base/tools.md",
-      "bytes": 10384,
-      "sha256": "ab9153583425f383f0ddf0c230572b4022cd82dbe0cac5cd87e46d1948ec9e5a"
+      "bytes": 10531,
+      "sha256": "b4d2d0918904f56841997c0583fc74b6f33a570dd6978c41c4772e09c7f49ae6"
     },
     {
       "path": "UPSP/initialization/persona_template/docs/protocol/base/workbench.md",
-      "bytes": 5585,
-      "sha256": "0b863d48b1a851a5bcf14690d4d9c7b308910e8d292796cf4f28f152401d8884"
+      "bytes": 5905,
+      "sha256": "9bbd90e01f4dd427affbbf5ea730f75cd7ebaa9efe72b19677b42da9bcb24290"
     },
     {
       "path": "UPSP/initialization/persona_template/docs/protocol/base/workflow_slots.md",
@@ -2267,8 +2287,8 @@
     },
     {
       "path": "UPSP/initialization/persona_template/rules/protocol/base/tools.md",
-      "bytes": 7389,
-      "sha256": "6dd6783867fdd1ab4a70589dbcd68adb4b6002b63351b0c55fc3cf4a87291269"
+      "bytes": 7888,
+      "sha256": "90430d1e114d56174231cc8383c2957d7623a245c16bc670b9a819f0ba28439b"
     },
     {
       "path": "UPSP/initialization/persona_template/rules/protocol/base/workbench.md",
@@ -2293,12 +2313,12 @@
     {
       "path": "UPSP/product.json",
       "bytes": 547,
-      "sha256": "af14c776d4a380fea048486e64770b64be03ef69b7d135150ecbe77ca7ea408f"
+      "sha256": "8522b062cf696673223b7b5d9de528493374ec26de6bcb14119c546d6913a3d5"
     },
     {
       "path": "UPSP_Base_DDS.md",
-      "bytes": 449389,
-      "sha256": "6f576d1020dcad518accbc6771bc8119ea7966e6e9ab8b6a323d31b8a24a3d51"
+      "bytes": 463758,
+      "sha256": "7045a4256afbbe79d5c54aa2da5a3cb4168a4f95c0e8be8596c5f8ef5ccb6a51"
     },
     {
       "path": "UPSP_CLI.cmd",
@@ -2312,8 +2332,8 @@
     },
     {
       "path": "desktop/UPSP.Desktop/MainForm.cs",
-      "bytes": 11621,
-      "sha256": "86efe12f55e3eec10a56b85d8ff1909f42f8fbead5ea4161be57ad096a09c551"
+      "bytes": 11372,
+      "sha256": "1b7ce8002c7c76af81b8394e02205afc54ffbd34e0c00780a52ba8135de16753"
     },
     {
       "path": "desktop/UPSP.Desktop/Program.cs",
@@ -2394,6 +2414,11 @@
       "path": "docs/public/releases/0.1.0-alpha.7.md",
       "bytes": 6512,
       "sha256": "42e52a7c84ba5b9efd4dd2816ddb4fc64a9f6e11af9ce97d824c0327d6f99c71"
+    },
+    {
+      "path": "docs/public/releases/0.1.0-alpha.8.md",
+      "bytes": 9689,
+      "sha256": "dd837d42611cdb3c4ec16bbff242aa7c2f2e0c3fd3f90f3c66753d79968665ec"
     },
     {
       "path": "pyproject.toml",
@@ -2502,8 +2527,8 @@
     },
     {
       "path": "tools/serve_seed_gui.py",
-      "bytes": 95910,
-      "sha256": "e5c8358f05d81024c384c828f94f6f037946528a2cc1597eff8445cc487cd22a"
+      "bytes": 106020,
+      "sha256": "baa2c223cdfdf3b68c8089208aef71b4d888be395ddaa532e433c27c33e69dd3"
     },
     {
       "path": "tools/single_agent_survival_experiment.py",

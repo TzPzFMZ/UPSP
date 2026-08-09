@@ -96,6 +96,20 @@ class SetupRunner(EngineComponent):
         }
         if material_inputs:
             assemble_kwargs["material_inputs"] = material_inputs
+
+        def apply_permission_boundary(iteration):
+            callback = getattr(self, "permission_boundary_callback", None)
+            if not callable(callback):
+                return None
+            applied = callback(context.round_num, "setup", iteration)
+            if isinstance(applied, dict):
+                current = applied.get("current") or {}
+                level = str(current.get("permission_level") or "").strip()
+                if level:
+                    context.execution_permission_level = level
+            return applied
+
+        apply_permission_boundary(1)
         system, messages = self.assembler.assemble_setup(
             context.state,
             context.round_type,
@@ -113,6 +127,7 @@ class SetupRunner(EngineComponent):
         result["_interaction_meta"] = interaction_meta
         intent = self._parse_setup_intent(result, context.round_type)
         iteration = 1
+        retry_feedbacks = []
         while self._needs_setup_finalize_retry(intent) and iteration < 3:
             self._round_audit_parsed(context.round_num, "setup", iteration, intent)
             retry_settlement = self._setup_retry_settlement(
@@ -132,8 +147,17 @@ class SetupRunner(EngineComponent):
                 intent,
                 retry_attempt=iteration,
             )
+            retry_feedbacks.append(messages[-1])
             try:
                 next_iteration = iteration + 1
+                if apply_permission_boundary(next_iteration):
+                    system, messages = self.assembler.assemble_setup(
+                        context.state,
+                        context.round_type,
+                        user_msgs,
+                        **assemble_kwargs,
+                    )
+                    messages = list(messages) + list(retry_feedbacks)
                 result = self._call_llm_with_round_audit(
                     "setup",
                     system,

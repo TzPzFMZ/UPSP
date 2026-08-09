@@ -10,6 +10,7 @@ import uuid
 
 from constants import local_now
 from data.atomic_write import atomic_write_json
+from engines.heartbeat import round_decision_from_heartbeat_flags
 from logic.relay_intent_pool import settle_open_relay_intents
 from paths import ACTIVE_PID, PERSONA_DIR, UPSP_LOCAL_STATE_ROOT
 
@@ -276,6 +277,13 @@ class ResidentRuntimeService:
         runtime = self._require_runtime()
         return runtime.resolve_tool_approval(approval_id, decision)
 
+    def update_execution_permission(self, permission_level):
+        runtime = self._require_runtime()
+        try:
+            return runtime.permission_updates.request(permission_level)
+        except ValueError as exc:
+            raise RuntimeServiceError(str(exc)) from exc
+
     def status(self):
         runtime_status = (
             self.runtime.runtime_status()
@@ -304,8 +312,65 @@ class ResidentRuntimeService:
             "send_in_flight": bool(operation and operation["kind"] == "send"),
             "relay_in_flight": bool(operation and operation["kind"] == "relay"),
             "runtime": runtime_status,
+            "cli_data": self._gui_cli_projection(runtime_status),
             "last_outcome": dict(self.last_outcome),
         }
+
+    def _gui_cli_projection(self, runtime_status):
+        runtime = self.runtime
+        if runtime is None:
+            return {
+                "total_round": 0,
+                "active_flags": [],
+                "round_type": runtime_status.get("round_type"),
+                "guide_queue": [],
+                "coalesced": False,
+                "deferred_items": [],
+                "phase": "initialization",
+                "active_guides": {"rhythm": "", "work": ""},
+                "active_task": "",
+            }
+        try:
+            state = runtime.sm.load()
+            base = state.get("base", {}) if isinstance(state, dict) else {}
+            meta = base.get("meta", {}) if isinstance(base, dict) else {}
+            flags = base.get("heartbeat_flags", {}) if isinstance(base, dict) else {}
+            flags = flags if isinstance(flags, dict) else {}
+            decision = round_decision_from_heartbeat_flags(flags)
+            slots = runtime.workbench.active_guide_slots()
+            slots = slots if isinstance(slots, dict) else {}
+            return {
+                "total_round": meta.get("total_round", 0) if isinstance(meta, dict) else 0,
+                "active_flags": [name for name, value in flags.items() if value],
+                "round_type": decision.get("round_type"),
+                "guide_queue": decision.get("guide_queue") or [],
+                "coalesced": bool(decision.get("coalesced")),
+                "deferred_items": decision.get("deferred_items") or [],
+                "phase": (
+                    (base.get("runtime") or {}).get("phase", "idle")
+                    if isinstance(base.get("runtime"), dict)
+                    else "idle"
+                ),
+                "active_guides": {
+                    key: str(slots.get(key) or "").strip()
+                    for key in ("rhythm", "work")
+                },
+                "active_task": str(
+                    runtime.workbench.get("base.active_task") or ""
+                ).strip(),
+            }
+        except Exception:
+            return {
+                "total_round": 0,
+                "active_flags": [],
+                "round_type": runtime_status.get("round_type"),
+                "guide_queue": [],
+                "coalesced": False,
+                "deferred_items": [],
+                "phase": runtime_status.get("stage") or "idle",
+                "active_guides": {"rhythm": "", "work": ""},
+                "active_task": "",
+            }
 
     def close(self, wait_seconds=10):
         if self._closed:

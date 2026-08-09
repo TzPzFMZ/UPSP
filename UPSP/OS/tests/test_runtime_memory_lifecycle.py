@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -248,9 +249,22 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         rt = self._make_runtime(tmp_path)
 
         # 模拟 MemoryStore
+        inherited = {
+            "created_round": 12,
+            "last_recalled_round": 34,
+            "created_at": "2026-08-01T01:02:03+08:00",
+            "last_recalled_at": "2026-08-06T12:00:00+08:00",
+            "linked_containers": ["DC-1"],
+            "current_overview": "DC-1：当前挂接备注",
+            "current_overview_updated_at": "2026-08-06T11:00:00+08:00",
+        }
+
         class _FakeMS:
             def load_meta(self):
-                return {}
+                return {
+                    "MEM-0ABCDEF0": dict(inherited),
+                    "MEM-0BBBBB01": dict(inherited),
+                }
         fake_ms = _FakeMS()
 
         # 输入文本已含 ## MEM-... 标题
@@ -270,6 +284,15 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         headings2 = [line for line in content2.splitlines()
                      if line.strip().startswith("## MEM-0BBBBB01")]
         assert len(headings2) == 1, f"Abstract 层 MEM-0BBBBB01 出现 {len(headings2)} 个标题：\n{content2}"
+        archived = json.loads(abstract_meta.read_text(encoding="utf-8"))
+        for mem_id in ("MEM-0ABCDEF0", "MEM-0BBBBB01"):
+            assert archived[mem_id]["created_round"] == 12
+            assert archived[mem_id]["last_recalled_round"] == 34
+            assert archived[mem_id]["linked_containers"] == ["DC-1"]
+            assert archived[mem_id]["current_overview"] == "DC-1：当前挂接备注"
+            assert archived[mem_id]["current_overview_updated_at"] == (
+                "2026-08-06T11:00:00+08:00"
+            )
 
     def test_process_forgetting_removes_stored_stm_copy_completely(self, tmp_path, monkeypatch):
         """已入库遗忘分支必须删除 STM 正文、meta、index、keywords、heat 的整套副本"""

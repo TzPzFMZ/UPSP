@@ -16,6 +16,8 @@ import type {
   ProviderErrorKind,
   ProtocolCatalogEntry,
   ProtocolDocumentPayload,
+  RequestPrefixDiffPayload,
+  RequestPrefixDiffTarget,
   RelayRuntimeState,
   SettingValue,
   SettingsFileId,
@@ -532,6 +534,20 @@ function renderChatMeta(recordedAt: unknown, copyReply = false): string {
   </div>`;
 }
 
+function fullLocalTime(value: unknown): { source: string; label: string; title: string } | null {
+  const source = String(value || "").trim();
+  const date = new Date(source);
+  if (!source || Number.isNaN(date.getTime())) return null;
+  const pad = (part: number): string => String(part).padStart(2, "0");
+  const label = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return { source, label, title: `${label} · ${source}` };
+}
+
+function renderFullTime(value: unknown, className = ""): string {
+  const time = fullLocalTime(value);
+  return time ? `<time class="${escapeHtml(className)}" datetime="${escapeHtml(time.source)}" title="${escapeHtml(time.title)}">${escapeHtml(time.label)}</time>` : "";
+}
+
 function renderChatTraceStep(step: ChatTraceStep, groupKey: string, position: number): string {
   const key = `${groupKey}:step:${step.key}:${position}`;
   const open = state.conversationDisclosure.has(key)
@@ -852,6 +868,9 @@ export function renderStage(pageId: PageId): void {
     }
   }
   restoreStageScroll(scrollSnapshots);
+  const contextNav = els.stagePage.querySelector<HTMLElement>(".runtime-context-workspace > nav");
+  const contextRail = els.stagePage.querySelector<HTMLElement>(".context-diff-rail");
+  if (contextNav && contextRail) contextRail.scrollTop = contextNav.scrollTop;
 }
 
 export function renderStageAndFocus(pageId: PageId, selector: string): void {
@@ -1255,8 +1274,107 @@ function renderContextToolSummary(pane?: ContextPane): string {
 }
 
 function renderContextPaneDetail(round: number, frame: CallFrame, pane?: ContextPane): string {
+  const diffTarget = contextPrefixDiffFor(round, frame)?.target;
+  const paneTarget = diffTarget?.pane_id === pane?.id ? diffTarget : null;
   const toolSummary = renderContextToolSummary(pane);
-  return `${toolSummary}${renderContextToolIndex(pane)}${toolSummary ? "" : renderMarkdownDocument(`context:${round}:${frame.frame_id}:${pane?.id || "empty"}`, contextPaneMarkdown(pane))}`;
+  if (toolSummary) {
+    return `${paneTarget ? renderContextDiffSeam(paneTarget) : ""}${toolSummary}${renderContextToolIndex(pane)}`;
+  }
+  if (!pane) return "";
+  const blocks = pane.content_blocks || [];
+  if (!blocks.length) {
+    const content = renderContextBlock(
+      `context:${round}:${frame.frame_id}:${pane.id}`,
+      contextPaneLabel(pane.id),
+      contextPaneMarkdown(pane),
+      pane.chars ?? pane.raw_chars ?? 0,
+      "",
+      "",
+      "",
+      paneTarget && ["block_inside", "layer_inside"].includes(paneTarget.placement)
+        ? paneTarget
+        : null,
+    );
+    return paneTarget && !["block_inside", "layer_inside"].includes(paneTarget.placement)
+      ? `${paneTarget.placement === "layer_start" || paneTarget.placement === "layer_boundary" ? renderContextDiffSeam(paneTarget) : ""}${content}${paneTarget.placement !== "layer_start" && paneTarget.placement !== "layer_boundary" ? renderContextDiffSeam(paneTarget) : ""}`
+      : content;
+  }
+  const targetBlockPresent = Boolean(
+    paneTarget?.block_id && blocks.some((block) => block.block_id === paneTarget.block_id),
+  );
+  const cards = blocks.map((block) => {
+    const provenance = block.provenance || {};
+    const meta = [
+      block.source_block_id ? `${t("来源")} ${block.source_block_id}` : "",
+      provenance.kind,
+      provenance.round ? `${t("轮次")} ${provenance.round}` : "",
+      provenance.step,
+      provenance.iter != null ? `${t("帧次")} ${provenance.iter}` : "",
+    ].filter(Boolean).map(escapeHtml).join(" · ");
+    const timestamp = String(provenance.timestamp || "");
+    const before = paneTarget
+      && paneTarget.placement === "block_boundary"
+      && block.block_id === paneTarget.block_id
+      ? renderContextDiffSeam(paneTarget)
+      : "";
+    const card = renderContextBlock(
+      `context:${round}:${frame.frame_id}:${pane.id}:${block.block_id}`,
+      block.title || contextPaneLabel(pane.id),
+      block.content_md || block.content_raw || "",
+      block.chars ?? block.raw_chars ?? 0,
+      block.tone,
+      meta,
+      timestamp,
+      paneTarget
+        && block.block_id === paneTarget.block_id
+        && ["block_inside", "layer_inside"].includes(paneTarget.placement)
+        ? paneTarget
+        : null,
+    );
+    return `${before}${card}`;
+  }).join("");
+  const beforeStack = paneTarget
+    && ["layer_start", "layer_boundary"].includes(paneTarget.placement)
+    ? renderContextDiffSeam(paneTarget)
+    : "";
+  const afterStack = paneTarget
+    && (
+      ["layer_end", "request_end"].includes(paneTarget.placement)
+      || (paneTarget.placement === "block_boundary" && !targetBlockPresent)
+    )
+    ? renderContextDiffSeam(paneTarget)
+    : "";
+  return `<div class="context-block-stack">${beforeStack}${cards}${afterStack}</div>`;
+}
+
+function renderContextDiffSeam(target: RequestPrefixDiffTarget): string {
+  return `<div class="context-diff-seam" data-context-diff-anchor tabindex="-1"><span>${escapeHtml(contextDiffLocationLabel(target))}</span></div>`;
+}
+
+function contextDiffLocationLabel(target: RequestPrefixDiffTarget): string {
+  if (target.source_mapping === "derived") {
+    return t("变化发生在该块编译出的协议片段");
+  }
+  if (target.placement === "block_inside") {
+    return t("变化从块内第 {offset} 字符开始", {
+      offset: Number(target.block_offset ?? target.source_offset).toLocaleString(state.locale),
+    });
+  }
+  return t("请求体变化后缀从这里开始");
+}
+
+function renderContextBlock(
+  documentId: string,
+  title: string,
+  content: string,
+  chars: number,
+  tone = "",
+  meta = "",
+  timestamp = "",
+  diffTarget: RequestPrefixDiffTarget | null = null,
+): string {
+  const time = renderFullTime(timestamp, "context-block-time");
+  return `<section class="context-block-card${diffTarget ? " context-diff-block" : ""}" data-tone="${escapeHtml(tone)}"><header><b>${escapeHtml(title)}</b><span>${escapeHtml(chars.toLocaleString(state.locale))} ${t("字符")}${meta ? ` · ${meta}` : ""}${time ? ` · ${t("语料时间")} ${time}` : ""}</span>${diffTarget ? `<em class="context-diff-block-marker" data-context-diff-anchor tabindex="-1">${escapeHtml(contextDiffLocationLabel(diffTarget))}</em>` : ""}</header><div class="context-block-body">${renderMarkdownDocument(documentId, content || "—")}</div></section>`;
 }
 
 const contextInstrumentPaneIds = ["00_call_header", "01_tool_header", "02_generation_config"];
@@ -1276,6 +1394,75 @@ const contextPaneLabels: Record<string, MessageKey> = {
 function contextPaneLabel(paneId: string): string {
   const label = contextPaneLabels[paneId];
   return label ? t(label) : paneId;
+}
+
+function contextPrefixDiffFor(round: number, frame: CallFrame): RequestPrefixDiffPayload | null {
+  const payload = runtimeProjection.contextPrefixDiff;
+  return runtimeProjection.contextPrefixDiffKey === `${round}:${frame.frame_id}`
+    && payload?.state === "ready"
+    && payload.current?.round === round
+    && payload.current?.frame_id === frame.frame_id
+    && payload.target
+    ? payload
+    : null;
+}
+
+function contextDiffTooltip(diff: RequestPrefixDiffPayload): string {
+  const target = diff.target;
+  const ratio = `${((Number(diff.prefix_ratio) || 0) * 100).toFixed(1)}%`;
+  const change = target?.change_kind === "insert"
+    ? t("新增")
+    : target?.change_kind === "delete"
+      ? t("删除")
+      : t("替换");
+  return t("与 {frame} 比较：公共前缀 {bytes} 字节（{ratio}）；目标 {pane}{block}；变化类型 {change}。请求体前缀不等同于 provider 实际缓存命中。", {
+    frame: diff.previous?.frame_id || "—",
+    bytes: Number(diff.common_prefix_bytes || 0).toLocaleString(state.locale),
+    ratio,
+    pane: target ? contextPaneLabel(target.pane_id) : "—",
+    block: target?.block_id ? ` / ${target.block_id}` : "",
+    change,
+  });
+}
+
+function renderContextDiffRail(panes: ContextPane[], round: number, frame: CallFrame): string {
+  const diff = contextPrefixDiffFor(round, frame);
+  const target = diff?.target;
+  const railLabel = runtimeProjection.contextPrefixDiffLoading
+    ? t("正在计算请求体前缀差分")
+    : runtimeProjection.contextPrefixDiff?.state === "identical"
+      ? t("与最近兼容帧的请求体完全相同")
+      : runtimeProjection.contextPrefixDiff?.state === "unavailable"
+        || runtimeProjection.contextPrefixDiffError
+        ? t("没有可用的请求体前缀差分")
+        : t("请求体前缀差分轨道");
+  const alignment = target && ["layer_start", "layer_boundary"].includes(target.placement)
+    ? "at-start"
+    : target && ["layer_end", "request_end"].includes(target.placement)
+      ? "at-end"
+      : "at-center";
+  const tooltip = diff ? contextDiffTooltip(diff) : "";
+  return `<div class="context-diff-rail" aria-label="${escapeHtml(railLabel)}" aria-busy="${runtimeProjection.contextPrefixDiffLoading ? "true" : "false"}">
+    ${panes.map((pane) => `<div class="context-diff-slot">${target?.pane_id === pane.id ? `<button type="button" class="context-diff-cursor ${alignment}" data-context-diff-jump title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><span aria-hidden="true"></span></button>` : ""}</div>`).join("")}
+  </div>`;
+}
+
+export function jumpToContextPrefixDiff(): void {
+  const target = runtimeProjection.contextPrefixDiff?.target;
+  if (!target || runtimeProjection.contextPrefixDiff?.state !== "ready") return;
+  state.activeRuntimePane = target.pane_id;
+  renderStage("context");
+  window.requestAnimationFrame(() => {
+    const article = els.stagePage.querySelector<HTMLElement>(".runtime-context-workspace article");
+    const anchor = article?.querySelector<HTMLElement>("[data-context-diff-anchor]");
+    if (!article || !anchor) return;
+    const articleRect = article.getBoundingClientRect();
+    const anchorRect = anchor.getBoundingClientRect();
+    const targetTop = article.scrollTop + anchorRect.top - articleRect.top
+      - Math.min(96, article.clientHeight * 0.2);
+    article.scrollTop = Math.max(0, targetTop);
+    anchor.focus({ preventScroll: true });
+  });
 }
 
 function renderContextInstrument(pane: ContextPane): string {
@@ -1320,7 +1507,7 @@ function renderContextInstrument(pane: ContextPane): string {
   return `<button class="context-instrument ${kind}" data-runtime-pane="${escapeHtml(pane.id)}" aria-label="${escapeHtml(t("查看 {title} 层真实内容", { title: paneLabel }))}">
     <span class="context-instrument-top"><b>${escapeHtml(paneLabel)}</b></span>
     <span class="context-instrument-readout"><strong>${escapeHtml(primary)}</strong><small>${escapeHtml(secondary)}</small></span>
-    <span class="context-instrument-foot"><em>${escapeHtml(pane.raw_chars ?? pane.chars ?? 0)} CH</em></span>
+    <span class="context-instrument-foot"><em>${escapeHtml(pane.chars ?? pane.raw_chars ?? 0)} CH</em></span>
   </button>`;
 }
 
@@ -1367,7 +1554,44 @@ function contextFrameSelector(frames: CallFrame[], selectedFrame: CallFrame): st
 }
 
 function contextSelectors(round: number, live: NonNullable<typeof runtimeProjection.live>, frame: CallFrame): string {
-  return `<div class="context-selectors">${contextRoundSelector(round)}${contextFrameSelector(live.call_frames || [], frame)}</div>`;
+  const frameTime = renderFullTime(frame.created_at, "context-frame-time");
+  return `<div class="context-selectors">${contextRoundSelector(round)}${contextFrameSelector(live.call_frames || [], frame)}${frameTime ? `<p class="context-frame-created">${t("调用编译时间")} · ${frameTime}</p>` : ""}</div>`;
+}
+
+function frameContextUsage(frame: CallFrame | null | undefined, ring = false): string {
+  const usage = frame?.context_usage;
+  const chars = usage ? formattedInteger(usage.chars) : "—";
+  const inputTokens = usage?.state === "pending"
+    ? t("等待模型回执")
+    : usage?.state === "reported"
+      ? formattedInteger(usage.input_tokens)
+      : "—";
+  const windowTokens = formattedInteger(usage?.window_tokens);
+  const ratio = usage?.state === "reported"
+    && Number(usage.input_tokens) >= 0
+    && Number(usage.window_tokens) > 0
+    ? Math.min(1, Number(usage.input_tokens) / Number(usage.window_tokens))
+    : 0;
+  const stateClass = usage?.state || "unavailable";
+  const frameId = frame?.frame_id || t("尚无帧次");
+  const models = settingsProjection.data?.model_catalog.models || [];
+  const detectedModel = models.find((item) => item.id === frame?.model_profile_id);
+  const detected = formattedInteger(
+    detectedModel?.detected_context_window,
+  );
+  const accessible = t("帧 {frame}：字符 {chars}；输入 Tokens {tokens} / {window}；识别容量 {detected}；Runtime 运行上限 {window}", {
+    frame: frameId,
+    chars,
+    tokens: inputTokens,
+    window: windowTokens,
+    detected,
+  });
+  const values = ring ? "" : `
+    <span class="context-usage-value"><b>${t("字符")}</b> ${escapeHtml(chars)}</span>
+    <span class="context-usage-value"><b>Tokens</b> ${escapeHtml(inputTokens)} / ${escapeHtml(windowTokens)}</span>`;
+  return `<span class="frame-context-usage ${escapeHtml(stateClass)}" aria-label="${escapeHtml(accessible)}" title="${escapeHtml(accessible)}">
+    ${ring ? `<span class="context-usage-ring" style="--context-usage-angle:${escapeHtml((ratio * 360).toFixed(2))}deg" aria-hidden="true"></span>` : ""}${values}
+  </span>`;
 }
 
 function renderRuntimeContextPage(): string {
@@ -1381,12 +1605,12 @@ function renderRuntimeContextPage(): string {
   const tab = getActivePageTab("context");
   if (tab === "guide") {
     return `<div class="runtime-context-guide">
-      <header class="ledger-title compact"><div><span class="hud-label">${t("上下文十层")} · ${t("轮次")} ${escapeHtml(round)}</span><h2>${escapeHtml(frame.frame_id)}</h2></div><div class="context-head-actions"><p>${escapeHtml(panes.length)} ${t("层")} · ${escapeHtml(t("来源 {source}", { source: frame.layer_source || "none" }))}</p>${contextSelectors(round, live, frame)}</div></header>
+      <header class="ledger-title compact"><div><span class="hud-label">${t("上下文十层")} · ${t("轮次")} ${escapeHtml(round)}</span><h2>${escapeHtml(frame.frame_id)}</h2>${frameContextUsage(frame)}</div><div class="context-head-actions"><p>${escapeHtml(panes.length)} ${t("层")} · ${escapeHtml(t("来源 {source}", { source: frame.layer_source || "none" }))}</p>${contextSelectors(round, live, frame)}</div></header>
       <div class="context-guide-scroll" data-stage-scroll-key="${escapeHtml(`context:guide:${round}:${frame.frame_id}`)}">
         <section class="context-instrument-cluster" aria-label="${t("调用头仪表")}">${panes.slice(0, 3).map(renderContextInstrument).join("")}</section>
         <div class="layer-ledger">${panes.slice(3).map((pane) => `
           <button class="layer-ledger-row" data-runtime-pane="${escapeHtml(pane.id)}" aria-label="${escapeHtml(t("查看 {title} 层真实内容", { title: contextPaneLabel(pane.id) }))}">
-            <div><b>${escapeHtml(contextPaneLabel(pane.id))}</b><small>${escapeHtml((pane.content_md || pane.content_raw || "").slice(0, 96) || t("空层"))}</small></div><em>${escapeHtml(pane.raw_chars ?? pane.chars ?? 0)}</em>
+            <div><b>${escapeHtml(contextPaneLabel(pane.id))}</b><small>${escapeHtml((pane.content_md || pane.content_raw || "").slice(0, 96) || t("空层"))}</small></div><em>${escapeHtml(pane.chars ?? pane.raw_chars ?? 0)}</em>
           </button>
         `).join("")}</div>
       </div>
@@ -1395,7 +1619,8 @@ function renderRuntimeContextPage(): string {
   }
   const selected = panes.find((pane) => pane.id === state.activeRuntimePane) || panes[0];
   return `<div class="runtime-context-workspace">
-    <nav aria-label="${t("上下文十层")}" data-stage-scroll-key="${escapeHtml(`context:content:${round}:${frame.frame_id}:nav`)}">${panes.map((pane) => `<button class="${pane.id === selected?.id ? "active" : ""}" data-runtime-pane="${escapeHtml(pane.id)}"><b>${escapeHtml(contextPaneLabel(pane.id))}</b><span>${escapeHtml(pane.raw_chars ?? pane.chars ?? 0)}</span></button>`).join("")}</nav>
+    <nav aria-label="${t("上下文十层")}" data-stage-scroll-key="${escapeHtml(`context:content:${round}:${frame.frame_id}:nav`)}">${panes.map((pane) => `<button class="${pane.id === selected?.id ? "active" : ""}" data-runtime-pane="${escapeHtml(pane.id)}"><b>${escapeHtml(contextPaneLabel(pane.id))}</b><span>${escapeHtml(pane.chars ?? pane.raw_chars ?? 0)}</span></button>`).join("")}</nav>
+    ${renderContextDiffRail(panes, round, frame)}
     <article data-stage-scroll-key="${escapeHtml(`context:content:${round}:${frame.frame_id}:${selected?.id || "none"}`)}"><header class="context-detail-head"><div><span class="hud-label">${t("内容详情")} · ${t("轮次")} ${escapeHtml(round)} · ${t("帧次")} ${escapeHtml(frame.frame_id)}</span><h2>${escapeHtml(selected ? contextPaneLabel(selected.id) : t("空层"))}</h2></div>${contextSelectors(round, live, frame)}</header>${renderContextPaneDetail(round, frame, selected)}</article>
   </div>`;
 }
@@ -2066,8 +2291,7 @@ function renderSettingField(field: SettingFieldSpec, value: SettingValue): strin
 
 function settingsFeedback(): string {
   const message = settingsProjection.error || settingsProjection.feedback;
-  if (!message) return "";
-  return `<p class="settings-feedback ${settingsProjection.error ? "warn" : ""}" role="status">${escapeHtml(message)}</p>`;
+  return `<p class="settings-feedback ${settingsProjection.error ? "warn" : ""}" data-settings-feedback role="status" ${message ? "" : "hidden"}>${escapeHtml(message)}</p>`;
 }
 
 function settingsActions(): string {
@@ -2240,15 +2464,26 @@ export function providerUrlSuffix(protocol: string): string {
   return providerUrlSuffixes[protocol as ModelConnection["protocol"]] || "";
 }
 
-export function providerBaseUrl(url: string): string {
+function providerUrlParts(url: string): [string, string] {
   const normalized = url.trim().replace(/\/+$/, "");
-  const suffix = Object.values(providerUrlSuffixes).find((candidate) => normalized.endsWith(candidate));
-  if (suffix) return normalized.slice(0, -suffix.length);
-  return normalized.endsWith("/v1") ? normalized.slice(0, -3) : normalized;
+  const paths = [...new Set([...Object.values(providerUrlSuffixes), "/chat/completions", "/responses", "/messages"])]
+    .sort((left, right) => right.length - left.length);
+  const path = paths.find((candidate) => normalized.endsWith(candidate)) || "";
+  return path ? [normalized.slice(0, -path.length), path] : [normalized, ""];
 }
 
-export function providerRequestUrl(baseUrl: string, protocol: string): string {
-  return `${baseUrl.trim().replace(/\/+$/, "")}${providerUrlSuffix(protocol)}`;
+export function providerBaseUrl(url: string): string {
+  return providerUrlParts(url)[0];
+}
+
+export function providerRequestPath(url: string, protocol: string): string {
+  return url ? providerUrlParts(url)[1] : providerUrlSuffix(protocol);
+}
+
+export function providerRequestUrl(baseUrl: string, requestPath: string): string {
+  const base = baseUrl.trim().replace(/\/+$/, "");
+  const path = requestPath.trim();
+  return path ? `${base}/${path.replace(/^\/+/, "")}` : base;
 }
 
 function connectionEditor(connection?: ModelConnection): string {
@@ -2257,21 +2492,41 @@ function connectionEditor(connection?: ModelConnection): string {
   return `<form class="catalog-editor" data-model-catalog-form="connection" data-model-catalog-id="${escapeHtml(id)}" autocomplete="off">
     <label><span>${t("备注名")}</span><input name="alias" value="${escapeHtml(connection?.alias || "")}" required maxlength="80"></label>
     <label><span>${t("协议")}</span><select name="protocol" data-provider-protocol><option value="openai_chat" ${protocol === "openai_chat" ? "selected" : ""}>OpenAI Chat</option><option value="openai_responses" ${protocol === "openai_responses" ? "selected" : ""}>OpenAI Responses</option><option value="anthropic_messages" ${protocol === "anthropic_messages" ? "selected" : ""}>Anthropic Messages</option></select></label>
-    <label class="wide"><span>${t("接口地址")}</span><div class="provider-url-editor"><input name="url_base" type="url" value="${escapeHtml(providerBaseUrl(connection?.url || ""))}" required><span data-provider-url-suffix>${providerUrlSuffix(protocol)}</span></div></label>
+    <label class="wide"><span>${t("基础地址")}</span><div class="provider-url-editor"><input name="url_base" type="url" value="${escapeHtml(providerBaseUrl(connection?.url || ""))}" required aria-label="${t("基础地址")}"><input name="url_path" value="${escapeHtml(providerRequestPath(connection?.url || "", protocol))}" data-provider-url-path aria-label="${t("请求路径")}"></div><small>${t("请求路径会按协议给出默认值；如服务商端点不同，可直接修改覆盖。")}</small></label>
     <label class="wide"><span>${t("密钥环境变量")}</span><input name="api_key_env" value="${escapeHtml(connection?.api_key_env || "")}" pattern="[A-Za-z_][A-Za-z0-9_]*"></label>
     <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>${t("取消")}</button><button type="submit" class="primary-action">${t("保存")}</button></footer>
   </form>`;
+}
+
+function formattedInteger(value: number | null | undefined): string {
+  return Number.isInteger(value) && Number(value) >= 0
+    ? Number(value).toLocaleString(state.locale)
+    : "—";
+}
+
+function modelContextSourceLabel(model?: ModelProfile): string {
+  const source = model?.context_window_source || (model?.context_window ? "legacy_manual" : "unknown");
+  if (source === "provider") return t("模型服务元数据");
+  if (source === "registry") return t("内置官方模型表");
+  if (source === "legacy_manual") return t("旧配置手动值");
+  return t("尚未识别");
 }
 
 function modelEditor(model?: ModelProfile): string {
   const data = settingsProjection.data;
   if (!data) return "";
   const supported = (model?.reasoning.supported || []).join(", ");
+  const detected = Number(model?.detected_context_window || 0);
+  const source = model?.context_window_source || (model?.context_window ? "legacy_manual" : "unknown");
   return `<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="${escapeHtml(model?.id || "")}" autocomplete="off">
     <label><span>${t("备注名")}</span><input name="alias" value="${escapeHtml(model?.alias || "")}" required maxlength="80"></label>
-    <label><span>${t("服务连接")}</span><select name="connection_id" required><option value="">${t("请选择")}</option>${data.model_catalog.connections.map((item) => `<option value="${escapeHtml(item.id)}" ${model?.connection_id === item.id ? "selected" : ""}>${escapeHtml(item.alias)}</option>`).join("")}</select></label>
-    <label><span>${t("模型 ID")}</span><input name="model" value="${escapeHtml(model?.model || "")}" required></label>
-    <label><span>${t("上下文窗口")}</span><input name="context_window" type="number" min="0" max="100000000" value="${escapeHtml(model?.context_window ?? 0)}" required></label>
+    <label><span>${t("服务连接")}</span><select name="connection_id" data-model-context-input required><option value="">${t("请选择")}</option>${data.model_catalog.connections.map((item) => `<option value="${escapeHtml(item.id)}" ${model?.connection_id === item.id ? "selected" : ""}>${escapeHtml(item.alias)}</option>`).join("")}</select></label>
+    <label><span>${t("模型 ID")}</span><input name="model" data-model-context-input value="${escapeHtml(model?.model || "")}" required></label>
+    <label><span>${t("识别容量")}</span><div class="model-context-detection"><output data-model-context-detected>${escapeHtml(detected > 0 ? formattedInteger(detected) : modelContextSourceLabel(model))}</output><button type="button" data-resolve-model-context>${t("重新识别")}</button></div></label>
+    <label><span>${t("运行上限")}</span><input name="context_window" type="number" min="1" max="${escapeHtml(detected > 0 ? detected : 100000000)}" value="${escapeHtml(model?.context_window || "")}" required></label>
+    <input name="detected_context_window" type="hidden" value="${escapeHtml(detected)}">
+    <input name="context_window_source" type="hidden" value="${escapeHtml(source)}">
+    <p class="model-context-feedback wide" data-model-context-feedback>${escapeHtml(modelContextSourceLabel(model))}</p>
     <label><span>${t("支持的推理强度")}</span><input name="reasoning_supported" value="${escapeHtml(supported)}" placeholder="low, medium, high"></label>
     <label><span>${t("默认推理强度")}</span><input name="reasoning_default" value="${escapeHtml(model?.reasoning.default || "")}"></label>
     <div class="settings-switch"><span>${t("流式输出")}</span><input name="streaming_enabled" type="checkbox" aria-label="${t("流式输出")}" ${model?.streaming.enabled !== false ? "checked" : ""}></div>
@@ -2297,7 +2552,7 @@ function renderModelCard(model: ModelProfile): string {
   const connection = settingsProjection.data?.model_catalog.connections.find((item) => item.id === model.connection_id);
   return `<article class="catalog-item">
     <header><div><strong>${escapeHtml(model.alias)}</strong><span>${escapeHtml(model.model)} · ${escapeHtml(connection?.alias || t("连接缺失"))}</span></div><div><button type="button" data-edit-catalog="model" data-catalog-id="${escapeHtml(model.id)}">${t("编辑")}</button><button type="button" data-delete-catalog="model" data-catalog-id="${escapeHtml(model.id)}">${t("删除")}</button></div></header>
-    <p>${t("上下文窗口：{size}；默认推理强度：{effort}", { size: model.context_window, effort: model.reasoning.default || t("系统默认") })}</p>
+    <p>${t("识别容量：{detected}；运行上限：{limit}；默认推理强度：{effort}", { detected: formattedInteger(model.detected_context_window), limit: formattedInteger(model.context_window), effort: model.reasoning.default || t("系统默认") })}</p>
     ${state.editingModelId === model.id ? modelEditor(model) : ""}
   </article>`;
 }
@@ -2567,7 +2822,9 @@ export function openMemoryDetail(itemId: string, { retry = false }: { retry?: bo
   if (!retry) rememberDetailFocus();
   const detail = depositionDetail("memory", itemId);
   const sourceRound = detail?.created_round ?? item.created_round;
-  const sourceRef = `${itemId} · ${sourceRound == null ? t("轮次未记录") : `${t("当前轮")} R${sourceRound}`} · ${(item.linked_containers || []).length} ${t("个挂接")}`;
+  const created = fullLocalTime(detail?.created_at ?? item.created_at)?.label || t("未记录");
+  const recalled = fullLocalTime(detail?.last_recalled_at ?? item.last_recalled_at)?.label || t("未记录");
+  const sourceRef = `${itemId} · ${sourceRound == null ? t("轮次未记录") : `${t("当前轮")} R${sourceRound}`} · ${t("入库时间")} ${created} · ${t("最近调用时间")} ${recalled} · ${(detail?.linked_containers || item.linked_containers || []).length} ${t("个挂接")}`;
   if (detail) {
     showDetail({
       sourceType: "MEMORY",
@@ -2799,15 +3056,33 @@ export function renderComposerState(): void {
     || stage === "cleanup_local"
     || (stopRequested && runtimeProjection.status?.current_round != null)
   );
+  const projectedPermission = runtimeProjection.status?.execution_permission?.pending_level
+    || runtimeProjection.status?.execution_permission?.permission_level;
+  if (roundActive && !runtimeProjection.permissionChanging && projectedPermission) {
+    els.permissionLevel.value = projectedPermission;
+  }
   const connected = runtimeProjection.host === "connected";
   const pending = inFlight || relayInFlight || runtimeProjection.awaitingProjection;
   const modelReady = settingsProjection.data?.persona.setup_model_ready === true;
+  const frames = runtimeProjection.live?.call_frames || [];
+  const latestFrame = frames.find((frame) => frame.frame_id === runtimeProjection.live?.latest_frame_id) || frames.at(-1) || null;
+  const reportedFrame = latestFrame?.context_usage?.state === "reported"
+    ? latestFrame
+    : [...frames].reverse().find((frame) => frame.context_usage?.state === "reported")
+      || [...runtimeProjection.conversationRoundOrder].reverse().flatMap((round) => [
+        ...(runtimeProjection.conversationRounds.get(round)?.call_frames || []),
+      ].reverse()).find((frame) => frame.context_usage?.state === "reported")
+      || latestFrame;
+  const contextUsageHtml = frameContextUsage(reportedFrame, true);
+  if (els.contextUsage.innerHTML !== contextUsageHtml) {
+    els.contextUsage.innerHTML = contextUsageHtml;
+  }
   els.configureModelButton.hidden = modelReady;
   els.sendButton.hidden = !modelReady || roundActive;
   els.stopButton.hidden = !roundActive;
   els.stopButton.disabled = runtimeProjection.stopping || !stopAvailable;
   els.sendButton.disabled = !connected || pending || !modelReady;
-  els.permissionLevel.disabled = pending;
+  els.permissionLevel.disabled = runtimeProjection.permissionChanging || stage.startsWith("cleanup");
   els.messageInput.readOnly = pending;
   els.runtimeComposer.setAttribute("aria-busy", String(pending));
   if (!modelReady) {

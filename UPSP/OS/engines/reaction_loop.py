@@ -810,12 +810,16 @@ class ReactionLoopRunner(EngineComponent):
         except Exception:
             return set()
 
-    def _boost_mounted_memory_once(self, mem_id, round_num, boosted_memory_ids):
+    def _boost_mounted_memory_once(
+            self, mem_id, round_num, boosted_memory_ids, memory_layer="STM"):
         mem_id = str(mem_id or "").strip()
         if not mem_id or mem_id in boosted_memory_ids:
             return
         try:
-            self.heat.recall_boost(mem_id, round_num=round_num)
+            if str(memory_layer or "STM").strip() == "STM":
+                self.heat.recall_boost(mem_id, round_num=round_num)
+            else:
+                self.memory_store.mark_recalled(mem_id, round_num=round_num)
             boosted_memory_ids.add(mem_id)
         except Exception:
             pass

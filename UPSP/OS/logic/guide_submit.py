@@ -179,17 +179,16 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     "reason": bootstrap_validation.get("reason"),
                     "details": bootstrap_validation.get("details") or {},
                 })
-                receipt = _base_receipt(guide_id)
-                receipt.update({
-                    "status": "rejected",
-                    "reason": bootstrap_validation.get("reason"),
-                    "details": bootstrap_validation.get("details") or {},
-                })
-                return receipt
+                return _rejection_receipt(
+                    guide_id,
+                    bootstrap_validation,
+                    guide=guide,
+                )
             task_id = materialize_initial_task_guide(
                 workbench_store,
                 normalized.get("fields") or {},
                 evidence_refs=normalized.get("evidence_refs") or [],
+                round_num=(evidence_context or {}).get("round_num"),
             )
             _mark_guide_completed(workbench_store, guide, guide_id)
             _clear_work_intent_debt_if_present(evidence_context)
@@ -236,13 +235,7 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     "reason": task_update.get("reason"),
                     "details": task_update.get("details") or {},
                 })
-                receipt = _base_receipt(guide_id)
-                receipt.update({
-                    "status": "rejected",
-                    "reason": task_update.get("reason"),
-                    "details": task_update.get("details") or {},
-                })
-                return receipt
+                return _rejection_receipt(guide_id, task_update, guide=guide)
             refresh_task_execution_active_guide(
                 workbench_store,
                 str(guide.get("task_id") or "").strip(),
@@ -265,13 +258,11 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     "reason": pending_input_update.get("reason"),
                     "details": pending_input_update.get("details") or {},
                 })
-                receipt = _base_receipt(guide_id)
-                receipt.update({
-                    "status": "rejected",
-                    "reason": pending_input_update.get("reason"),
-                    "details": pending_input_update.get("details") or {},
-                })
-                return receipt
+                return _rejection_receipt(
+                    guide_id,
+                    pending_input_update,
+                    guide=guide,
+                )
             refresh_task_execution_active_guide(
                 workbench_store,
                 str(guide.get("task_id") or "").strip(),
@@ -315,13 +306,7 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     "reason": task_update.get("reason"),
                     "details": task_update.get("details") or {},
                 })
-                receipt = _base_receipt(guide_id)
-                receipt.update({
-                    "status": "rejected",
-                    "reason": task_update.get("reason"),
-                    "details": task_update.get("details") or {},
-                })
-                return receipt
+                return _rejection_receipt(guide_id, task_update, guide=guide)
             refresh_task_execution_active_guide(
                 workbench_store,
                 str(guide.get("task_id") or "").strip(),
@@ -340,14 +325,14 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     "reason": backend.get("reason"),
                     "details": backend.get("details") or {},
                 })
-                receipt = _base_receipt(guide_id)
-                receipt.update({
-                    "status": "rejected",
-                    "reason": backend.get("reason"),
-                    "details": backend.get("details") or {},
-                    "backend_receipts": backend.get("backend_receipts") or [],
-                })
-                return receipt
+                return _rejection_receipt(
+                    guide_id,
+                    backend,
+                    guide=guide,
+                    extra={
+                        "backend_receipts": backend.get("backend_receipts") or [],
+                    },
+                )
             backend_receipts.extend(backend.get("backend_receipts") or [])
             completed_flags.extend(backend.get("completed_flags") or [])
             if backend.get("cache_compaction"):
@@ -540,10 +525,15 @@ def _apply_reaction_loop_resident_submit(
                     "source_refs": source_refs,
                 },
             )
-            receipt = _base_receipt(guide_id)
+            receipt = _reject(
+                guide_id,
+                "relay_task_guidance_not_pending_input",
+                {
+                    "task_id": active_task,
+                    "next_action": "继续当前任务，不要在 relay 中重新请求任务指南。",
+                },
+            )
             receipt.update({
-                "status": "rejected",
-                "reason": "relay_task_guidance_not_pending_input",
                 "task_id": active_task,
                 "next_action": "continue_current_task",
             })
@@ -600,6 +590,17 @@ def _apply_reaction_loop_resident_submit(
                 "任务清单创建指南已经存在，不要再次请求 reaction_loop_guide。"
                 f" 请直接使用当前工作指南：guide_id={work_guide}，"
                 "item_id=build_initial_task_guide，option_id=submit_initial_guide。"
+            ),
+            "details": {
+                "work_guide": work_guide,
+                "next_action": "直接提交现有 task_bootstrap，不要重复创建指南。",
+            },
+            "error_hint": _guide_error_hint(
+                "task_guidance_already_active",
+                {
+                    "work_guide": work_guide,
+                    "next_action": "直接提交现有 task_bootstrap，不要重复创建指南。",
+                },
             ),
         })
         return receipt
@@ -781,6 +782,12 @@ def _mark_guide_items_completed(workbench_store, guide, guide_id, completed_flag
 
 def _task_pending_first_receipt(workbench_store, guide_id, block, *, status):
     reason = str((block or {}).get("reason") or "pending_interaction_first")
+    details = {
+        "task_id": (block or {}).get("task_id"),
+        "blockers": (block or {}).get("blockers") or [],
+        "pending_input_ids": (block or {}).get("pending_input_ids") or [],
+        "next_option_id": (block or {}).get("next_option_id"),
+    }
     try:
         workbench_store.append_guide_ledger(guide_id, {
             "event": (
@@ -798,10 +805,12 @@ def _task_pending_first_receipt(workbench_store, guide_id, block, *, status):
     receipt.update({
         "status": status,
         "reason": reason,
-        "task_id": (block or {}).get("task_id"),
-        "blockers": (block or {}).get("blockers") or [],
-        "pending_input_ids": (block or {}).get("pending_input_ids") or [],
-        "next_option_id": (block or {}).get("next_option_id"),
+        "task_id": details["task_id"],
+        "blockers": details["blockers"],
+        "pending_input_ids": details["pending_input_ids"],
+        "next_option_id": details["next_option_id"],
+        "details": details,
+        "error_hint": _guide_error_hint(reason, details),
     })
     return receipt
 
@@ -1151,6 +1160,10 @@ def _validate_submissions(guide, submissions):
             return _validation_reject(
                 "guide_item_not_found",
                 {"item_id": item_id},
+                hint_details={
+                    "attempted": {"item_id": item_id},
+                    "expected": _guide_definition_coordinates(guide),
+                },
             )
         canonical_option_id = _task_execution_option_alias(guide, item, option_id)
         if canonical_option_id != option_id:
@@ -1167,6 +1180,21 @@ def _validate_submissions(guide, submissions):
             return _validation_reject(
                 "guide_option_not_found",
                 {"item_id": item_id, "option_id": option_id},
+                hint_details={
+                    "attempted": {
+                        "item_id": item_id,
+                        "option_id": option_id,
+                    },
+                    "expected": {
+                        "item_id": item_id,
+                        "option_ids": [
+                            str(candidate.get("option_id") or "").strip()
+                            for candidate in item.get("options") or []
+                            if isinstance(candidate, dict)
+                            and str(candidate.get("option_id") or "").strip()
+                        ],
+                    },
+                },
             )
         fields = submission.get("fields") or {}
         if not isinstance(fields, dict):
@@ -1189,13 +1217,34 @@ def _validate_submissions(guide, submissions):
         if "reason" in required_fields and "reason" not in fields and reason:
             fields["reason"] = reason
             submission["fields"] = fields
+        if "allowed_fields" in option:
+            raw_allowed_fields = option.get("allowed_fields") or []
+        else:
+            raw_allowed_fields = required_fields
+        allowed_fields = [
+            str(field)
+            for field in raw_allowed_fields
+            if str(field)
+        ]
         missing = [
             field
             for field in required_fields
             if field not in fields or fields.get(field) in (None, "")
         ]
+        undeclared = sorted(set(fields) - set(allowed_fields))
         if missing:
             details = {"fields": missing}
+            hint_details = {
+                "missing_fields": missing,
+                "undeclared_fields": undeclared,
+                "required_fields": required_fields,
+                "allowed_fields": allowed_fields,
+                "attempted": {"fields": sorted(fields)},
+                "expected": {
+                    "required_fields": required_fields,
+                    "allowed_fields": allowed_fields,
+                },
+            }
             if (
                     str(guide.get("kind") or "").strip() == "task_bootstrap"
                     and item_id == BOOTSTRAP_ITEM_ID
@@ -1213,21 +1262,21 @@ def _validate_submissions(guide, submissions):
                         "items, acceptance}"
                     ),
                 })
-            return _validation_reject("missing_guide_fields", details)
-        if "allowed_fields" in option:
-            raw_allowed_fields = option.get("allowed_fields") or []
-        else:
-            raw_allowed_fields = required_fields
-        allowed_fields = [
-            str(field)
-            for field in raw_allowed_fields
-            if str(field)
-        ]
-        undeclared = sorted(set(fields) - set(allowed_fields))
+            return _validation_reject(
+                "missing_guide_fields",
+                details,
+                hint_details=hint_details,
+            )
         if undeclared:
             return _validation_reject(
                 "undeclared_guide_fields",
                 {"fields": undeclared},
+                hint_details={
+                    "undeclared_fields": undeclared,
+                    "allowed_fields": allowed_fields,
+                    "attempted": {"fields": sorted(fields)},
+                    "expected": {"allowed_fields": allowed_fields},
+                },
             )
     return {"status": "accepted"}
 
@@ -1865,6 +1914,9 @@ def _validate_bootstrap_source_requirement_coverage(
         return _validation_reject(
             "bootstrap_item_requirement_refs_required",
             {"items": items_missing_requirement_refs},
+            hint_details={
+                "known_requirements": requirement_ids,
+            },
         )
     if unknown_requirement_refs:
         return _validation_reject(
@@ -1908,6 +1960,10 @@ def _validate_bootstrap_source_requirement_coverage(
         return _validation_reject(
             "bootstrap_acceptance_refs_required",
             {"acceptance": acceptance_missing_refs},
+            hint_details={
+                "known_items": item_ids,
+                "known_requirements": requirement_ids,
+            },
         )
     if unknown_acceptance_item_refs or unknown_acceptance_requirement_refs:
         return _validation_reject(
@@ -1915,6 +1971,10 @@ def _validate_bootstrap_source_requirement_coverage(
             {
                 "item_refs": unknown_acceptance_item_refs,
                 "requirement_refs": unknown_acceptance_requirement_refs,
+            },
+            hint_details={
+                "known_items": item_ids,
+                "known_requirements": requirement_ids,
             },
         )
     missing_item_acceptance = [
@@ -2372,12 +2432,56 @@ def _complete_task_guide(workbench_store, guide, reason):
     }
 
 
+def _rejection_receipt(guide_id, result, *, guide=None, extra=None):
+    result = result if isinstance(result, dict) else {}
+    details = dict(result.get("details") or {})
+    hint_details = dict(details)
+    if isinstance(guide, dict):
+        hint_details.setdefault("legal_coordinates", _guide_definition_coordinates(guide))
+        hint_details.setdefault("known_pending_input_ids", [
+            str(item.get("pending_input_id") or "").strip()
+            for item in guide.get("pending_inputs") or []
+            if isinstance(item, dict)
+            and str(item.get("pending_input_id") or "").strip()
+        ])
+        hint_details.setdefault("known_item_ids", [
+            str(item.get("item_id") or "").strip()
+            for item in guide.get("items") or []
+            if isinstance(item, dict)
+            and str(item.get("task_record_type") or "").strip() == "item"
+            and str(item.get("item_id") or "").strip()
+        ])
+        hint_details.setdefault("known_acceptance_ids", [
+            str(item.get("item_id") or "").strip()
+            for item in guide.get("items") or []
+            if isinstance(item, dict)
+            and str(item.get("task_record_type") or "").strip() == "acceptance"
+            and str(item.get("item_id") or "").strip()
+        ])
+    reason = str(result.get("reason") or "guide_submission_rejected").strip()
+    receipt = _base_receipt(guide_id)
+    receipt.update({
+        "status": str(result.get("status") or "rejected").strip(),
+        "reason": reason,
+        "details": details,
+        "error_hint": (
+            result.get("error_hint")
+            if isinstance(result.get("error_hint"), dict)
+            else _guide_error_hint(reason, hint_details)
+        ),
+    })
+    receipt.update(extra or {})
+    return receipt
+
+
 def _reject(guide_id, reason, details=None):
+    details = details or {}
     receipt = _base_receipt(guide_id)
     receipt.update({
         "status": "rejected",
         "reason": reason,
-        "details": details or {},
+        "details": details,
+        "error_hint": _guide_error_hint(reason, details),
     })
     return receipt
 
@@ -2389,6 +2493,10 @@ def _guide_coordinates(workbench_store, guide_id):
         guide = workbench_store.load_guide(guide_id)
     except (ReadError, FileNotFoundError, ValueError):
         return []
+    return _guide_definition_coordinates(guide)
+
+
+def _guide_definition_coordinates(guide):
     return [
         {
             "item_id": str(item.get("item_id") or item.get("id") or ""),
@@ -2400,9 +2508,243 @@ def _guide_coordinates(workbench_store, guide_id):
     ]
 
 
-def _validation_reject(reason, details=None):
+def _validation_reject(reason, details=None, *, hint_details=None):
+    details = details or {}
+    hint_source = {**details, **(hint_details or {})}
     return {
         "status": "rejected",
         "reason": reason,
-        "details": details or {},
+        "details": details,
+        "error_hint": _guide_error_hint(reason, hint_source),
+    }
+
+
+def _guide_error_hint(reason, details=None):
+    """Return the single model-action contract for a handled guide rejection."""
+    reason = str(reason or "").strip()
+    details = details if isinstance(details, dict) else {}
+    kind = str(details.get("error_kind") or "validation").strip()
+    retry = str(details.get("retry") or "after_correction").strip()
+    attempted = details.get("attempted") or {}
+    current = details.get("current") or {}
+    expected = details.get("expected") or {}
+    next_action = str(details.get("next_action") or "").strip()
+
+    if reason == "guide_not_active":
+        kind = "state_conflict"
+        attempted = attempted or {"guide_id": details.get("guide_id", "")}
+        current = current or {"guide_id": details.get("active_guide", "")}
+        expected = expected or details.get("legal_coordinates") or []
+        next_action = next_action or "只使用当前 active guide_id 及其合法 item_id/option_id 重新提交。"
+    elif reason == "guide_item_not_found":
+        attempted = attempted or {"item_id": details.get("item_id", "")}
+        next_action = "从 expected 中选择合法 item_id，再完整重提本次提交。"
+    elif reason == "guide_option_not_found":
+        attempted = attempted or {
+            "item_id": details.get("item_id", ""),
+            "option_id": details.get("option_id", ""),
+        }
+        next_action = "保留 item_id，并从 expected.option_ids 中选择合法 option_id 后重提。"
+    elif reason == "invalid_guide_submission":
+        attempted = attempted or {
+            "field": details.get("field", "submission"),
+        }
+        expected = expected or {
+            "submission": "object",
+            **(
+                {"expected_count": details.get("expected_count")}
+                if details.get("expected_count") is not None else {}
+            ),
+        }
+        next_action = "按 expected 的对象形状重新构造提交，不要原样重试。"
+    elif reason == "missing_guide_fields":
+        attempted = attempted or {"fields": details.get("fields") or []}
+        expected = expected or {
+            "required_fields": details.get("required_fields") or details.get("fields") or [],
+            "allowed_fields": details.get("allowed_fields") or [],
+        }
+        undeclared = details.get("undeclared_fields") or []
+        next_action = (
+            "一次补齐 missing_fields，并删除 undeclared_fields；reason/evidence_refs 应放在 submission 外层。"
+            if undeclared else
+            "一次补齐 missing_fields 后完整重提；reason/evidence_refs 应放在 submission 外层。"
+        )
+    elif reason == "undeclared_guide_fields":
+        attempted = attempted or {
+            "fields": details.get("undeclared_fields") or details.get("fields") or [],
+        }
+        expected = expected or {"allowed_fields": details.get("allowed_fields") or []}
+        misplaced = set(details.get("undeclared_fields") or details.get("fields") or []) & {
+            "reason", "evidence_refs"
+        }
+        next_action = (
+            "从 fields 删除 reason/evidence_refs，并把它们放到同一 submission 外层；其余字段只保留 allowed_fields。"
+            if misplaced else
+            "删除未声明字段，只保留 expected.allowed_fields 后完整重提。"
+        )
+    elif reason == "bootstrap_wait_for_tool_results":
+        retry = "next_frame"
+        attempted = attempted or {"current_tool_ids": details.get("current_tool_ids") or []}
+        current = current or {"tool_results_visible": False}
+        expected = expected or {
+            "current_tool_ids": [],
+            "submission_frame": "next_reaction",
+        }
+        next_action = "等待本帧工具结果进入下一帧，再基于可见结果提交 submit_initial_guide。"
+    elif reason == "bootstrap_source_not_read":
+        retry = "after_tool_result"
+        attempted = attempted or {
+            "source_refs": details.get("missing_source_refs") or [],
+        }
+        current = current or {"read_source_refs": details.get("prior_source_refs") or []}
+        expected = expected or {"read_source_refs": details.get("missing_source_refs") or []}
+        next_action = "先逐项 file_read/web_fetch missing_source_refs，等待结果进入下一帧，再用真实已读来源完整重提。"
+    elif reason == "bootstrap_source_requirements_required":
+        attempted = attempted or {"source_refs": details.get("source_refs") or []}
+        expected = expected or {
+            "source_requirements": [{
+                "requirement_id": "req_01",
+                "source_ref": "已读 source_ref",
+                "summary": "从该来源实际读到的要求",
+            }],
+        }
+        next_action = "为每个已读 source_ref 提交 requirement_id/source_ref/summary，再完整重提 bootstrap。"
+    elif reason == "bootstrap_invalid_source_requirements":
+        attempted = attempted or {
+            "invalid_requirements": details.get("invalid_requirements") or [],
+        }
+        expected = expected or {
+            "required_fields": ["requirement_id", "source_ref", "summary"],
+        }
+        next_action = "逐项修正 invalid_requirements，保证 ID 唯一且三个必填字段非空。"
+    elif reason == "bootstrap_source_requirement_ref_unknown":
+        attempted = attempted or {
+            "source_refs": details.get("unknown_source_refs") or [],
+        }
+        current = current or {"read_source_refs": details.get("prior_source_refs") or []}
+        expected = expected or {
+            "source_refs": details.get("source_refs") or [],
+            "corrected_example": details.get("corrected_example") or {},
+        }
+        next_action = next_action or "只引用已读真实来源，按 corrected_example 完整重提 bootstrap。"
+    elif reason == "bootstrap_item_requirement_refs_required":
+        attempted = attempted or {"items": details.get("items") or []}
+        expected = expected or {"requirement_refs": "每个 item 至少一个已声明 requirement_id"}
+        next_action = "为 attempted.items 中每个任务项补上 requirement_refs 后完整重提。"
+    elif reason == "bootstrap_unknown_requirement_refs":
+        attempted = attempted or {"requirement_refs": details.get("requirement_refs") or []}
+        expected = expected or {"requirement_refs": details.get("known_requirements") or []}
+        next_action = "把未知 requirement_refs 替换为 expected 中已声明的 requirement_id。"
+    elif reason == "bootstrap_source_requirement_coverage_missing":
+        attempted = attempted or {"uncovered_requirement_ids": details.get("requirement_ids") or []}
+        expected = expected or {"item_requirement_refs_must_cover": details.get("requirement_ids") or []}
+        next_action = "让至少一个任务项引用每个 uncovered requirement_id 后完整重提。"
+    elif reason == "bootstrap_acceptance_refs_required":
+        attempted = attempted or {"acceptance": details.get("acceptance") or []}
+        expected = expected or {"acceptance_refs": "每个 acceptance 至少包含 item_refs 或 requirement_refs"}
+        next_action = "为 attempted.acceptance 中每个验收项补上 item_refs 或 requirement_refs。"
+    elif reason == "bootstrap_acceptance_refs_unknown":
+        attempted = attempted or {
+            "item_refs": details.get("item_refs") or [],
+            "requirement_refs": details.get("requirement_refs") or [],
+        }
+        expected = expected or {
+            "item_refs": details.get("known_items") or [],
+            "requirement_refs": details.get("known_requirements") or [],
+        }
+        next_action = "将未知引用替换为 expected 中已声明的 item_id/requirement_id。"
+    elif reason == "bootstrap_item_acceptance_coverage_missing":
+        attempted = attempted or {"uncovered_item_ids": details.get("items") or []}
+        expected = expected or {"acceptance_item_refs_must_cover": details.get("items") or []}
+        next_action = "在 acceptance.item_refs 中覆盖每个 uncovered_item_id 后完整重提。"
+    elif reason in {"unsupported_task_bootstrap_submission", "unsupported_task_guide_submission"}:
+        attempted = attempted or {
+            "item_id": details.get("item_id", ""),
+            "option_id": details.get("option_id", ""),
+        }
+        expected = expected or details.get("legal_coordinates") or []
+        next_action = "只按当前 guide 的合法 item_id/option_id 坐标重新提交。"
+    elif reason in {"pending_interaction_first", "relay_task_guidance_not_pending_input", "task_guidance_already_active"}:
+        kind = "state_conflict"
+        retry = "after_state_change"
+        attempted = attempted or {"guide_id": details.get("guide_id", "")}
+        current = current or {
+            key: details.get(key)
+            for key in ("task_id", "pending_input_ids", "work_guide")
+            if details.get(key) not in (None, "", [])
+        }
+        expected = expected or {"next_state": details.get("next_option_id") or details.get("work_guide") or "当前阻断解除"}
+        next_action = next_action or "先处理 current 指出的活动状态，再按当前 guide 坐标提交。"
+    elif reason in {"missing_pending_input_ids", "unknown_pending_inputs", "invalid_pending_input_status"}:
+        attempted = attempted or {"pending_inputs": details.get("pending_inputs") or []}
+        expected = expected or {
+            "pending_input_ids": details.get("known_pending_input_ids") or [],
+            "statuses": ["integrated", "deferred", "rejected", "split"],
+        }
+        next_action = "使用 expected 中的真实 pending_input_id 和合法 status 修正后重提。"
+    elif reason in {"task_status_update_empty", "missing_task_guide_record_ids", "unknown_task_guide_records"}:
+        attempted = attempted or {
+            "items": details.get("items") or [],
+            "acceptance": details.get("acceptance") or [],
+        }
+        expected = expected or details.get("expected_fields") or {
+            "item_ids": details.get("known_item_ids") or [],
+            "acceptance_ids": details.get("known_acceptance_ids") or [],
+        }
+        next_action = "使用 expected 中的真实记录 ID，提交结构化 items/acceptance 状态更新。"
+    elif reason == "task_completion_evidence_required":
+        retry = "after_new_evidence"
+        attempted = attempted or {"records": details.get("missing_evidence_refs") or []}
+        current = current or {"known_evidence_refs": details.get("known_evidence_refs") or []}
+        expected = expected or {"evidence_refs": details.get("known_evidence_items") or details.get("known_evidence_refs") or []}
+        next_action = "先取得或选择真实 evidence ref，再补到对应完成项；不要猜造 EV-*。"
+    elif reason == "task_completion_evidence_not_found":
+        retry = "after_correction"
+        attempted = attempted or {"evidence_refs": details.get("unknown_evidence_refs") or []}
+        current = current or {"known_evidence_refs": details.get("known_evidence_refs") or []}
+        expected = expected or {"evidence_refs": details.get("known_evidence_items") or details.get("known_evidence_refs") or []}
+        next_action = "用 expected 中 Runtime 已登记的真实 evidence ref 替换未知引用。"
+    elif reason in {
+            "task_blocked_reason_required",
+            "task_blocked_evidence_required",
+            "task_blocked_evidence_not_found"}:
+        retry = "after_correction"
+        attempted = attempted or {
+            "records": (
+                details.get("missing_reasons")
+                or details.get("missing_evidence_refs")
+                or []
+            ),
+            "evidence_refs": details.get("unknown_evidence_refs") or [],
+        }
+        expected = expected or {
+            "blocker_evidence_items": details.get("blocker_evidence_items") or [],
+            "correction_example": details.get("correction_example") or {},
+        }
+        next_action = (
+            "为 blocked 记录同时填写非空 reason，并从 expected.blocker_evidence_items "
+            "选择真实 call:<call_id> 后按 correction_example 重提；不要把失败调用写成 EV-*。"
+        )
+    elif reason == "duplicate_task_guide_record_ids":
+        attempted = attempted or {"message": details.get("message", "")}
+        expected = expected or {"record_ids": "unique"}
+        next_action = "为新增任务、验收或来源要求使用不重复的稳定 ID 后重提。"
+    else:
+        attempted = attempted or {
+            key: details.get(key)
+            for key in ("field", "fields", "item_id", "option_id", "task_id")
+            if details.get(key) not in (None, "", [])
+        }
+        next_action = next_action or "根据 reason 和 details 修正提交；不要原样重试或声称已成功。"
+
+    return {
+        "kind": kind if kind in {
+            "validation", "state_conflict", "permission_security",
+            "transient_external", "unknown_internal",
+        } else "validation",
+        "retry": retry,
+        "attempted": attempted,
+        "current": current,
+        "expected": expected,
+        "next_action": next_action,
     }

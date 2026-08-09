@@ -103,10 +103,11 @@ class ExecutorError(EngineError):
 
 class APIBridgeError(ExecutorError):
     """API 桥接错误（熔断/握手/超时）"""
-    def __init__(self, endpoint, message=None, status_code=None):
+    def __init__(self, endpoint, message=None, status_code=None, *, transient=False):
         super().__init__(message or f"API 错误: {endpoint}")
         self.endpoint = endpoint
         self.status_code = status_code
+        self.transient = bool(transient)
 
 
 class APITimeoutError(APIBridgeError):

@@ -50,10 +50,10 @@ class TestMemID:
         assert validate_mem_id("MEM-00333-01") is False  # 旧格式
         assert validate_mem_id("INVALID") is False
 
-    def test_make_meta_template_20_fields(self):
+    def test_make_meta_template_21_fields(self):
         from logic.mem_id import make_meta_template
         meta = make_meta_template("MEM-TEST01", "测试标题", weight=5)
-        assert len(meta) == 20
+        assert len(meta) == 21
         assert meta["id"] == "MEM-TEST01"
         assert meta["type"] == "F"
         assert meta["weight"] == 5
@@ -1556,7 +1556,7 @@ class TestMemoryWriteProtocol:
         assert memory_store.written[0][1]["current_overview"] == ""
         assert "abstract" not in memory_store.written[0][1]
         assert memory_store.meta[0][0][1]["tags"] == ["一", "二", "三", "四"]
-        assert len(memory_store.meta[0][0][1]) == 20
+        assert len(memory_store.meta[0][0][1]) == 21
         assert memory_store.meta[0][0][1]["dream"] is False
         assert memory_store.meta[0][0][1]["current_overview"] == ""
         retired = {"abstract", "locked", "source_rounds", "mode", "merged_from"}

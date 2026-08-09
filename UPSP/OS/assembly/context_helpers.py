@@ -8,6 +8,7 @@ import json
 import re
 
 from assembly.popup import PopupManager
+from constants import corpus_entry_timestamp
 from logic.closeout_copy import closeout_final_reply_reminder
 
 
@@ -550,6 +551,10 @@ def render_corpus_entry_for_context(
     if rendered.get("kind") == "setup_fact":
         content = _naturalize_setup_fact_body(content)
     header_lines = _corpus_header_lines(rendered, content, current_round)
+    timestamp = corpus_entry_timestamp(rendered)
+    if timestamp:
+        header_lines = list(header_lines)
+        header_lines.insert(1, f"语料时间：{timestamp}。")
     if (
         rendered.get("kind") == "dialogue_progress"
         and current_reaction_iteration is None
@@ -1006,3 +1011,32 @@ def hide_empty_memory_annotation(content):
         "",
         str(content or ""),
     )
+
+
+def join_layer_blocks(blocks, separator="\n\n"):
+    """Join model-visible blocks and return compact character-span metadata."""
+    chunks = []
+    cursor = 0
+    index = []
+    for block in blocks or []:
+        if not isinstance(block, dict):
+            continue
+        content = str(block.get("content") or "")
+        if not content:
+            continue
+        joiner = "" if not chunks else str(block.get("separator_before", separator))
+        chunks.extend((joiner, content))
+        start = cursor + len(joiner)
+        cursor = start + len(content)
+        item = {
+            "block_id": str(block.get("block_id") or ""),
+            "title": str(block.get("title") or ""),
+            "char_start": start,
+            "char_end": cursor,
+        }
+        for key in ("kind", "source_block_id"):
+            value = str(block.get(key) or "")
+            if value:
+                item[key] = value
+        index.append(item)
+    return "".join(chunks), index

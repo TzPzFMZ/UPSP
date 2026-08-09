@@ -31,7 +31,7 @@
 
 ---
 
-## 三、元数据字段（第二层，Base层20字段）
+## 三、元数据字段（第二层，Base层21字段）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -50,6 +50,7 @@
 | access | string | public/private |
 | recalled | boolean | 是否经过召回补全正文重写 |
 | current_overview | string | 现状概况，≤128字，非空时引用最新挂接容器 |
+| current_overview_updated_at | ISO8601+偏移/string | 现状概况最后真实变化时间；未知为空字符串 |
 | tags | string[] | 语义标签（软链接） |
 | linked_containers | string[] | 关联工作容器编号（硬链接） |
 | decay_period_days | int | 衰减总周期天数 |

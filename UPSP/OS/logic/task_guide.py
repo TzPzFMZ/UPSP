@@ -47,6 +47,10 @@ PENDING_INPUT_SETTLED_STATUSES = {
 }
 
 SUCCESS_EVIDENCE_STATUSES = {"ok", "success", "accepted", "applied"}
+BLOCKED_TASK_STATUSES = {"blocked"}
+BLOCKER_EVIDENCE_STATUSES = {
+    "blocked", "rejected", "error", "failed", "timeout", "not_found", "degraded",
+}
 ACTIVE_CORPUS_REF_RE = re.compile(r"^C-[0-9]{5}$")
 PENDING_INPUT_ALIAS_FIELD_RE = re.compile(
     r"^(?P<pending_id>(?:pending_)?input_\d+)_(?P<field>status|summary|reason)$"
@@ -112,7 +116,8 @@ def create_task_bootstrap_guide(workbench_store, reason="", source_refs=None):
     return guide
 
 
-def materialize_initial_task_guide(workbench_store, fields, evidence_refs=None):
+def materialize_initial_task_guide(
+        workbench_store, fields, evidence_refs=None, round_num=None):
     """Create an active WB task and task-execution guide from bootstrap fields."""
     fields = dict(fields or {})
     task_title = str(fields.get("task_title") or "").strip()
@@ -136,6 +141,8 @@ def materialize_initial_task_guide(workbench_store, fields, evidence_refs=None):
         "risk_notes": risk_notes,
         "source_refs": source_refs,
     }
+    if isinstance(round_num, int) and not isinstance(round_num, bool) and round_num > 0:
+        task_guide["created_round"] = round_num
     task_id = workbench_store.create_task_guide_task(
         task_title=task_title,
         task_goal=task_goal,
@@ -702,12 +709,12 @@ def apply_task_status_update(
     _apply_submission_evidence_refs(
         item_updates,
         evidence_refs,
-        final_statuses=ITEM_COMPLETION_STATUSES,
+        final_statuses=ITEM_COMPLETION_STATUSES | BLOCKED_TASK_STATUSES,
     )
     _apply_submission_evidence_refs(
         acceptance_updates,
         evidence_refs,
-        final_statuses=ACCEPTANCE_COMPLETION_STATUSES,
+        final_statuses=ACCEPTANCE_COMPLETION_STATUSES | BLOCKED_TASK_STATUSES,
     )
     missing_items = _missing_update_record_ids(
         item_updates,
@@ -759,6 +766,61 @@ def apply_task_status_update(
         final_statuses=ACCEPTANCE_COMPLETION_STATUSES,
     )
     known_evidence_refs = _known_task_evidence_refs(evidence_context)
+    blocker_evidence_refs = _known_blocker_evidence_refs(
+        evidence_context,
+        guide,
+    )
+    missing_blocked_reason = _missing_blocked_reasons(
+        item_updates,
+        id_key="item_id",
+        label="items",
+    ) + _missing_blocked_reasons(
+        acceptance_updates,
+        id_key="acceptance_id",
+        label="acceptance",
+    )
+    missing_blocked_evidence = _missing_completion_evidence_refs(
+        item_updates,
+        id_key="item_id",
+        label="items",
+        final_statuses=BLOCKED_TASK_STATUSES,
+    ) + _missing_completion_evidence_refs(
+        acceptance_updates,
+        id_key="acceptance_id",
+        label="acceptance",
+        final_statuses=BLOCKED_TASK_STATUSES,
+    )
+    blocker_items = _feedback_blocker_evidence_items(
+        evidence_context,
+        blocker_evidence_refs,
+        guide=guide,
+    )
+    if missing_blocked_reason:
+        return {
+            "status": "rejected",
+            "reason": "task_blocked_reason_required",
+            "details": {
+                "missing_reasons": missing_blocked_reason,
+                "blocker_evidence_items": blocker_items,
+                "correction_example": _blocked_correction_example(
+                    missing_blocked_reason,
+                    blocker_items,
+                ),
+            },
+        }
+    if missing_blocked_evidence:
+        return {
+            "status": "rejected",
+            "reason": "task_blocked_evidence_required",
+            "details": {
+                "missing_evidence_refs": missing_blocked_evidence,
+                "blocker_evidence_items": blocker_items,
+                "correction_example": _blocked_correction_example(
+                    missing_blocked_evidence,
+                    blocker_items,
+                ),
+            },
+        }
     if missing_evidence:
         details = {"missing_evidence_refs": missing_evidence}
         if known_evidence_refs:
@@ -780,13 +842,30 @@ def apply_task_status_update(
             "reason": "task_completion_evidence_required",
             "details": details,
         }
+    unknown_evidence, unknown_blocker_evidence = _unknown_task_evidence_refs(
+        item_updates,
+        acceptance_updates,
+        known_evidence_refs or set(),
+        blocker_evidence_refs or set(),
+        evidence_context,
+    )
+    if unknown_blocker_evidence:
+        return {
+            "status": "rejected",
+            "reason": "task_blocked_evidence_not_found",
+            "details": {
+                "unknown_evidence_refs": unknown_blocker_evidence,
+                "blocker_evidence_items": blocker_items,
+                "correction_example": _blocked_correction_example(
+                    _blocked_record_labels(
+                        item_updates,
+                        acceptance_updates,
+                    ),
+                    blocker_items,
+                ),
+            },
+        }
     if known_evidence_refs is not None:
-        unknown_evidence = _unknown_completion_evidence_refs(
-            item_updates,
-            acceptance_updates,
-            known_evidence_refs,
-            evidence_context,
-        )
         if unknown_evidence:
             return {
                 "status": "rejected",
@@ -1169,33 +1248,65 @@ def _missing_completion_evidence_refs(updates, *, id_key, label, final_statuses)
     return missing
 
 
-def _unknown_completion_evidence_refs(
+def _missing_blocked_reasons(updates, *, id_key, label):
+    return [
+        f"{label}:{str(update.get(id_key) or '').strip()}"
+        for update in updates or []
+        if isinstance(update, dict)
+        and str(update.get("status") or "").strip().lower() in BLOCKED_TASK_STATUSES
+        and not str(update.get("reason") or "").strip()
+    ]
+
+
+def _unknown_task_evidence_refs(
         item_updates,
         acceptance_updates,
         known_evidence_refs,
+        blocker_evidence_refs,
         evidence_context=None):
     unknown = []
+    unknown_blockers = []
     for update in list(item_updates or []) + list(acceptance_updates or []):
         if not isinstance(update, dict):
             continue
+        blocked = (
+            str(update.get("status") or "").strip().lower()
+            in BLOCKED_TASK_STATUSES
+        )
+        known = blocker_evidence_refs if blocked else known_evidence_refs
         for ref in _normalize_evidence_refs(update.get("evidence_refs")):
             if (
-                    not _evidence_ref_known(ref, known_evidence_refs, evidence_context)
-                    and ref not in unknown):
-                unknown.append(ref)
-    return unknown
+                    not _evidence_ref_known(
+                        ref,
+                        known or set(),
+                        evidence_context,
+                        allow_grant_paths=not blocked,
+                    )):
+                target = unknown_blockers if blocked else unknown
+                if ref not in target:
+                    target.append(ref)
+    return unknown, unknown_blockers
 
 
-def _known_task_evidence_refs(evidence_context):
+def _known_task_evidence_refs(
+        evidence_context,
+        *,
+        cache_min_round=None,
+        include_cache=True,
+        include_active_corpus=True):
     if evidence_context is None:
         return None
     context = evidence_context if isinstance(evidence_context, dict) else {}
     refs = set()
-    for ref in _normalize_evidence_refs(context.get("active_corpus_ids")):
-        text = ref.upper()
-        if ACTIVE_CORPUS_REF_RE.match(text):
-            refs.add(text)
-    for result in _task_evidence_results(context):
+    if include_active_corpus:
+        for ref in _normalize_evidence_refs(context.get("active_corpus_ids")):
+            text = ref.upper()
+            if ACTIVE_CORPUS_REF_RE.match(text):
+                refs.add(text)
+    for result in _task_evidence_results(
+            context,
+            cache_min_round=cache_min_round,
+            include_cache=include_cache):
         if not isinstance(result, dict):
             continue
         status = str(result.get("status") or "").strip().lower()
@@ -1229,6 +1340,43 @@ def _known_task_evidence_refs(evidence_context):
     return refs
 
 
+def _known_blocker_evidence_refs(evidence_context, guide=None):
+    if evidence_context is None:
+        return None
+    guide = guide if isinstance(guide, dict) else {}
+    refs = set(_normalize_evidence_refs(guide.get("source_refs")))
+    for records in (guide.get("items") or [], guide.get("acceptance") or []):
+        for record in records:
+            if isinstance(record, dict):
+                refs.update(_normalize_evidence_refs(record.get("evidence_refs")))
+    created_round = _positive_round(guide.get("created_round"))
+    refs.update(_known_task_evidence_refs(
+        evidence_context,
+        cache_min_round=created_round,
+        include_cache=created_round is not None,
+        include_active_corpus=False,
+    ) or set())
+    context = evidence_context if isinstance(evidence_context, dict) else {}
+    for result in _task_evidence_results(
+            context,
+            cache_min_round=created_round,
+            include_cache=created_round is not None):
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status") or "").strip().lower()
+        if status not in BLOCKER_EVIDENCE_STATUSES:
+            continue
+        call_id = str(
+            result.get("call_id")
+            or result.get("tool_call_id")
+            or result.get("id")
+            or ""
+        ).strip()
+        if call_id:
+            refs.add(f"call:{call_id}")
+    return refs
+
+
 def _feedback_known_evidence_refs(known_evidence_refs, limit=30):
     refs = sorted(str(ref) for ref in known_evidence_refs or [] if str(ref).strip())
     priority = []
@@ -1252,7 +1400,13 @@ def _feedback_known_evidence_refs(known_evidence_refs, limit=30):
     return selected
 
 
-def _feedback_known_evidence_items(evidence_context, known_evidence_refs, limit=12):
+def _feedback_known_evidence_items(
+        evidence_context,
+        known_evidence_refs,
+        limit=12,
+        *,
+        cache_min_round=None,
+        include_cache=True):
     if evidence_context is None:
         return []
     context = evidence_context if isinstance(evidence_context, dict) else {}
@@ -1273,7 +1427,10 @@ def _feedback_known_evidence_items(evidence_context, known_evidence_refs, limit=
             limit=limit,
         )
 
-    for result in _task_evidence_results(context):
+    for result in _task_evidence_results(
+            context,
+            cache_min_round=cache_min_round,
+            include_cache=include_cache):
         if len(items) >= limit:
             break
         if not isinstance(result, dict):
@@ -1299,7 +1456,113 @@ def _feedback_known_evidence_items(evidence_context, known_evidence_refs, limit=
     return items
 
 
-def _task_evidence_results(context):
+def _feedback_blocker_evidence_items(
+        evidence_context, blocker_evidence_refs, limit=12, guide=None):
+    if evidence_context is None:
+        return []
+    context = evidence_context if isinstance(evidence_context, dict) else {}
+    known = set(str(ref) for ref in blocker_evidence_refs or [] if str(ref).strip())
+    items = []
+    seen = set()
+    guide = guide if isinstance(guide, dict) else {}
+    created_round = _positive_round(guide.get("created_round"))
+    include_cache = created_round is not None
+    for result in _task_evidence_results(
+            context,
+            cache_min_round=created_round,
+            include_cache=include_cache):
+        if len(items) >= limit:
+            break
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status") or "").strip().lower()
+        call_id = str(
+            result.get("call_id")
+            or result.get("tool_call_id")
+            or result.get("id")
+            or ""
+        ).strip()
+        ref = f"call:{call_id}" if call_id else ""
+        if (
+                status not in BLOCKER_EVIDENCE_STATUSES
+                or not ref
+                or ref not in known
+                or ref in seen):
+            continue
+        seen.add(ref)
+        tool_id = str(result.get("tool_id") or "").strip()
+        reason = _truncate_feedback_text(result.get("reason") or status, 120)
+        items.append({
+            "ref": ref,
+            "tool_id": tool_id,
+            "status": status,
+            "reason": reason,
+            "summary": _truncate_feedback_text(
+                f"{tool_id or 'tool'} {status}: {reason}",
+            ),
+        })
+    for item in _feedback_known_evidence_items(
+            evidence_context,
+            blocker_evidence_refs,
+            limit=limit,
+            cache_min_round=created_round,
+            include_cache=include_cache):
+        if len(items) >= limit:
+            break
+        ref = str(item.get("ref") or "").strip()
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        item["status"] = "success"
+        item["reason"] = ""
+        items.append(item)
+    return items
+
+
+def _blocked_record_labels(item_updates, acceptance_updates):
+    labels = []
+    for updates, key, label in (
+            (item_updates, "item_id", "items"),
+            (acceptance_updates, "acceptance_id", "acceptance")):
+        labels.extend(
+            f"{label}:{str(update.get(key) or '').strip()}"
+            for update in updates or []
+            if isinstance(update, dict)
+            and str(update.get("status") or "").strip().lower()
+            in BLOCKED_TASK_STATUSES
+        )
+    return labels
+
+
+def _blocked_correction_example(records, blocker_items):
+    record = str((records or ["items:item_01"])[0] or "items:item_01")
+    section, _, record_id = record.partition(":")
+    section = "acceptance" if section == "acceptance" else "items"
+    record_id = record_id or ("acc_01" if section == "acceptance" else "item_01")
+    ref = str(((blocker_items or [{}])[0]).get("ref") or "call:<call_id>")
+    id_key = "acceptance_id" if section == "acceptance" else "item_id"
+    return {
+        section: [{
+            id_key: record_id,
+            "status": "blocked",
+            "reason": "说明可复核的阻塞事实",
+            "evidence_refs": [ref],
+        }]
+    }
+
+
+def _positive_round(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _task_evidence_results(
+        context, *, cache_min_round=None, include_cache=True):
     results = list(context.get("prior_general_tool_results") or [])
     results.extend(
         receipt
@@ -1307,6 +1570,8 @@ def _task_evidence_results(context):
         if isinstance(receipt, dict)
         and str(receipt.get("tool_id") or "").strip() != "guide_submit"
     )
+    if not include_cache:
+        return results
     context_store = context.get("context_store")
     for getter_name in ("get_lately_entries", "get_now_entries"):
         getter = getattr(context_store, getter_name, None)
@@ -1319,6 +1584,12 @@ def _task_evidence_results(context):
         for entry in entries or []:
             if not isinstance(entry, dict):
                 continue
+            if cache_min_round is not None:
+                loc = entry.get("loc") if isinstance(entry.get("loc"), dict) else {}
+                if _positive_round(loc.get("round")) is None:
+                    continue
+                if _positive_round(loc.get("round")) < cache_min_round:
+                    continue
             tool_result = entry.get("tool_result")
             if isinstance(tool_result, dict):
                 results.append(tool_result)
@@ -1451,7 +1722,12 @@ def _add_command_evidence_refs(refs, value):
     refs.update(command_evidence_refs(value))
 
 
-def _evidence_ref_known(ref, known_evidence_refs, evidence_context=None):
+def _evidence_ref_known(
+        ref,
+        known_evidence_refs,
+        evidence_context=None,
+        *,
+        allow_grant_paths=True):
     active_corpus_ref = str(ref or "").strip().upper()
     if (
             ACTIVE_CORPUS_REF_RE.match(active_corpus_ref)
@@ -1473,7 +1749,10 @@ def _evidence_ref_known(ref, known_evidence_refs, evidence_context=None):
             return True
         if _relative_path_suffix_known(canonical_path, known_evidence_refs):
             return True
-        if _artifact_path_exists_in_grant(canonical_path, evidence_context):
+        if (
+                allow_grant_paths
+                and _artifact_path_exists_in_grant(
+                    canonical_path, evidence_context)):
             return True
     return False
 

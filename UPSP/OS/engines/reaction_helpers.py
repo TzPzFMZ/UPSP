@@ -1096,14 +1096,17 @@ def format_native_tool_failure_feedback(item, reason):
     hint = model_visible_error_hint(item)
     next_action, message = native_tool_feedback_action(reason, item)
     if hint:
-        if isinstance(item.get("details"), dict) and item["details"].get("next_action"):
+        if isinstance(item.get("error_hint"), dict):
             next_action = safe_feedback_value(hint.get("next_action"), limit=500)
+        else:
+            hint = {**hint, "next_action": next_action}
         message = list(message) + [
             f"kind={safe_feedback_value(hint.get('kind'))}",
             f"retry={safe_feedback_value(hint.get('retry'))}",
             f"attempted={safe_feedback_value(json.dumps(hint.get('attempted'), ensure_ascii=False))}",
             f"current={safe_feedback_value(json.dumps(hint.get('current'), ensure_ascii=False))}",
             f"expected={safe_feedback_value(json.dumps(hint.get('expected'), ensure_ascii=False))}",
+            f"next_action={next_action}",
         ]
     duplicate_warning = reason in {
         "duplicate_tool_result_satisfied",

@@ -416,49 +416,103 @@ def model_visible_error_hint(result):
         return {}
     details = result.get("details") if isinstance(result.get("details"), dict) else {}
     existing = result.get("error_hint") if isinstance(result.get("error_hint"), dict) else {}
-    haystack = " ".join((status, reason))
-    kind = str(existing.get("kind") or details.get("error_kind") or "")
-    if kind not in {"validation", "state_conflict", "permission_security",
-                    "transient_external", "unknown_internal"}:
-        if any(word in haystack for word in ("permission", "security", "forbidden", "auth")):
-            kind = "permission_security"
-        elif any(word in haystack for word in ("timeout", "connection", "dns", "tls", "rate", "upstream", "temporar")):
-            kind = "transient_external"
-        elif any(word in haystack for word in ("not_active", "stale", "conflict", "already", "closed")):
-            kind = "state_conflict"
-        elif any(word in haystack for word in ("invalid", "missing", "required", "unknown", "not_read", "not_found", "unsupported", "schema")):
-            kind = "validation"
-        else:
+    valid_kinds = {
+        "validation", "state_conflict", "permission_security",
+        "transient_external", "unknown_internal",
+    }
+    if existing:
+        kind = str(existing.get("kind") or "unknown_internal")
+        if kind not in valid_kinds:
             kind = "unknown_internal"
+        return {
+            "kind": kind,
+            "retry": _safe_error_hint_value(
+                existing.get("retry", "never_without_new_evidence")),
+            "attempted": _safe_error_hint_value(existing.get("attempted", {})),
+            "current": _safe_error_hint_value(existing.get("current", {})),
+            "expected": _safe_error_hint_value(existing.get("expected", {})),
+            "next_action": _safe_error_hint_value(existing.get(
+                "next_action",
+                "不要原样重试；保留 reason，停止当前动作并报告。",
+            )),
+        }
+
+    permission_reasons = {
+        "permission_required", "user_skipped_tool_approval", "outside_allowlist",
+        "allowed_paths_outside_allowlist", "sandbox_tool_not_allowed",
+        "capability_denied", "credential_path_forbidden",
+        "local_or_private_host_denied",
+    }
+    state_reasons = {
+        "guide_not_active", "pending_interaction_first",
+        "relay_task_guidance_not_pending_input", "task_guidance_already_active",
+        "duplicate_tool_result_satisfied", "duplicate_protocol_read_satisfied",
+        "duplicate_container_focus_satisfied", "already_closed", "stale_state",
+        "source_changed",
+    }
+    transient_reasons = {
+        "timeout", "connection_refused", "connection_reset", "dns_error",
+        "tls_error", "rate_limited", "upstream_unavailable",
+        "provider_unavailable", "temporary_external_error",
+        "web_backend_exhausted", "host_resolution_failed",
+    }
+    explicit_kind = str(details.get("error_kind") or "").strip()
+    if explicit_kind in valid_kinds:
+        kind = explicit_kind
+    elif reason in permission_reasons:
+        kind = "permission_security"
+    elif reason in state_reasons:
+        kind = "state_conflict"
+    elif reason in transient_reasons:
+        kind = "transient_external"
+    elif status in {"rejected", "blocked"}:
+        kind = "validation"
+    else:
+        kind = "unknown_internal"
     defaults = {
-        "validation": ("after_correction", "按 expected 修正参数后再提交。"),
+        "validation": ("after_correction", "根据 reason 与可见校验字段修正后再提交；不要原样重试。"),
         "state_conflict": ("after_correction", "刷新当前状态，只按 current/expected 坐标重新提交。"),
         "permission_security": ("after_authorization", "停止当前动作，取得明确授权或降低动作范围。"),
         "transient_external": ("later", "保留 reason，稍后重试；不要声称已成功。"),
         "unknown_internal": ("never_without_new_evidence", "不要原样重试；保留 reason，停止当前动作并报告。"),
     }
     retry, next_action = defaults[kind]
-    attempted = existing.get("attempted", details.get("attempted"))
+    attempted = details.get("attempted")
     if attempted in (None, ""):
         attempted = {key: result[key] for key in ("guide_id", "item_id", "option_id", "field")
                      if result.get(key) not in (None, "")}
     hint = {
         "kind": kind,
-        "retry": _safe_error_hint_value(existing.get("retry") or details.get("retry") or retry),
+        "retry": _safe_error_hint_value(details.get("retry") or retry),
         "attempted": _safe_error_hint_value(attempted or {}),
-        "current": _safe_error_hint_value(existing.get("current") or details.get("current") or details.get("active_guide") or {}),
-        "expected": _safe_error_hint_value(existing.get("expected") or details.get("expected") or result.get("expected") or {}),
-        "next_action": _safe_error_hint_value(existing.get("next_action") or details.get("next_action") or result.get("repair_hint") or next_action),
+        "current": _safe_error_hint_value(details.get("current") or details.get("active_guide") or {}),
+        "expected": _safe_error_hint_value(details.get("expected") or result.get("expected") or {}),
+        "next_action": _safe_error_hint_value(details.get("next_action") or result.get("repair_hint") or next_action),
     }
     return hint
 
 
 def _safe_error_hint_value(value):
     allowed_keys = {
-        "guide_id", "item_id", "option_id", "option_ids", "field", "fields",
-        "allowed", "source_ref", "missing_source_refs", "unknown_source_refs",
-        "prior_source_refs", "legal_coordinates", "requirement_id",
-        "tool_id",
+        "reason", "guide_id", "item_id", "item_ids", "option_id", "option_ids",
+        "field", "fields", "missing_fields", "undeclared_fields", "required_fields",
+        "allowed_fields", "allowed", "source_ref", "source_refs", "read_source_refs",
+        "missing_source_refs", "unknown_source_refs", "prior_source_refs",
+        "legal_coordinates", "requirement_id", "requirement_ids", "requirement_refs",
+        "known_requirements", "items", "item_refs", "acceptance", "acceptance_ids",
+        "current_tool_ids", "tool_results_visible", "submission_frame", "tool_id",
+        "pending_inputs", "pending_input_ids", "known_pending_input_ids", "statuses",
+        "task_id", "work_guide", "next_state", "record_ids", "known_item_ids",
+        "known_acceptance_ids", "records", "evidence_refs", "known_evidence_refs",
+        "known_evidence_items", "uncovered_requirement_ids", "uncovered_item_ids",
+        "blocker_evidence_items", "correction_example", "ref", "status",
+        "call_id", "acceptance_id",
+        "item_requirement_refs_must_cover", "acceptance_item_refs_must_cover",
+        "acceptance_refs", "invalid_requirements", "corrected_example",
+        "source_requirements", "summary", "message", "expected_count", "submission",
+        "url", "find_text", "char_start", "next_char_start",
+        "source_content_sha256", "expected_source_content_sha256",
+        "source_bytes_incomplete", "backend_ids", "next_state",
     }
     if isinstance(value, dict):
         return {str(key): _safe_error_hint_value(child) for key, child in value.items()

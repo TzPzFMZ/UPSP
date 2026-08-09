@@ -913,12 +913,12 @@ class ReactionToolSettlementDispatcher:
                 if (
                     receipt.get("status") == "accepted"
                     and receipt.get("mount_mode") != "none"
-                    and str(receipt.get("memory_layer") or "STM").strip() == "STM"
                 ):
                     runner._boost_mounted_memory_once(
                         receipt.get("mem_id"),
                         round_num,
                         boosted_memory_ids,
+                        receipt.get("memory_layer") or "STM",
                     )
         attach_native_trace_to_receipts(
             memory_content_read_receipts,
