@@ -1,0 +1,40 @@
+{
+  "persona_dir": "./persona",
+  "llm": {
+    "api_url": "",
+    "api_key": "",
+    "model": ""
+  },
+  "rhythm": {
+    "max_rounds": 32
+  },
+  "speed_wheel": {
+    "trigger_threshold": 256
+  },
+  "core_axis": {
+    "change_threshold": 10
+  },
+  "memory": {
+    "stm_max_chars": 16384,
+    "stm_lock_warn_ratio": 0.6,
+    "ltm_w5_f_to_s": 256,
+    "ltm_w5_s_to_a": 256,
+    "ltm_w5_a_delete": 256,
+    "ltm_w4_s_to_a": 256,
+    "ltm_w4_a_delete": 256,
+    "ltm_w3_s_to_a": 256,
+    "ltm_w3_a_delete": 256,
+    "ltm_w2_a_delete": 128,
+    "ltm_w1_a_delete": 64
+  },
+  "heat": {
+    "w_fre": 0.2,
+    "w_emo": 0.3,
+    "w_rel": 0.3,
+    "w_task": 0.2
+  },
+  "reconnect": {
+    "short_minutes": 30,
+    "long_minutes": 60
+  }
+}

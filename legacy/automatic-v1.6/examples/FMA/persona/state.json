@@ -1,0 +1,49 @@
+{
+  "meta": {
+    "total_round": 38,
+    "last_rhythm_round": 33,
+    "version": "auto-1.6"
+  },
+  "dynamic_axes": {
+    "valence": 100,
+    "arousal": 100,
+    "focus": 100,
+    "mood": 100,
+    "humor": 100,
+    "safety": 100
+  },
+  "core_speed_wheel": 110,
+  "core_axis_snapshots": [
+    {
+      "round": 12,
+      "valence": 65,
+      "arousal": 70,
+      "focus": 45,
+      "mood": 68,
+      "humor": 55,
+      "safety": 72
+    },
+    {
+      "round": 33,
+      "valence": 100,
+      "arousal": 100,
+      "focus": 100,
+      "mood": 100,
+      "humor": 100,
+      "safety": 100
+    }
+  ],
+  "workhood_index": {
+    "value": 7.98,
+    "self_reference": 8.21,
+    "self_reflection": 7.63,
+    "autonomy": 8.1,
+    "last_update_round": 33
+  },
+  "token_usage": {
+    "current_round_tokens": 0,
+    "current_rhythm_period_tokens": 0,
+    "last_rhythm_period_tokens": 0,
+    "total_tokens": 0
+  }
+}
