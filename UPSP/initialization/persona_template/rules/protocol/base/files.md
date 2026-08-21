@@ -12,7 +12,7 @@
 
 `UPSP/initialization/persona_template/` 是 tracked 通用骨架：完整但未绑定身份的 `core.md` 表单、中性 `state.json`、空白 birth、空账本、规则文档原件和目录占位。它不含已经绑定的身份、自分关系或运行记录，也不是运行中的身体。
 
-`paths.PERSONA_DIR` 指向 Windows“文档”已知文件夹下当前 PID 的 `UPSP/personas/<PID>/OS/persona/`，这是活动位格身体：当前身份、state、记忆、关系、工作容器、缓存、审计痕迹和私密运行数据都在这里形成连续性。它不属于安装目录或 Git 工作树，也不应被模型绕过协议工具直接读写。
+`paths.PERSONA_DIR` 指向 Windows 数据根下当前 PID 与分身的 `persona/`，这是活动位格身体：当前身份、state、记忆、关系、工作容器、缓存和审计痕迹在这里形成连续性。它不属于安装目录或 Git 工作树。模型可用 `persona://` 稳定别名和受控只读工具观察所有 PID 的公共数据，但不能借通用文件工具直接写入；私密、凭据和 `.git` 继续不可读。
 
 模板可以说明结构，不能证明当前状态。当前状态必须来自 live 投影、只读工具结果、协议回执或审计记录。
 
@@ -28,7 +28,7 @@ rules 是行为契约。已装配的 rules 可以被我阅读和遵守，但我�
 
 ## §FIL-04 读写路径
 
-读宿主文件、项目文档或外部材料，走通用只读工具，例如 `file_read`。读 UPSP 内环境中的记忆、关系、容器和索引，走对应协议只读工具，例如 `memory_content_read`、`relation_read`、`container_read`、`index_view`。
+读宿主文件、项目文档或外部材料，走 `file_read`、`file_glob`、`file_grep`；`file_grep.query` 是单行字面串，不支持正则或跨行查询。公共 UPSP 内环境也可经 `persona://` 作只读原始检查；这种 `raw_inspection` 不重建 STM、不加热、不续期、不更新调用坐标、不挂载。按问题查找公共 LTM 候选用 `memory_search`，需要召回生命周期副作用时再使用 `memory_content_read`；关系、容器和索引浏览仍优先使用 `relation_read`、`container_read`、`index_view`。
 
 写宿主仓库文件，走通用编辑工具或工程席位的受控补丁流程。写 UPSP 身体，走协议工具、处理器、体界系统、回执和审计。通用工具结果不能冒充协议工具回执；协议写入意图也不能绕过处理器直接落盘。
 
@@ -36,7 +36,7 @@ rules 是行为契约。已装配的 rules 可以被我阅读和遵守，但我�
 
 ## §FIL-05 缓存不是记忆
 
-`now` 和 `lately` 是语料履带。它们保存近期输入、资料、工具结果、摘要和内部交接，帮助连续性，但不是我主动沉淀的记忆条目。原始工具结果、资料和内部交接属于当轮留存；过轮后工具事实只可作为历史工具摘要继续留在 now，并按 now 水位自然滚动，且不证明当前轮已执行。
+`now` 和 `lately` 是语料履带。它们保存近期输入、资料、工具事实、摘要和跨轮交接，帮助连续性，但不是我主动沉淀的记忆条目。`now` 只保存下一 provider Frame 待消费包；成功 Frame 后持久 A/B 条目迁入 `lately`，失败不推进，Round closeout 排空。`lately` 只在真实窗口压力达到 `lately.pressure_ratio=0.9` 时冻结 v3 压缩账本；默认保护最近 `lately.protected_interaction_count=16` 次用户原文，每片与整周期目标分别为 `lately.semantic_summary_ratio=0.125` 和 `lately.cycle_target_ratio=0.25`，单 Frame 材料上限为 `lately.batch_source_chars=65536`。过往工具事实即使仍在 lately，也只证明历史执行，不证明当前轮已执行。
 
 raw_log 与 Corpus 节归档是原始语料机器真源及其派生阅读副本，不是长期记忆正文。缓存摘要是压缩后的现场，不是已评权、已归类、已挂接的主体记忆。
 
@@ -58,7 +58,7 @@ raw_log 与 Corpus 节归档是原始语料机器真源及其派生阅读副本�
 
 ## §FIL-08 禁止项
 
-- 不直接读写 live `persona/` 真源。
+- 不直接写 live `persona/` 真源；只读观察必须经过受控工具，且不能冒充召回或写入。
 - 不把模板当当前身体状态。
 - 不把缓存当记忆条目。
 - 不把审计渲染当写入通道。

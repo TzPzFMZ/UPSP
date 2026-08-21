@@ -365,7 +365,7 @@ def _replace_metadata_line(content, label, value):
     pattern = re.compile(rf"(?m)^-\s*{re.escape(label)}[：:].*$")
     replacement = f"- {label}：{value}"
     if pattern.search(content):
-        return pattern.sub(replacement, content, count=1)
+        return pattern.sub(lambda _match: replacement, content, count=1)
     section = re.search(r"(?ms)^##\s*基础信息\s*$.*?(?=^##\s|\Z)", content)
     if not section:
         raise ValueError("relation_basic_info_section_missing")
@@ -402,5 +402,5 @@ def _replace_status_line(content, status):
     pattern = re.compile(r"(?m)^-\s*状态[：:].*$")
     replacement = f"- 状态：{status}"
     if pattern.search(content):
-        return pattern.sub(replacement, content, count=1)
+        return pattern.sub(lambda _match: replacement, content, count=1)
     return content.rstrip() + "\n\n" + replacement + "\n"

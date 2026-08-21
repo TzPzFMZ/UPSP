@@ -23,7 +23,7 @@
 
 `index.md` 是派生的人类可读投影，固定八列：
 
-| 编号 | 类型 | 权重 | 标题 | 梦源 | 交互对象 | 入库轮/最后调用轮 | 现状概况 |
+| 编号 | 类型 | 权重 | 标题 | 梦源 | 交互对象 | 创建轮/最后调用轮 | 现状概况 |
 |------|------|------|------|------|---------|-------------------|----------|
 | MEM-0E6F3A7B | F | 5 | 三模式分工确认 | 否 | PID/关系卡规范 ID | 第334轮 / 第334轮 | 已桥接到 DC-3 |
 
@@ -31,24 +31,27 @@
 
 ---
 
-## 三、元数据字段（第二层，Base层21字段）
+## 三、元数据字段（第二层，Base层24字段）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | string | 8位十六进制 TTTTTNNN |
 | type | string | F/S/A/P，P为钉选锁定层 |
-| weight | int | 0-5，决定记忆形态 |
+| weight | int | 0-5，决定目标形态；未入库 STM 遗忘可同步降权，入库后不变 |
 | title | string | 标题（≤16字） |
 | dream | boolean | 是否由梦境素材升格而来 |
 | created_at | ISO8601+偏移 | 创建时间 |
+| stored_at | ISO8601+偏移或空串 | 首次正式入库时间；未入库为空，填写后永久不变 |
 | last_recalled_at | ISO8601+偏移 | 最后召回时间 |
 | created_round | int/null | 创建轮号 |
+| created_instance_id | string | 创建该记忆的分身 ID |
 | last_recalled_round | int/null | 最后召回轮号 |
+| last_recalled_instance_id | string | 最后召回该记忆的分身 ID |
 | source | string | "前端\|终端\|地点" |
 | model | string | 产出模型标识 |
 | subject | string | 记忆涉及的活动关系主体规范 ID |
 | access | string | public/private |
-| recalled | boolean | 是否经过召回补全正文重写 |
+| recalled | boolean | 是否曾完成回忆重整 |
 | current_overview | string | 现状概况，≤128字，非空时引用最新挂接容器 |
 | current_overview_updated_at | ISO8601+偏移/string | 现状概况最后真实变化时间；未知为空字符串 |
 | tags | string[] | 语义标签（软链接） |

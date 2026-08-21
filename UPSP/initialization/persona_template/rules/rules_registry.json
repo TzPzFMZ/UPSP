@@ -42,7 +42,7 @@
       "layer": "全文常驻",
       "scope": "cross_step",
       "load": "full",
-      "description": "记忆行为契约——反应步写入+回执+挂接边界"
+      "description": "记忆行为契约——语义检索+事实写入+回执+挂接边界"
     },
     {
       "file": "relation.md",
@@ -58,7 +58,7 @@
       "layer": "全文常驻",
       "scope": "cross_step",
       "load": "full",
-      "description": "工作容器操作契约——九容器+焦点工具+记忆挂接边界"
+      "description": "工作容器操作契约——持久关系建链+焦点工具+记忆挂接边界"
     },
     {
       "file": "workbench.md",

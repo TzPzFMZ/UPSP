@@ -7,6 +7,7 @@ import type {
   DepositionKind,
   FocusReturnDescriptor,
   GlobalSettingsTab,
+  BootstrapIdentity,
   ModelConnection,
   ModelProfile,
   ModelRouteSlot,
@@ -35,6 +36,7 @@ import {
   els,
   pageTabs,
   personaProjection,
+  personaCatalogProjection,
   protocolProjection,
   runtimePages,
   runtimeProjection,
@@ -78,27 +80,70 @@ function personaAbbreviation(): string {
 const personaNameVariants: PersonaNameVariant[] = ["name_zh", "name_en", "abbreviation"];
 const personaNameStoragePrefix = "upsp.seed_gui.persona_name_variant.v1:";
 
-function selectedPersonaNameVariant(): PersonaNameVariant {
-  const identity = bootstrapProjection.data?.identity;
-  if (!identity?.pid) return "abbreviation";
-  const stored = localStorage.getItem(`${personaNameStoragePrefix}${identity.pid}`);
+function selectedPersonaNameVariant(
+  pid: string,
+  identity: Partial<BootstrapIdentity> | null | undefined,
+): PersonaNameVariant {
+  if (!pid) return "abbreviation";
+  const stored = localStorage.getItem(`${personaNameStoragePrefix}${pid}`);
   if (
     personaNameVariants.includes(stored as PersonaNameVariant)
-    && identity[stored as PersonaNameVariant]
+    && identity?.[stored as PersonaNameVariant]
   ) return stored as PersonaNameVariant;
-  if (stored) localStorage.removeItem(`${personaNameStoragePrefix}${identity.pid}`);
+  if (stored) localStorage.removeItem(`${personaNameStoragePrefix}${pid}`);
   return "abbreviation";
 }
 
+function personaDisplayName(pid: string, identity: Partial<BootstrapIdentity>): string {
+  const variant = selectedPersonaNameVariant(pid, identity);
+  return identity[variant]
+    || identity.display_name
+    || identity.name_zh
+    || identity.name_en
+    || identity.abbreviation
+    || pid;
+}
+
+function personaFullNameTooltip(pid: string, identity: Partial<BootstrapIdentity>): string {
+  const names = [identity.name_zh, identity.name_en, identity.abbreviation]
+    .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
+  return `${names.join(" / ") || pid} · ${pid}`;
+}
+
 export function selectPersonaNameVariant(variant: string): boolean {
-  const identity = bootstrapProjection.data?.identity;
+  const catalog = personaCatalogProjection.data;
+  const active = catalog?.personas.find((item) => item.pid === catalog.active.pid);
+  const identity = active?.identity || bootstrapProjection.data?.identity;
   if (
-    !identity?.pid
+    !catalog?.active.pid
     || !personaNameVariants.includes(variant as PersonaNameVariant)
-    || !identity[variant as PersonaNameVariant]
+    || !identity?.[variant as PersonaNameVariant]
   ) return false;
-  localStorage.setItem(`${personaNameStoragePrefix}${identity.pid}`, variant);
+  localStorage.setItem(`${personaNameStoragePrefix}${catalog.active.pid}`, variant);
   renderIdentity();
+  return true;
+}
+
+function identityMutationBusy(): boolean {
+  if (personaCatalogProjection.pending) return true;
+  const status = runtimeProjection.status;
+  if (!status) return false;
+  const stage = String(status.stage || "");
+  return status.current_round != null
+    || status.send_in_flight === true
+    || status.relay_in_flight === true
+    || status.mutation_in_flight === true
+    || status.pending_tool_approval != null
+    || status.restart_requested === true
+    || (stage !== "" && stage !== "idle");
+}
+
+const identityHtmlCache = new WeakMap<HTMLElement, string>();
+
+function renderIdentityHtml(element: HTMLElement, html: string): boolean {
+  if (identityHtmlCache.get(element) === html) return false;
+  identityHtmlCache.set(element, html);
+  element.innerHTML = html;
   return true;
 }
 
@@ -179,7 +224,7 @@ const personaFieldLabels: Record<string, MessageKey> = {
   work_intent_debt: "工作意图债务",
   feeling_settle_due: "感受待结算",
   api_degraded: "API 降级",
-  stm_degrade_pending: "短期记忆待降级",
+  memory_compression_due: "记忆待压缩",
   user_message_waiting: "用户消息等待",
   rhythm_due: "节律到期",
   standby_due: "待命到期",
@@ -193,7 +238,6 @@ const personaFieldLabels: Record<string, MessageKey> = {
   calendar_month_due: "月节律到期",
   calendar_quarter_due: "季节律到期",
   calendar_year_due: "年节律到期",
-  evolution_pending: "演化待处理",
   permanent_expired: "永固层过期",
   periodic_expired: "定期层过期",
   popup_active: "弹窗活动",
@@ -329,20 +373,81 @@ export function renderIdentity(): void {
     : t("版本信息不可用");
   els.productVersionNumber.textContent = product?.version || "—";
 
-  const identity = bootstrapProjection.data?.identity;
-  const selectedVariant = selectedPersonaNameVariant();
-  els.personaNameValue.textContent = identity?.[selectedVariant] || personaAbbreviation();
-  els.personaNameOptions.innerHTML = personaNameVariants.map((variant) => {
+  const catalog = personaCatalogProjection.data;
+  const busy = identityMutationBusy();
+  const activePid = catalog?.active.pid || "";
+  const activePersona = catalog?.personas.find((item) => item.pid === activePid);
+  const identity = activePersona?.identity || bootstrapProjection.data?.identity || {};
+  const selectedVariant = selectedPersonaNameVariant(catalog?.active.pid || "", identity);
+  const personaTabsChanged = renderIdentityHtml(els.personaTabs, (catalog?.personas || []).map((item) => {
+    const active = item.pid === activePid;
+    const name = personaDisplayName(item.pid, item.identity);
+    const title = personaFullNameTooltip(item.pid, item.identity);
+    return `<button class="identity-tab persona-tab ${active ? "active" : ""}" type="button"
+      data-identity-tab data-tab-group="persona" data-activate-persona="${escapeHtml(item.pid)}"
+      role="tab" aria-selected="${active ? "true" : "false"}" tabindex="${active ? "0" : "-1"}"
+      aria-current="${active ? "page" : "false"}" title="${escapeHtml(title)}" ${busy && !active ? "disabled" : ""}>
+      <span>${escapeHtml(name)}</span>
+    </button>`;
+  }).join(""));
+  if (personaTabsChanged) window.requestAnimationFrame(() => {
+    els.personaTabs.querySelector<HTMLElement>(".identity-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
+  renderIdentityHtml(els.personaNameOptions, personaNameVariants.map((variant) => {
     const value = identity?.[variant] || "";
     const label = variant === "name_zh" ? t("中文名") : variant === "name_en" ? t("英文名") : t("缩写");
     return `
-      <button class="persona-name-option ${variant === selectedVariant ? "active" : ""}" type="button"
-              data-persona-name-variant="${variant}" ${value ? "" : "disabled"}>
+      <button class="identity-menu-option ${variant === selectedVariant ? "active" : ""}" type="button"
+              data-persona-name-variant="${variant}" aria-pressed="${variant === selectedVariant ? "true" : "false"}" ${value ? "" : "disabled"}>
         <b>${escapeHtml(label)}</b>
         <span>${escapeHtml(value || t("未填写"))}</span>
       </button>
     `;
-  }).join("");
+  }).join(""));
+  els.createPersonaButton.disabled = busy;
+
+  const activeInstance = activePersona?.instances.find(
+    (item) => item.instance_id === catalog?.active.instance_id && !item.archived,
+  );
+  els.identityFeedback.textContent = personaCatalogProjection.pending
+    ? t("正在处理")
+    : personaCatalogProjection.error;
+  els.identityFeedback.hidden = !els.identityFeedback.textContent;
+  const liveInstances = (activePersona?.instances || []).filter((item) => !item.archived);
+  const archivedInstances = (activePersona?.instances || []).filter((item) => item.archived);
+  const instanceTabsChanged = renderIdentityHtml(els.instanceTabs, liveInstances.map((item) => {
+    const active = item.instance_id === catalog?.active.instance_id;
+    const label = item.label || item.instance_id;
+    const source = item.kind === "meta" ? "meta" : `${item.source_instance_id || "meta"}/R${item.source_round}`;
+    const title = `${label} · ${item.instance_id} · ${t("来源")} ${source}`;
+    const slot = busy
+      ? active ? `<span class="identity-tab-spinner" role="status" aria-label="${t("正在处理")}"></span>` : `<span class="identity-tab-slot" aria-hidden="true"></span>`
+      : `<button class="instance-fork" type="button" data-fork-instance="${escapeHtml(item.instance_id)}"
+          aria-label="${escapeHtml(t("从此分身创建分支"))}" title="${escapeHtml(t("从此分身创建分支"))}">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="4" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="5" cy="16" r="1.5"/><path d="M5 5.5v9M6.5 12c5 0 7-1.8 7-4.5"/></svg>
+        </button>`;
+    return `<span class="identity-tab-shell instance-tab ${active ? "active" : ""}">
+      <button class="identity-tab instance-tab-select" type="button" data-identity-tab data-tab-group="instance"
+        data-activate-instance="${escapeHtml(item.instance_id)}" data-persona-id="${escapeHtml(activePersona?.pid || "")}"
+        role="tab" aria-selected="${active ? "true" : "false"}" tabindex="${active ? "0" : "-1"}"
+        aria-current="${active ? "page" : "false"}" title="${escapeHtml(title)}" ${busy && !active ? "disabled" : ""}>
+        <span>${escapeHtml(label)}</span>
+      </button>${slot}
+    </span>`;
+  }).join(""));
+  if (instanceTabsChanged) window.requestAnimationFrame(() => {
+    els.instanceTabs.querySelector<HTMLElement>(".identity-tab-shell.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
+  const instanceActions = [
+    activeInstance?.kind === "branch"
+      ? `<button class="identity-menu-option" type="button" data-archive-instance="${escapeHtml(activeInstance.instance_id)}" ${busy ? "disabled" : ""}><span>${t("归档分身")}</span></button>`
+      : "",
+    ...archivedInstances.map((item) => `<button class="identity-menu-option" type="button" data-restore-instance="${escapeHtml(item.instance_id)}" ${busy ? "disabled" : ""}><b>${t("恢复分身")}</b><span>${escapeHtml(item.label || item.instance_id)}</span></button>`),
+  ].filter(Boolean);
+  renderIdentityHtml(els.instanceOptions, instanceActions.length
+    ? instanceActions.join("")
+    : `<button class="identity-menu-option" type="button" disabled><span>${t("没有可用操作")}</span></button>`);
+  els.createInstanceButton.disabled = busy;
 
   const live = runtimeProjection.live;
   const statusbar = live?.statusbar_projection || {};
@@ -957,9 +1062,12 @@ function depositionDetailStatus(kind: DepositionKind, itemId: string, loadingTex
 }
 
 function depositionRow(kind: DepositionKind, item: DepositionItem, selected: boolean, description: unknown, status: unknown): string {
+  const layerLabel = kind === "memory"
+    ? (item.memory_layers || []).join(" + ") || item.memory_layer || "MEM"
+    : kind === "container" ? item.prefix || "WB" : item.category || "REL";
   return `
     <button class="deposition-row ${selected ? "active" : ""}" data-deposition-kind="${kind}" data-deposition-id="${escapeHtml(item.id)}" aria-current="${selected ? "true" : "false"}" ${kind === "memory" ? 'aria-haspopup="dialog"' : ""}>
-      <span>${escapeHtml(kind === "memory" ? item.memory_layer || "MEM" : kind === "container" ? item.prefix || "WB" : item.category || "REL")}</span>
+      <span>${escapeHtml(layerLabel)}</span>
       <div><b>${escapeHtml(item.title || item.name || item.id)}</b><small>${escapeHtml(description || item.id)}</small></div>
       <em>${escapeHtml(status || item.status || "READ")}</em>
     </button>
@@ -2065,8 +2173,8 @@ function renderMemoryPage(): string {
   if (unavailable) return unavailable;
   const tab = getActivePageTab("mem");
   let items = depositionItems("memory");
-  if (tab === "stm") items = items.filter((item) => item.memory_layer === "STM");
-  if (tab === "ltm") items = items.filter((item) => (item.memory_layer || "").startsWith("LTM/"));
+  if (tab === "stm") items = items.filter((item) => item.stm_present === true || item.memory_layer === "STM");
+  if (tab === "ltm") items = items.filter((item) => Boolean(item.ltm_layer) || (item.memory_layer || "").startsWith("LTM/"));
   if (tab === "mounts") items = items.filter((item) => (item.linked_containers || []).length);
   if (tab === "search") {
     const query = state.memoryQuery.trim().toLocaleLowerCase("zh-CN");
@@ -2201,6 +2309,8 @@ interface SettingFieldSpec {
   key: string;
   label: MessageKey;
   kind: SettingKind;
+  description?: MessageKey;
+  wide?: boolean;
   min?: number;
   max?: number;
   step?: number;
@@ -2208,22 +2318,29 @@ interface SettingFieldSpec {
 }
 
 const runtimeSettingFields: SettingFieldSpec[] = [
+  {
+    key: "response_anchor.prompt",
+    label: "回答锚点",
+    kind: "string",
+    max: 512,
+    wide: true,
+    description: "示例：使用用户当前语言；先给结论，再给必要证据。",
+  },
   { key: "heartbeat.interval", label: "心跳间隔", kind: "int", min: 1, max: 3600 },
-  { key: "round.time_limit", label: "轮次时限", kind: "int", min: 60, max: 86400 },
+  { key: "round.reminder_seconds", label: "反应提醒时间（秒）", kind: "int", min: 60, max: 86400 },
+  { key: "round.warning_seconds", label: "反应警告时间（秒）", kind: "int", min: 60, max: 172800 },
+  { key: "round.auto_relay_seconds", label: "自动中继时间（秒）", kind: "int", min: 60, max: 259200 },
   { key: "rhythm.period", label: "节律周期", kind: "int", min: 1, max: 100000 },
   { key: "standby.idle_threshold_min", label: "待机阈值", kind: "int", min: 1, max: 10080 },
-  { key: "token_usage.warning_ratio", label: "令牌警告阈值", kind: "float", min: 0.01, max: 1, step: 0.01 },
-  { key: "token_usage.critical_ratio", label: "令牌危险阈值", kind: "float", min: 0.01, max: 1, step: 0.01 },
-  { key: "audit.round_snapshot_retention", label: "轮次快照保留量", kind: "int", min: 1, max: 4096 },
+  { key: "audit.round_snapshot_retention", label: "轮次快照保留量", kind: "int", min: 1, max: 64 },
+  { key: "audit.round_snapshot_max_mib", label: "轮次快照总上限（MiB）", kind: "int", min: 1, max: 4096 },
   { key: "audit.state_backup_retention", label: "状态备份保留量", kind: "int", min: 1, max: 4096 },
-  { key: "autonomous_trigger.tacit_pending_threshold", label: "隐性迭代触发阈值", kind: "int", min: 1, max: 1000000 },
-  { key: "autonomous_trigger.connection_pending_threshold", label: "关系迭代触发阈值", kind: "int", min: 1, max: 1000000 },
   { key: "general_tools.file_read_window_chars", label: "文件读取窗口", kind: "int", min: 1, max: 16777216 },
   { key: "general_tools.web_fetch_window_chars", label: "网页读取窗口", kind: "int", min: 1, max: 16777216 },
   { key: "general_tools.web_search_window_results", label: "搜索结果窗口", kind: "int", min: 1, max: 1000 },
 ];
 
-type ContextSettingsFileId = "memory" | "now" | "lately" | "periodic" | "high_freq" | "relation";
+type ContextSettingsFileId = "memory" | "lately" | "periodic" | "high_freq" | "relation";
 
 const contextSettingFields: Record<ContextSettingsFileId, SettingFieldSpec[]> = {
   memory: [
@@ -2241,16 +2358,12 @@ const contextSettingFields: Record<ContextSettingsFileId, SettingFieldSpec[]> = 
     { key: "heat.upgrade_high_rounds", label: "高热升格轮数", kind: "int", min: 1, max: 100000 },
     { key: "heat.locked_value", label: "热度锁定值", kind: "int", min: 0, max: 100 },
   ],
-  now: [
-    { key: "budget_chars", label: "当前缓存预算", kind: "int", min: 1, max: 16777216 },
-    { key: "trim_chars", label: "当前缓存裁剪量", kind: "int", min: 1, max: 16777216 },
-  ],
   lately: [
-    { key: "budget_chars", label: "最近缓存预算", kind: "int", min: 1, max: 16777216 },
-    { key: "trim_chars", label: "最近缓存裁剪量", kind: "int", min: 1, max: 16777216 },
-    { key: "compact_ratio", label: "最近缓存压缩比例", kind: "float", min: 0, max: 1, step: 0.001 },
-    { key: "compact_shard_chars", label: "压缩分片大小", kind: "int", min: 1, max: 16777216 },
-    { key: "compact_shard_ratio", label: "压缩分片比例", kind: "float", min: 0, max: 1, step: 0.001 },
+    { key: "pressure_ratio", label: "压缩触发比例", kind: "float", min: 0.50, max: 0.99, step: 0.01 },
+    { key: "protected_interaction_count", label: "保护最近交互数", kind: "int", min: 0, max: 128 },
+    { key: "semantic_summary_ratio", label: "分片摘要上限比例", kind: "float", min: 0.01, max: 0.50, step: 0.005 },
+    { key: "cycle_target_ratio", label: "单周期目标比例", kind: "float", min: 0.05, max: 0.80, step: 0.01 },
+    { key: "batch_source_chars", label: "单帧处理字符上限", kind: "int", min: 1024, max: 262144 },
   ],
   periodic: [
     { key: "limits.periodic_memory_items_chars", label: "定期记忆条目上限", kind: "int", min: 1, max: 16777216 },
@@ -2283,10 +2396,10 @@ function renderSettingField(field: SettingFieldSpec, value: SettingValue): strin
     const numeric = field.kind === "int" || field.kind === "float";
     const attributes = numeric
       ? `type="number" ${field.min == null ? "" : `min="${field.min}"`} ${field.max == null ? "" : `max="${field.max}"`} step="${field.step ?? (field.kind === "int" ? 1 : "any")}"`
-      : "type=\"text\"";
+      : `type="text" ${field.max == null ? "" : `maxlength="${field.max}"`}`;
     control = `<input ${attributes} ${common} value="${escapeHtml(value)}">`;
   }
-  return `<label class="settings-field"><span><b>${t(field.label)}</b></span>${control}</label>`;
+  return `<label class="settings-field${field.wide ? " settings-source" : ""}"><span><b>${t(field.label)}</b></span>${control}${field.description ? `<small>${t(field.description)}</small>` : ""}</label>`;
 }
 
 function settingsFeedback(): string {
@@ -2307,9 +2420,11 @@ function settingsForm(fileId: SettingsFileId, title: MessageKey, description: Me
 }
 
 function renderRuntimeSettings(values: Record<string, SettingValue>): string {
-  const primary = runtimeSettingFields.slice(0, 6);
-  const advanced = runtimeSettingFields.slice(6);
+  const responseAnchor = runtimeSettingFields[0];
+  const primary = runtimeSettingFields.slice(1, 7);
+  const advanced = runtimeSettingFields.slice(7);
   return `${settingsForm("system", "运行设置", "控制 Seed 串行运行、节律、阈值与宿主保留量。修改在下一次相关读取时生效。", `
+    <div class="settings-grid">${renderSettingField(responseAnchor, values[responseAnchor.key])}</div>
     <div class="settings-grid">${primary.map((field) => renderSettingField(field, values[field.key])).join("")}</div>
     <details class="settings-advanced"><summary>${t("高级运行设置")}</summary><div class="settings-grid">${advanced.map((field) => renderSettingField(field, values[field.key])).join("")}</div></details>
   `)}${settingsFeedback()}`;
@@ -2323,7 +2438,6 @@ function keySourceLabel(source: string): string {
 
 function renderContextSettings(files: SettingsPayload["files"]): string {
   const groups: Array<[ContextSettingsFileId, MessageKey, MessageKey]> = [
-    ["now", "当前缓存", "当前轮的高注意力内容容量。"],
     ["lately", "最近缓存", "近期语料的容量、裁剪与压缩边界。"],
     ["periodic", "定期层", "定期记忆投影的内容上限。"],
     ["high_freq", "高频层", "高频索引与引用窗口的显示边界。"],
@@ -2524,6 +2638,7 @@ function modelEditor(model?: ModelProfile): string {
     <label><span>${t("模型 ID")}</span><input name="model" data-model-context-input value="${escapeHtml(model?.model || "")}" required></label>
     <label><span>${t("识别容量")}</span><div class="model-context-detection"><output data-model-context-detected>${escapeHtml(detected > 0 ? formattedInteger(detected) : modelContextSourceLabel(model))}</output><button type="button" data-resolve-model-context>${t("重新识别")}</button></div></label>
     <label><span>${t("运行上限")}</span><input name="context_window" type="number" min="1" max="${escapeHtml(detected > 0 ? detected : 100000000)}" value="${escapeHtml(model?.context_window || "")}" required></label>
+    <label><span>${t("输出 Token 上限")}</span><input name="output_token_limit" type="number" min="0" max="1000000" value="${escapeHtml(model?.output_token_limit || 0)}" required><small>${t("0 表示自动：OpenAI 使用服务默认值，原生 Anthropic 使用 32000。")}</small></label>
     <input name="detected_context_window" type="hidden" value="${escapeHtml(detected)}">
     <input name="context_window_source" type="hidden" value="${escapeHtml(source)}">
     <p class="model-context-feedback wide" data-model-context-feedback>${escapeHtml(modelContextSourceLabel(model))}</p>
@@ -2552,7 +2667,7 @@ function renderModelCard(model: ModelProfile): string {
   const connection = settingsProjection.data?.model_catalog.connections.find((item) => item.id === model.connection_id);
   return `<article class="catalog-item">
     <header><div><strong>${escapeHtml(model.alias)}</strong><span>${escapeHtml(model.model)} · ${escapeHtml(connection?.alias || t("连接缺失"))}</span></div><div><button type="button" data-edit-catalog="model" data-catalog-id="${escapeHtml(model.id)}">${t("编辑")}</button><button type="button" data-delete-catalog="model" data-catalog-id="${escapeHtml(model.id)}">${t("删除")}</button></div></header>
-    <p>${t("识别容量：{detected}；运行上限：{limit}；默认推理强度：{effort}", { detected: formattedInteger(model.detected_context_window), limit: formattedInteger(model.context_window), effort: model.reasoning.default || t("系统默认") })}</p>
+    <p>${t("识别容量：{detected}；运行上限：{limit}；输出上限：{output}；默认推理强度：{effort}", { detected: formattedInteger(model.detected_context_window), limit: formattedInteger(model.context_window), output: model.output_token_limit > 0 ? formattedInteger(model.output_token_limit) : t("自动"), effort: model.reasoning.default || t("系统默认") })}</p>
     ${state.editingModelId === model.id ? modelEditor(model) : ""}
   </article>`;
 }
@@ -2756,6 +2871,7 @@ function showDetail({
   sourceRef,
   documentId,
   contentMd,
+  actionsHtml = "",
   ledgerJson = false,
 }: {
   sourceType: "RUNTIME" | "RULES" | "DOCS" | "MANUAL" | "MEMORY" | "TOOL";
@@ -2764,13 +2880,14 @@ function showDetail({
   sourceRef: string;
   documentId: string;
   contentMd: string;
+  actionsHtml?: string;
   ledgerJson?: boolean;
 }): void {
   els.manualTitle.textContent = title;
   els.manualSummary.textContent = summary;
   els.manualPageLabel.textContent = detailSourceLabel(sourceType);
   els.manualSources.textContent = sourceRef;
-  els.manualBody.innerHTML = renderMarkdownDocument(documentId, contentMd);
+  els.manualBody.innerHTML = `${actionsHtml}${renderMarkdownDocument(documentId, contentMd)}`;
   els.manualOverlay.hidden = false;
   hydrateMarkdownDocuments(els.manualBody, els.manualBody);
   if (ledgerJson) hydrateLedgerJsonTables(els.manualBody);
@@ -2822,17 +2939,41 @@ export function openMemoryDetail(itemId: string, { retry = false }: { retry?: bo
   if (!retry) rememberDetailFocus();
   const detail = depositionDetail("memory", itemId);
   const sourceRound = detail?.created_round ?? item.created_round;
+  const sourceInstance = detail?.created_instance_id || item.created_instance_id || "meta";
+  const recallRound = detail?.last_recalled_round ?? item.last_recalled_round;
+  const recallInstance = detail?.last_recalled_instance_id || item.last_recalled_instance_id || "meta";
   const created = fullLocalTime(detail?.created_at ?? item.created_at)?.label || t("未记录");
+  const stored = fullLocalTime(detail?.stored_at ?? item.stored_at)?.label || t("未入库");
   const recalled = fullLocalTime(detail?.last_recalled_at ?? item.last_recalled_at)?.label || t("未记录");
-  const sourceRef = `${itemId} · ${sourceRound == null ? t("轮次未记录") : `${t("当前轮")} R${sourceRound}`} · ${t("入库时间")} ${created} · ${t("最近调用时间")} ${recalled} · ${(detail?.linked_containers || item.linked_containers || []).length} ${t("个挂接")}`;
+  const sourceRef = `${itemId} · ${sourceRound == null ? t("轮次未记录") : `${sourceInstance}/R${sourceRound}`} · ${recallRound == null ? t("轮次未记录") : `${recallInstance}/R${recallRound}`} · ${t("创建时间")} ${created} · ${t("入库时间")} ${stored} · ${t("最近调用时间")} ${recalled} · ${(detail?.linked_containers || item.linked_containers || []).length} ${t("个挂接")}`;
   if (detail) {
+    const stmPresent = detail.stm_present === true || detail.memory_layer === "STM";
+    const ltmLayer = detail.ltm_layer || ((detail.memory_layer || "").startsWith("LTM/") ? detail.memory_layer : "");
+    const mounted = Boolean(detail.periodic_mounted);
+    const mountStatus = detail.periodic_mount_status || (mounted ? "mounted" : "unmounted");
+    const mountPending = mountStatus === "awaiting_completion" || mountStatus === "mount_blocked";
+    const mutation = depositionProjection.periodicMutation;
+    const pending = mutation.pending && mutation.memId === itemId;
+    const layerStates = [
+      ...(stmPresent ? [t("STM 衰减中")] : []),
+      ...(ltmLayer ? [ltmLayer] : []),
+    ];
+    const mountState = mounted ? t("定期层已挂载") : mountPending ? t("等待回忆重整或挂载重试") : t("未挂载");
+    const action = mounted || mountPending ? "unmount" : "mount";
+    const actionLabel = mounted ? t("从定期层卸载") : mountPending ? t("取消等待挂载") : t("挂载到定期层");
+    const actionsHtml = `
+      <div class="periodic-memory-control" aria-live="polite">
+        <span class="periodic-memory-status${mounted ? " is-mounted" : mountPending ? " is-pending" : ""}" role="img" aria-label="${escapeHtml(mountState)}" title="${escapeHtml(mountState)}"></span>
+        <button type="button" aria-pressed="${mounted}" data-periodic-memory-action="${action}" data-memory-id="${escapeHtml(itemId)}" ${pending ? "disabled" : ""}>${pending ? t("正在处理") : actionLabel}</button>
+      </div>`;
     showDetail({
       sourceType: "MEMORY",
       title: detail.title || item.title || itemId,
-      summary: `${detail.memory_layer || item.memory_layer || "MEM"} · ${t("公开")} · W${detail.weight ?? item.weight ?? "?"} · ${t("主题")} ${detail.subject || item.subject || t("未记录")}`,
+      summary: `${layerStates.join(" · ") || detail.memory_layer || item.memory_layer || "MEM"} · ${t("公开")} · W${detail.weight ?? item.weight ?? "?"} · ${t("主题")} ${detail.subject || item.subject || t("未记录")}`,
       sourceRef,
       documentId: `memory:${itemId}`,
       contentMd: memoryBodyMarkdown(detail.body),
+      actionsHtml,
     });
   } else {
     const error = depositionProjection.detailErrors[`memory:${itemId}`];

@@ -108,16 +108,6 @@ SCENARIOS: tuple[dict[str, Any], ...] = (
         "contract": "continue 必须带 handoff/relay receipt，不伪装为完成。",
     },
     {
-        "id": "cache_compaction_user_task",
-        "title": "缓存压缩内务不吞掉后续交互",
-        "evidence_level": "guide_matrix",
-        "nodeids": [
-            "UPSP/OS/tests/test_round_context_acceptance.py::"
-            "test_spec470_guide_system_matrix_fake_acceptance",
-        ],
-        "contract": "cache compaction 的目标结算和后续 interaction agenda 均保持可达。",
-    },
-    {
         "id": "evidence_mismatch",
         "title": "证据不匹配返回可直接使用的证据映射",
         "evidence_level": "processor_contract",

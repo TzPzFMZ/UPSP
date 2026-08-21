@@ -126,17 +126,18 @@ class TestHeartbeat:
         flags = sm.get_flags()
         assert flags["rhythm_due"] is True
 
-    def test_tick_sets_token_warning(self, tmp_path, monkeypatch):
+    def test_tick_does_not_duplicate_cache_pressure_as_token_warning(
+            self, tmp_path, monkeypatch):
         from engines.heartbeat import HeartbeatManager
         from data.state_store import StateStore
         monkeypatch.setattr(HeartbeatManager, "_load_interval", lambda s: 2)
         sm = StateStore(str(tmp_path / "state.json"))
         sm.init_if_missing()
-        sm.set("base.token_usage.usage_ratio", 0.75)
+        sm.set("base.token_usage.usage_ratio", 0.95)
         hb = HeartbeatManager(sm, interval=0.1)
         hb._do_tick()
         flags = sm.get_flags()
-        assert flags["token_usage_warning"] is True
+        assert flags["token_usage_warning"] is False
 
     def test_tick_clears_stale_api_degraded_when_connectivity_recovers(
             self, tmp_path, monkeypatch):
@@ -160,13 +161,12 @@ class TestHeartbeat:
             interval=0.1,
             memory_heat=MockHeat(),
             connectivity_store=MockConnectivity(),
-            evolution_store=MockEvolution(),
         )
 
         assert hb._do_tick() is False
         assert sm.get("base.heartbeat_flags.api_degraded") is False
 
-    def test_tick_clears_stale_token_warning_when_usage_is_below_threshold(
+    def test_tick_clears_retired_token_warning_even_when_usage_is_high(
             self, tmp_path, monkeypatch):
         from engines.heartbeat import HeartbeatManager
         from data.state_store import StateStore
@@ -177,7 +177,7 @@ class TestHeartbeat:
             "base.heartbeat_flags.token_usage_warning": True,
             "base.token_usage.current_tokens": 100,
             "base.token_usage.window_size": 1000,
-            "base.token_usage.usage_ratio": 0.1,
+            "base.token_usage.usage_ratio": 0.95,
         })
         hb = HeartbeatManager(sm, interval=0.1)
         monkeypatch.setattr(hb, "_check_api_degraded", lambda: False)
@@ -317,7 +317,6 @@ class TestHeartbeat:
             interval=0.1,
             memory_heat=MockHeat(),
             connectivity_store=MockConnectivity(),
-            evolution_store=MockEvolution(),
         )
 
         hb.enqueue_message("我是 Codex。")
@@ -368,7 +367,6 @@ class TestHeartbeat:
             interval=0.1,
             memory_heat=MockHeat(),
             connectivity_store=MockConnectivity(),
-            evolution_store=MockEvolution(),
         )
 
         assert hb._do_tick() is False
@@ -399,7 +397,6 @@ class TestHeartbeat:
             interval=0.1,
             memory_heat=MockHeat(),
             connectivity_store=MockConnectivity(),
-            evolution_store=MockEvolution(),
         )
         hb._do_tick()
         flags = sm.get_flags()
@@ -418,27 +415,37 @@ class TestHeartbeat:
         flags = sm.get_flags()
         assert flags["user_message_waiting"] is True
 
-    def test_tick_sets_evolution_pending_when_material_threshold_reached(self, tmp_path, monkeypatch):
+    def test_tick_does_not_reactivate_retired_evolution_material(self, tmp_path, monkeypatch):
         from engines.heartbeat import HeartbeatManager
         from data.state_store import StateStore
-        from data.evolution_store import EvolutionStore
 
         sm = StateStore(str(tmp_path / "state.json"))
         sm.init_if_missing()
-        evolution = EvolutionStore(str(tmp_path / "Iteration"))
         pending = tmp_path / "Iteration" / "Raw" / "Tacit" / "pending.jsonl"
         pending.parent.mkdir(parents=True)
         pending.write_text('{"round":1,"kept":["MEM-A"]}\n', encoding="utf-8")
-        monkeypatch.setattr(HeartbeatManager, "_load_evolution_thresholds", lambda s: {
-            "tacit_pending_threshold": 1,
-            "connection_pending_threshold": 99,
-        })
-
-        hb = HeartbeatManager(sm, interval=0.1, evolution_store=evolution)
+        hb = HeartbeatManager(sm, interval=0.1)
         hb._do_tick()
 
         flags = sm.get_flags()
-        assert flags["evolution_pending"] is True
+        assert "evolution_pending" not in flags
+        assert pending.read_text(encoding="utf-8")
+
+    def test_tick_restores_memory_compression_projection_after_restart(
+            self, tmp_path, monkeypatch):
+        from data.memory_compression_store import MemoryCompressionManager
+        from data.state_store import StateStore
+        from engines.heartbeat import HeartbeatManager
+
+        monkeypatch.setattr(
+            MemoryCompressionManager, "has_active_cycle", lambda _self: True)
+        sm = StateStore(str(tmp_path / "state.json"))
+        sm.init_if_missing()
+        hb = HeartbeatManager(sm, interval=0.1)
+
+        hb._do_tick()
+
+        assert sm.get_flags()["memory_compression_due"] is True
 
     def test_tick_ignores_legacy_next_round_relay_hint(self, tmp_path, monkeypatch):
         from engines.heartbeat import HeartbeatManager

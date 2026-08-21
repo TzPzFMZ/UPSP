@@ -7,6 +7,7 @@ RHYTHM_GUIDE_KINDS = {
     "emergency_handling_guide",
     "context_pressure_rhythm_guide",
     "cache_compaction_rhythm_guide",
+    "memory_compression_rhythm_guide",
 }
 RETIRED_TASK_BOOTSTRAP_OPTION_IDS = {
     "need_more" "_sources",
@@ -23,6 +24,7 @@ def _guide_kind_label(kind):
         "emergency_handling_guide": "紧急处理指南",
         "context_pressure_rhythm_guide": "上下文压力指南",
         "cache_compaction_rhythm_guide": "最近缓存压缩指南",
+        "memory_compression_rhythm_guide": "记忆语义压缩指南",
     }.get(str(kind or "").strip(), "指南清单")
 
 

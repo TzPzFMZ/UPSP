@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from copy import deepcopy
 from collections import deque
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +29,10 @@ class ConfigStoreStub(ConfigStore):
     @staticmethod
     def get_execution_permission_level():
         return "unlimited"
+
+    @staticmethod
+    def get_round_context_window_tokens():
+        return 1_000_000
 
     def load(self, name):
         if name == "api":
@@ -71,6 +76,39 @@ class ScriptedExecutor:
 
 
 class RuntimeTestMixin:
+    @staticmethod
+    def _memory_recall_stub(runtime):
+        class DummyMemoryRecall:
+            @property
+            def memory_store(self):
+                return runtime.memory_store
+
+            @property
+            def heat(self):
+                return runtime.heat
+
+            def recall(
+                    self, mem_id, *, round_num=None, boosted_ids=None,
+                    reconsolidation_tracker=None, periodic_requested=False):
+                if isinstance(boosted_ids, set) and mem_id in boosted_ids:
+                    return {
+                        "source_memory_layer": "STM",
+                        "stm_present": True,
+                        "heat_boost_applied": False,
+                        "heat_boost_deduplicated": True,
+                    }
+                runtime.heat.recall_boost(mem_id, round_num=round_num)
+                if isinstance(boosted_ids, set):
+                    boosted_ids.add(mem_id)
+                return {
+                    "source_memory_layer": "STM",
+                    "stm_present": True,
+                    "heat_boost_applied": True,
+                    "heat_boost_deduplicated": False,
+                }
+
+        return DummyMemoryRecall()
+
     def _make_runtime(self, tmp_path):
         from engines.runtime import Runtime
         from data.state_store import StateStore
@@ -117,6 +155,9 @@ class RuntimeTestMixin:
             def set_entry(self, mem_id, entry):
                 self.entries[mem_id] = dict(entry)
 
+            def get_entry(self, mem_id):
+                return deepcopy(self.entries.get(mem_id))
+
             def recall_boost(self, mem_id, round_num=None):
                 self.boosted.append((mem_id, round_num))
 
@@ -160,6 +201,7 @@ class RuntimeTestMixin:
             heat=InMemoryHeat(),
             alert_store=InMemoryAlerts(),
             relation_store=NoopRelationStore(),
+            config_store=ConfigStoreStub(),
         )
         # Direct reaction-loop tests model the already-authorized full-tool path.
         runtime.permission_chain.apply("unlimited")
@@ -246,6 +288,8 @@ class RuntimeTestMixin:
                 self.entries = []
                 self.meta = {}
                 self.index_rows = []
+                self.ltm = {}
+                self.stm_bodies = {}
 
             def write_entry(self, mem_id, title, summary, **kwargs):
                 self.entries.append((mem_id, title, summary, kwargs))
@@ -255,6 +299,68 @@ class RuntimeTestMixin:
 
             def append_index(self, mem_id, entry_type, weight, title, **kwargs):
                 self.index_rows.append((mem_id, entry_type, weight, title, kwargs))
+
+            def render_entry(self, mem_id, title, summary="", **kwargs):
+                self.entries.append((mem_id, title, summary, kwargs))
+                return f"## {mem_id} {title}\n**标题**：{title}\n**正文**：{summary}"
+
+            def snapshot_stm_files(self):
+                return deepcopy((self.stm_bodies, self.meta))
+
+            def snapshot_ltm_files(self):
+                return deepcopy(self.ltm)
+
+            def restore_stm_files(self, snapshot):
+                self.stm_bodies, self.meta = deepcopy(snapshot)
+
+            def restore_ltm_files(self, snapshot):
+                self.ltm = deepcopy(snapshot)
+
+            def store_ltm_entry(self, tier, mem_id, body, meta):
+                self.ltm[mem_id] = {
+                    "tier": tier, "body": body, "meta": deepcopy(meta),
+                }
+
+            def replace_stm_body(self, mem_id, body):
+                self.stm_bodies[mem_id] = body
+
+            def replace_stm_meta(self, mem_id, meta):
+                self.meta[mem_id] = deepcopy(meta)
+
+            def rebuild_stm_index(self):
+                return None
+
+            def rebuild_stm_keywords(self):
+                return None
+
+            def ltm_entry_state(self, mem_id, *, include_backup=True):
+                return deepcopy(self.ltm.get(mem_id))
+
+            def stm_entry_state(self, mem_id):
+                meta = deepcopy(self.meta.get(mem_id))
+                return {
+                    "body": self.stm_bodies.get(mem_id),
+                    "meta": meta,
+                    "heat": runtime.heat.get_entry(mem_id) if meta else None,
+                }
+
+            def read_meta_by_id(self, mem_id):
+                return deepcopy(self.meta[mem_id])
+
+            def get_meta(self, mem_id):
+                return deepcopy(self.meta[mem_id])
+
+            def read_body_by_id(self, mem_id, max_chars=2048):
+                body = self.stm_bodies[mem_id]
+                return {
+                    "body": body[:max_chars],
+                    "meta": deepcopy(self.meta[mem_id]),
+                    "truncated": len(body) > max_chars,
+                    "memory_layer": "STM",
+                }
+
+            def read_entry(self, mem_id):
+                return self.stm_bodies[mem_id]
 
             def update_linked_containers(
                     self, mem_id, operation, refs, current_overview=None):
@@ -297,4 +403,5 @@ class RuntimeTestMixin:
         runtime.memory_store = memory_store
         runtime.memory_index = memory_index
         runtime.container_store = container_store
+        runtime.memory_recall = self._memory_recall_stub(runtime)
         return memory_store, memory_index, container_store

@@ -7,6 +7,7 @@ import { build } from "esbuild";
 const guiRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const assetsRoot = resolve(guiRoot, "assets", "markdown");
 const common = {
+  absWorkingDir: guiRoot,
   bundle: true,
   write: false,
   platform: "browser",
@@ -16,6 +17,7 @@ const common = {
   minify: false,
   sourcemap: false,
   logLevel: "silent",
+  preserveSymlinks: true,
 };
 
 const results = await Promise.all([

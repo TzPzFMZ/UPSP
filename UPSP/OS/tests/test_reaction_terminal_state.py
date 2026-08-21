@@ -52,63 +52,16 @@ def test_spec564_runtime_auto_continue_sets_relay_flag():
     assert guard["set_flags"] == ["continue_requested"]
 
 
-def test_spec564_natural_final_reply_candidate_blocks_write_pending():
+def test_spec758_natural_reply_preserves_runtime_mount_blocked_closeout():
     from engines.reaction_terminal_state import validate_natural_final_reply_candidate
+    from logic.reaction_obligations import ReactionObligationTracker
 
-    class WritePendingTracker:
-        def finalize_blocker(self):
-            return {
-                "blocked": True,
-                "reason": "write_pending_unresolved",
-                "pendings": [
-                    {
-                        "pending_id": "WP-1",
-                        "settlement_stage": "settlement_required",
-                    }
-                ],
-            }
-
-    result = validate_natural_final_reply_candidate(
-        closeout_form_validator=lambda form: {
-            "blocked": False,
-            "settlement_ledger": {"validated": True},
-        },
-        write_pending_tracker=WritePendingTracker(),
-        current_state={},
-        round_type="interactive",
-        runtime_guide_completed_flags=set(),
-        current_runtime_guide_pending_flags=lambda state, completed_flags=None: ({}, []),
-        task_closeout_acceptance=lambda form: {"allowed": True},
+    obligations = ReactionObligationTracker()
+    obligations.add_periodic_mount_blocked(
+        "MEM-1234ABCD", "periodic_memory_budget_exceeded"
     )
-
-    assert result["allowed"] is False
-    assert result["status"] == "write_pending_blocked"
-    assert result["source"] == "natural_final_reply_candidate"
-    assert "失败写入结算门禁" in result["feedback"]
-    assert "WP-1" in result["feedback"]
-
-
-def test_spec606_natural_blocked_reply_records_deferred_subject_resolution():
-    from engines.reaction_terminal_state import validate_natural_final_reply_candidate
-    from logic.write_pending_settlement import WritePendingTracker
-
-    tracker = WritePendingTracker(round_num=606, round_type="interactive")
-    tracker.observe_receipts([{
-        "tool_id": "memory_write",
-        "status": "rejected",
-        "reason": "subject_not_confirmed",
-        "call_id": "call_spec606_terminal",
-        "title": "对象未确认",
-        "subject": "Other",
-        "confirmed_subject": "TzPz",
-    }])
-
     result = validate_natural_final_reply_candidate(
-        closeout_form_validator=lambda form: {
-            "blocked": False,
-            "settlement_ledger": {"validated": True},
-        },
-        write_pending_tracker=tracker,
+        closeout_form_validator=obligations.validate_closeout_form,
         current_state={},
         round_type="interactive",
         runtime_guide_completed_flags=set(),
@@ -119,25 +72,18 @@ def test_spec606_natural_blocked_reply_records_deferred_subject_resolution():
     )
 
     assert result["allowed"] is True
-    ledger = result["settlement_ledger"]
-    assert ledger["write_status"] == "subject_resolution_waiting_for_user"
-    assert ledger["write_applied"] is False
-    assert ledger["deferred_write_reasons"] == ["subject_not_confirmed"]
+    assert result["closeout_form"]["closeout_decision"] == "blocked"
+    assert result["settlement_ledger"]["closeout_decision"] == "blocked"
 
 
 def test_spec571_missing_access_evidence_allows_task_bootstrap_natural_reply():
     from engines.reaction_terminal_state import validate_natural_final_reply_candidate
-
-    class WritePendingTracker:
-        def finalize_blocker(self):
-            return {"blocked": False}
 
     result = validate_natural_final_reply_candidate(
         closeout_form_validator=lambda form: {
             "blocked": False,
             "settlement_ledger": {"validated": True},
         },
-        write_pending_tracker=WritePendingTracker(),
         current_state={},
         round_type="interactive",
         runtime_guide_completed_flags=set(),
@@ -170,16 +116,11 @@ def test_spec571_missing_access_evidence_allows_task_bootstrap_natural_reply():
 def test_spec571_task_bootstrap_still_blocks_without_access_failure_evidence():
     from engines.reaction_terminal_state import validate_natural_final_reply_candidate
 
-    class WritePendingTracker:
-        def finalize_blocker(self):
-            return {"blocked": False}
-
     result = validate_natural_final_reply_candidate(
         closeout_form_validator=lambda form: {
             "blocked": False,
             "settlement_ledger": {"validated": True},
         },
-        write_pending_tracker=WritePendingTracker(),
         current_state={},
         round_type="interactive",
         runtime_guide_completed_flags=set(),
@@ -207,16 +148,11 @@ def test_spec571_task_bootstrap_still_blocks_without_access_failure_evidence():
 def test_spec613_natural_no_go_closes_evidenced_terminal_blocked_task():
     from engines.reaction_terminal_state import validate_natural_final_reply_candidate
 
-    class WritePendingTracker:
-        def finalize_blocker(self):
-            return {"blocked": False}
-
     result = validate_natural_final_reply_candidate(
         closeout_form_validator=lambda form: {
             "blocked": False,
             "settlement_ledger": {"validated": True},
         },
-        write_pending_tracker=WritePendingTracker(),
         current_state={},
         round_type="interactive",
         runtime_guide_completed_flags=set(),

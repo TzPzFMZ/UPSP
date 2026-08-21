@@ -82,6 +82,8 @@ def test_spec705_shell_keeps_native_and_runtime_boundaries():
     assert "AssemblyInformationalVersionAttribute" in backend
     assert "WaitForIdleAsync" in backend
     assert "StopOutcomeSafe" in backend
+    assert 'Boolean(root, "restart_requested")' in backend
+    assert "Task RestartAsync" in backend
     assert "Task<bool> RequestStopAsync" in backend
     assert (
         'Text(receipt.RootElement, "reason") != '
@@ -98,6 +100,8 @@ def test_spec705_shell_keeps_native_and_runtime_boundaries():
     assert '_statusItem.Text = "当前状态：后端繁忙，正在重试";' in form
     assert "_backendStatusFailures" not in form
     assert "!_backendFailureShown && _backend.HasExited" in form
+    assert "snapshot.RestartRequested" in form
+    assert "await _backend.RestartAsync()" in form
     assert "if (Visible)" in form
     assert "Hide();" in form
     assert "Local\\UPSP.Desktop.SingleInstance.v1" in program
@@ -161,6 +165,10 @@ def test_spec705_build_payload_has_an_explicit_production_allowlist():
     assert "payload_root_file_violation" in build
     assert "Join-Path $payloadRoot 'metadata'" in build
     assert "UPSP\\product.json" in build
+    assert "$product.build_number -is [int]" in build
+    assert "$product.build_number -is [long]" in build
+    assert "$stableProductVersion" in build
+    assert "$alphaProductVersion" in build
     assert "THIRD_PARTY_NOTICES.md" in build
     assert "nodeModulesQueue" in build
     assert "moduleRoots" in build
@@ -185,10 +193,10 @@ def test_spec707_product_manifest_is_the_release_version_truth():
     assert product == {
         "schema_version": "upsp_product_manifest.v1",
         "name": "UPSP",
-        "version": "0.1.0-alpha.8",
-        "windows_file_version": "0.1.0.8",
-        "channel": "alpha",
-        "build_number": 8,
+        "version": "0.1.1",
+        "windows_file_version": "0.1.1.0",
+        "channel": "stable",
+        "build_number": 1,
         "author": {
             "zh-CN": "由 TzPzFMZ 发起、设计并与 AI 协作开发",
             "en-US": (
@@ -202,7 +210,7 @@ def test_spec707_product_manifest_is_the_release_version_truth():
         "copyright": "Copyright (c) 2026 TzPzFMZ",
     }
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "0.1.0a5"' in pyproject
+    assert 'version = "0.1.1"' in pyproject
     manifest = (
         DESKTOP_ROOT / "UPSP.Desktop" / "app.manifest"
     ).read_text(encoding="utf-8")
@@ -210,3 +218,37 @@ def test_spec707_product_manifest_is_the_release_version_truth():
     assert "0.8.5" not in (
         DESKTOP_ROOT / "UPSP.Desktop" / "UPSP.Desktop.csproj"
     ).read_text(encoding="utf-8")
+
+
+def test_spec769_public_release_identity_and_memory_entry_wording():
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    readme_en = (REPO_ROOT / "README.en.md").read_text(encoding="utf-8")
+    release = (
+        REPO_ROOT / "docs" / "public" / "releases" / "0.1.1.md"
+    ).read_text(encoding="utf-8")
+    installer = (
+        DESKTOP_ROOT / "installer" / "UPSP.nsi"
+    ).read_text(encoding="utf-8")
+
+    assert "Windows Stable `0.1.1`" in readme
+    assert "Windows Stable `0.1.1`" in readme_en
+    assert "UPSP-Setup-0.1.1-win-x64.exe" in readme
+    assert "UPSP-Setup-0.1.1-win-x64.exe" in readme_en
+    assert "docs/public/releases/0.1.1.md" in readme
+    assert "docs/public/releases/0.1.1.md" in readme_en
+    assert "# UPSP 0.1.1" in release
+    assert "记忆条目" in release
+    assert "发布草案" not in release
+    assert "[待回填]" not in release
+    assert "公共记忆" not in release
+    assert "公共 LTM" not in release
+    assert "Windows Alpha Installer" not in installer
+
+
+def test_spec769_gui_build_ignores_package_manager_link_layout():
+    build = (
+        REPO_ROOT / "UPSP" / "gui" / "scripts" / "build.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert 'absWorkingDir: guiRoot' in build
+    assert 'preserveSymlinks: true' in build

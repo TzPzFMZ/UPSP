@@ -82,7 +82,7 @@ def test_runtime_file_read_context_reads_latest_provider_usage():
     }
 
 
-def test_invalid_provider_usage_clears_stale_budget_to_legacy_floor():
+def test_invalid_provider_usage_preserves_last_real_budget():
     from types import SimpleNamespace
 
     from engines.runtime_services import EngineComponent
@@ -126,11 +126,11 @@ def test_invalid_provider_usage_clears_stale_budget_to_legacy_floor():
     context = runtime_file_read_context(store)
     plan = plan_file_read_window(16384, context)
 
-    assert context == {"current_tokens": 0, "context_window": 100000}
-    assert store.get("base.token_usage.last_round_input") == 0
-    assert store.get("base.token_usage.last_round_output") == 0
-    assert plan["window_chars"] == 4096
-    assert plan["window_budget_status"] == "fallback_missing_or_invalid_budget"
+    assert context == {"current_tokens": 1000, "context_window": 100000}
+    assert store.get("base.token_usage.last_round_input") == 1000
+    assert store.get("base.token_usage.last_round_output") == 100
+    assert plan["window_chars"] > 4096
+    assert plan["window_budget_status"] == "adaptive_max"
 
 
 def test_file_read_handler_applies_private_runtime_budget(tmp_path, monkeypatch):
@@ -320,7 +320,7 @@ def test_all_read_tool_bodies_are_removed_before_cache_storage():
         ),
         (
             {
-                "tool_id": "file_search",
+                "tool_id": "file_glob",
                 "status": "ok",
                 "matches": [{"name": "a.md", "path": "a.md", "is_file": True}],
             },
@@ -363,7 +363,7 @@ def test_all_read_tool_bodies_are_removed_before_cache_storage():
         assert stored["material_body_chars"] == len(expected_material)
 
 
-def test_missing_usage_stops_at_now_soft_watermark_without_deleting_material():
+def test_missing_usage_keeps_one_4k_file_read_then_stops_the_batch():
     from engines.general_tool_dispatcher import GeneralToolDispatcher
 
     dispatcher = GeneralToolDispatcher(execute_fn=lambda call, **kwargs: {
@@ -375,20 +375,22 @@ def test_missing_usage_stops_at_now_soft_watermark_without_deleting_material():
         "returned_chars": 4096,
         "window_legacy_floor_chars": 4096,
     })
-    result = dispatcher.handle_requests(
-        [{"tool_id": "file_read", "path": "next.md"}],
+    results = dispatcher.handle_requests(
+        [
+            {"tool_id": "file_read", "path": "first.md"},
+            {"tool_id": "file_read", "path": "next.md"},
+        ],
         [],
         runtime_context={
             "current_tokens": 0,
             "context_window": 0,
-            "round_material_chars": 63000,
-            "now_budget_chars": 65536,
         },
-    )[0]
+    )
 
-    assert result["status"] == "rejected"
-    assert result["reason"] == "material_budget_unknown"
-    assert result["window_budget_status"] == "material_budget_unknown"
+    assert results[0]["status"] == "ok"
+    assert results[1]["status"] == "rejected"
+    assert results[1]["reason"] == "file_read_batch_budget_exhausted"
+    assert results[1]["window_budget_status"] == "batch_floor_exhausted"
 
 
 def test_provider_preflight_blocks_only_newly_retained_material():

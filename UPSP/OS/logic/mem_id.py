@@ -12,6 +12,7 @@ import random
 from datetime import datetime
 
 from constants import local_now
+from paths import ACTIVE_INSTANCE_ID
 
 
 def generate_mem_id():
@@ -32,7 +33,7 @@ def validate_mem_id(mem_id):
 
 # 元数据模板生成 —— 保留到 logic/ 因为它是纯计算（不需要读文件）
 def make_meta_template(mem_id, title="", weight=2, subject=None, model=""):
-    """创建 21 字段元数据 dict"""
+    """创建 24 字段元数据 dict"""
     now = local_now().isoformat()
     return {
         "id": mem_id,
@@ -41,9 +42,12 @@ def make_meta_template(mem_id, title="", weight=2, subject=None, model=""):
         "title": title[:16] if title else mem_id,
         "dream": False,
         "created_at": now,
+        "stored_at": "",
         "last_recalled_at": now,
         "created_round": None,
+        "created_instance_id": ACTIVE_INSTANCE_ID,
         "last_recalled_round": None,
+        "last_recalled_instance_id": ACTIVE_INSTANCE_ID,
         "source": "",
         "model": model,
         "subject": subject,

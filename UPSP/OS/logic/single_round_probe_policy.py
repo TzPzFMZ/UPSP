@@ -20,7 +20,6 @@ _REACTION_EXECUTION_KEYS = (
     "relation_card_declarations",
     "memory_write_declarations",
     "memory_annotation_declarations",
-    "memory_recall_completion_requests",
     "memory_link_update_declarations",
     "memory_container_create_declarations",
     "memory_container_write_declarations",
@@ -30,7 +29,6 @@ _REACTION_EXECUTION_KEYS = (
     "alert_mode_settle_declarations",
     "fault_record_declarations",
     "container_focus_declarations",
-    "pending_cancel_requests",
 )
 
 _PROBE_ACTIVE_FLAGS = {"user_message_waiting"}

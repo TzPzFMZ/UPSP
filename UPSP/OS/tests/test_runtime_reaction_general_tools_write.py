@@ -9,6 +9,14 @@ from runtime_test_helpers import RuntimeTestMixin, ScriptedExecutor
 
 
 class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
+    @staticmethod
+    def _enable_legacy_shell_for_historical_pipeline_test(monkeypatch):
+        from logic.protocol_tools import TOOL_DEFINITIONS
+
+        monkeypatch.setitem(
+            TOOL_DEFINITIONS["shell_command"], "status", "enabled"
+        )
+
     def test_spec428_duplicate_general_tool_fact_has_actionable_short_fields(self):
         from logic.general_tools import format_general_tool_fact
 
@@ -54,6 +62,16 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
 
             def append_to_cache(self, round_num, role, text, *, kind, **kwargs):
                 self.entries.append((round_num, role, text, kind, kwargs))
+
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                    "boundary": kwargs["boundary"],
+                }
+
+            def load_cache_compaction_debt(self):
+                return {}
 
         def fake_execute(request):
             return {
@@ -113,6 +131,8 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             self, tmp_path, monkeypatch):
         from engines.general_tool_dispatcher import GeneralToolDispatcher
 
+        self._enable_legacy_shell_for_historical_pipeline_test(monkeypatch)
+
         rt = self._make_runtime(tmp_path)
         assembler = rt.assembler
         monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
@@ -127,6 +147,16 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
 
             def append_to_cache(self, round_num, role, text, *, kind, **kwargs):
                 self.entries.append((round_num, role, text, kind, kwargs))
+
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                    "boundary": kwargs["boundary"],
+                }
+
+            def load_cache_compaction_debt(self):
+                return {}
 
         def fake_execute(request):
             return {
@@ -157,7 +187,6 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                         "command": "python -V",
                         "purpose": "check version",
                         "timeout_ms": 3000,
-                        "risk_level": "low",
                     },
                     call_id="call_shell",
                     tool_class="focus_tool",
@@ -188,6 +217,8 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             self, tmp_path, monkeypatch):
         from engines.general_tool_dispatcher import GeneralToolDispatcher
 
+        self._enable_legacy_shell_for_historical_pipeline_test(monkeypatch)
+
         rt = self._make_runtime(tmp_path)
         assembler = rt.assembler
         monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
@@ -214,7 +245,6 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                                 "command": "dir /b sandbox\\round_25",
                                 "purpose": "inspect files",
                                 "timeout_ms": 3000,
-                                "risk_level": "low",
                             },
                             call_id=f"call_shell_repeat_{len(self.calls)}",
                             tool_class="focus_tool",
@@ -382,6 +412,8 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             self, tmp_path, monkeypatch):
         from engines.general_tool_dispatcher import GeneralToolDispatcher
 
+        self._enable_legacy_shell_for_historical_pipeline_test(monkeypatch)
+
         rt = self._make_runtime(tmp_path)
         assembler = rt.assembler
         monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
@@ -407,7 +439,6 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                             "command": "dir /b sandbox\\round_25",
                             "purpose": "inspect files",
                             "timeout_ms": 3000,
-                            "risk_level": "low",
                         },
                         call_id="call_shell_first",
                         tool_class="focus_tool",
@@ -423,7 +454,6 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                                 "command": "dir /b sandbox\\round_25",
                                 "purpose": "inspect files",
                                 "timeout_ms": 3000,
-                                "risk_level": "low",
                             },
                             call_id=f"call_shell_dup_{index}",
                             tool_class="focus_tool",
@@ -483,6 +513,8 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             self, tmp_path, monkeypatch):
         from engines.general_tool_dispatcher import GeneralToolDispatcher
 
+        self._enable_legacy_shell_for_historical_pipeline_test(monkeypatch)
+
         rt = self._make_runtime(tmp_path)
         assembler = rt.assembler
         monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
@@ -499,7 +531,6 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                     "command": command,
                     "purpose": "inspect files",
                     "timeout_ms": 3000,
-                    "risk_level": "low",
                 },
                 call_id=call_id,
                 tool_class="focus_tool",
@@ -575,6 +606,8 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             self, tmp_path, monkeypatch):
         from engines.general_tool_dispatcher import GeneralToolDispatcher
 
+        self._enable_legacy_shell_for_historical_pipeline_test(monkeypatch)
+
         rt = self._make_runtime(tmp_path)
         assembler = rt.assembler
         monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
@@ -591,7 +624,6 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                     "command": command,
                     "purpose": "inspect files",
                     "timeout_ms": 3000,
-                    "risk_level": "low",
                 },
                 call_id=call_id,
                 tool_class="focus_tool",
@@ -669,6 +701,8 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             self, tmp_path, monkeypatch):
         from engines.general_tool_dispatcher import GeneralToolDispatcher
 
+        self._enable_legacy_shell_for_historical_pipeline_test(monkeypatch)
+
         rt = self._make_runtime(tmp_path)
         assembler = rt.assembler
         monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
@@ -696,7 +730,6 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                                 "command": "python missing_script.py",
                                 "purpose": "run missing script",
                                 "timeout_ms": 3000,
-                                "risk_level": "low",
                             },
                             call_id=f"call_shell_fail_{reaction_count}",
                             tool_class="focus_tool",
@@ -765,6 +798,16 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
 
             def append_to_cache(self, round_num, role, text, *, kind, **kwargs):
                 self.entries.append((round_num, role, text, kind, kwargs))
+
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                    "boundary": kwargs["boundary"],
+                }
+
+            def load_cache_compaction_debt(self):
+                return {}
 
         def fake_execute(request):
             return {

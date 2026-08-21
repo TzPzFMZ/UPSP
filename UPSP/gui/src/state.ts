@@ -7,6 +7,7 @@ import type {
   PageId,
   PageTab,
   PersonaProjection,
+  PersonaCatalogProjection,
   PollingState,
   ProtocolProjection,
   RuntimeProjection,
@@ -123,6 +124,12 @@ export const depositionProjection: DepositionProjection = {
     feedback: "",
     receipt: null,
   },
+  periodicMutation: {
+    pending: false,
+    memId: "",
+    feedback: "",
+    receipt: null,
+  },
   loading: true,
   error: "",
   renderKey: "",
@@ -182,6 +189,7 @@ export const bootstrapProjection: BootstrapProjection = {
   preview: false,
   testToken: "",
   skipModelSetup: false,
+  manageNewPersona: false,
   draft: {
     name_zh: "",
     name_en: "",
@@ -194,9 +202,17 @@ export const bootstrapProjection: BootstrapProjection = {
   },
 };
 
+export const personaCatalogProjection: PersonaCatalogProjection = {
+  data: null,
+  loading: true,
+  pending: false,
+  error: "",
+};
+
 export const polling: PollingState = {
   about: null,
   bootstrap: null,
+  personas: null,
   runtime: null,
   runtimeForceQueued: false,
   task: null,
@@ -245,10 +261,17 @@ export const els: Elements = {
   bootstrapRoot: requiredElement<HTMLElement>("#bootstrapRoot"),
   app: requiredElement<HTMLElement>("#appShell"),
   leftRail: requiredElement<HTMLElement>(".left-rail"),
-  personaNameSelector: requiredElement<HTMLDetailsElement>("#personaNameSelector"),
-  personaNameSummary: requiredElement<HTMLElement>("#personaNameSummary"),
-  personaNameValue: requiredElement<HTMLElement>("#personaNameValue"),
+  personaTabs: requiredElement<HTMLElement>("#personaTabs"),
+  personaMoreMenu: requiredElement<HTMLDetailsElement>("#personaMoreMenu"),
+  personaMoreToggle: requiredElement<HTMLElement>("#personaMoreToggle"),
   personaNameOptions: requiredElement<HTMLElement>("#personaNameOptions"),
+  createPersonaButton: requiredElement<HTMLButtonElement>("#createPersonaButton"),
+  instanceTabs: requiredElement<HTMLElement>("#instanceTabs"),
+  instanceMoreMenu: requiredElement<HTMLDetailsElement>("#instanceMoreMenu"),
+  instanceMoreToggle: requiredElement<HTMLElement>("#instanceMoreToggle"),
+  instanceOptions: requiredElement<HTMLElement>("#instanceOptions"),
+  createInstanceButton: requiredElement<HTMLButtonElement>("#createInstanceButton"),
+  identityFeedback: requiredElement<HTMLElement>("#identityFeedback"),
   statusReadouts: requiredElement<HTMLElement>("#statusReadouts"),
   productVersionName: requiredElement<HTMLElement>("#productVersionName"),
   productVersionNumber: requiredElement<HTMLElement>("#productVersionNumber"),

@@ -31,8 +31,8 @@ class TestMemoryEntryToolBoundaries:
         assert protocol_tools.tool_metadata_for("internal_handoff_route") == {}
         assert protocol_tools.tool_metadata_for("heartbeat_restart")["tool_family"] == "substrate_tool"
         assert protocol_tools.tool_class_for("heartbeat_restart") == "sync_tool"
-        assert protocol_tools.tool_metadata_for("cache_compact")["tool_family"] == "substrate_tool"
-        assert protocol_tools.tool_class_for("cache_compact") == "sync_tool"
+        assert protocol_tools.tool_metadata_for("cache_compact") == {}
+        assert protocol_tools.tool_class_for("cache_compact") == ""
         assert protocol_tools.tool_metadata_for("connection_material_settle")["tool_family"] == "substrate_tool"
         assert protocol_tools.tool_class_for("connection_material_settle") == "sync_tool"
         assert protocol_tools.tool_metadata_for("tacit_material_settle")["tool_family"] == "substrate_tool"
@@ -446,7 +446,8 @@ class TestMemoryEntryToolBoundaries:
         }
         assert not hasattr(protocol_tools, "load_protocol_tool_guide")
         assert "fault_record" not in exported
-        assert "| fault_record | sync_tool | fault" in tools_doc
+        assert "| fault_record | sync_tool | fault" not in tools_doc
+        assert "退役的 `chronicle_write`、`alert_mode_settle`、`fault_record`" in tools_doc
 
     def test_spec060_apply_fault_record_declaration(self):
         from logic.fault_record import apply_fault_record_declarations
@@ -548,6 +549,17 @@ class TestMemoryEntryToolBoundaries:
                     "total_chars": ranged["total_chars"],
                 }
 
+        class DummyMemoryRecall:
+            @staticmethod
+            def recall(_mem_id, **_kwargs):
+                return {
+                    "source_memory_layer": "STM",
+                    "stm_present": True,
+                    "heat_boost_applied": False,
+                    "heat_boost_deduplicated": False,
+                }
+
+        store = DummyMemoryStore()
         receipts, mounts, unmounts = apply_memory_content_read_requests(
             [{
                 "tool_id": "memory_content_read",
@@ -558,7 +570,10 @@ class TestMemoryEntryToolBoundaries:
                 "reason": "need body",
             }],
             state={"presence": {"confirmed_subjects": []}},
-            data_modules={"memory_store": DummyMemoryStore()},
+            data_modules={
+                "memory_store": store,
+                "memory_recall": DummyMemoryRecall(),
+            },
         )
 
         assert receipts[0]["tool_id"] == "memory_content_read"
@@ -611,6 +626,18 @@ class TestMemoryEntryToolBoundaries:
             }
         }, ensure_ascii=False), encoding="utf-8")
 
+        store = ms.MemoryStore()
+
+        class DummyMemoryRecall:
+            @staticmethod
+            def recall(_mem_id, **_kwargs):
+                return {
+                    "source_memory_layer": "LTM/Abstract",
+                    "stm_present": True,
+                    "heat_boost_applied": False,
+                    "heat_boost_deduplicated": False,
+                }
+
         receipts, mounts, unmounts = apply_memory_content_read_requests(
             [{
                 "tool_id": "memory_content_read",
@@ -619,7 +646,10 @@ class TestMemoryEntryToolBoundaries:
                 "reason": "ltm heat index showed this id",
             }],
             state={"presence": {"confirmed_subjects": []}},
-            data_modules={"memory_store": ms.MemoryStore()},
+            data_modules={
+                "memory_store": store,
+                "memory_recall": DummyMemoryRecall(),
+            },
         )
 
         assert receipts[0]["status"] == "accepted"
@@ -882,40 +912,19 @@ class TestMemoryEntryToolBoundaries:
 
         assert receipts[0]["status"] == "private_memory_not_visible"
 
-    def test_recall_complete_rejects_private_memory_when_subject_absent(self):
-        from logic.memory_recall_complete import apply_memory_recall_completion_requests
+    def test_private_memory_does_not_create_reconsolidation_candidate(self):
+        from logic.memory_reconsolidation import reconsolidation_candidate
 
-        class DummyMemoryStore:
-            def get_meta(self, mem_id):
-                return {
-                    "id": mem_id,
-                    "title": "Private",
-                    "access": "private",
-                    "subject": "FMZ",
-                    "linked_containers": [],
-                }
-
-            def private_subjects_for_memory(self, mem_id):
-                return ["TzPz"]
-
-            def read_entry(self, mem_id):
-                raise AssertionError("private memory body must not be read")
-
-            def read_index(self):
-                return []
-
-            def update_entry_title_and_body(self, *args, **kwargs):
-                raise AssertionError("private memory must not be rewritten")
-
-        receipts = apply_memory_recall_completion_requests(
-            [{
-                "mem_id": "MEM-041000AA",
-                "completed_body": "completed body",
-                "reason": "complete",
-            }],
-            {"memory_store": DummyMemoryStore()},
-            round_num=51,
-            state={"presence": {"confirmed_subjects": []}},
-        )
-
-        assert receipts[0]["status"] == "private_memory_not_visible"
+        assert reconsolidation_candidate({
+            "source": "ltm",
+            "ltm": {"tier": "Abstract"},
+            "body": "私密正文不得进入指南",
+            "meta": {
+                "id": "MEM-041000AA",
+                "title": "Private",
+                "access": "private",
+                "weight": 4,
+                "stored_at": "2026-08-01T00:00:00+08:00",
+                "tags": ["私密"],
+            },
+        }) is None

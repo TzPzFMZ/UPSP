@@ -1,11 +1,7 @@
-"""
-Periodic context layer helpers.
-
-The assembler keeps the public instance methods as compatibility wrappers; this
-module owns the structured periodic mount projection and budget trimming rules.
-"""
+"""Periodic context assembly from verified Pinned memory truth."""
 
 from assembly.context_helpers import join_layer_blocks
+from errors import RequiredContextError
 
 
 def build_periodic(assembler, state, step, round_type):
@@ -15,18 +11,58 @@ def build_periodic(assembler, state, step, round_type):
 
 def build_periodic_with_block_index(assembler, state, step, round_type):
     try:
-        from data.periodic_mount_store import PeriodicMountStore
+        from data.memory_store import MemoryStore, project_periodic_memory_body
+        from data.periodic_mount_store import (
+            PERIODIC_MOUNTS_SCHEMA,
+            PeriodicMountStore,
+        )
+        from data.periodic_pin_owner_store import PeriodicPinOwnerStore
+        from paths import ACTIVE_INSTANCE_ID
 
         mounts = PeriodicMountStore().load()
         limits = periodic_limits(getattr(assembler, "config_store", None))
+        if mounts.get("schema_version") == PERIODIC_MOUNTS_SCHEMA:
+            owner_entries = PeriodicPinOwnerStore().load().get("entries", {})
+            by_id = {
+                item["id"]: item
+                for item in MemoryStore().list_public_ltm_entries()
+            }
+            live_items = []
+            used = 0
+            for mounted in mounts.get("periodic_memory_items", []):
+                mem_id = mounted["id"]
+                owner = owner_entries.get(mem_id)
+                if (
+                    not isinstance(owner, dict)
+                    or ACTIVE_INSTANCE_ID not in owner.get("owners", [])
+                ):
+                    raise ValueError(f"periodic_memory_owner_missing:{mem_id}")
+                source = by_id.get(mem_id)
+                if source is None:
+                    raise ValueError(f"periodic_memory_missing:{mem_id}")
+                if source.get("memory_layer") != "LTM/Pinned":
+                    raise ValueError(f"periodic_memory_not_pinned:{mem_id}")
+                text = project_periodic_memory_body(
+                    source.get("body", ""), source)
+                used += len(text)
+                if used > limits["periodic_memory_items_chars"]:
+                    raise ValueError("periodic_memory_budget_exceeded")
+                live_items.append({
+                    "id": mem_id,
+                    "title": source.get("title") or mem_id,
+                    "rendered_text": text,
+                })
+            mounts = {"periodic_memory_items": live_items}
         structured = render_structured_periodic_with_block_index(
             mounts,
             limits["periodic_memory_items_chars"],
         )
         if structured[0] is not None:
             return structured
-    except Exception:
-        pass
+    except RequiredContextError:
+        raise
+    except Exception as exc:
+        raise RequiredContextError("read", "periodic_memory_mounts", exc) from exc
     return "", []
 
 

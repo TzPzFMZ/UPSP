@@ -25,6 +25,7 @@ from logic.general_tools import (
 from logic.sandbox_grant import (
     load_sandbox_grant,
     normalize_sandbox_tool_path_alias,
+    sandbox_denied_roots_for_tool,
     sandbox_roots_for_tool,
 )
 from logic.protocol_tools import (
@@ -68,7 +69,11 @@ SIGNATURE_IGNORED_FIELDS = {
 
 SIGNATURE_FIELDS_BY_TOOL = {
     "file_read": ("path", "line_start", "encoding"),
-    "file_search": ("root", "pattern", "recursive", "max_results"),
+    "file_glob": ("root", "pattern", "recursive", "max_results"),
+    "file_grep": (
+        "root", "query", "file_pattern", "recursive", "case_sensitive",
+        "context_lines", "max_results", "encoding",
+    ),
     "file_edit": ("path", "patch"),
     "file_write": ("path", "content"),
     "web_fetch": (
@@ -137,12 +142,22 @@ class GeneralToolDispatcher:
     def _execute_call(self, call, sandbox_grant=None):
         if sandbox_grant:
             roots = sandbox_roots_for_tool(sandbox_grant, call.get("tool_id"))
+            denied_roots = sandbox_denied_roots_for_tool(
+                sandbox_grant, call.get("tool_id")
+            )
             if self.execute_fn is execute_general_tool_call:
-                return self.execute_fn(call, allowed_roots=roots)
+                return self.execute_fn(
+                    call, allowed_roots=roots, denied_roots=denied_roots
+                )
             try:
-                return self.execute_fn(call, allowed_roots=roots)
+                return self.execute_fn(
+                    call, allowed_roots=roots, denied_roots=denied_roots
+                )
             except TypeError:
-                return self.execute_fn(call)
+                try:
+                    return self.execute_fn(call, allowed_roots=roots)
+                except TypeError:
+                    return self.execute_fn(call)
         if self.execute_fn is execute_general_tool_call:
             return self.execute_fn(
                 call, allowed_roots=UNRESTRICTED_ALLOWED_ROOTS

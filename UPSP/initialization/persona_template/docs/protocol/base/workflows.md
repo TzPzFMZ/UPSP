@@ -67,7 +67,7 @@ Spec134 之后，反应步工具入口可以由 provider-native tool calling 承
 
 ## 五、通用工具外部行动总线
 
-`general_tool` 是 UPSP 的外部行动权工具族，不等于 MCP。MCP、connector、plugin、adapter 与 Python handler 只是执行后端。Spec 069 开通 `file_read`，Spec 070 开通 `web_fetch` / `web_search` 两个 `public_web_read` 只读 web 工具，Spec 071 开通 `file_edit` 受控 `workspace_patch_allowlist` 写入工具，Spec 072 开通 `shell_command` 低风险 `workspace_shell_allowlist` 命令工具，Spec 073 开通 `subagent_dispatch` 子 agent `subagent_task_scope` 调度工具，Spec339 开通 `file_search` 只读文件名搜索工具；后续按后端接线分批推进。
+`general_tool` 是 UPSP 的外部行动权工具族，不等于 MCP。MCP、connector、plugin、adapter 与 Python handler 只是执行后端。Spec 069 开通 `file_read`，Spec 070 以 `public_web_read` 开通 `web_fetch/web_search`，Spec 071 以 `workspace_patch_allowlist` 开通 `file_edit/file_write`，Spec 072 以 `workspace_shell_allowlist` 开通 `shell_command`，Spec 073 以 `subagent_task_scope` 开通 `subagent_dispatch`，Spec339 开通旧 `file_search`；Spec752 将搜索拆为路径发现 `file_glob` 与字面正文检索 `file_grep`。Spec756 恢复 `shell_command`：limited 不导出、guarded 逐次审批、unlimited 直接执行；grant 只限制工具导出与初始 cwd，不是子进程文件系统沙箱。
 
 通用工具独立链路为：
 
@@ -76,7 +76,7 @@ Spec134 之后，反应步工具入口可以由 provider-native tool calling 承
 3. `general_tool_call`：门禁放行后，Runtime 根据注册表 `backend_candidates / active_backend` 取出当前 `backend_type / handler / permission_scope`，形成内部执行对象。
 4. `general_tool_result`：脚本返回结构化结果，供下一次反应迭代读取；执行事实写成 `kind=tool_fact`，只读正文/候选内容写成 `kind=material` 或既有 CONTENT 挂载。
 
-`general_tool_result` 不叫 `protocol_tool_receipt`，也不进入 `tool_transaction_audit`。`backend_type=python/adapter/mcp/connector/plugin` 只表示执行后端，不改变工具族身份；MCP 后端执行的 `file_read` 仍是 `general_tool`。Spec132 门禁拒绝码固定为 `capability_denied`、`dangerous_shell_command`、`outside_allowlist`、`private_network_denied`、`write_scope_missing`。`file_read` 默认只读工作区 allowlist，拒绝 persona live 私密数据和密钥类路径；续读复制工具回执 `next_line_start` 到 `line_start`，不传其他范围或窗口字段。`file_search` 只搜索 allowlist 内候选文件名，不读取正文，默认不递归；`file_read` / `file_search` / `web_fetch` / `web_search` 的正文或候选资料不拼入 `tool_fact`。`file_edit` 默认只对仓库 tracked 文本文件或显式 allowlist 应用 unified diff，门禁先拒绝 live persona、密钥、越权路径、无 patch 与自然语言写入；`web_fetch` / `web_search` 默认只读公开 `http/https` 网页，门禁先拒绝本机/私网、登录交互、下载型资源和外部账号操作；`shell_command` 默认只在 allowlist cwd 执行低风险命令，门禁先拒绝删除、移动、重置、后台服务、网络写、远端脚本管道和凭据读取；Windows 下不支持 Bash/POSIX here-doc，多行 Python 应用 `file_write` 写临时 `.py` 后执行，或使用 PowerShell here-string 管道；`subagent_dispatch` 默认只调度边界清晰的子 agent 任务，写入型任务必须声明 `write_scope`，无真实后端时返回 `backend_unavailable`。
+`general_tool_result` 不叫 `protocol_tool_receipt`，也不进入 `tool_transaction_audit`。`backend_type=python/adapter/mcp/connector/plugin` 只表示执行后端，不改变工具族身份。`file_read/file_glob/file_grep` 受 read allowlist 约束，并可通过 `persona://` 观察全部 PID 的公共数据；私密、凭据和 `.git` 仍拒绝。`file_glob` 只匹配文件名；`file_grep` 只做字面正文检索，覆盖不完整或一次零命中不得声称不存在。三者的大正文或候选资料不拼入 `tool_fact`。泛用读取记忆文件是无生命周期副作用的 `raw_inspection`；真实召回仍走 `memory_content_read`。`file_edit/file_write`、Shell cwd/显式目标和子 agent `write_scope` 都拒绝 persona 真源。其余 web、shell 与子 agent 风险门保持原合同。
 
 ---
 
@@ -92,9 +92,9 @@ Spec134 之后，反应步工具入口可以由 provider-native tool calling 承
 
 ## 七、缓存压缩边界
 
-善后步的“最近缓存压缩”只在本轮发生 `lately` 字符履带删除后置位维护节律。删后幸存段仍作为原语料块留在“最近缓存 lately”层；脚本只在 POPUP 提醒 Runtime 将置位 `cache_compaction_due`，不要求 LLM 在 cleanup_finalize 中给出 keep、drop 或 replace 动作。压缩不设 kind 白名单，不默认排除当前轮或 `minimum_commitment`。
+善后步的“最近缓存压缩”由三步主模型共同逻辑窗口 90% 输入 Token 水位触发。Runtime 在最终缓存落账后只持久化 v3 债务，不执行 FIFO、不改写 lately、不置 heartbeat；最近可配置 16 次交互的用户输入原文受保护。下一自然轮起手不受影响，Reaction 才把确定性预处理后的当前分片作为单次材料显示。
 
-真正改写 `lately_cache.jsonl` 的执行器是 `cache_compact`，属于 `substrate_tool / sync_tool / context / high`。真实 source ids 留在 Runtime pending metadata；下一轮 rhythm agenda 物化 `cache_compaction_rhythm_guide` 后，模型用 `guide_submit(submit_cache_compaction_shard)` 提交分片摘要，Runtime 后台调用 `cache_compact`。它默认不作为反应步常规声明工具暴露，不注入普通 reaction guide，不产生独立前台工具入口。raw_log 与 Corpus 节归档保留 A 轨原文，压缩摘要以 `kind=cache_summary` 留在 lately。
+真正改写 `lately_cache.jsonl` 的是 v3 `ContextStore` 原子事务。真实 source range、正文 SHA 和已暂存结果留在 `cache_compaction_debt.v3`；模型只通过通用 `guide_submit(submit_cache_compaction_batch)` 提交 replace/keep。各片摘要上限 12.5%，整周期目标 25%；达到目标或处理完当前可压缩组后，处理器一次原子替换 frozen prefix，并保留开放债务期间追加的尾部。无用户输入锚点的历史前缀生成 `kind=cache_summary`；具有用户交互锚点或承接既有 `interaction_summary` 的组始终生成 `kind=interaction_summary`，其中受保护交互的用户原文仍紧邻保留。摘要记录原始轮次范围，但其 `loc` 是实际完成压缩的 Reaction Frame。不存在独立 `cache_compact` 工具或执行器；压缩材料与摘要不进入 raw_log/Corpus。
 
 ---
 

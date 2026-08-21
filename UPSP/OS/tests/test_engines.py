@@ -200,11 +200,14 @@ class TestAPIExecutor:
         assert executor.provider_calls == 0
 
     class _PayloadTruthConfig(ConfigStoreStub):
-        def __init__(self, provider, *, url=None, model=None, extra_body=None):
+        def __init__(self, provider, *, url=None, model=None, extra_body=None,
+                     reasoning_effort="", output_token_limit=0):
             self.provider = provider
             self.url = url
             self.model = model
             self.extra_body = extra_body
+            self.reasoning_effort = reasoning_effort
+            self.output_token_limit = output_token_limit
 
         def load(self, name):
             if name == "system":
@@ -223,7 +226,9 @@ class TestAPIExecutor:
                         "model": self.model or f"unit-{provider}",
                         "provider": provider,
                         "context_window": 123456,
+                        "output_token_limit": self.output_token_limit,
                         "api_key": "secret-key",
+                        "reasoning_effort": self.reasoning_effort,
                         "extra_body": self.extra_body or {
                             "seed": 422,
                             "tool_choice": "must_not_override",
@@ -255,15 +260,18 @@ class TestAPIExecutor:
         "provider",
         ["openai_chat", "openai_responses", "anthropic_messages"],
     )
+    @pytest.mark.parametrize("reasoning_effort", ["", "high"])
     def test_spec422_sends_body_from_step_json_request_body(
-            self, provider, tmp_path, monkeypatch):
+            self, provider, reasoning_effort, tmp_path, monkeypatch):
         from engines.executor import APIExecutor
         import hashlib
         import json
 
         sent = {}
         ex = APIExecutor(
-            self._PayloadTruthConfig(provider),
+            self._PayloadTruthConfig(
+                provider, reasoning_effort=reasoning_effort,
+            ),
             connectivity_store=NoopConnectivity(),
             context_dir=str(tmp_path / "context"),
         )
@@ -309,6 +317,17 @@ class TestAPIExecutor:
             envelope["wire_body_sha256"]
         )
         assert "request_body_source_map" not in envelope["request_body"]
+        effort_fields = {
+            "openai_chat": ("reasoning_effort", "high"),
+            "openai_responses": ("reasoning", {"effort": "high"}),
+            "anthropic_messages": ("output_config", {"effort": "high"}),
+        }
+        expected_effort = effort_fields[provider] if reasoning_effort else None
+        for field, value in effort_fields.values():
+            if expected_effort and field == expected_effort[0]:
+                assert envelope["request_body"][field] == expected_effort[1]
+            else:
+                assert field not in envelope["request_body"]
 
         for filename in [
             "00_call_header.json",
@@ -368,6 +387,128 @@ class TestAPIExecutor:
         assert "layer popup truth" in body_text
         assert "runtime system must not be payload truth" not in body_text
         assert "runtime message must not be payload truth" not in body_text
+
+    @pytest.mark.parametrize(
+        ("provider", "field", "ordinary_value"),
+        [
+            ("openai_chat", "max_tokens", None),
+            ("openai_responses", "max_output_tokens", None),
+            ("anthropic_messages", "max_tokens", 32000),
+        ],
+    )
+    def test_spec742_cache_compaction_alone_uses_fixed_output_limit(
+            self, provider, field, ordinary_value, tmp_path):
+        from engines.executor import APIExecutor
+        import json
+
+        ordinary_executor = APIExecutor(
+            self._PayloadTruthConfig(provider),
+            connectivity_store=NoopConnectivity(),
+            context_dir=str(tmp_path / "ordinary"),
+        )
+        ordinary = ordinary_executor.prepare_provider_request(
+            "reaction", "system",
+            [{"role": "user", "content": "hello"}],
+        )
+        compact = APIExecutor(
+            self._PayloadTruthConfig(provider, extra_body={
+                "max_tokens": 456,
+                "max_output_tokens": 777,
+                "max_completion_tokens": 123,
+            }),
+            connectivity_store=NoopConnectivity(),
+            context_dir=str(tmp_path / "compact"),
+        ).prepare_provider_request(
+            "reaction",
+            "system",
+            [{"role": "user", "content": "hello"}],
+            cache_compaction_call=True,
+        )
+
+        if ordinary_value is None:
+            assert field not in ordinary["payload"]
+        else:
+            assert ordinary["payload"][field] == ordinary_value
+        assert compact["payload"][field] == 65536
+        assert {
+            key for key in (
+                "max_tokens", "max_output_tokens", "max_completion_tokens"
+            ) if key in compact["payload"]
+        } == {field}
+        layer = json.loads(
+            (
+                tmp_path / "compact" / "reaction" / "layers"
+                / "02_generation_config.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert layer["content"][field] == 65536
+
+    @pytest.mark.parametrize(
+        ("provider", "field"),
+        [
+            ("openai_chat", "max_tokens"),
+            ("openai_responses", "max_output_tokens"),
+            ("anthropic_messages", "max_tokens"),
+        ],
+    )
+    def test_spec749_ordinary_output_limit_is_only_sent_when_configured(
+            self, provider, field, tmp_path):
+        from engines.executor import APIExecutor
+        import json
+
+        prepared = APIExecutor(
+            self._PayloadTruthConfig(provider, output_token_limit=16384),
+            connectivity_store=NoopConnectivity(),
+            context_dir=str(tmp_path / provider),
+        ).prepare_provider_request(
+            "reaction", "system", [{"role": "user", "content": "hello"}],
+        )
+
+        assert prepared["payload"][field] == 16384
+        layer = json.loads(
+            (
+                tmp_path / provider / "reaction" / "layers"
+                / "02_generation_config.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert layer["content"][field] == 16384
+
+    @pytest.mark.parametrize(
+        ("provider", "field"),
+        [
+            ("openai_chat", "max_tokens"),
+            ("openai_responses", "max_output_tokens"),
+            ("anthropic_messages", "max_tokens"),
+        ],
+    )
+    def test_spec742_output_limit_aliases_are_normalized_only_for_compaction(
+            self, provider, field):
+        from engines.executor import APIExecutor
+
+        original = {
+            "max_tokens": 456,
+            "max_output_tokens": 777,
+            "max_completion_tokens": 123,
+            "seed": 422,
+        }
+        ordinary = dict(original)
+        APIExecutor._apply_cache_compaction_output_limit(
+            ordinary, provider, False,
+        )
+        assert ordinary == original
+
+        compact = dict(original)
+        APIExecutor._apply_cache_compaction_output_limit(
+            compact, provider, True,
+        )
+        assert compact["seed"] == 422
+        assert {
+            key for key in (
+                "max_tokens", "max_output_tokens", "max_completion_tokens"
+            ) if key in compact
+        } == {field}
+        assert compact[field] == 65536
+
 
     def test_spec725_pre_send_wire_verification_rejects_mutated_payload(
             self, tmp_path, monkeypatch):
@@ -466,7 +607,7 @@ class TestAPIExecutor:
                 "role": "assistant",
                 "kind": "dialogue_progress",
                 "active_corpus_id": "C-00102",
-                "content": "【轮中进展记录】\n语料短ID：C-00102。\nLATELY_SECOND",
+                "content": "【历史进展记录，来自第 722 轮】\n语料短ID：C-00102。\nLATELY_SECOND",
             },
             {
                 "role": "system",
@@ -755,7 +896,7 @@ class TestAPIExecutor:
             [{"call_id": "call_read", "tool_id": "file_read", "status": "ok"}],
             [],
             round_num=17,
-            iteration=0,
+            iteration=1,
             interaction_meta={},
         )
 
@@ -766,7 +907,12 @@ class TestAPIExecutor:
         assert len(entries) == 1
         assert entries[0]["content"] == "【本轮推理上下文】\n\n先读取任务文件。"
         assert entries[0]["native_replay"]["tool_results"][0]["tool_call_id"] == "call_read"
-        runner._clear_consumed_reasoning_replay(17, 2)
+        receipt = store.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000017:reaction:2",
+            expire_call_transients=True,
+        )
+        assert receipt["expired_c_blocks"] == 1
         assert store.get_call_transient_entries(
             17, "reaction", reaction_iteration=2) == []
 
@@ -1043,7 +1189,7 @@ class TestAPIExecutor:
             "先读任务，再调用工具。",
             native_replay=native_replay,
             step="reaction",
-            iter=0,
+            iter=1,
         )
         context_dir = tmp_path / "context"
         assembler = ContextAssembler(
@@ -1391,12 +1537,13 @@ class TestAPIExecutor:
 
         assert tool_header["permission_level"] == permission
         assert tool_header["permission_label"] == label
-        assert {"file_write", "file_edit", "shell_command", "subagent_dispatch"} <= tool_names
+        assert {"file_write", "file_edit", "subagent_dispatch"} <= tool_names
+        assert "shell_command" in tool_names
         functions = {
             item["function"]["name"]: item["function"]
             for item in sent["payload"]["tools"]
         }
-        for tool_id in ("file_write", "file_edit", "shell_command", "subagent_dispatch"):
+        for tool_id in ("file_write", "file_edit", "subagent_dispatch"):
             description = functions[tool_id]["description"]
             assert "受限档" in description
             assert "放行档" in description
@@ -1445,6 +1592,8 @@ class TestAPIExecutor:
             connectivity_store=NoopConnectivity(),
         )
 
+        assert services.assembler.config_store is executor.cfg
+
         services.executor.call(
             "reaction",
             "system",
@@ -1454,12 +1603,34 @@ class TestAPIExecutor:
         assert (tmp_path / "context" / "reaction" / "step.json").is_file()
         assert not (tmp_path / "wrong-context" / "reaction" / "step.json").exists()
 
+    def test_spec765_runtime_services_preserves_explicit_assembler_config(
+            self, tmp_path):
+        from assembly.context import ContextAssembler
+        from engines.runtime_services import RuntimeServices
+
+        runtime_config = self._PayloadTruthConfig("openai_chat")
+        explicit_config = object()
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            config_store=explicit_config,
+        )
+
+        services = RuntimeServices.create(
+            assembler=assembler,
+            config_store=runtime_config,
+            connectivity_store=NoopConnectivity(),
+        )
+
+        assert services.cfg is runtime_config
+        assert services.assembler.config_store is explicit_config
+
     def test_spec423_round_audit_started_uses_actual_fallback_envelope(
             self, tmp_path, monkeypatch):
         import json
         from types import SimpleNamespace
         from engines.executor import APIExecutor
         from engines.round_audit import RoundAuditRecorder
+        from data.round_audit_codec import read_round_audit_file
 
         class FallbackConfig(ConfigStoreStub):
             def load(self, name):
@@ -1519,13 +1690,8 @@ class TestAPIExecutor:
             iteration=1,
         )
 
-        events = [
-            json.loads(line)
-            for line in (tmp_path / "context" / "round" / "round_423.jsonl")
-            .read_text(encoding="utf-8")
-            .splitlines()
-            if line.strip()
-        ]
+        round_path = tmp_path / "context" / "round" / "round_423.jsonl"
+        events = read_round_audit_file(round_path)
         started = next(
             event for event in events
             if event["event_type"] == "llm_call_started"
@@ -1534,14 +1700,18 @@ class TestAPIExecutor:
             event for event in events
             if event["event_type"] == "llm_output_raw"
         )
-        started_envelope = started["payload"]["provider_request_envelope"]
-        output_envelope = output["payload"]["provider_request_envelope"]
+        snapshots = {
+            event["event_id"]: event["payload"]["provider_request_envelope"]
+            for event in events if event["event_type"] == "step_input_snapshot"
+        }
+        started_envelope = snapshots[started["payload"]["request_snapshot_event_id"]]
+        output_envelope = snapshots[output["payload"]["request_snapshot_event_id"]]
 
         assert started_envelope["endpoint"]["tier"] == "fallback"
         assert started_envelope["provider"]["model"] == "actual-fallback"
         assert started_envelope["request_body_sha256"] == output_envelope["request_body_sha256"]
-        assert "request_body_source_map" not in started_envelope
-        assert "request_body_source_map" not in output_envelope
+        assert "provider_request_envelope" not in started["payload"]
+        assert "provider_request_envelope" not in output["payload"]
 
     def test_spec425_round_audit_records_started_for_send_failure_fallback(
             self, tmp_path, monkeypatch):
@@ -1549,6 +1719,7 @@ class TestAPIExecutor:
         from types import SimpleNamespace
         from engines.executor import APIExecutor
         from engines.round_audit import RoundAuditRecorder
+        from data.round_audit_codec import read_round_audit_file
 
         class FallbackConfig(ConfigStoreStub):
             def load(self, name):
@@ -1614,13 +1785,8 @@ class TestAPIExecutor:
             iteration=1,
         )
 
-        events = [
-            json.loads(line)
-            for line in (tmp_path / "context" / "round" / "round_425.jsonl")
-            .read_text(encoding="utf-8")
-            .splitlines()
-            if line.strip()
-        ]
+        round_path = tmp_path / "context" / "round" / "round_425.jsonl"
+        events = read_round_audit_file(round_path)
         started_events = [
             event for event in events
             if event["event_type"] == "llm_call_started"
@@ -1629,11 +1795,15 @@ class TestAPIExecutor:
             event for event in events
             if event["event_type"] == "llm_output_raw"
         )
+        snapshots = {
+            event["event_id"]: event["payload"]["provider_request_envelope"]
+            for event in events if event["event_type"] == "step_input_snapshot"
+        }
         started_envelopes = [
-            event["payload"]["provider_request_envelope"]
+            snapshots[event["payload"]["request_snapshot_event_id"]]
             for event in started_events
         ]
-        output_envelope = output["payload"]["provider_request_envelope"]
+        output_envelope = snapshots[output["payload"]["request_snapshot_event_id"]]
 
         assert [url for url, _payload in sends] == [
             "https://primary.invalid/v1/chat/completions",
@@ -1658,7 +1828,9 @@ class TestAPIExecutor:
             if event["event_type"] == "llm_call_failed"
         ]
         assert len(failed_attempts) == 1
-        failed_envelope = failed_attempts[0]["payload"]["provider_request_envelope"]
+        failed_envelope = snapshots[
+            failed_attempts[0]["payload"]["request_snapshot_event_id"]
+        ]
         assert failed_envelope["endpoint"]["tier"] == "primary"
         http_attempts = [
             event["payload"] for event in events
@@ -2379,6 +2551,8 @@ class TestAPIExecutor:
                 "https://api.example/v1/chat/completions",
                 "provider_transport_error:ConnectionResetError: peer reset",
                 transient=True,
+                allow_fallback=True,
+                affects_connectivity=False,
             )
 
         monkeypatch.setattr(APIExecutor, "_send_request", reset)
@@ -2399,6 +2573,165 @@ class TestAPIExecutor:
         terminal = connection.messages[-1]
         assert terminal["kind"] == "api"
         assert terminal["transient"] is True
+        assert terminal["allow_fallback"] is True
+        assert terminal["affects_connectivity"] is False
+
+    def test_spec749_round_audit_allows_declared_nontransient_failover(self):
+        from engines.round_audit import RoundAuditRecorder
+        from errors import APIBridgeError
+
+        class Executor:
+            @staticmethod
+            def _allows_provider_failover(error):
+                return error.allow_fallback
+
+            @staticmethod
+            def _fallback_tier(*_args, **_kwargs):
+                return "fallback"
+
+        error = APIBridgeError(
+            "primary", "provider_output_limit_reached:max_output_tokens",
+            allow_fallback=True, affects_connectivity=False,
+        )
+        assert RoundAuditRecorder._fallback_tier_for_prepared_error(
+            Executor(),
+            {
+                "tier": "primary", "endpoint_config": {"model": "primary"},
+                "step": "reaction",
+            },
+            error,
+        ) == "fallback"
+
+    def test_spec749_parent_drains_terminal_after_worker_exit(self, monkeypatch):
+        from engines.executor import APIExecutor
+
+        class FakeReceiver:
+            def __init__(self):
+                self.polls = iter([True, False, True])
+                self.messages = [
+                    {
+                        "type": "event",
+                        "event_type": "llm_stream_first_chunk",
+                        "payload": {"stream_id": "unit"},
+                    },
+                    {
+                        "type": "result",
+                        "response": {
+                            "choices": [{"message": {"content": "drained"}}],
+                            "usage": {},
+                        },
+                    },
+                ]
+
+            def poll(self, _timeout):
+                return next(self.polls)
+
+            def recv(self):
+                return self.messages.pop(0)
+
+            def close(self):
+                pass
+
+        class FakeSender:
+            def close(self):
+                pass
+
+        class FakeProcess:
+            pid = 749
+            exitcode = 0
+            daemon = False
+
+            def start(self):
+                pass
+
+            def is_alive(self):
+                return False
+
+            def join(self, timeout=None):
+                pass
+
+            def terminate(self):
+                raise AssertionError("completed worker must not be terminated")
+
+        class FakeContext:
+            def Pipe(self, duplex=False):
+                assert duplex is False
+                return FakeReceiver(), FakeSender()
+
+            def Process(self, **_kwargs):
+                return FakeProcess()
+
+        ex = APIExecutor(self._RetryConfig(), connectivity_store=NoopConnectivity())
+        events = []
+        ex.bind_stream_event_sink(
+            lambda event_type, payload: events.append((event_type, payload))
+        )
+        monkeypatch.setattr(
+            "engines.executor.multiprocessing.get_context",
+            lambda _method: FakeContext(),
+        )
+
+        response = ex._send_request_cancellable(
+            "https://api.example/v1/chat/completions",
+            "key",
+            {"model": "unit"},
+            "openai_chat",
+        )
+
+        assert response["choices"][0]["message"]["content"] == "drained"
+        assert events == [("llm_stream_first_chunk", {"stream_id": "unit"})]
+
+    def test_spec749_output_limit_skips_same_endpoint_retries_and_fails_over(
+            self, monkeypatch):
+        from engines.executor import APIExecutor
+        from errors import APIBridgeError
+
+        class FallbackConfig(ConfigStoreStub):
+            def load(self, name):
+                if name != "api":
+                    return super().load(name)
+                return {
+                    "endpoints": {
+                        "primary": {
+                            "url": "https://primary.invalid/v1/responses",
+                            "model": "primary-model",
+                            "provider": "openai_responses",
+                        },
+                        "fallback": {
+                            "url": "https://fallback.invalid/v1/chat/completions",
+                            "model": "fallback-model",
+                            "provider": "openai_chat",
+                        },
+                    },
+                    "step_routes": {"reaction": ["primary", "fallback"]},
+                    "handshake": {"retry": 2, "request_timeout_seconds": 180},
+                    "circuit_breaker": {"max_failures": 3, "cooldown_seconds": 900},
+                }
+
+        sends = []
+        ex = APIExecutor(FallbackConfig(), connectivity_store=NoopConnectivity())
+        ex._provider_call_interval_seconds = 0
+
+        def fake_send(url, _api_key, _payload):
+            sends.append(url)
+            if "primary.invalid" in url:
+                raise APIBridgeError(
+                    url,
+                    "provider_output_limit_reached:max_output_tokens",
+                    allow_fallback=True,
+                    affects_connectivity=False,
+                )
+            return {"choices": [{"message": {"content": "fallback ok"}}], "usage": {}}
+
+        monkeypatch.setattr(ex, "_send_request", fake_send)
+
+        result = ex.call("reaction", "system", [{"role": "user", "content": "go"}])
+
+        assert result["response"] == "fallback ok"
+        assert sends == [
+            "https://primary.invalid/v1/responses",
+            "https://fallback.invalid/v1/chat/completions",
+        ]
 
     @pytest.mark.parametrize("status_code", [401, 403])
     def test_permanent_auth_status_fails_once(self, monkeypatch, status_code):
@@ -2596,7 +2929,6 @@ class TestAPIExecutor:
             connectivity_store=conn,
             interval=999,
             memory_heat=MockHeat(),
-            evolution_store=MockEvolution(),
         )
         hb._do_tick()
 
@@ -2856,6 +3188,116 @@ class TestAPIExecutor:
         )
 
         assert response["choices"][0]["message"]["content"] == "json ok"
+
+    def test_spec749_responses_incomplete_preserves_reason_without_retry_label(
+            self, monkeypatch):
+        from engines.executor import APIExecutor
+        from errors import APIBridgeError
+
+        class FakeConfig(ConfigStoreStub):
+            def get_request_timeout(self):
+                return 300
+
+            def get_stream_first_chunk_timeout(self):
+                return 120
+
+            def get_stream_idle_timeout(self):
+                return 90
+
+            def get_stream_content_overrun_chars(self):
+                return 65536
+
+        class FakeStreamResponse:
+            headers = {"Content-Type": "text/event-stream"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                return iter([
+                    b'data: {"type":"response.reasoning_text.delta","delta":"thinking"}\n',
+                    b'data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}\n',
+                ])
+
+            def read(self):
+                raise AssertionError("streaming path must not read full response body")
+
+        monkeypatch.setattr(
+            "engines.executor.urllib.request.urlopen",
+            lambda req, timeout=None: FakeStreamResponse(),
+        )
+        ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
+        ex._transport_provider = "openai_responses"
+        events = []
+        ex.bind_stream_event_sink(
+            lambda event_type, payload: events.append((event_type, payload))
+        )
+
+        with pytest.raises(APIBridgeError, match="provider_output_limit_reached") as caught:
+            ex._send_request(
+                "https://api.example/v1/responses",
+                "",
+                {"model": "unit", "input": [], "stream": True},
+            )
+
+        assert caught.value.transient is False
+        assert caught.value.allow_fallback is True
+        assert caught.value.affects_connectivity is False
+        assert ex._provider_error_kind(caught.value) == "output_limit"
+        error = next(payload for kind, payload in events if kind == "llm_stream_error")
+        assert error["reason"] == "provider_output_limit_reached"
+        assert error["provider_event_type"] == "response.incomplete"
+        assert error["incomplete_reason"] == "max_output_tokens"
+
+    def test_spec749_responses_failed_keeps_sanitized_provider_error(self, monkeypatch):
+        from engines.executor import APIExecutor
+        from errors import APIBridgeError
+
+        class FakeConfig(ConfigStoreStub):
+            def get_request_timeout(self): return 300
+            def get_stream_first_chunk_timeout(self): return 120
+            def get_stream_idle_timeout(self): return 90
+            def get_stream_content_overrun_chars(self): return 65536
+
+        class FakeStreamResponse:
+            headers = {"Content-Type": "text/event-stream"}
+
+            def __enter__(self): return self
+            def __exit__(self, exc_type, exc, tb): return False
+            def __iter__(self):
+                return iter([
+                    b'data: {"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","type":"server_error","message":"temporary upstream failure sk-secret123456789"}}}\n',
+                ])
+            def read(self): raise AssertionError("streaming path")
+
+        monkeypatch.setattr(
+            "engines.executor.urllib.request.urlopen",
+            lambda req, timeout=None: FakeStreamResponse(),
+        )
+        ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
+        ex._transport_provider = "openai_responses"
+        events = []
+        ex.bind_stream_event_sink(
+            lambda event_type, payload: events.append((event_type, payload))
+        )
+
+        with pytest.raises(APIBridgeError, match="provider_response_failed") as caught:
+            ex._send_request(
+                "https://api.example/v1/responses", "",
+                {"model": "unit", "input": [], "stream": True},
+            )
+
+        assert caught.value.transient is True
+        assert ex._provider_error_kind(caught.value) == "provider_failed"
+        error = next(payload for kind, payload in events if kind == "llm_stream_error")
+        assert error["provider_error_code"] == "server_error"
+        assert error["provider_error_type"] == "server_error"
+        assert error["provider_error_message"] == (
+            "temporary upstream failure sk-[redacted]"
+        )
 
     def test_spec502_streaming_incomplete_tool_arguments_are_rejected(
             self, monkeypatch):
@@ -3319,6 +3761,7 @@ class TestAPIExecutor:
                         "primary": {
                             "url": "https://example.invalid/v1/responses",
                             "model": "unit-responses",
+                            "reasoning_effort": "high",
                         },
                     },
                 }
@@ -3365,13 +3808,7 @@ class TestAPIExecutor:
             "model": "unit-responses",
             "input": "user: ping",
             "instructions": "transport",
-            "max_output_tokens": 4096,
-            "reasoning": {"effort": "none"},
-            "text": {
-                "format": {"type": "text"},
-                "verbosity": "low",
-            },
-            "temperature": 0.7,
+            "reasoning": {"effort": "high"},
         }
         assert [tool["name"] for tool in sent["payload"]["tools"]] == ["setup_finalize"]
         assert "tool_choice" not in sent["payload"]
@@ -3534,6 +3971,7 @@ class TestAPIExecutor:
             "url": "https://example.invalid/v1/messages",
             "model": "unit-anthropic",
             "provider": "anthropic_messages",
+            "reasoning_effort": "high",
             "prompt_cache": {
                 "enabled": True,
                 "key_prefix": "unit-upsp",
@@ -3562,6 +4000,7 @@ class TestAPIExecutor:
         )
 
         assert "prompt_cache_key" not in payload
+        assert payload["output_config"] == {"effort": "high"}
         assert audit["prompt_cache_lane"] == "reaction_final_reply_text"
         assert audit["prompt_cache_key"].endswith(
             ":reaction_final_reply_text:context-v43"
@@ -3781,6 +4220,11 @@ class TestAPIExecutor:
         sent_tool_names = [item["function"]["name"] for item in sent_payloads[0]["tools"]]
         assert "reaction_finalize" in sent_tool_names
         assert "file_read" in sent_tool_names
+        assert sent_payloads[0]["thinking"] == {"type": "enabled"}
+        assert sent_payloads[0]["reasoning_effort"] == "high"
+        assert "temperature" not in sent_payloads[0]
+        assert "reasoning" not in sent_payloads[0]
+        assert "text" not in sent_payloads[0]
         assert "tool_choice" not in sent_payloads[0]
         assert "parallel_tool_calls" not in sent_payloads[0]
         assert result["tool_call_envelopes"][0]["tool_id"] == "reaction_finalize"

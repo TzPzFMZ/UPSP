@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 
 REACTION_FINAL_REPLY_TEXT_GUIDE = "__final_reply_text__"
+REACTION_CONTINUE_HANDOFF_SOURCE = "reaction.continue_handoff"
 
 TEXT_POLICY_ILLEGAL = "illegal"
 TEXT_POLICY_PROGRESS = "progress"
@@ -11,6 +12,38 @@ TEXT_POLICY_EMPTY_RETRY = "empty_retry"
 
 TOOL_MODE_FREE = "free"
 TOOL_MODE_REQUIRED = "required"
+
+
+def closeout_final_response_source(result, *, user_stop=False):
+    """Return a truthful source for the final round_closed projection."""
+    result = result if isinstance(result, dict) else {}
+    explicit = str(result.get("_final_response_source") or "").strip()
+    if explicit:
+        return explicit
+    response = str(result.get("response") or "").strip()
+    if user_stop and not response:
+        return "runtime.user_stop"
+    if not response:
+        for receipt in result.get("_heartbeat_rearm_receipts") or []:
+            if not isinstance(receipt, dict):
+                continue
+            status = str(receipt.get("status") or "").strip()
+            flags = {str(flag) for flag in receipt.get("set_flags") or []}
+            if "continue_requested" not in flags:
+                continue
+            if status == "continue_requested_rearmed":
+                relay_intent = receipt.get("relay_intent")
+                if (
+                    isinstance(relay_intent, dict)
+                    and str(relay_intent.get("status") or "").strip() == "open"
+                ):
+                    return REACTION_CONTINUE_HANDOFF_SOURCE
+            if (
+                status == "continue_requested_rearmed_from_open_relay_intents"
+                and receipt.get("open_relay_intent_ids")
+            ):
+                return REACTION_CONTINUE_HANDOFF_SOURCE
+    return "reaction.final_reply_text"
 
 
 @dataclass(frozen=True)

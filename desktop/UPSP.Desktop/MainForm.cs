@@ -16,6 +16,7 @@ internal sealed class MainForm : Form
     private bool _allowClose;
     private bool _exitInProgress;
     private bool _backendFailureShown;
+    private bool _backendRestartInProgress;
     private bool _lastActive;
     private int _statusRefreshInFlight;
 
@@ -192,6 +193,22 @@ internal sealed class MainForm : Form
             if (snapshot.Connected)
             {
                 _backendFailureShown = false;
+            }
+            if (snapshot.RestartRequested && !_backendRestartInProgress)
+            {
+                _backendRestartInProgress = true;
+                _statusItem.Text = "当前状态：正在切换位格或分身";
+                try
+                {
+                    await _backend.RestartAsync();
+                    _webView.CoreWebView2.Navigate(_backend.Origin.AbsoluteUri);
+                    _lastActive = false;
+                }
+                finally
+                {
+                    _backendRestartInProgress = false;
+                }
+                return;
             }
             _statusItem.Text = $"当前状态：{snapshot.DisplayText}";
             if (_lastActive && !snapshot.HasActiveOperation)

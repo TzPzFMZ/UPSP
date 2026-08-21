@@ -94,6 +94,8 @@ class SetupRunner(EngineComponent):
             "internal_handoff": heartbeat_handoff,
             "interaction_meta": interaction_meta,
         }
+        if not context.task_guidance_enabled:
+            assemble_kwargs["task_guidance_enabled"] = False
         if material_inputs:
             assemble_kwargs["material_inputs"] = material_inputs
 
@@ -126,6 +128,8 @@ class SetupRunner(EngineComponent):
         result["_setup_messages"] = messages
         result["_interaction_meta"] = interaction_meta
         intent = self._parse_setup_intent(result, context.round_type)
+        intent = self._apply_task_guidance_policy(
+            intent, context.task_guidance_enabled)
         iteration = 1
         retry_feedbacks = []
         while self._needs_setup_finalize_retry(intent) and iteration < 3:
@@ -184,6 +188,8 @@ class SetupRunner(EngineComponent):
             result["_setup_messages"] = messages
             result["_interaction_meta"] = interaction_meta
             intent = self._parse_setup_intent(result, context.round_type)
+            intent = self._apply_task_guidance_policy(
+                intent, context.task_guidance_enabled)
             iteration = next_iteration
         if self._needs_setup_finalize_retry(intent):
             intent = self._setup_retry_exhausted_intent(intent)
@@ -207,7 +213,12 @@ class SetupRunner(EngineComponent):
             iteration,
             final_settlement,
         )
-        self._update_token_usage(result)
+        self._update_token_usage(
+            result,
+            round_num=context.round_num,
+            phase="setup",
+            iteration=iteration,
+        )
         setup_facts = self._setup_fact_from_intent(context.round_type, intent)
         return SetupResult(
             raw_result=result,
@@ -281,6 +292,16 @@ class SetupRunner(EngineComponent):
             if not isinstance(intent, dict):
                 return False
             return intent.get("reject_reason") == "setup_finalize_missing_or_invalid"
+
+    @staticmethod
+    def _apply_task_guidance_policy(intent, enabled):
+            if enabled or not isinstance(intent, dict):
+                return intent
+            intent = dict(intent)
+            intent["task_guidance_required"] = False
+            intent["task_guidance_route"] = "none"
+            intent["task_guidance_reason"] = None
+            return intent
 
     @staticmethod
     def _setup_retry_settlement(intent, interaction_meta, retry_attempt=1):
@@ -408,8 +429,6 @@ class SetupRunner(EngineComponent):
     def _missing_setup_finalize_intent(terminal_invalids=None):
             return {
                 "mount_requests": [],
-                "rules_selection": None,
-                "round_type_confirm": None,
                 "security_verdict": "reject",
                 "reject_reason": "setup_finalize_missing_or_invalid",
                 "suggested_mode": None,
@@ -437,9 +456,6 @@ class SetupRunner(EngineComponent):
                 f"起手安全裁决：{verdict_text}。",
                 f"本轮类型：{self._round_type_label(round_type)}。",
             ]
-            round_confirm = str(intent.get("round_type_confirm") or "").strip()
-            if round_confirm:
-                lines.append(f"起手确认轮型：{self._round_type_label(round_confirm)}。")
             if isinstance(intent.get("standby_skip_reaction"), bool):
                 lines.append(
                     "待命跳过反应步：" +
@@ -609,12 +625,11 @@ class SetupRunner(EngineComponent):
                 if not content:
                     continue
                 try:
-                    source_round = int(intent.get("source_round") or round_num or 0)
-                except (TypeError, ValueError):
-                    source_round = int(round_num or 0)
-                try:
+                    projection_round = int(round_num or 0)
+                    if projection_round <= 0:
+                        raise ValueError("relay_handoff_projection_round_invalid")
                     self.ctx_store.append_to_cache(
-                        source_round,
+                        projection_round,
                         "user",
                         content,
                         kind="relay_handoff",

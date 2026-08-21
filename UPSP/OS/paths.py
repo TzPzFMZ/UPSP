@@ -1,7 +1,7 @@
 """UPSP Base — 程序路径与当前活动位格路径的唯一投影。
 
-``PROGRAM_OS_ROOT`` 永远是安装目录中的后端代码；``OS_ROOT`` 永远是
-Documents 数据根中当前 PID 的 OS。其他模块不得重新拼接活动实例路径。
+``PROGRAM_OS_ROOT`` 永远是安装目录中的后端代码；``OS_ROOT`` 是
+Documents 数据根中的当前活动分身。其他模块不得重新拼接活动实例路径。
 """
 import os
 import sys
@@ -21,10 +21,13 @@ from initialization.windows_data import load_active_instance  # noqa: E402
 
 _ACTIVE_LAYOUT = load_active_instance(PROGRAM_UPSP_ROOT)
 ACTIVE_PID = _ACTIVE_LAYOUT.pid
+ACTIVE_INSTANCE_ID = _ACTIVE_LAYOUT.instance_id
 UPSP_DATA_ROOT = str(_ACTIVE_LAYOUT.data_root)
 UPSP_LOCAL_STATE_ROOT = str(_ACTIVE_LAYOUT.local_state_root)
 ACTIVE_INSTANCE_MANIFEST = str(_ACTIVE_LAYOUT.manifest_path)
 ACTIVE_INSTANCE_ROOT = str(_ACTIVE_LAYOUT.instance_root)
+ACTIVE_PID_ROOT = str(_ACTIVE_LAYOUT.pid_root)
+META_INSTANCE_ROOT = str(_ACTIVE_LAYOUT.meta_root)
 OS_ROOT = str(_ACTIVE_LAYOUT.os_root)
 
 INITIALIZATION_DIR = os.path.join(PROGRAM_UPSP_ROOT, "initialization")
@@ -37,11 +40,12 @@ OS_TEMPLATE_DIR = os.path.join(INITIALIZATION_DIR, "os_template")
 # ============================================================
 
 def resolve_persona_dir():
-    """Return the one active persona root selected by the manifest."""
+    """Return the local persona root selected by the active manifest."""
     return str(_ACTIVE_LAYOUT.persona_dir)
 
 
 PERSONA_DIR = resolve_persona_dir()                       # 位格核心（内环境）
+SHARED_PERSONA_DIR = str(_ACTIVE_LAYOUT.shared_persona_dir)  # 同 PID 共享真源
 GLOBAL_CONFIG_DIR = str(_ACTIVE_LAYOUT.global_config_dir) # 本机跨位格配置
 CONFIG_DIR    = str(_ACTIVE_LAYOUT.config_dir)            # 当前位格配置
 ORGAN_TOPOLOGY = os.path.join(CONFIG_DIR, "organ_topology.json")
@@ -68,21 +72,21 @@ AUDIT_DIR = str(_ACTIVE_LAYOUT.audit_cache_dir)
 # persona/ 内环境 — 七文件
 # ============================================================
 
-CORE_MD    = os.path.join(PERSONA_DIR, "core.md")
+CORE_MD    = os.path.join(SHARED_PERSONA_DIR, "core.md")
 STATE_JSON = os.path.join(PERSONA_DIR, "state.json")
 
 # ============================================================
 # persona/rules/
 # ============================================================
 
-RULES_DIR      = os.path.join(PERSONA_DIR, "rules")
+RULES_DIR      = os.path.join(SHARED_PERSONA_DIR, "rules")
 RULES_REGISTRY = os.path.join(RULES_DIR, "rules_registry.json")
 
 # ============================================================
 # persona/docs/
 # ============================================================
 
-DOCS_DIR      = os.path.join(PERSONA_DIR, "docs")
+DOCS_DIR      = os.path.join(SHARED_PERSONA_DIR, "docs")
 DOCS_REGISTRY = os.path.join(DOCS_DIR, "docs_registry.json")
 
 # docs/protocol/base/ — 协议层
@@ -161,7 +165,8 @@ WB_OUTPUT_DIR = os.path.join(WB_DIR, "output")
 # ============================================================
 
 LTM_DIR        = os.path.join(PERSONA_DIR, "LTM")
-LTM_MEMORY_DIR = os.path.join(LTM_DIR, "Memory")
+LTM_MEMORY_DIR = os.path.join(SHARED_PERSONA_DIR, "LTM", "Memory")
+LTM_MEMORY_LINKS_JSON = os.path.join(LTM_DIR, "memory_links.json")
 
 # LTM/Memory/ 四层 + Pinned
 LTM_FULL_DIR     = os.path.join(LTM_MEMORY_DIR, "Full")
@@ -185,9 +190,14 @@ LTM_BACKUP_BACKUP_MD     = os.path.join(LTM_BACKUP_DIR, "backup.md")
 LTM_BACKUP_INDEX_MD      = os.path.join(LTM_BACKUP_DIR, "index.md")
 LTM_BACKUP_META_JSON     = os.path.join(LTM_BACKUP_DIR, "meta.json")
 LTM_PINNED_PINNED_MD     = os.path.join(LTM_PINNED_DIR, "pinned.md")
+LTM_PINNED_INDEX_MD      = os.path.join(LTM_PINNED_DIR, "index.md")
 LTM_PINNED_META_JSON     = os.path.join(LTM_PINNED_DIR, "meta.json")
 
 LTM_KEYWORDS_JSON = os.path.join(LTM_MEMORY_DIR, "keywords.json")
+MEMORY_COMPRESSION_PENDING_JSON = os.path.join(
+    LTM_MEMORY_DIR, "memory_compression_pending.json")
+PERIODIC_PIN_OWNERS_JSON = os.path.join(
+    LTM_MEMORY_DIR, "periodic_pin_owners.json")
 
 # LTM/ 9种工作容器目录（DDS §13-18）
 CONTAINER_DIALECTICS_DIR = os.path.join(LTM_DIR, "Dialectics")  # DC-

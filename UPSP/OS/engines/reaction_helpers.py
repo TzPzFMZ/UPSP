@@ -10,8 +10,6 @@ from pathlib import PurePosixPath, PureWindowsPath
 
 from data.relation_store import relation_public_name
 from logic.evidence_refs import evidence_handle_for_result, result_supports_evidence
-from logic.write_pending_settlement import format_pending_cancel_tool_fact
-
 from logic.handoff_prefixes import prefix_reaction_loop_handoff
 from engines.reaction_protocol_tool_execution import model_visible_error_hint
 
@@ -40,7 +38,6 @@ def reaction_identity_has_blocked_activity(parsed_reaction):
         "relation_card_declarations",
         "memory_write_declarations",
         "memory_annotation_declarations",
-        "memory_recall_completion_requests",
         "memory_link_update_declarations",
         "memory_container_create_declarations",
         "memory_container_write_declarations",
@@ -50,7 +47,6 @@ def reaction_identity_has_blocked_activity(parsed_reaction):
         "alert_mode_settle_declarations",
         "fault_record_declarations",
         "container_focus_declarations",
-        "pending_cancel_requests",
     )
     return any(parsed_reaction.get(key) for key in blocked_keys)
 
@@ -76,7 +72,6 @@ def record_pending_memory_ids(pending_memory_ids, receipts):
     for offset, mem_id in enumerate(applied_ids):
         pending_memory_ids[f"PENDING-{next_index + offset}"] = mem_id
         pending_memory_ids["PENDING"] = mem_id
-        pending_memory_ids["PENDING-1"] = mem_id
 
 
 def attach_native_trace_to_receipts(receipts, declarations):
@@ -87,7 +82,6 @@ def attach_native_trace_to_receipts(receipts, declarations):
         "response_id",
         "provider_item_id",
         "index",
-        "resolves_pending_id",
     )
     traces = []
     for declaration in declarations or []:
@@ -111,66 +105,6 @@ def attach_native_trace_to_receipts(receipts, declarations):
     return receipts
 
 
-def _message_receipt_call_ids(message):
-    values = []
-    if not isinstance(message, dict):
-        return values
-    raw = message.get("_tool_fact_receipt_call_ids") or []
-    if isinstance(raw, str):
-        raw = [raw]
-    for item in raw:
-        text = str(item or "").strip()
-        if text:
-            values.append(text)
-    return values
-
-
-def remove_settled_write_pending_context(
-        accumulated_messages,
-        pending_native_tool_feedbacks,
-        settled_pendings):
-    """Drop stale pending reminder facts after a write retry resolves them."""
-    pending_ids = set()
-    call_ids = set()
-    for pending in settled_pendings or []:
-        if not isinstance(pending, dict):
-            continue
-        pending_id = str(pending.get("pending_id") or "").strip()
-        call_id = str(pending.get("call_id") or "").strip()
-        if pending_id:
-            pending_ids.add(pending_id)
-        if call_id:
-            call_ids.add(call_id)
-        raw_call_ids = pending.get("call_ids") or []
-        if isinstance(raw_call_ids, str):
-            raw_call_ids = [raw_call_ids]
-        for item in raw_call_ids:
-            text = str(item or "").strip()
-            if text:
-                call_ids.add(text)
-    if not pending_ids and not call_ids:
-        return
-
-    kept_messages = []
-    for message in accumulated_messages or []:
-        content = str((message or {}).get("content") or "")
-        message_call_ids = set(_message_receipt_call_ids(message))
-        if pending_ids and any(pending_id in content for pending_id in pending_ids):
-            continue
-        if call_ids and message_call_ids.intersection(call_ids):
-            continue
-        kept_messages.append(message)
-    accumulated_messages[:] = kept_messages
-
-    kept_feedbacks = []
-    for feedback in pending_native_tool_feedbacks or []:
-        text = str(feedback or "")
-        if pending_ids and any(pending_id in text for pending_id in pending_ids):
-            continue
-        kept_feedbacks.append(feedback)
-    pending_native_tool_feedbacks[:] = kept_feedbacks
-
-
 def reaction_loop_has_other_activity(parsed_reaction):
     """结束判定/收束终步的护栏：reaction_loop 之外不得夹带工具动作。"""
     parsed_reaction = parsed_reaction or {}
@@ -184,7 +118,6 @@ def reaction_loop_has_other_activity(parsed_reaction):
         "relation_card_declarations",
         "memory_write_declarations",
         "memory_annotation_declarations",
-        "memory_recall_completion_requests",
         "memory_link_update_declarations",
         "memory_container_create_declarations",
         "memory_container_write_declarations",
@@ -194,7 +127,6 @@ def reaction_loop_has_other_activity(parsed_reaction):
         "alert_mode_settle_declarations",
         "fault_record_declarations",
         "container_focus_declarations",
-        "pending_cancel_requests",
     )
     return any(parsed_reaction.get(key) for key in activity_keys)
 
@@ -207,7 +139,6 @@ def reaction_loop_has_protocol_submission_activity(parsed_reaction):
         "relation_card_declarations",
         "memory_write_declarations",
         "memory_annotation_declarations",
-        "memory_recall_completion_requests",
         "memory_link_update_declarations",
         "memory_container_create_declarations",
         "memory_container_write_declarations",
@@ -217,7 +148,6 @@ def reaction_loop_has_protocol_submission_activity(parsed_reaction):
         "alert_mode_settle_declarations",
         "fault_record_declarations",
         "container_focus_declarations",
-        "pending_cancel_requests",
     )
     return any(parsed_reaction.get(key) for key in submission_keys)
 
@@ -230,16 +160,22 @@ def format_protocol_tool_material_entry(receipt):
     status = str(receipt.get("status") or "").strip()
     if status not in {"ok", "accepted", "applied", "success"}:
         return None
-    if tool_id != "index_view":
+    if tool_id not in {"index_view", "memory_search"}:
         return None
     content = str(receipt.get("content") or "").strip()
     if not content:
         return None
-    title = "index_view scope={} offset={} limit={}".format(
-        receipt.get("scope") or "",
-        receipt.get("offset") or "",
-        receipt.get("limit") or "",
-    ).strip()
+    if tool_id == "memory_search":
+        title = "memory_search offset={} limit={}".format(
+            receipt.get("offset") or 0,
+            receipt.get("limit") or 8,
+        )
+    else:
+        title = "index_view scope={} offset={} limit={}".format(
+            receipt.get("scope") or "",
+            receipt.get("offset") or "",
+            receipt.get("limit") or "",
+        ).strip()
     return {
         "role": "system",
         "kind": "material",
@@ -256,6 +192,12 @@ def protocol_receipt_should_enter_tool_fact(receipt):
         return False
     status = str(receipt.get("status") or "").strip()
     if status == "submission_received":
+        return False
+    if (
+            str(receipt.get("tool_id") or "").strip() == "guide_submit"
+            and isinstance(receipt.get("cache_compaction"), dict)
+            and status in {"accepted", "applied", "ok", "success"}
+    ):
         return False
     return bool(status)
 
@@ -581,7 +523,10 @@ def _format_alert_guide_fact(receipt, submissions):
 def _format_cache_compaction_guide_fact(receipt, submissions):
     cache_submissions = [
         item for item in submissions
-        if str(item.get("option_id") or "").strip() == "submit_cache_compaction_shard"
+        if str(item.get("option_id") or "").strip() in {
+            "submit_cache_compaction_batch",
+            "submit_cache_compaction_shard",
+        }
     ]
     cache_status = receipt.get("cache_compaction")
     if not cache_submissions and not isinstance(cache_status, dict):
@@ -602,13 +547,27 @@ def _format_cache_compaction_guide_fact(receipt, submissions):
                 ("跳过分片", "skipped_shards"),
                 ("目标达成", "target_met"),
                 ("全部完成", "all_done"),
+                ("压缩周期", "compaction_id"),
+                ("完成分片", "completed_ids"),
+                ("剩余分片", "remaining_ids"),
+                ("已原子写回", "rewrite_applied"),
         ):
             _append_fact_line(lines, label, cache_status.get(key))
     for submission in cache_submissions:
         fields = submission.get("fields") if isinstance(submission.get("fields"), dict) else {}
         item_id = _fact_value(submission.get("item_id"))
         if item_id:
-            lines.append(f"处理项：{item_id} / submit_cache_compaction_shard。")
+            lines.append(
+                f"处理项：{item_id} / "
+                f"{str(submission.get('option_id') or '').strip()}。"
+            )
+        results = fields.get("results") if isinstance(fields.get("results"), list) else []
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            _append_fact_line(lines, "分片编号", result.get("shard_id"))
+            _append_fact_line(lines, "处理动作", result.get("action"))
+            _append_fact_line(lines, "保留原因", result.get("reason"))
         for label, key in (
                 ("分片编号", "shard_id"),
                 ("来源块", "source_block_ids"),
@@ -618,6 +577,11 @@ def _format_cache_compaction_guide_fact(receipt, submissions):
                 ("压缩比例", "compact_ratio"),
         ):
             _append_fact_line(lines, label, fields.get(key))
+    for backend in _backend_receipts(receipt):
+        if backend.get("operation_id") != "progressive_cache_compaction":
+            continue
+        _append_fact_line(lines, "后台事务", backend.get("operation_id"))
+        _append_fact_line(lines, "后台状态", backend.get("status"))
     for backend in _backend_receipts(receipt, "cache_compact"):
         _append_fact_line(lines, "后台处理器", backend.get("tool_id"))
         _append_fact_line(lines, "后台状态", backend.get("status"))
@@ -815,8 +779,8 @@ def _memory_body_too_long_fact_lines(reason, receipt):
     return [
         "失败原因：memory_body_too_long。",
         first,
-        "请压缩正文或调整 weight 后重新调用 memory_write。",
-        "不要只因字数升权。",
+        "下一 Reaction Frame 将出现记忆写入重写指南；其他字段已经冻结。",
+        "请按指南重写正文或明确选择 not_written，不要直接重试 memory_write。",
     ]
 
 
@@ -875,8 +839,6 @@ def format_protocol_tool_fact(receipt, fact_context=None):
     if not isinstance(receipt, dict):
         return ""
     tool_id = str(receipt.get("tool_id") or "protocol_tool").strip()
-    if tool_id == "pending_cancel":
-        return format_pending_cancel_tool_fact(receipt)
     if tool_id == "guide_submit":
         guide_fact = _format_guide_submit_tool_fact(receipt, fact_context=fact_context)
         if guide_fact:
@@ -889,6 +851,7 @@ def format_protocol_tool_fact(receipt, fact_context=None):
         "memory_content_read": "本轮记忆读取回执",
         "corpus_read": "本轮语料展开回执",
         "index_view": "本轮索引查看回执",
+        "memory_search": "本轮记忆检索回执",
         "container_read": "本轮容器读取回执",
         "memory_container_create": "本轮容器创建回执",
         "memory_container_write": "本轮容器写入回执",
@@ -905,8 +868,6 @@ def format_protocol_tool_fact(receipt, fact_context=None):
         handle = evidence_handle_for_result(receipt)
         if handle:
             lines.append(f"证据引用：{handle}。")
-    if tool_id == "memory_write" and success_status and receipt.get("write_pending_resolved"):
-        lines.append("这次写入已成功补写先前失败的记忆。")
     if not success_status:
         reason = str(receipt.get("reason") or "").strip()
         if tool_id == "relation_card_write" and reason == "relation_index_write_failed":
@@ -917,21 +878,6 @@ def format_protocol_tool_fact(receipt, fact_context=None):
             lines.append("不要重复创建或重复写入关系卡；等待宿主修复关系关键词索引。")
         elif tool_id == "memory_write" and reason.startswith("memory_body_too_long:"):
             lines.extend(_memory_body_too_long_fact_lines(reason, receipt))
-            stage = str(receipt.get("write_pending_stage") or "").strip()
-            pending_id = _fact_value(receipt.get("write_pending_id"))
-            cancel_available = bool(receipt.get("write_pending_cancel_available"))
-            if stage == "settlement_required" and pending_id:
-                lines.append(
-                    f"这次重写仍失败；下一次重试必须填写 resolves_pending_id={pending_id}。"
-                )
-                if cancel_available:
-                    lines.append(
-                        f"只有确认放弃这次写入意图时，才调用 pending_cancel(pending_id={pending_id})。"
-                    )
-                else:
-                    lines.append("这条写入不能取消；请继续修正后重试，或阻塞收束。")
-            else:
-                lines.append("请先修正后重新调用 memory_write，当前不能收束。")
         elif tool_id == "memory_write" and reason in SUBJECT_RESOLUTION_REASONS:
             lines.extend(_memory_subject_fact_lines(reason, receipt))
         elif tool_id == "chronicle_write" and reason == "no_active_chronicle_focus":
@@ -940,7 +886,7 @@ def format_protocol_tool_fact(receipt, fact_context=None):
             if call_id:
                 lines.append(f"调用编号：{call_id}。")
             lines.append("失败原因：no_active_chronicle_focus。")
-            lines.append("当前没有编年史写入焦点；不要继续调用 chronicle_write。")
+            lines.append("当前没有编年史写入焦点；不要重复提交当前编年 guide 选项。")
             lines.append(
                 "请消费已有工具事实并继续推进；完成时直接自然语言回复用户，"
                 "需要跨轮继续才调用 reaction_finalize(handoff_text)。"
@@ -980,12 +926,21 @@ def format_protocol_tool_fact(receipt, fact_context=None):
         ("中继状态", "final_status"),
         ("索引范围", "scope"),
         ("索引分区", "zone"),
+        ("查询词", "query_terms"),
+        ("候选总数", "total_matches"),
+        ("下一偏移", "next_offset"),
         ("索引偏移", "offset"),
         ("索引数量", "limit"),
     ):
+        if tool_id == "memory_search" and key == "query_terms":
+            continue
         value = _fact_value(receipt.get(key))
         if value:
             lines.append(f"{label}：{value}。")
+    if tool_id == "memory_search" and success_status:
+        lines.append(
+            "候选定位片段不是事实证据；必须对相关 MEM-* 调用 memory_content_read 读取完整正文。"
+        )
     if success_status:
         value = _fact_value(receipt.get("reason"))
         if value:
@@ -1073,11 +1028,14 @@ def native_tool_failure_feedbacks(items):
             result_count = int(item.get("result_count") or 0)
         except (TypeError, ValueError):
             result_count = -1
-        if (
-                item.get("tool_id") == "file_search"
+        empty_search = (
+                item.get("tool_id") in {"file_glob", "file_grep"}
                 and status in {"ok", "success"}
-                and result_count == 0):
-            reason = "search_no_results"
+                and result_count == 0
+        )
+        if empty_search:
+            if reason in {"ok", "success"}:
+                reason = "search_no_results"
         elif not reason or status in {"ok", "accepted", "applied", "guide_loaded", "success"}:
             continue
         elif (
@@ -1128,21 +1086,15 @@ def format_native_tool_failure_feedback(item, reason):
         f"  call_id: {safe_feedback_value(item.get('call_id'))}",
         f"  reason: {safe_feedback_value(reason)}",
     ])
-    pending_id = ""
-    if str(item.get("write_pending_stage") or "").strip() == "settlement_required":
-        pending_id = safe_feedback_value(item.get("write_pending_id"))
-    if pending_id:
-        lines.append(f"  pending_id: {pending_id}")
     submitted_subject, confirmed_subject = _memory_subject_values(item)
     if submitted_subject:
         lines.append(f"  subject: {safe_feedback_value(submitted_subject)}")
     if confirmed_subject:
         lines.append(f"  confirmed_subject: {safe_feedback_value(confirmed_subject)}")
-    if tool_id or reason or pending_id or submitted_subject:
+    if tool_id or reason or submitted_subject:
         signature = "|".join([
             str(tool_id or ""),
             str(reason or ""),
-            str(pending_id or ""),
             str(submitted_subject or ""),
         ])
         lines.append(f"  feedback_signature: {safe_feedback_value(signature, limit=240)}")
@@ -1168,7 +1120,8 @@ def native_tool_visible_label(tool_id):
     value = str(tool_id or "").strip()
     labels = {
         "file_read": "文件读取工具",
-        "file_search": "文件搜索工具",
+        "file_glob": "文件名搜索工具",
+        "file_grep": "文件正文搜索工具",
         "file_edit": "文件编辑工具",
         "shell_command": "shell 命令工具",
         "subagent_dispatch": "子 agent 调度工具",
@@ -1255,30 +1208,15 @@ def native_tool_feedback_action(reason, item):
         over_by = item.get("over_by")
         if max_chars is None or actual_chars is None or over_by is None:
             max_chars, actual_chars, over_by = parse_memory_body_too_long(reason)
-        pending_id = ""
-        if str(item.get("write_pending_stage") or "").strip() == "settlement_required":
-            pending_id = safe_feedback_value(item.get("write_pending_id"))
-        cancel_available = bool(item.get("write_pending_cancel_available"))
         message = [
             (
                 "memory_write.body 超出当前权重上限："
                 f"actual={actual_chars}, max={max_chars}。"
             ),
-            "请压缩正文或调整 weight 后重新调用 memory_write。",
-            "不要只因字数升权。",
+            "下一 Reaction Frame 将出现记忆写入重写指南，其他字段保持冻结。",
+            "请按指南重写正文，或明确选择 not_written；不要直接重试 memory_write。",
         ]
-        if pending_id:
-            message.append(
-                "这条失败写入已有 pending_id："
-                f"{pending_id}；压缩后重交必须填写 resolves_pending_id={pending_id}。"
-            )
-            if cancel_available:
-                message.append("只有决定放弃这次写入意图时，才调用 pending_cancel。")
-            else:
-                message.append("这条写入不能取消；请继续修正后重试，或阻塞收束。")
-        else:
-            message.append("请先修正后重新调用 memory_write，当前不能收束。")
-        return "compress_body_or_adjust_weight", message
+        return "use_memory_write_rewrite_guide", message
     if reason == "native_argument_missing_required":
         if str(item.get("tool_id") or "").strip() == "reaction_finalize" and field == "handoff_text":
             return "provide_handoff_text_or_reply_naturally", [
@@ -1322,26 +1260,37 @@ def native_tool_feedback_action(reason, item):
         parent, name = _parent_path_hint(path)
         pattern = name.rsplit(".", 1)[0] + "*" if "." in name else (name or "*")
         search_line = (
-            f"优先调用 file_search，root={parent}，pattern={pattern}，"
+            f"优先调用 file_glob，root={parent}，pattern={pattern}，"
             "找到候选后用候选里的精确 path 重新调用 file_read。"
             if parent else
-            "优先调用 file_search 搜索原路径附近的上级目录；找到候选后用精确 path 重新调用 file_read。"
+            "优先调用 file_glob 搜索原路径附近的上级目录；找到候选后用精确 path 重新调用 file_read。"
         )
         return "search_parent_directory_or_retry_exact_path", [
             f"本次请求的路径不存在：{path or '未记录'}。",
             "先检查是否抄错点号、下划线、空格、中文文件名或扩展名。",
             search_line,
             "如果父目录也可能抄错，改搜上级目录；仍没有候选时再说明阻断。",
-            "不要直接向用户要新路径，除非 file_search 也没有找到可用候选。",
+            "不要直接向用户要新路径，除非 file_glob 也没有找到可用候选。",
         ]
     if reason == "search_no_results":
         root = str(item.get("root") or "").strip()
+        if item.get("tool_id") == "file_grep":
+            query = str(item.get("query") or "").strip()
+            return "change_content_search_or_finalize", [
+                f"完整扫描范围没有命中正文：root={root or '未记录'}；query={query or '未记录'}。",
+                "下一次可改写字面 query、调整 file_pattern 或换 root；不要把字面不命中扩大为语义不存在。",
+            ]
         pattern = str(item.get("pattern") or "").strip()
         return "change_search_arguments_or_finalize", [
             f"当前搜索窗口没有命中：root={root or '未记录'}；pattern={pattern or '未记录'}。",
             "下一次应换更宽的 pattern、换 root，或显式 recursive=true 搜索子目录。",
             "如果已经搜索过合理父目录和上级目录，提交 reaction_finalize 说明当前没有候选。",
             "不能声称整台机器都不存在，只能说当前搜索窗口没有命中。",
+        ]
+    if reason == "search_no_results_partial":
+        return "widen_or_complete_content_search", [
+            "文件正文搜索零命中，但 coverage_complete=false。",
+            "应缩小或拆分 root、调整 file_pattern/query，或用 file_read 检查被跳过的大文件；不能声称不存在。",
         ]
     if reason in {"guide_missing", "guide_not_loaded", "guide_required"}:
         return "stop_or_retry_with_valid_tool", [
@@ -1377,6 +1326,12 @@ def native_tool_feedback_action(reason, item):
         return "consume_existing_focus_or_finalize", [
             "本轮同一容器焦点已经打开成功；不要重复调用 container_focus.open。",
             "请使用当前已可见的 WB focus 继续 memory_container_write；完成时直接自然语言回复用户。",
+        ]
+    if reason == "focus_tool_iteration_conflict":
+        accepted = safe_feedback_value(item.get("accepted_focus_tool")) or "另一个焦点工具"
+        return "wait_next_frame_single_focus_tool", [
+            f"本帧已经接受 `{accepted}`；当前焦点工具调用已被拒绝，没有执行。",
+            "每个 provider Frame/反应迭代最多一个焦点工具。等待回执后，下一帧只提交一个焦点工具。",
         ]
     if reason in {"native_argument_schema_missing", "native_protocol_write_not_enabled"}:
         return "stop_or_retry_with_valid_tool", [

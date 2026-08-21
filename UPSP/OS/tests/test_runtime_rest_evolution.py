@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -48,86 +49,37 @@ class TestRuntimeRestEvolution(RuntimeTestMixin):
 
         assert "fatigue" not in sample
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "YELLOW Spec410: 进化集整理仍是未上线早期 markdown 块设计，"
-            "不得按旧 internal_handoff 路径补回；后续另开 spec 重设。"
-        ),
-    )
-    def test_runtime_autonomous_reaction_includes_evolution_context(self, tmp_path, monkeypatch):
+    def test_runtime_has_no_active_evolution_surface(self, tmp_path):
         from engines.runtime import Runtime
         from data.state_store import StateStore
-        from data.evolution_store import EvolutionStore
-
-        class CapturingExecutor:
-            def __init__(self):
-                self.messages = None
-                self.calls = []
-
-            def call(self, step, system, messages):
-                self.messages = messages
-                self.calls.append(list(messages))
-                return {"response": "#done"}
 
         sm = StateStore(str(tmp_path / "state.json"))
         sm.init_if_missing()
-        evolution = EvolutionStore(str(tmp_path / "Iteration"))
-        pending = tmp_path / "Iteration" / "Raw" / "Tacit" / "pending.jsonl"
-        pending.parent.mkdir(parents=True)
-        pending.write_text('{"item_id":"MEM-A","action":"kept"}\n', encoding="utf-8")
+        rt = Runtime(state_store=sm)
 
-        rt = self._make_runtime(tmp_path)
-        rt.evolution_store = evolution
-        executor = CapturingExecutor()
-        rt.executor = executor
-        def fake_assemble_reaction(*args, **kwargs):
-            return "sys", list(kwargs.get("internal_handoff") or [])
+        assert "evolution_store" not in Runtime._SERVICE_ATTRS
+        assert not hasattr(rt, "evolution_store")
+        assert not hasattr(rt, "_process_evolution_set")
+        assert "evolution_pending" not in sm.get_flags()
 
-        monkeypatch.setattr(rt.assembler, "assemble_reaction", fake_assemble_reaction)
-        monkeypatch.setattr(rt, "_load_evolution_thresholds", lambda: {
-            "tacit_pending_threshold": 1,
-            "connection_pending_threshold": 99,
-        })
-
-        result = rt._run_reaction_loop(sm.load(), "autonomous", [])
-
-        assert result["_evolution_requested"] is True
-        assert any(
-            "进化集整理任务" in m.get("content", "")
-            for call in executor.calls
-            for m in call
+    def test_historical_evolution_marker_is_plain_text(self):
+        production_root = Path(__file__).parents[1]
+        sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in production_root.rglob("*.py")
+            if "tests" not in path.parts and "__pycache__" not in path.parts
         )
 
-    def test_runtime_processes_evolution_block_and_moves_pending(self, tmp_path):
-        from engines.runtime import Runtime
-        from data.state_store import StateStore
-        from data.evolution_store import EvolutionStore
+        assert "<!-- EVOLUTION" not in sources
+        assert "<!-- FORGET:" not in sources
+        assert "<!-- LTM_DEGRADE:" not in sources
 
-        sm = StateStore(str(tmp_path / "state.json"))
-        sm.init_if_missing()
-        evolution = EvolutionStore(str(tmp_path / "Iteration"))
-        pending = tmp_path / "Iteration" / "Raw" / "Tacit" / "pending.jsonl"
-        pending.parent.mkdir(parents=True)
-        pending.write_text('{"item_id":"MEM-A","action":"kept"}\n', encoding="utf-8")
-        rt = Runtime(state_store=sm, evolution_store=evolution)
-
-        rt._process_evolution_set(
-            "autonomous",
-            sm.load(),
-            {
-                "response": "<!-- EVOLUTION -->\n稳定模式：MEM-A 被持续沿用。\n<!-- /EVOLUTION -->",
-                "_evolution_requested": True,
-                "_evolution_stats": {"tacit_count": 1, "connection_count": 0},
-            },
-            10,
-        )
-
-        assert (tmp_path / "Iteration" / "Materials" / "Evolution" / "evolution_R10.md").is_file()
-        assert pending.read_text(encoding="utf-8") == ""
-        assert '"item_id":"MEM-A"' in (
-            tmp_path / "Iteration" / "Raw" / "Tacit" / "processed.jsonl"
+    def test_cleanup_no_longer_writes_retired_tacit_or_connection_raw(self):
+        cleanup_source = (
+            Path(__file__).parents[1] / "engines" / "cleanup_pipeline.py"
         ).read_text(encoding="utf-8")
-        batches = list((tmp_path / "Iteration" / "Raw" / "Tacit").glob("processed_*_R10.jsonl"))
-        assert len(batches) == 1
-        assert '"item_id":"MEM-A"' in batches[0].read_text(encoding="utf-8")
+
+        assert "write_tacit_set" not in cleanup_source
+        assert "write_connection_set" not in cleanup_source
+        assert "TACIT_SET_DIR" not in cleanup_source
+        assert "CONNECTION_SET_DIR" not in cleanup_source

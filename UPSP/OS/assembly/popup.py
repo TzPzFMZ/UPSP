@@ -21,6 +21,9 @@ GUIDE_TEMPLATE_TITLES = {
     "reaction_closeout": "反应循环指南",
     "final_reply": "最终回复指南",
     "cleanup": "善后步指南",
+    "memory_reconsolidation": "回忆重整指南",
+    "memory_write_rewrite": "记忆写入重写指南",
+    "cache_compaction": "最近缓存压缩指南",
 }
 
 

@@ -135,6 +135,32 @@ class TestSpec560ReactionFinalizeOccam(RuntimeTestMixin):
             for event in reaction_events
         )
 
+    def test_reaction_session_keeps_established_round_number(
+            self, tmp_path, monkeypatch):
+        from engines.round_context import FrameRef, RoundContext, SetupResult
+
+        rt = self._make_runtime(tmp_path)
+        _minimal_reaction_context(rt, monkeypatch)
+        rt.executor = ScriptedExecutor({
+            "response": "done",
+            "tool_call_envelopes": [],
+        })
+        rt.sm.set("base.meta.total_round", 3)
+        result = rt.reaction_loop_runner.run(
+            RoundContext(7, "interactive", rt.sm.load(), {}),
+            SetupResult(
+                {},
+                {"mount_requests": []},
+                {},
+                frame_ref=FrameRef.for_axis(7, "setup", 1),
+            ),
+        )
+
+        assert result["_frame_settlements"][0]["frame_id"] == \
+            "R000007:reaction:1"
+        assert rt.audit.get_store()._read_events_quiet(7)
+        assert not rt.audit.get_store()._read_events_quiet(3)
+
     def test_reaction_frame_consumes_sourced_organ_signal_as_user_material(
             self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)

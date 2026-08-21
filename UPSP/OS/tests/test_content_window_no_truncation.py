@@ -147,6 +147,17 @@ def test_memory_content_read_resident_reads_full_body_without_max_chars():
                 "read_mode": "full",
             }
 
+    class DummyMemoryRecall:
+        @staticmethod
+        def recall(_mem_id, **_kwargs):
+            return {
+                "source_memory_layer": "STM",
+                "stm_present": True,
+                "heat_boost_applied": False,
+                "heat_boost_deduplicated": False,
+            }
+
+    store = DummyMemoryStore()
     receipts, mounts, unmounts = apply_memory_content_read_requests(
         [{
             "tool_id": "memory_content_read",
@@ -154,7 +165,7 @@ def test_memory_content_read_resident_reads_full_body_without_max_chars():
             "mount_mode": "resident",
         }],
         {"presence": {"confirmed_subjects": ["Codex"]}},
-        {"memory_store": DummyMemoryStore()},
+        {"memory_store": store, "memory_recall": DummyMemoryRecall()},
     )
 
     assert receipts[0]["status"] == "accepted"
@@ -476,10 +487,18 @@ def test_explicit_range_requires_start_and_end_pairs_for_protocol_reads(range_re
                 "total_chars": result["total_chars"],
             }
 
+    class DummyMemoryRecall:
+        @staticmethod
+        def recall(*_args, **_kwargs):
+            raise AssertionError("invalid range must fail before recall")
+
     memory_receipts, memory_mounts, memory_unmounts = apply_memory_content_read_requests(
         [{"tool_id": "memory_content_read", "mem_id": "MEM-333", **range_request}],
         {"presence": {"confirmed_subjects": ["Codex"]}},
-        {"memory_store": DummyMemoryStore()},
+        {
+            "memory_store": DummyMemoryStore(),
+            "memory_recall": DummyMemoryRecall(),
+        },
     )
     assert memory_receipts[0]["status"] == "rejected"
     assert memory_receipts[0]["reason"] == "range_pair_required"

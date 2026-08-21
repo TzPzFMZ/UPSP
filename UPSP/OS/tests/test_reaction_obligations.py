@@ -326,7 +326,8 @@ def test_spec340_skippable_memory_route_prompt_is_not_hard_block():
 
     assert "请先处理后再结束反应步" not in prompt
     assert "可延期" in prompt
-    assert "自然语言回复用户" in prompt
+    assert "分别检查 DC、EC、PRJ、FUT" in prompt
+    assert "确实均不满足永固触发条件才可自然语言回复收束" in prompt
     assert "reaction_finalize" not in prompt
     assert "deferred/open" in prompt
 
@@ -345,7 +346,7 @@ def test_spec340_many_memory_route_pending_warns_to_stop_new_memory_writes():
 
     assert "停止新增 memory_write" in prompt
     assert "只处理已有 pending" in prompt
-    assert "自然语言回复收束" in prompt
+    assert "均不满足时才自然语言回复收束" in prompt
     assert "reaction_finalize" not in prompt
 
 
@@ -462,6 +463,62 @@ def test_spec290_closeout_form_generates_ledger_without_model_status_fields():
     assert ledger["pending_resolution_result"] == "open"
 
 
+def test_spec758_periodic_mount_blocked_closes_as_runtime_blocked():
+    from logic.reaction_obligations import ReactionObligationTracker
+
+    tracker = ReactionObligationTracker()
+    tracker.add_periodic_mount_blocked(
+        "MEM-1234ABCD", "periodic_memory_budget_exceeded"
+    )
+
+    result = tracker.validate_closeout_form({
+        "closeout_decision": "finish",
+    })
+
+    assert result["blocked"] is False
+    ledger = result["settlement_ledger"]
+    assert ledger["closeout_decision"] == "blocked"
+    assert ledger["pending_status"] == "blocked"
+    assert ledger["pending_resolution_result"] == "blocked"
+    assert ledger["pending_obligations"][0]["obligation_type"] == (
+        "periodic_memory_mount_blocked"
+    )
+    assert "closeout_decision_corrected:finish->blocked" in ledger["corrections"]
+    prompt = tracker.render_prompt()
+    assert "无需重试" in prompt
+    assert "按 blocked 闭合本轮" in prompt
+
+
+def test_spec758_actionable_reconsolidation_still_blocks_mount_failure_closeout():
+    from logic.reaction_obligations import ReactionObligationTracker
+
+    class PendingReconsolidation:
+        def has_pending(self):
+            return True
+
+        def pending_ids(self):
+            return ["MEM-AAAABBBB"]
+
+        def audit_state(self):
+            return {"pending_ids": self.pending_ids()}
+
+    tracker = ReactionObligationTracker(
+        memory_reconsolidation_tracker=PendingReconsolidation()
+    )
+    tracker.add_periodic_mount_blocked(
+        "MEM-1234ABCD", "periodic_memory_budget_exceeded"
+    )
+
+    result = tracker.validate_closeout_form({
+        "closeout_decision": "finish",
+    })
+
+    assert result["blocked"] is True
+    assert "memory_reconsolidation_pending_unresolved:MEM-AAAABBBB" in (
+        result["reasons"]
+    )
+
+
 def test_spec290_continue_handoff_text_settles_unfinished_file_cursor():
     from logic.reaction_obligations import ReactionObligationTracker
 
@@ -517,3 +574,31 @@ def test_spec290_continue_without_handoff_text_is_blocked_by_obligation_tracker(
 
     assert result["blocked"] is True
     assert "closeout_continue_requires_handoff_text" in result["reasons"]
+
+
+def test_spec758_reconsolidation_is_unskippable_until_tracker_clears():
+    from logic.reaction_obligations import ReactionObligationTracker
+
+    class ReconsolidationTracker:
+        pending = ["MEM-7460ABCD"]
+
+        def has_pending(self):
+            return bool(self.pending)
+
+        def pending_ids(self):
+            return list(self.pending)
+
+        def audit_state(self):
+            return {"pending_items": list(self.pending)}
+
+    reconsolidation = ReconsolidationTracker()
+    tracker = ReactionObligationTracker(
+        memory_reconsolidation_tracker=reconsolidation
+    )
+
+    blocked = tracker.validate_closeout_form({"closeout_decision": "finish"})
+    assert blocked["blocked"] is True
+    assert "memory_reconsolidation_pending" in tracker.pending_types()
+
+    reconsolidation.pending.clear()
+    assert "memory_reconsolidation_pending" not in tracker.pending_types()

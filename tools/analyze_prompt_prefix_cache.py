@@ -18,6 +18,7 @@ if str(PROGRAM_OS_ROOT) not in sys.path:
 from data.prompt_cache_telemetry import (  # noqa: E402
     extract_prompt_cache_telemetry as _extract_prompt_cache_telemetry_v2,
 )
+from data.round_audit_codec import read_round_audit_file  # noqa: E402
 from paths import STM_CTX_ROUND_DIR  # noqa: E402
 
 DEFAULT_ROUND_DIR = Path(STM_CTX_ROUND_DIR)
@@ -40,19 +41,7 @@ def _write_json(path: Path, data: Any) -> None:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            text = line.strip()
-            if not text:
-                continue
-            try:
-                event = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(event, dict):
-                events.append(event)
-    return events
+    return read_round_audit_file(path)
 
 
 def _round_num_from_path(path: Path) -> int:

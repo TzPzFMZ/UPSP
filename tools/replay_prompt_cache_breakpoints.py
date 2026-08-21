@@ -16,6 +16,7 @@ if str(PROGRAM_OS_ROOT) not in sys.path:
     sys.path.insert(0, str(PROGRAM_OS_ROOT))
 
 from engines.prompt_cache_planner import apply_explicit_breakpoints  # noqa: E402
+from data.round_audit_codec import read_round_audit_file  # noqa: E402
 
 
 CALLS_NAME = "prompt_cache_replay_calls.jsonl"
@@ -34,14 +35,7 @@ def _canonical_sha(value: Any) -> str:
 
 
 def _read_events(path: Path) -> Iterable[dict[str, Any]]:
-    with path.open("r", encoding="utf-8") as stream:
-        for line in stream:
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(event, dict):
-                yield event
+    yield from read_round_audit_file(path)
 
 
 def _layer_contents(payload: dict[str, Any]) -> dict[str, Any]:

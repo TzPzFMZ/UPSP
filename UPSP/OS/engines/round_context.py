@@ -2,6 +2,9 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from logic.memory_reconsolidation import MemoryReconsolidationTracker
+from logic.memory_write_rewrite import MemoryWriteRewriteTracker
+
 
 @dataclass(frozen=True)
 class RuntimeTrigger:
@@ -12,9 +15,14 @@ class RuntimeTrigger:
     flags: dict[str, Any] = field(default_factory=dict)
     messages: tuple[Any, ...] = ()
     execution_permission_level: str = "guarded"
+    final_response_max_chars: int | None = None
+    final_response_length_rejections: int = 0
+    response_contract: dict[str, Any] = field(default_factory=dict)
+    task_guidance_enabled: bool = True
+    context_window_tokens: int = 0
 
     def as_dict(self):
-        return {
+        result = {
             "trigger_id": self.trigger_id,
             "trigger_seq": self.trigger_seq,
             "observed_at": self.observed_at,
@@ -23,6 +31,16 @@ class RuntimeTrigger:
             "messages": list(self.messages),
             "execution_permission_level": self.execution_permission_level,
         }
+        if self.final_response_max_chars is not None:
+            result["final_response_max_chars"] = self.final_response_max_chars
+        if self.final_response_length_rejections:
+            result["final_response_length_rejections"] = (
+                self.final_response_length_rejections)
+        if self.response_contract:
+            result["response_contract"] = dict(self.response_contract)
+        if not self.task_guidance_enabled:
+            result["task_guidance_enabled"] = False
+        return result
 
 
 @dataclass(frozen=True)
@@ -88,6 +106,22 @@ class RoundContext:
     setup_frame: FrameRef | None = None
     cleanup_frame: FrameRef | None = None
     execution_permission_level: str = "guarded"
+    final_response_max_chars: int | None = None
+    final_response_length_rejections: int = 0
+    response_contract: dict[str, Any] = field(default_factory=dict)
+    task_guidance_enabled: bool = True
+    context_window_tokens: int = 0
+    memory_heat_boosted_ids: set[str] = field(default_factory=set)
+    memory_reconsolidation_tracker: Any = field(init=False)
+    memory_write_rewrite_tracker: Any = field(init=False)
+
+    def __post_init__(self):
+        self.memory_reconsolidation_tracker = MemoryReconsolidationTracker(
+            self.round_num
+        )
+        self.memory_write_rewrite_tracker = MemoryWriteRewriteTracker(
+            self.round_num
+        )
 
 
 @dataclass

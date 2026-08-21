@@ -59,9 +59,11 @@ from data.provider_request_wire import (
     verified_provider_request_wire,
 )
 from engines.prompt_cache_planner import apply_explicit_breakpoints, profile_settings
+from logic.progressive_cache_compaction import COMPACTION_OUTPUT_TOKENS
 from paths import ACTIVE_PID
 
 _SYSTEM_SLEEP = time.sleep
+ANTHROPIC_DEFAULT_OUTPUT_TOKENS = 32000
 
 
 class _ProviderTransportConfig:
@@ -132,6 +134,10 @@ def _provider_transport_worker(connection, request):
             "endpoint": str(getattr(exc, "endpoint", "") or ""),
             "status_code": getattr(exc, "status_code", None),
             "transient": bool(getattr(exc, "transient", False)),
+            "allow_fallback": bool(getattr(exc, "allow_fallback", False)),
+            "affects_connectivity": bool(
+                getattr(exc, "affects_connectivity", True)
+            ),
         })
     except Exception as exc:
         connection.send({
@@ -787,8 +793,16 @@ class APIExecutor:
             )
         except (TypeError, ValueError, OverflowError):
             context_window_tokens = 0
-        if context_window_tokens > 0:
-            envelope["context_window_tokens"] = context_window_tokens
+        logical_window = int(
+            getattr(self, "round_context_window_tokens", 0) or 0
+        )
+        envelope["endpoint_context_window_tokens"] = (
+            context_window_tokens if context_window_tokens > 0 else None
+        )
+        envelope["context_window_tokens"] = (
+            logical_window if logical_window > 0
+            else (context_window_tokens if context_window_tokens > 0 else None)
+        )
         return envelope
 
     def _call_header_for_layers(self, step, channel, attempt):
@@ -842,21 +856,10 @@ class APIExecutor:
 
     def _generation_config_for_layers(self, provider, step, endpoint_config,
                                       prompt_cache_scope=None,
-                                      model_name=""):
-        if provider == "openai_responses":
-            payload = {
-                "max_output_tokens": 4096,
-                "reasoning": {"effort": "none"},
-                "text": {
-                    "format": {"type": "text"},
-                    "verbosity": "low",
-                },
-                "temperature": 0.7,
-            }
-        elif provider == "anthropic_messages":
-            payload = {"max_tokens": 4096}
-        else:
-            payload = {"temperature": 0.7}
+                                      model_name="",
+                                      cache_compaction_call=False):
+        payload = {}
+        self._apply_configured_output_limit(payload, provider, endpoint_config)
         self._apply_prompt_cache_config(
             payload,
             provider or "openai_chat",
@@ -865,8 +868,48 @@ class APIExecutor:
             prompt_cache_scope=prompt_cache_scope,
             model_name=model_name,
         )
-        self._apply_endpoint_payload_overrides(payload, endpoint_config)
+        self._apply_endpoint_payload_overrides(
+            payload, endpoint_config, provider=provider,
+        )
+        self._apply_cache_compaction_output_limit(
+            payload, provider, cache_compaction_call,
+        )
         return payload
+
+    @staticmethod
+    def _apply_configured_output_limit(payload, provider, endpoint_config=None):
+        if not isinstance(payload, dict):
+            return
+        endpoint_config = (
+            endpoint_config if isinstance(endpoint_config, dict) else {}
+        )
+        value = endpoint_config.get("output_token_limit", 0)
+        if isinstance(value, bool) or not isinstance(value, int):
+            value = 0
+        if value <= 0:
+            if provider != "anthropic_messages":
+                return
+            value = ANTHROPIC_DEFAULT_OUTPUT_TOKENS
+        field = (
+            "max_output_tokens"
+            if provider == "openai_responses"
+            else "max_tokens"
+        )
+        payload[field] = value
+
+    @staticmethod
+    def _apply_cache_compaction_output_limit(payload, provider, enabled):
+        if not enabled:
+            return
+        field = (
+            "max_output_tokens"
+            if provider == "openai_responses"
+            else "max_tokens"
+        )
+        for alias in (
+                "max_tokens", "max_output_tokens", "max_completion_tokens"):
+            payload.pop(alias, None)
+        payload[field] = COMPACTION_OUTPUT_TOKENS
 
     def _ensure_context_layers_from_inputs(self, context_step, system_prompt,
                                            messages):
@@ -1126,7 +1169,8 @@ class APIExecutor:
             messages=None,
             model=None,
             endpoint=None,
-            active_protocol_tool_guides=None):
+            active_protocol_tool_guides=None,
+            cache_compaction_call=False):
         """Build the sanitized LLM call contract without sending a request."""
         tier = endpoint or self._select_tier(step)
         ep = self._get_endpoint(tier)
@@ -1162,6 +1206,7 @@ class APIExecutor:
             endpoint_config=ep,
             step=step,
             prompt_cache_scope=prompt_cache_scope,
+            cache_compaction_call=cache_compaction_call,
         )
         payload = self._apply_streaming_config_to_payload(payload, ep, provider)
         request_contract_audit = self._request_contract_audit(
@@ -1195,7 +1240,7 @@ class APIExecutor:
 
     def prepare_provider_request(self, step, system_prompt, messages, model=None,
                                  endpoint=None, active_protocol_tool_guides=None,
-                                 attempt=1):
+                                 attempt=1, cache_compaction_call=False):
         """Compile, persist, and re-read the actual provider request body."""
         tier = endpoint or self._select_tier(step)
         ep = self._get_endpoint(tier)
@@ -1217,6 +1262,7 @@ class APIExecutor:
                     endpoint=fallback_tier,
                     active_protocol_tool_guides=active_protocol_tool_guides,
                     attempt=attempt,
+                    cache_compaction_call=cache_compaction_call,
                 )
             raise APIBridgeError(tier, "all endpoints are circuit-open")
 
@@ -1262,6 +1308,7 @@ class APIExecutor:
             ep,
             prompt_cache_scope=prompt_cache_scope,
             model_name=model_name,
+            cache_compaction_call=cache_compaction_call,
         )
         provisional_payload = dict(generation_config)
         if native_tools:
@@ -1354,6 +1401,7 @@ class APIExecutor:
             "call_channel": channel.name,
             "phase": channel.phase,
             "attempt": attempt,
+            "_cache_compaction_call": bool(cache_compaction_call),
         }
 
     def call_prepared(self, prepared):
@@ -1504,6 +1552,7 @@ class APIExecutor:
         messages = list(prepared.get("messages") or [])
         model = prepared.get("model")
         active_protocol_tool_guides = prepared.get("active_protocol_tool_guides")
+        cache_compaction_call = bool(prepared.get("_cache_compaction_call"))
         tier = prepared.get("tier") or prepared.get("endpoint")
         ep = prepared.get("endpoint_config") or self._get_endpoint(tier)
         health_endpoint = str(
@@ -1697,6 +1746,8 @@ class APIExecutor:
                 if not isinstance(e, APIBridgeError):
                     raise
                 if not self._is_transient_provider_error(e):
+                    if getattr(e, "allow_fallback", False) is True:
+                        break
                     breaker.record_failure()
                     self._log_connectivity(
                         health_endpoint, "error", str(e),
@@ -1708,14 +1759,15 @@ class APIExecutor:
                     continue
                 break
 
-        breaker.record_failure()
-        connectivity_status = (
-            "timeout" if self._is_api_timeout_error(last_error) else "error"
-        )
-        self._log_connectivity(
-            health_endpoint, connectivity_status, str(last_error),
-            source=connectivity_source,
-        )
+        if getattr(last_error, "affects_connectivity", True) is not False:
+            breaker.record_failure()
+            connectivity_status = (
+                "timeout" if self._is_api_timeout_error(last_error) else "error"
+            )
+            self._log_connectivity(
+                health_endpoint, connectivity_status, str(last_error),
+                source=connectivity_source,
+            )
 
         tried_fingerprints = {
             tuple(item)
@@ -1740,6 +1792,7 @@ class APIExecutor:
                 endpoint=fallback_tier,
                 active_protocol_tool_guides=active_protocol_tool_guides,
                 attempt=int(prepared.get("attempt") or 1) + 1,
+                cache_compaction_call=cache_compaction_call,
             )
             fallback_prepared["_tried_endpoint_fingerprints"] = list(
                 tried_fingerprints
@@ -1770,6 +1823,14 @@ class APIExecutor:
     @staticmethod
     def _provider_error_kind(error, status_code=0):
         text = str(error or "").lower()
+        if "provider_output_limit_reached" in text:
+            return "output_limit"
+        if "provider_response_incomplete" in text:
+            return "response_incomplete"
+        if "provider_response_failed" in text:
+            return "provider_failed"
+        if "provider_stream_error" in text:
+            return "provider_error"
         if isinstance(error, APITimeoutError) or "timeout" in text:
             return "timeout"
         if "econnrefused" in text or "connection refused" in text:
@@ -1785,7 +1846,7 @@ class APIExecutor:
         return "internal_error"
 
     def call(self, step, system_prompt, messages, model=None, endpoint=None,
-             active_protocol_tool_guides=None):
+             active_protocol_tool_guides=None, cache_compaction_call=False):
         prepared = self.prepare_provider_request(
             step,
             system_prompt,
@@ -1793,6 +1854,7 @@ class APIExecutor:
             model=model,
             endpoint=endpoint,
             active_protocol_tool_guides=active_protocol_tool_guides,
+            cache_compaction_call=cache_compaction_call,
         )
         return self.call_prepared(prepared)
 
@@ -1851,6 +1913,19 @@ class APIExecutor:
             for candidate in chain[idx + 1:]:
                 endpoint = self._get_endpoint(candidate)
                 if not endpoint.get("url"):
+                    continue
+                logical_window = int(
+                    getattr(self, "round_context_window_tokens", 0) or 0
+                )
+                try:
+                    candidate_window = int(endpoint.get("context_window") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    candidate_window = 0
+                if (
+                        logical_window > 0
+                        and candidate_window < logical_window):
+                    # No exact tokenizer proof is available before this
+                    # fallback request, so a smaller/unknown backup is skipped.
                     continue
                 if self._endpoint_fingerprint(endpoint) in excluded:
                     continue
@@ -1947,19 +2022,16 @@ class APIExecutor:
 
     def _build_payload(self, url, model_name, system_prompt, messages, tools=None,
                        provider=None, endpoint_config=None,
-                       step=None, prompt_cache_scope=None):
+                       step=None, prompt_cache_scope=None,
+                       cache_compaction_call=False):
         if provider == "openai_responses" or self._uses_responses_api(url):
             payload = {
                 "model": model_name,
                 "input": self._responses_input(messages, provider),
-                "max_output_tokens": 4096,
-                "reasoning": {"effort": "none"},
-                "text": {
-                    "format": {"type": "text"},
-                    "verbosity": "low",
-                },
-                "temperature": 0.7,
             }
+            self._apply_configured_output_limit(
+                payload, "openai_responses", endpoint_config,
+            )
             if str(system_prompt or "").strip():
                 payload["instructions"] = str(system_prompt)
             if tools:
@@ -1972,7 +2044,12 @@ class APIExecutor:
                 prompt_cache_scope=prompt_cache_scope,
                 model_name=model_name,
             )
-            self._apply_endpoint_payload_overrides(payload, endpoint_config)
+            self._apply_endpoint_payload_overrides(
+                payload, endpoint_config, provider="openai_responses",
+            )
+            self._apply_cache_compaction_output_limit(
+                payload, "openai_responses", cache_compaction_call,
+            )
             return payload
 
         if provider == "anthropic_messages":
@@ -1983,8 +2060,10 @@ class APIExecutor:
             payload = {
                 "model": model_name,
                 "messages": anthropic_messages,
-                "max_tokens": 4096,
             }
+            self._apply_configured_output_limit(
+                payload, "anthropic_messages", endpoint_config,
+            )
             if anthropic_system:
                 payload["system"] = anthropic_system
             if tools:
@@ -1997,7 +2076,12 @@ class APIExecutor:
                 prompt_cache_scope=prompt_cache_scope,
                 model_name=model_name,
             )
-            self._apply_endpoint_payload_overrides(payload, endpoint_config)
+            self._apply_endpoint_payload_overrides(
+                payload, endpoint_config, provider="anthropic_messages",
+            )
+            self._apply_cache_compaction_output_limit(
+                payload, "anthropic_messages", cache_compaction_call,
+            )
             return payload
 
         payload_messages = self._chat_messages(
@@ -2011,8 +2095,10 @@ class APIExecutor:
         payload = {
             "model": model_name,
             "messages": payload_messages,
-            "temperature": 0.7,
         }
+        self._apply_configured_output_limit(
+            payload, provider or "openai_chat", endpoint_config,
+        )
         if tools:
             payload["tools"] = tools
         self._apply_prompt_cache_config(
@@ -2023,7 +2109,12 @@ class APIExecutor:
             prompt_cache_scope=prompt_cache_scope,
             model_name=model_name,
         )
-        self._apply_endpoint_payload_overrides(payload, endpoint_config)
+        self._apply_endpoint_payload_overrides(
+            payload, endpoint_config, provider=provider or "openai_chat",
+        )
+        self._apply_cache_compaction_output_limit(
+            payload, provider or "openai_chat", cache_compaction_call,
+        )
         settings = self._prompt_cache_settings(
             step,
             provider or "openai_chat",
@@ -2109,6 +2200,13 @@ class APIExecutor:
             "provider_stream_interrupted",
             "provider_native_tool_empty_output",
         ))
+
+    @classmethod
+    def _allows_provider_failover(cls, exc):
+        return (
+            cls._is_transient_provider_error(exc)
+            or getattr(exc, "allow_fallback", False) is True
+        )
 
     def _as_api_timeout_error(self, exc, endpoint):
         if isinstance(exc, APITimeoutError):
@@ -2217,7 +2315,8 @@ class APIExecutor:
         self._raise_if_cancelled()
 
     @staticmethod
-    def _apply_endpoint_payload_overrides(payload, endpoint_config=None):
+    def _apply_endpoint_payload_overrides(
+            payload, endpoint_config=None, *, provider):
         if not isinstance(endpoint_config, dict):
             return
         reserved = {
@@ -2250,9 +2349,23 @@ class APIExecutor:
                 "prompt_cache_payload_override_conflict:"
                 + ",".join(cache_override_fields)
             )
-        for field in ("thinking", "reasoning_effort"):
-            if field in endpoint_config:
-                overrides[field] = endpoint_config[field]
+        if "thinking" in endpoint_config:
+            overrides["thinking"] = endpoint_config["thinking"]
+        effort = str(endpoint_config.get("reasoning_effort") or "").strip()
+        if effort:
+            container = {
+                "openai_responses": "reasoning",
+                "anthropic_messages": "output_config",
+            }.get(provider)
+            if container:
+                config = overrides.get(container) or {}
+                if not isinstance(config, dict):
+                    raise ValueError(
+                        f"reasoning_effort_payload_override_conflict:{container}"
+                    )
+                overrides[container] = {**config, "effort": effort}
+            else:
+                overrides["reasoning_effort"] = effort
         for key, value in overrides.items():
             if key in reserved:
                 continue
@@ -2847,8 +2960,11 @@ class APIExecutor:
                         continue
                     terminal = message
                     break
-                if not process.is_alive():
-                    break
+                # Do not break merely because the worker exited.  The child can
+                # close immediately after sending its terminal Pipe message;
+                # Windows may publish exit state before the buffered message is
+                # observable.  Reading until the Pipe reports EOF drains that
+                # terminal message without adding another timeout or thread.
             process.join(timeout=2)
             if self.cancellation_requested:
                 raise ProviderCallCancelled()
@@ -2871,6 +2987,10 @@ class APIExecutor:
                 terminal.get("message") or "provider_transport_worker_failed",
                 status_code=terminal.get("status_code"),
                 transient=terminal.get("transient") is True,
+                allow_fallback=terminal.get("allow_fallback") is True,
+                affects_connectivity=(
+                    terminal.get("affects_connectivity") is not False
+                ),
             )
         finally:
             with self._transport_lock:
@@ -3065,17 +3185,26 @@ class APIExecutor:
                     break
                 is_first_chunk = first_chunk_at is None
                 chunk = json.loads(data)
-                if self._stream_event_is_error(provider, chunk):
+                stream_failure = self._provider_stream_failure(provider, chunk)
+                if stream_failure is not None:
                     self._emit_stream_error(
-                        "provider_stream_interrupted",
+                        stream_failure["reason"],
                         accumulator,
                         start,
                         first_chunk_at=first_chunk_at,
                         protocol=provider,
+                        details=stream_failure.get("audit"),
                     )
                     raise APIBridgeError(
                         url,
-                        "provider_stream_interrupted: provider emitted an error event",
+                        stream_failure["message"],
+                        transient=stream_failure.get("transient") is True,
+                        allow_fallback=(
+                            stream_failure.get("allow_fallback") is True
+                        ),
+                        affects_connectivity=(
+                            stream_failure.get("affects_connectivity") is not False
+                        ),
                     )
                 done_seen = self._add_stream_chunk(provider, accumulator, chunk)
                 if is_first_chunk:
@@ -3210,13 +3339,94 @@ class APIExecutor:
         return bool(accumulator.add_event(chunk))
 
     @staticmethod
-    def _stream_event_is_error(provider, chunk):
-        event_type = str((chunk or {}).get("type") or "")
-        if provider == "openai_responses":
-            return event_type in {"error", "response.failed", "response.incomplete"}
-        if provider == "anthropic_messages":
-            return event_type == "error"
-        return False
+    def _provider_stream_failure(provider, chunk):
+        if not isinstance(chunk, dict):
+            return None
+        event_type = str(chunk.get("type") or "").strip()
+        if provider == "openai_responses" and event_type == "response.incomplete":
+            response = chunk.get("response") or {}
+            response = response if isinstance(response, dict) else {}
+            details = response.get("incomplete_details") or chunk.get("incomplete_details") or {}
+            details = details if isinstance(details, dict) else {}
+            incomplete_reason = APIExecutor._safe_provider_error_text(
+                details.get("reason") or details.get("code") or "unknown", 80,
+            )
+            output_limited = incomplete_reason in {
+                "max_output_tokens", "max_tokens", "max_completion_tokens",
+            }
+            reason = (
+                "provider_output_limit_reached"
+                if output_limited
+                else "provider_response_incomplete"
+            )
+            return {
+                "reason": reason,
+                "message": f"{reason}:{incomplete_reason}",
+                "transient": False,
+                "allow_fallback": incomplete_reason != "content_filter",
+                "affects_connectivity": False,
+                "audit": {
+                    "provider_event_type": event_type,
+                    "incomplete_reason": incomplete_reason,
+                },
+            }
+        if (
+            provider == "openai_responses"
+            and event_type in {"error", "response.failed"}
+        ) or (provider == "anthropic_messages" and event_type == "error"):
+            response = chunk.get("response") or {}
+            response = response if isinstance(response, dict) else {}
+            error = response.get("error") or chunk.get("error") or {}
+            error = error if isinstance(error, dict) else {}
+            error_code = APIExecutor._safe_provider_error_text(
+                error.get("code") or "unknown", 80,
+            )
+            error_type = APIExecutor._safe_provider_error_text(
+                error.get("type") or "unknown", 80,
+            )
+            error_message = APIExecutor._safe_provider_error_text(
+                error.get("message") or "", 240,
+            )
+            classifier = f"{error_code} {error_type}".lower()
+            transient = any(marker in classifier for marker in (
+                "server_error", "rate_limit", "overload", "temporarily_unavailable",
+                "timeout", "internal_error",
+            ))
+            reason = (
+                "provider_response_failed"
+                if event_type == "response.failed"
+                else "provider_stream_error"
+            )
+            return {
+                "reason": reason,
+                "message": f"{reason}:{error_code}:{error_type}",
+                "transient": transient,
+                "allow_fallback": transient,
+                "affects_connectivity": transient,
+                "audit": {
+                    "provider_event_type": event_type,
+                    "provider_error_code": error_code,
+                    "provider_error_type": error_type,
+                    "provider_error_message": error_message,
+                },
+            }
+        return None
+
+    @staticmethod
+    def _safe_provider_error_text(value, limit):
+        text = " ".join(str(value or "").split())
+        text = re.sub(
+            r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*",
+            "Bearer [redacted]",
+            text,
+        )
+        text = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}", "sk-[redacted]", text)
+        text = re.sub(
+            r"(?i)\b(api[_-]?key|token|password|secret)\s*[:=]\s*\S+",
+            r"\1=[redacted]",
+            text,
+        )
+        return text[:max(0, int(limit))]
 
     @staticmethod
     def _stream_response(provider, accumulator):
@@ -3298,7 +3508,8 @@ class APIExecutor:
             start,
             *,
             first_chunk_at=None,
-            protocol="openai_chat"):
+            protocol="openai_chat",
+            details=None):
         now = float(self._monotonic())
         payload = dict(accumulator.summary(include_delta=True))
         provider_error_kind = str(reason or "").strip()
@@ -3325,6 +3536,8 @@ class APIExecutor:
             payload["first_chunk_latency_ms"] = int(
                 max(0.0, float(first_chunk_at) - start) * 1000
             )
+        if isinstance(details, dict):
+            payload.update(details)
         self._emit_stream_event("llm_stream_error", payload)
 
     # ==============================================================

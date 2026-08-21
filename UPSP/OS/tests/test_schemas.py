@@ -19,11 +19,11 @@ class TestStateSchema:
         state = default_state()
 
         flags = state["base"]["heartbeat_flags"]
-        assert len(flags) == 20
+        assert len(flags) == 18
         assert {
             "token_usage_warning",
             "identity_timeout",
-            "evolution_pending",
+            "memory_compression_due",
             "calendar_day_due",
             "calendar_week_due",
             "calendar_month_due",
@@ -48,7 +48,8 @@ class TestMemorySchema:
         )
 
         heat = default_heat_entry(weight=5)
-        assert len(heat) == 10
+        assert len(heat) == 9
+        assert "stored" not in heat
         assert heat["heat_locked"] is False
         assert "pinned" not in heat
 
@@ -59,9 +60,12 @@ class TestMemorySchema:
             "title",
             "dream",
             "created_at",
+            "stored_at",
             "last_recalled_at",
             "created_round",
+            "created_instance_id",
             "last_recalled_round",
+            "last_recalled_instance_id",
             "source",
             "model",
             "subject",
@@ -109,6 +113,7 @@ class TestMemorySchema:
             current_overview="已在 DC-12 中订正",
             content_line="",
             created_at="now",
+            stored_at_text="未入库",
             tags="标签1",
             feelings="无",
             delta_desc="无变化",
@@ -239,14 +244,22 @@ class TestConfigSchema:
             default_model_routing_config,
             default_models_config,
             default_system_config,
+            default_lately_config,
         )
 
         system = default_system_config()
         memory = default_memory_config()
-        assert system["autonomous_trigger"]["tacit_pending_threshold"] == 512
-        assert system["autonomous_trigger"]["connection_pending_threshold"] == 512
-        assert system["audit"]["round_snapshot_retention"] == 64
+        assert "autonomous_trigger" not in system
+        assert system["audit"]["round_snapshot_retention"] == 8
+        assert system["audit"]["round_snapshot_max_mib"] == 256
+        assert system["audit"]["round_snapshot_policy_version"] == 2
         assert system["audit"]["state_backup_retention"] == 8
+        assert "warning_ratio" not in system["token_usage"]
+        lately = default_lately_config()
+        assert lately["pressure_ratio"] == 0.9
+        assert lately["semantic_summary_ratio"] == 0.125
+        assert lately["cycle_target_ratio"] == 0.25
+        assert system["token_usage"]["watermark_policy_version"] == 2
         assert default_interface_config()["locale"] == "system"
         assert default_models_config()["connections"] == []
         assert default_models_config()["models"] == []

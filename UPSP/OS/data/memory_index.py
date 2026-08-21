@@ -15,7 +15,7 @@ import json
 import os
 
 from data.atomic_write import atomic_write_json
-from paths import KEYWORDS_JSON, LTM_KEYWORDS_JSON, RELATION_KEYWORDS_JSON
+from paths import KEYWORDS_JSON, RELATION_KEYWORDS_JSON
 from schemas.memory import default_keywords_json
 from errors import ReadError
 
@@ -72,60 +72,6 @@ class MemoryIndex:
                 if not index[kw]:
                     del index[kw]
         self.save_index(data)
-
-
-    # ==============================================================
-    # LTM 倒排操作
-    # ==============================================================
-
-    def load_ltm_index(self):
-        """读取 LTM 倒排索引"""
-        if not os.path.isfile(LTM_KEYWORDS_JSON):
-            return default_keywords_json()
-        try:
-            with open(LTM_KEYWORDS_JSON, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            raise ReadError(LTM_KEYWORDS_JSON, cause=e)
-
-    def save_ltm_index(self, data):
-        """写入 LTM 倒排索引（原子）"""
-        atomic_write_json(LTM_KEYWORDS_JSON, data)
-
-    def add_ltm_keywords(self, mem_id, keywords, tier="Full"):
-        """为 LTM 条目添加关键词映射（标层级）"""
-        data = self.load_ltm_index()
-        index = data.setdefault("index", {})
-        tag = f"{mem_id}[{tier[0]}]"
-        for kw in keywords:
-            kw = kw.strip()
-            if not kw:
-                continue
-            if kw not in index:
-                index[kw] = []
-            if tag not in index[kw]:
-                index[kw].append(tag)
-        self.save_ltm_index(data)
-
-    def remove_ltm_entry(self, mem_id, tier=None):
-        """从 LTM 倒排索引中移除条目"""
-        data = self.load_ltm_index()
-        index = data.get("index", {})
-        for kw in list(index.keys()):
-            to_remove = []
-            for tag in index[kw]:
-                if tier is None:
-                    if tag.startswith(mem_id + "["):
-                        to_remove.append(tag)
-                else:
-                    if tag == f"{mem_id}[{tier[0]}]":
-                        to_remove.append(tag)
-            for t in to_remove:
-                index[kw].remove(t)
-            if not index[kw]:
-                del index[kw]
-        self.save_ltm_index(data)
-
 
     # ==============================================================
     # 关系域倒排操作

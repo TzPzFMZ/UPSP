@@ -275,6 +275,31 @@ class TestSpec694RhythmGuideAlignment(RuntimeTestMixin):
         ]
         assert events == ["runtime_rhythm_guide_materialized"]
 
+    def test_spec767_materializer_supersedes_stale_day_with_active_compression(
+            self, tmp_path):
+        from logic.rhythm_guide_materializer import materialize_current_rhythm_guide
+
+        rt = self._make_runtime(tmp_path)
+        stale_day_id = materialize_current_rhythm_guide(
+            rt.workbench,
+            {"calendar_day_due": True},
+            round_num=650,
+        )
+
+        compression_id = materialize_current_rhythm_guide(
+            rt.workbench,
+            {
+                "calendar_day_due": True,
+                "memory_compression_due": True,
+            },
+            round_num=651,
+        )
+
+        assert rt.workbench.load_guide(stale_day_id)["status"] == "superseded"
+        compression = rt.workbench.load_guide(compression_id)
+        assert compression["kind"] == "memory_compression_rhythm_guide"
+        assert compression["items"][0]["item_id"] == "memory_compression_due"
+
     def test_reaction_frame_recovery_retires_emergency_without_changing_round_type(
             self, tmp_path):
         from logic.rhythm_guide_materializer import materialize_current_rhythm_guide

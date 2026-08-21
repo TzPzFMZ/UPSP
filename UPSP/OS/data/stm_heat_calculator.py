@@ -75,17 +75,16 @@ class STMHeatCalculator:
         return (new_h, ah_high, new_zone)
 
     def check_upgrade(self, heat, meta):
-        """Return STM entries that should upgrade to LTM Full."""
+        """Return STM entries whose canonical LTM should be admitted."""
         candidates = []
         for mem_id, info in heat.items():
             if info.get("AH_high", 0) < self.config["upgrade_high_rounds"]:
                 continue
-            status = meta.get(mem_id, {}).get("ltm_status", "未归档")
-            if status == "未归档" and not info.get("stored"):
+            if not str(meta.get(mem_id, {}).get("stored_at") or "").strip():
                 candidates.append(mem_id)
         return candidates
 
-    def process_forgetting(self, heat):
+    def process_forgetting(self, heat, meta=None):
         """
         Split degraded STM entries into deletion, direct abstract, and LLM compression.
 
@@ -99,7 +98,7 @@ class STMHeatCalculator:
             if not info.get("degrade"):
                 continue
 
-            stored = info.get("stored", False)
+            stored = bool(str((meta or {}).get(mem_id, {}).get("stored_at") or "").strip())
             compression = info.get("compression", False)
 
             if stored:

@@ -126,6 +126,55 @@ def test_spec702_ready_status_fails_closed_for_missing_or_corrupt_skeleton(tmp_p
     assert status == {"state": "incomplete", "ready": False, "missing": []}
 
 
+def test_spec762_known_state_migration_restores_persona_readiness(tmp_path):
+    from data.state_store import StateStore
+
+    target = tmp_path / "OS" / "persona"
+    initializer = PersonaInitializer(target, TEMPLATE_ROOT, PRESET_ROOT)
+    initializer.create(load_preset(PRESET_ROOT, "alyosha"), _stamp())
+    state_path = target / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["base"]["heartbeat_flags"].pop("memory_compression_due")
+    state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+    assert initializer.status() == {
+        "state": "incomplete", "ready": False, "missing": [],
+    }
+    StateStore(str(state_path)).migrate_memory_compression_flags()
+    assert initializer.status() == {"state": "ready", "ready": True, "missing": []}
+
+
+def test_branch_readiness_uses_shared_persona_truth(tmp_path):
+    shared = tmp_path / "meta" / "persona"
+    receipt = PersonaInitializer(shared, TEMPLATE_ROOT, PRESET_ROOT).create(
+        load_preset(PRESET_ROOT, "alyosha"), _stamp()
+    )
+    branch = tmp_path / "branch" / "persona"
+
+    def ignore_shared(path, _names):
+        current = Path(path)
+        if current == shared:
+            return {"core.md", "rules", "docs"}
+        if current == shared / "LTM":
+            return {"Memory"}
+        return set()
+
+    shutil.copytree(shared, branch, ignore=ignore_shared)
+    status = PersonaInitializer(
+        branch,
+        TEMPLATE_ROOT,
+        PRESET_ROOT,
+        pid=receipt["pid"],
+        shared_persona_dir=shared,
+    ).status()
+
+    assert status == {"state": "ready", "ready": True, "missing": []}
+    (branch / "state.json").unlink()
+    assert PersonaInitializer(
+        branch, TEMPLATE_ROOT, PRESET_ROOT, shared_persona_dir=shared
+    ).status()["missing"] == ["state.json"]
+
+
 def test_spec702_state_store_cannot_create_default_half_persona(tmp_path, monkeypatch):
     from data import state_store as module
 
@@ -176,6 +225,10 @@ def test_spec702_template_contains_no_live_identity_or_runtime_records():
     assert not (TEMPLATE_ROOT / "STM/buffer/state_backups.jsonl").read_text(
         encoding="utf-8"
     ).strip()
+    heat = json.loads(
+        (TEMPLATE_ROOT / "STM/memory/heat.json").read_text(encoding="utf-8")
+    )
+    assert heat == {"_comment": "STM 热度值（脚本独占管理）", "entries": {}}
 
 
 @pytest.mark.parametrize(

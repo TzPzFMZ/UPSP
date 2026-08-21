@@ -36,6 +36,47 @@ class TestSpec143NativeToolRoundInspector:
         assert "final_response_empty" in summary["issues"]
         assert summary["ok"] is False
 
+    def test_spec756_inspector_accepts_verified_continue_handoff(self, tmp_path):
+        inspector = _load_native_round_inspector()
+        round_file = _write_round_jsonl(tmp_path, [
+            {"event_type": "round_started", "payload": {"round_type": "interactive"}},
+            {
+                "event_type": "heartbeat_rearm",
+                "phase": "cleanup",
+                "payload": {
+                    "status": "continue_requested_rearmed",
+                    "set_flags": ["continue_requested"],
+                    "relay_intent": {
+                        "status": "open",
+                        "relay_intent_id": "RI-756",
+                    },
+                },
+            },
+            {
+                "event_type": "runtime_audit",
+                "payload": {"tool_transaction_audit": {"status": "ok"}},
+            },
+            {
+                "event_type": "round_closed",
+                "payload": {
+                    "status": "closed",
+                    "final_response": "",
+                    "final_response_source": "reaction.continue_handoff",
+                },
+            },
+        ], round_num=756)
+
+        summary = inspector.inspect_round_file(
+            str(round_file),
+            require_round_closed=True,
+            require_final_response=True,
+            require_runtime_audit_ok=True,
+        )
+
+        assert summary["verified_continue_handoff"] is True
+        assert "final_response_empty" not in summary["issues"]
+        assert summary["ok"] is True
+
     def test_spec324_inspector_prefers_top_level_runtime_status(self, tmp_path):
         inspector = _load_native_round_inspector()
         round_file = _write_round_jsonl(tmp_path, [

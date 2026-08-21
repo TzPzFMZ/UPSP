@@ -63,7 +63,7 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
             for item in result["_invalid_tool_requests"]
         ]
 
-    def test_reaction_memory_recall_completion_submission_applies_before_cleanup(
+    def test_reaction_memory_recall_completion_submission_is_retired(
             self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
         assembler = rt.assembler
@@ -72,34 +72,6 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
         monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
         helper = self
-
-        class DummyMemoryStore:
-            def __init__(self):
-                self.meta = {
-                    "id": "MEM-041000AA",
-                    "title": "Old title",
-                    "linked_containers": ["DC-12"],
-                    "recalled": False,
-                }
-                self.writes = []
-
-            def get_meta(self, mem_id):
-                return dict(self.meta)
-
-            def set_meta(self, mem_id, entry):
-                self.meta = dict(entry)
-
-            def read_entry(self, mem_id):
-                return "## MEM-041000AA\nold compressed body"
-
-            def read_index(self):
-                return ["| MEM-041000AA | [A] | 2 | Old title | TzPz | 00041 | old summary |"]
-
-            def update_entry_title_and_body(self, mem_id, title, body):
-                self.writes.append((mem_id, title, body))
-
-        memory_store = DummyMemoryStore()
-        rt.memory_store = memory_store
 
         class RecallExecutor:
             def __init__(self):
@@ -131,18 +103,17 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
 
         result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
 
-        assert result["_memory_recall_completion_requests"][0]["mem_id"] == "MEM-041000AA"
-        assert memory_store.meta["recalled"] is True
-        assert memory_store.meta["title"].startswith("Old title[")
-        assert memory_store.writes == [(
-            "MEM-041000AA",
-            memory_store.meta["title"],
-            "Completed recall body",
-        )]
-        assert result["_memory_recall_completion_receipts"][0]["status"] == "applied"
-        assert result["_memory_recall_completion_receipts"][0]["call_id"] == "call_recall_complete"
-        assert result["_protocol_tool_receipts"][-1]["tool_id"] == "memory_recall_complete"
-        assert result["_protocol_tool_receipts"][-1]["status"] == "applied"
+        assert result["_protocol_tool_receipts"] == []
+        assert {
+            "tool_id": "memory_recall_complete",
+            "reason": "native_protocol_write_not_enabled",
+        } in [
+            {
+                "tool_id": item.get("tool_id"),
+                "reason": item.get("reason"),
+            }
+            for item in result["_invalid_tool_requests"]
+        ]
 
     @pytest.mark.parametrize("index_fails, expected_status", [
         (False, "applied"),
@@ -244,10 +215,12 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
             item["obligation_type"] != "relation_card_pending"
             for item in result["_reaction_obligations"]["pending_obligations"]
         )
-        now_text = "\n".join(entry["content"] for entry in rt.ctx_store.get_now_entries())
-        assert "【本轮关系卡写入回执】" in now_text
-        assert f"处理结果：{expected_status}。" in now_text
-        assert "REL-Codex" not in now_text
+        assert rt.ctx_store.get_now_entries() == []
+        lately_text = "\n".join(
+            entry["content"] for entry in rt.ctx_store.get_lately_entries())
+        assert "【本轮关系卡写入回执】" in lately_text
+        assert f"处理结果：{expected_status}。" in lately_text
+        assert "REL-Codex" not in lately_text
         if index_fails:
             assert receipt["reason"] == "relation_index_write_failed"
             assert receipt["repair_debt"] == {
@@ -255,8 +228,8 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
                 "card_id": "Codex",
                 "error_type": "OSError",
             }
-            assert "关系卡与 Registry 已写入" in now_text
-            assert "不要重复创建或重复写入关系卡" in now_text
+            assert "关系卡与 Registry 已写入" in lately_text
+            assert "不要重复创建或重复写入关系卡" in lately_text
             assert not result["_native_tool_feedbacks"]
 
     def test_relation_card_truth_failure_does_not_run_optional_index(self, tmp_path):

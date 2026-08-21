@@ -7,7 +7,7 @@ STM 三区：
   未定区：40 ≤ H < 70，衰减速率 -10/轮
   衰减区：H < 40，衰减速率 -15/轮
 
-升格条件：AH_high ≥ 5 → LTM Full
+升格条件：AH_high ≥ 5 → 填写 LTM meta.stored_at
 """
 import json
 import os
@@ -229,16 +229,16 @@ class MemoryHeat:
             pass
 
     # ==============================================================
-    # 升格检查（STM → LTM Full）
+    # 正式入库检查
     # ==============================================================
 
     def check_upgrade(self):
-        """返回 AH_high ≥ 阈值 的条目列表"""
+        """返回 AH_high 达标且 LTM 尚未正式入库的条目列表。"""
         heat = self.load_heat()
         entries = heat.get("entries", {})
         try:
             from data.memory_store import MemoryStore
-            meta = MemoryStore().load_meta()
+            meta = MemoryStore().active_ltm_meta_by_id()
         except Exception:
             meta = {}
         return self.calculator.check_upgrade(entries, meta)
@@ -250,13 +250,6 @@ class MemoryHeat:
             significant_threshold=self.config["zone_thresholds"]["significant"],
             uncertain_threshold=self.config["zone_thresholds"]["uncertain"],
         )
-
-    def mark_stored(self, mem_id):
-        """标记条目已存入 LTM"""
-        heat = self.load_heat()
-        if mem_id in heat.get("entries", {}):
-            heat["entries"][mem_id]["stored"] = True
-            self.save_heat(heat)
 
     # ==============================================================
     # STM heat lock（与 LTM Pinned 无关）
@@ -278,7 +271,12 @@ class MemoryHeat:
     def has_pending_degrade(self):
         """检查是否有需主动唤醒处理的未入库降格条目（心跳用）"""
         heat = self.load_heat()
-        for info in heat.get("entries", {}).values():
-            if info.get("degrade") and not info.get("stored"):
+        try:
+            from data.memory_store import MemoryStore, memory_is_admitted
+            meta = MemoryStore().active_ltm_meta_by_id()
+        except Exception:
+            return False
+        for mem_id, info in heat.get("entries", {}).items():
+            if info.get("degrade") and not memory_is_admitted(meta.get(mem_id)):
                 return True
         return False

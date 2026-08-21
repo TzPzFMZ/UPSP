@@ -19,6 +19,17 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                 calls.append((mem_id, round_num))
 
         rt.memory_store = MemoryStore()
+
+        class MemoryRecall:
+            memory_store = rt.memory_store
+            heat = rt.heat
+
+            def recall(self, mem_id, *, round_num=None, boosted_ids=None,
+                       reconsolidation_tracker=None):
+                self.memory_store.mark_recalled(mem_id, round_num=round_num)
+                boosted_ids.add(mem_id)
+
+        rt.memory_recall = MemoryRecall()
         rt._boost_mounted_memory_once(
             "MEM-ABCDEF12",
             724,
@@ -47,6 +58,17 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                 calls.append((mem_id, round_num))
 
         rt.memory_store = MemoryStore()
+
+        class MemoryRecall:
+            memory_store = rt.memory_store
+            heat = rt.heat
+
+            def recall(self, mem_id, *, round_num=None, boosted_ids=None,
+                       reconsolidation_tracker=None):
+                self.memory_store.mark_recalled(mem_id, round_num=round_num)
+                boosted_ids.add(mem_id)
+
+        rt.memory_recall = MemoryRecall()
         rt.executor = ScriptedExecutor({"response": "done"})
         rt._run_reaction_loop(rt.sm.load(), "interactive", [{
             "type": "memory",
@@ -288,6 +310,17 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                     "total_chars": len(body),
                 }
 
+        class DummyMemoryRecall:
+            @staticmethod
+            def recall(_mem_id, **_kwargs):
+                return {
+                    "source_memory_layer": "STM",
+                    "stm_present": True,
+                    "heat_boost_applied": False,
+                    "heat_boost_deduplicated": False,
+                }
+
+        store = DummyMemoryStore()
         receipts, mounts, unmounts = apply_memory_content_read_requests(
             [{
                 "tool_id": "memory_content_read",
@@ -295,7 +328,7 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                 "mount_mode": "temporary",
             }],
             {"presence": {"confirmed_subjects": ["Codex"]}},
-            {"memory_store": DummyMemoryStore()},
+            {"memory_store": store, "memory_recall": DummyMemoryRecall()},
         )
 
         assert receipts[0]["status"] == "accepted"
@@ -377,9 +410,28 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
 
         store = DummyMemoryStore()
         heat = DummyHeat()
+
+        class DummyMemoryRecall:
+            def __init__(self, memory_store, memory_heat):
+                self.memory_store = memory_store
+                self.heat = memory_heat
+
+            def recall(self, mem_id, *, round_num=None, boosted_ids=None,
+                       reconsolidation_tracker=None):
+                self.heat.recall_boost(mem_id, round_num=round_num)
+                if isinstance(boosted_ids, set):
+                    boosted_ids.add(mem_id)
+                return {
+                    "source_memory_layer": "STM",
+                    "stm_present": True,
+                    "heat_boost_applied": True,
+                    "heat_boost_deduplicated": False,
+                }
+
         monkeypatch.setattr(memory_store_mod, "MemoryStore", lambda: store)
         rt.memory_store = store
         rt.heat = heat
+        rt.memory_recall = DummyMemoryRecall(store, heat)
         helper = self
 
         rt.executor = ScriptedExecutor(
@@ -707,6 +759,93 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
             m.get("content", "") for m in rt.executor.calls[2])
         assert "工具循环警告" in second_call_text
         assert "不要原样重复调用" in second_call_text
+
+    def test_spec734_three_duplicate_protocol_read_frames_block_next_retry(
+            self, tmp_path, monkeypatch):
+        from engines import reaction_tool_settlement as settlement
+
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+
+        def accepted_reads(requests, _modules):
+            return ([{
+                "tool_id": "container_read",
+                "tool_family": "protocol_tool",
+                "tool_class": "read_tool",
+                "status": "accepted",
+                "source": "container_read",
+                "container_id": request["container_id"],
+            } for request in requests], [])
+
+        monkeypatch.setattr(
+            settlement,
+            "apply_container_read_requests",
+            accepted_reads,
+        )
+        helper = self
+
+        class RepeatingReadExecutor:
+            def __init__(self):
+                self.calls = []
+
+            def call(self, step, system, messages):
+                self.calls.append(list(messages))
+                return {
+                    "response": "",
+                    "tool_call_envelopes": [helper._native_tool_envelope(
+                        "container_read",
+                        {
+                            "container_id": "PRJ-SPEC734",
+                            "target_file": "open.md",
+                            "reason": "read the same content again",
+                        },
+                        call_id=f"call_repeat_{len(self.calls)}",
+                        tool_family="protocol_tool",
+                        tool_class="read_tool",
+                        risk="medium",
+                    )],
+                }
+
+        rt.executor = RepeatingReadExecutor()
+
+        result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
+
+        assert len(rt.executor.calls) == 4
+        assert result["aborted"] is True
+        assert result["error"] == "blocked/protocol_read_correction_exhausted"
+        assert "protocol_read_correction_exhausted" in result["response"]
+        duplicate_receipts = [
+            item for item in result["_container_read_receipts"]
+            if item.get("reason") == "duplicate_protocol_read_satisfied"
+        ]
+        assert len(duplicate_receipts) == 3
+        guard = next(
+            item for item in result["_reaction_loop_guard_receipts"]
+            if item.get("status")
+            == "protocol_read_correction_exhausted_auto_blocked"
+        )
+        assert guard["rejection_count"] == 3
+        assert guard["rejected_receipt_count"] == 3
+
+    def test_spec734_duplicate_protocol_read_streak_requires_consecutive_frames(self):
+        from engines.reaction_runtime_guards import ProtocolReadDuplicateGuard
+
+        guard = ProtocolReadDuplicateGuard()
+        duplicate = {
+            "reason": "duplicate_protocol_read_satisfied",
+            "protocol_read_signature": "memory_content_read:MEM-734",
+        }
+
+        assert guard.observe([duplicate], False) == {}
+        assert guard.observe([], False) == {}
+        assert guard.observe([duplicate], False) == {}
+        assert guard.observe([duplicate], False) == {}
+        assert guard.observe([duplicate], False)["blocked_reason"] \
+            == "blocked/protocol_read_correction_exhausted"
 
     def test_spec333_same_response_duplicate_container_read_follows_first_failure(
             self, tmp_path, monkeypatch):

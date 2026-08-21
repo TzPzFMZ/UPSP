@@ -7,10 +7,10 @@ from pathlib import Path
 SANDBOX_GRANT_ENV = "UPSP_ENGINEERING_SANDBOX_GRANT_JSON"
 DEFAULT_ALLOWED_TOOLS = (
     "file_read",
-    "file_search",
+    "file_glob",
+    "file_grep",
     "file_edit",
     "file_write",
-    "shell_command",
 )
 
 
@@ -100,6 +100,9 @@ def normalize_sandbox_grant(raw):
         "phase": _clean(raw.get("phase")) or "engineering",
         "task_root": str(task_root),
         "read_paths": _paths(raw.get("read_paths"), [task_root], task_root),
+        "denied_read_paths": _paths(
+            raw.get("denied_read_paths"), [], task_root
+        ),
         "write_paths": _paths(raw.get("write_paths"), [task_root], task_root),
         "shell_cwd": str(_path(raw.get("shell_cwd") or task_root, base=task_root)),
         "allowed_tools": allowed_tools,
@@ -172,13 +175,22 @@ def sandbox_roots_for_tool(grant, tool_id):
     if not grant:
         return None
     tool_id = _clean(tool_id)
-    if tool_id in {"file_read", "file_search"}:
+    if tool_id in {"file_read", "file_glob", "file_grep"}:
         return tuple(Path(item).resolve() for item in grant.get("read_paths") or [])
     if tool_id in {"file_edit", "file_write"}:
         return tuple(Path(item).resolve() for item in grant.get("write_paths") or [])
     if tool_id == "shell_command":
         return (Path(grant.get("shell_cwd")).resolve(),)
     return tuple(Path(item).resolve() for item in grant.get("read_paths") or [])
+
+
+def sandbox_denied_roots_for_tool(grant, tool_id):
+    grant = normalize_sandbox_grant(grant)
+    if not grant or _clean(tool_id) not in {"file_read", "file_glob", "file_grep"}:
+        return ()
+    return tuple(
+        Path(item).resolve() for item in grant.get("denied_read_paths") or []
+    )
 
 
 def sandbox_tool_allowed(grant, tool_id):
@@ -209,6 +221,9 @@ def render_sandbox_grant_guide(grant=None):
         "read_paths:",
     ]
     lines.extend(f"- {item}" for item in grant.get("read_paths") or [])
+    if grant.get("denied_read_paths"):
+        lines.append("denied_read_paths:")
+        lines.extend(f"- {item}" for item in grant.get("denied_read_paths") or [])
     lines.append("write_paths:")
     lines.extend(f"- {item}" for item in grant.get("write_paths") or [])
     lines.append(f"shell_cwd={grant.get('shell_cwd', '')}")

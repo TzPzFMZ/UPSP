@@ -2,6 +2,7 @@ import copy
 import time
 from dataclasses import dataclass, field
 
+from assembly.popup import PopupManager
 from constants import REACTION_EXIT_SIGNALS
 from engines.general_tool_dispatcher import DUPLICATE_GENERAL_TOOL_REASONS
 from engines.reaction_helpers import (
@@ -12,7 +13,6 @@ from engines.reaction_helpers import (
     reaction_identity_requires_resolution,
     reaction_loop_has_other_activity,
     reaction_loop_has_protocol_submission_activity,
-    remove_settled_write_pending_context,
 )
 from engines.reaction_iteration import (
     assistant_text_has_tool_payload,
@@ -24,6 +24,7 @@ from engines.reaction_loop_result import (
     build_reaction_loop_result,
 )
 from engines.reaction_runtime_guards import (
+    ProtocolReadDuplicateGuard,
     format_general_tool_duplicate_guard_feedback as _format_general_tool_duplicate_guard_feedback,
     general_tool_guard_failure_trackable as _general_tool_guard_failure_trackable,
     general_tool_result_success as _general_tool_result_success,
@@ -46,6 +47,18 @@ from engines.round_context import FrameRef
 from logic.closeout_copy import closeout_final_reply_reminder
 from logic.file_read_window import provider_material_context_issue
 from logic.protocol_tools import normalize_tool_id
+from logic.periodic_memory_mount import PeriodicMemoryMountProcessor
+from logic.memory_reconsolidation import (
+    MemoryReconsolidationError,
+    MemoryReconsolidationProcessor,
+    MemoryReconsolidationTracker,
+)
+from logic.memory_write_rewrite import MemoryWriteRewriteTracker
+from logic.progressive_cache_compaction import (
+    current_batch as current_cache_compaction_batch,
+    render_guide as render_cache_compaction_guide,
+    render_materials as render_cache_compaction_materials,
+)
 from logic.reaction_call_limit import (
     reaction_provider_call_hard_stop,
     reaction_provider_call_limit_policy,
@@ -62,14 +75,6 @@ from logic.rhythm_guidance import active_emergency_items, emergency_attempt_deci
 from logic.runtime_channels import build_message_envelope
 from logic.task_guide import BLOCKER_EVIDENCE_STATUSES
 from logic.tool_transaction_audit import audit_tool_transactions
-from logic.write_pending_settlement import (
-    WritePendingTracker,
-    format_write_pending_notice,
-    render_cancelled_write_warning,
-    render_open_write_pending_warning,
-    render_write_pending_blocker,
-    write_pending_notice_call_ids,
-)
 from errors import RequiredContextError
 
 
@@ -77,12 +82,19 @@ from errors import RequiredContextError
 class ReactionLoopState:
     runner: object
     state: object
+    round_num: int
     round_type: str
     mount_ids: object
     interaction_meta: object = None
     trigger_id: str = ""
     caused_by: str = ""
     topology_version: str = ""
+    final_response_max_chars: int | None = None
+    final_response_length_rejections: int = 0
+    response_contract: dict = field(default_factory=dict)
+    memory_heat_boosted_ids: set = field(default_factory=set)
+    memory_reconsolidation_tracker: object = None
+    memory_write_rewrite_tracker: object = None
 
 
 def _current_work_guide_id(workbench):
@@ -317,6 +329,8 @@ def _settle_reaction_frame(
                 "visible_focus_id": visible_focus_id,
                 "chronicle_store": getattr(runner, "chronicle_store", None),
                 "chronicle_focus": getattr(runner, "chronicle_focus", None),
+                "memory_heat_boosted_ids": getattr(
+                    runner, "_current_memory_heat_boosted_ids", set()),
             },
         )
     return settlement
@@ -330,9 +344,84 @@ def _run_reaction_frames(session):
     round_type = loop_state.round_type
     mount_ids = loop_state.mount_ids
     interaction_meta = loop_state.interaction_meta
-    round_num = self.sm.get_total_round()
+    round_num = loop_state.round_num
     self._current_round_type = round_type
     self._current_interaction_meta = dict(interaction_meta or {})
+    reconsolidation_tracker = loop_state.memory_reconsolidation_tracker
+    if not isinstance(reconsolidation_tracker, MemoryReconsolidationTracker):
+        reconsolidation_tracker = MemoryReconsolidationTracker(round_num)
+        loop_state.memory_reconsolidation_tracker = reconsolidation_tracker
+    rewrite_tracker = loop_state.memory_write_rewrite_tracker
+    if not isinstance(rewrite_tracker, MemoryWriteRewriteTracker):
+        rewrite_tracker = MemoryWriteRewriteTracker(round_num)
+        loop_state.memory_write_rewrite_tracker = rewrite_tracker
+    reaction_obligations = ReactionObligationTracker(
+        memory_reconsolidation_tracker=reconsolidation_tracker,
+        memory_write_rewrite_tracker=rewrite_tracker,
+        context_store=self.ctx_store,
+    )
+    result_state.reaction_obligations = reaction_obligations
+
+    boosted_memory_ids = loop_state.memory_heat_boosted_ids
+    self._current_memory_heat_boosted_ids = boosted_memory_ids
+    periodic_processor = PeriodicMemoryMountProcessor(
+        memory_store=self.memory_store,
+        heat=self.heat,
+        assembler=self.assembler,
+        config_store=self.cfg,
+        instance_id=getattr(self.memory_recall, "instance_id", "meta"),
+    )
+    reconsolidation_processor = MemoryReconsolidationProcessor(
+        memory_store=self.memory_store,
+        assembler=self.assembler,
+    )
+    self._current_memory_reconsolidation_tracker = reconsolidation_tracker
+    self._current_memory_write_rewrite_tracker = rewrite_tracker
+    self._current_memory_reconsolidation_processor = reconsolidation_processor
+    self._current_periodic_mount_processor = periodic_processor
+    periodic_reconsolidation_ids = []
+    try:
+        pending_items = periodic_processor.mount_store.load().get(
+            "pending_memory_items", [])
+        for item in pending_items:
+            mem_id = str(item.get("id") or "").strip()
+            if not mem_id or item.get("status") != "awaiting_completion":
+                continue
+            inspected = self.memory_recall.inspect(mem_id)
+            if periodic_processor.is_alignment_ready(inspected):
+                try:
+                    periodic_processor.apply("mount", mem_id)
+                except Exception as exc:
+                    periodic_processor.mark_pending_blocked(mem_id, str(exc))
+                    reaction_obligations.add_periodic_mount_blocked(
+                        mem_id, str(exc)
+                    )
+                continue
+            self.memory_recall.recall(
+                mem_id,
+                round_num=round_num,
+                boosted_ids=boosted_memory_ids,
+                reconsolidation_tracker=reconsolidation_tracker,
+                periodic_requested=True,
+            )
+            if reconsolidation_tracker.get(mem_id) is None:
+                raise MemoryReconsolidationError(
+                    "periodic_memory_reconsolidation_not_registered"
+                )
+            periodic_reconsolidation_ids.append(mem_id)
+    except Exception as exc:
+        raise RequiredContextError(
+            "recall", "periodic_memory_reconsolidation", exc
+        ) from exc
+    if periodic_reconsolidation_ids:
+        mount_ids = list(mount_ids or []) + [
+            {
+                "type": "memory", "ids": mem_id,
+                "source": "periodic_mount_reconsolidation",
+                "read_mode": "full",
+            }
+            for mem_id in periodic_reconsolidation_ids
+        ]
 
     # 记录初态挂载记忆 ID，并把 setup 预选转成训练材料证据。
     mounted_mem_ids, preselection_evidence = collect_mount_preselection(
@@ -343,9 +432,13 @@ def _run_reaction_frames(session):
     result_state.preselection_evidence = preselection_evidence
 
     # 挂载 = 正反馈：每轮被加载进CONTEXT的记忆+10热度（DDS §4.4）
-    boosted_memory_ids = set()
     for mid in mounted_mem_ids:
-        self._boost_mounted_memory_once(mid, round_num, boosted_memory_ids)
+        self._boost_mounted_memory_once(
+            mid,
+            round_num,
+            boosted_memory_ids,
+            reconsolidation_tracker=reconsolidation_tracker,
+        )
     for evidence in preselection_evidence:
         if evidence.get("item_type") != "memory":
             continue
@@ -354,13 +447,16 @@ def _run_reaction_frames(session):
             continue
         try:
             meta = self.memory_store.read_meta_by_id(mem_id)
-        except Exception:
-            continue
+        except Exception as exc:
+            raise RequiredContextError(
+                "recall", f"memory:{mem_id}", exc
+            ) from exc
         self._boost_mounted_memory_once(
             mem_id,
             round_num,
             boosted_memory_ids,
             meta.get("_memory_layer") or "STM",
+            reconsolidation_tracker=reconsolidation_tracker,
         )
 
     accumulated_messages = []
@@ -387,8 +483,6 @@ def _run_reaction_frames(session):
     all_memory_write_receipts = result_state.all_memory_write_receipts
     all_memory_annotation_declarations = result_state.all_memory_annotation_declarations
     all_memory_annotation_receipts = result_state.all_memory_annotation_receipts
-    all_memory_recall_completion_requests = result_state.all_memory_recall_completion_requests
-    all_memory_recall_completion_receipts = result_state.all_memory_recall_completion_receipts
     all_memory_content_read_requests = result_state.all_memory_content_read_requests
     all_memory_content_read_receipts = result_state.all_memory_content_read_receipts
     all_corpus_read_requests = result_state.all_corpus_read_requests
@@ -397,6 +491,8 @@ def _run_reaction_frames(session):
     all_container_read_receipts = result_state.all_container_read_receipts
     all_index_view_requests = result_state.all_index_view_requests
     all_index_view_receipts = result_state.all_index_view_receipts
+    all_memory_search_requests = result_state.all_memory_search_requests
+    all_memory_search_receipts = result_state.all_memory_search_receipts
     all_relation_read_requests = result_state.all_relation_read_requests
     all_relation_read_receipts = result_state.all_relation_read_receipts
     all_memory_link_update_declarations = result_state.all_memory_link_update_declarations
@@ -419,8 +515,6 @@ def _run_reaction_frames(session):
     all_container_focus_receipts = result_state.all_container_focus_receipts
     all_mount_cancel_requests = result_state.all_mount_cancel_requests
     all_mount_cancel_receipts = result_state.all_mount_cancel_receipts
-    all_pending_cancel_requests = result_state.all_pending_cancel_requests
-    all_pending_cancel_receipts = result_state.all_pending_cancel_receipts
     all_relay_intent_settle_requests = result_state.all_relay_intent_settle_requests
     all_relay_intent_settle_receipts = result_state.all_relay_intent_settle_receipts
     all_relation_card_receipts = result_state.all_relation_card_receipts
@@ -439,20 +533,19 @@ def _run_reaction_frames(session):
     all_settlement_ledgers = result_state.all_settlement_ledgers
     all_closeout_relay_receipts = result_state.all_closeout_relay_receipts
     reaction_loop_guard_receipts = result_state.reaction_loop_guard_receipts
-    reaction_obligations = ReactionObligationTracker()
-    write_pending_tracker = WritePendingTracker(round_num, round_type)
-    result_state.reaction_obligations = reaction_obligations
-    result_state.write_pending_tracker = write_pending_tracker
     closeout_conflict_count = 0
     reaction_progress_repeat_count = 0
     reaction_empty_output_count = 0
     reaction_finalize_invalid_correction_count = 0
     closeout_task_finish_block_signature = ""
     closeout_task_finish_block_count = 0
+    final_response_length_rejections = int(
+        loop_state.final_response_length_rejections or 0)
     general_tool_duplicate_last_signature = ""
     general_tool_duplicate_streak_count = 0
     general_tool_duplicate_closeout_pending = False
     general_tool_duplicate_closeout_info = {}
+    protocol_read_duplicate_guard = ProtocolReadDuplicateGuard()
     emergency_attempt_counts = {}
     emergency_attempt_nudged = set()
     emergency_auto_deferred = set()
@@ -473,16 +566,109 @@ def _run_reaction_frames(session):
     pending_relay_target_for_next = {}
     identity_resolution_correction_count = 0
     exit_signal = "done"
-    evolution_context = ""
-    evolution_stats = None
-    if round_type == "autonomous":
-        evolution_context, evolution_stats = self._build_evolution_reaction_context(state)
     i = 0
     round_start = time.time()
-    time_limit = self._load_time_limit()
+    time_limit = self._load_time_milestones()
     pending_memory_ids = {}
     pending_native_tool_feedbacks = []
+    periodic_obligation_prompt = reaction_obligations.render_prompt()
+    if periodic_obligation_prompt:
+        pending_native_tool_feedbacks.append(periodic_obligation_prompt)
     all_native_tool_feedbacks = result_state.all_native_tool_feedbacks
+
+    def reject_final_candidate(candidate, source, status, details, iteration):
+        self._get_round_audit_store().append_event(
+            round_num,
+            "final_response_candidate_rejected",
+            {"candidate": candidate, "source": source, "status": status, **details},
+            phase="reaction",
+            iteration=iteration,
+        )
+        for index in range(len(all_message_envelopes) - 1, -1, -1):
+            envelope = all_message_envelopes[index]
+            if (
+                    str(envelope.get("channel") or "") == "assistant_text"
+                    and str(envelope.get("text") or "").strip() == candidate):
+                del all_message_envelopes[index]
+                break
+
+    def guard_final_response(candidate, source, parsed, iteration):
+        """Apply the optional character budget after normal terminal validation."""
+        nonlocal final_response_length_rejections
+        candidate = str(candidate or "").strip()
+        if not candidate:
+            return ""
+        limit = loop_state.final_response_max_chars
+        if limit is not None and len(candidate) > limit:
+            final_response_length_rejections += 1
+            exhausted = final_response_length_rejections >= 2
+            status = (
+                "blocked/final_response_length_exhausted"
+                if exhausted else "final_response_too_long"
+            )
+            reaction_loop_guard_receipts.append({
+                "tool_id": "final_reply",
+                "tool_family": "message_channel",
+                "tool_class": "runtime_guard",
+                "status": status,
+                "source": source,
+                "actual_chars": len(candidate),
+                "max_chars": limit,
+                "rejection_count": final_response_length_rejections,
+            })
+            reject_final_candidate(
+                candidate, source, status, {
+                    "actual_chars": len(candidate),
+                    "max_chars": limit,
+                    "rejection_count": final_response_length_rejections,
+                }, iteration)
+            if exhausted:
+                ledger = {
+                    "closeout_decision": "blocked",
+                    "handoff_text": "",
+                    "auto_blocked": True,
+                    "blocked_reason": "blocked/final_response_length_exhausted",
+                    "blockers": ["blocked/final_response_length_exhausted"],
+                }
+                parsed["settlement_ledger"] = ledger
+                all_settlement_ledgers.append(ledger)
+                return "blocked"
+            feedback = (
+                "final_response_too_long: 你刚才的最终回复为 "
+                f"{len(candidate)} 个字符，超过本次上限 {limit}。"
+                "请保留结论与必要证据，立即改写为不超过上限的一条自然语言最终回复。"
+                "不要继续执行工具；Runtime 不会替你截断，若再次超限本轮将被阻断。"
+            )
+            pending_native_tool_feedbacks.append(feedback)
+            all_native_tool_feedbacks.append(feedback)
+            return "retry"
+
+        return ""
+
+    def settle_final_response_guards(
+            candidate, source, parsed, iteration, containers_created=None):
+        nonlocal reaction_loop, reaction_finalize_validated
+        nonlocal final_reply_pending, exit_signal, i
+        status = guard_final_response(candidate, source, parsed, iteration)
+        if not status:
+            return ""
+        reaction_loop = dict(reaction_loop)
+        reaction_loop["reaction_loop_done"] = False
+        if status == "blocked":
+            reaction_finalize_validated = True
+            final_reply_pending = True
+            exit_signal = "final_reply_pending"
+        iteration_records.append({
+            "index": i,
+            "response": "",
+            "containers_created": list(containers_created or []),
+            "exit_signal": (
+                "final_response_length_exhausted"
+                if status == "blocked" else "final_response_too_long"
+            ),
+        })
+        i += 1
+        return status
     hidden_stm_memory_ids = set()
     tool_settlement = ReactionToolSettlementDispatcher(self)
     runtime_guide_completed_flags = set()
@@ -538,9 +724,6 @@ def _run_reaction_frames(session):
             final_reply_pending = True
             exit_signal = "provider_call_hard_stop"
             break
-        cancel_fact_visible_to_model = (
-            write_pending_tracker.has_unconsumed_cancel_fact()
-        )
         # 重载 state（确保 focus 等字段是最新的）
         current_state = self.sm.load()
         if runtime_guide_completed_flags and isinstance(current_state, dict):
@@ -578,7 +761,7 @@ def _run_reaction_frames(session):
         _reminder_at, _warning_at, auto_relay_at = reaction_time_milestone_seconds(
             time_limit
         )
-        if time_limit > 0 and elapsed >= auto_relay_at:
+        if auto_relay_at > 0 and elapsed >= auto_relay_at:
             relay_receipt, settlement_ledger, guard_receipt = (
                 self._build_runtime_auto_continue_closeout(
                     elapsed_seconds=elapsed,
@@ -611,23 +794,84 @@ def _run_reaction_frames(session):
             all_native_tool_feedbacks.extend(drained_feedbacks)
 
         iteration_native_tool_feedbacks = list(pending_native_tool_feedbacks)
+        if loop_state.final_response_max_chars is not None:
+            rewrite_state = (
+                "已使用一次重写机会；再次超限将阻断本轮。"
+                if final_response_length_rejections
+                else "首次超限会要求重写，第二次超限将阻断本轮。"
+            )
+            iteration_native_tool_feedbacks.append(
+                "【最终回复字符预算】本次最终回复不得超过 "
+                f"{loop_state.final_response_max_chars} 个字符。该限制只约束已经通过"
+                "现有终态校验的最终回复，不限制工具调用或审计；Runtime 不会截断。"
+                + rewrite_state
+            )
         if time_reminder_feedback:
             iteration_native_tool_feedbacks.append(time_reminder_feedback)
-        open_pending_warning = render_open_write_pending_warning(
-            write_pending_tracker.open_write_obligations())
-        if open_pending_warning:
-            iteration_native_tool_feedbacks.append(open_pending_warning)
-        cancelled_pending_warning = render_cancelled_write_warning(
-            write_pending_tracker.cancelled_pendings())
-        if cancelled_pending_warning:
-            iteration_native_tool_feedbacks.append(cancelled_pending_warning)
 
         # 装配 reaction 步 messages（含远/近缓存+三源末位输入），并渲染 step.md 供审计。
         audit_iteration = i + 1
         permission_boundary = getattr(self, "permission_boundary_callback", None)
         if callable(permission_boundary):
             permission_boundary(round_num, "reaction", audit_iteration)
-        if self._should_suppress_active_guide_feedback(round_type, current_state):
+        reconsolidation_pending = reconsolidation_tracker.has_pending()
+        rewrite_pending_at_frame_start = rewrite_tracker.has_pending()
+        cache_compaction_debt = self.ctx_store.load_cache_compaction_debt()
+        cache_compaction_pending = (
+            cache_compaction_debt.get("schema_version")
+            == "cache_compaction_debt.v3"
+        )
+        if cache_compaction_pending:
+            active_protocol_tool_guides = []
+            active_guide_feedback = ""
+            try:
+                compaction_discipline = PopupManager.load_guide_template(
+                    "cache_compaction"
+                )
+                if not compaction_discipline:
+                    raise ValueError("cache_compaction_guide_missing")
+                iteration_native_tool_feedbacks.append(
+                    render_cache_compaction_guide(
+                        cache_compaction_debt, compaction_discipline
+                    )
+                )
+            except Exception as exc:
+                raise RequiredContextError(
+                    "read", "cache_compaction_guide", exc
+                ) from exc
+        elif reconsolidation_pending:
+            active_protocol_tool_guides = []
+            active_guide_feedback = ""
+            try:
+                reconsolidation_discipline = PopupManager.load_guide_template(
+                    "memory_reconsolidation"
+                )
+                reconsolidation_feedback = reconsolidation_tracker.render_guide(
+                    reconsolidation_discipline
+                )
+            except Exception as exc:
+                raise RequiredContextError(
+                    "read", "memory_reconsolidation_guide", exc
+                ) from exc
+            iteration_native_tool_feedbacks.append(
+                reconsolidation_feedback
+            )
+        elif rewrite_pending_at_frame_start:
+            active_protocol_tool_guides = []
+            active_guide_feedback = ""
+            try:
+                rewrite_discipline = PopupManager.load_guide_template(
+                    "memory_write_rewrite"
+                )
+                rewrite_feedback = rewrite_tracker.render_guide(
+                    rewrite_discipline
+                )
+            except Exception as exc:
+                raise RequiredContextError(
+                    "read", "memory_write_rewrite_guide", exc
+                ) from exc
+            iteration_native_tool_feedbacks.append(rewrite_feedback)
+        elif self._should_suppress_active_guide_feedback(round_type, current_state):
             active_protocol_tool_guides = []
             active_guide_feedback = ""
         else:
@@ -636,9 +880,14 @@ def _run_reaction_frames(session):
         active_general_tool_guides = self._active_general_tool_guides()
         if active_guide_feedback:
             iteration_native_tool_feedbacks.append(active_guide_feedback)
-        resident_feedback = self._reaction_resident_guide_feedback(
-            suppress_task_entry=_has_task_guide_completed_feedback(
-                iteration_native_tool_feedbacks
+        resident_feedback = "" if (
+            cache_compaction_pending
+            or reconsolidation_pending or rewrite_pending_at_frame_start
+        ) else (
+            self._reaction_resident_guide_feedback(
+                suppress_task_entry=_has_task_guide_completed_feedback(
+                    iteration_native_tool_feedbacks
+                )
             )
         )
         if resident_feedback:
@@ -660,6 +909,44 @@ def _run_reaction_frames(session):
             organ_runtime.begin_frame_materials(frame_ref)
             if organ_runtime is not None else ()
         )
+        frame_materials = list(organ_materials or ())
+        if cache_compaction_pending:
+            frame_materials.extend(
+                render_cache_compaction_materials(cache_compaction_debt)
+            )
+        elif rewrite_pending_at_frame_start and not reconsolidation_pending:
+            frame_materials.extend(rewrite_tracker.render_materials())
+        try:
+            active_rhythm_id = str(
+                self.workbench.get("base.active_guides.rhythm") or ""
+            ).strip()
+            active_rhythm = (
+                self.workbench.load_guide(active_rhythm_id)
+                if active_rhythm_id else {}
+            )
+            if (
+                not cache_compaction_pending
+                and not reconsolidation_pending
+                and not rewrite_pending_at_frame_start
+                and str(active_rhythm.get("kind") or "").strip()
+                == "memory_compression_rhythm_guide"
+            ):
+                from data.memory_compression_store import MemoryCompressionManager
+
+                compression_material = (
+                    MemoryCompressionManager(
+                        memory_store=self.memory_store,
+                    ).render_current_batch_material()
+                )
+                if not compression_material:
+                    raise ValueError("memory_compression_batch_missing")
+                frame_materials.append(compression_material)
+        except Exception as exc:
+            if 'active_rhythm' in locals() and str(
+                    (active_rhythm or {}).get("kind") or "").strip() == (
+                    "memory_compression_rhythm_guide"):
+                raise RequiredContextError(
+                    "read", "memory_compression_pending", exc) from exc
         assemble_kwargs = {
             "internal_handoff": internal_handoff,
             "protocol_tool_guides": active_protocol_tool_guides,
@@ -669,20 +956,26 @@ def _run_reaction_frames(session):
             "hidden_stm_memory_ids": hidden_stm_memory_ids,
             "runtime_focus_entries": runtime_focus_entries,
             "current_reaction_iteration": audit_iteration,
+            "response_contract": loop_state.response_contract,
         }
-        if organ_materials:
-            assemble_kwargs["material_inputs"] = organ_materials
+        if frame_materials:
+            assemble_kwargs["material_inputs"] = frame_materials
+        if cache_compaction_pending:
+            assemble_kwargs["hidden_lately_block_ids"] = [
+                block_id
+                for shard in current_cache_compaction_batch(cache_compaction_debt)
+                for block_id in shard.get("source_block_ids") or []
+            ]
         system, step_messages = self.assembler.assemble_reaction(
             current_state, round_type, mount_ids_current,
             **assemble_kwargs)
         pending_native_tool_feedbacks = []
         messages = step_messages
 
-        material_context_issue = provider_material_context_issue(
-            self.sm,
-            self.ctx_store,
-            round_num,
-            audit_iteration,
+        material_context_issue = None if cache_compaction_pending else (
+            provider_material_context_issue(
+                self.sm, self.ctx_store, round_num, audit_iteration,
+            )
         )
         if material_context_issue:
             reaction_loop_guard_receipts.append(dict(material_context_issue))
@@ -715,9 +1008,8 @@ def _run_reaction_frames(session):
                 round_num,
                 iteration=audit_iteration,
                 active_protocol_tool_guides=executor_protocol_tool_guides,
+                cache_compaction_call=cache_compaction_pending,
             )
-            self._clear_consumed_reasoning_replay(round_num, audit_iteration)
-            self._clear_provider_interruption_recovery_state()
         except Exception as exc:
             recovery_receipt = self._recover_provider_interruption_if_possible(
                 exc,
@@ -778,9 +1070,21 @@ def _run_reaction_frames(session):
             exit_signal = "continue_requested"
             i += 1
             break
-        self._update_token_usage(iter_result)
-        if cancel_fact_visible_to_model:
-            write_pending_tracker.mark_cancel_facts_consumed()
+        self._transition_current_cache(
+            round_num,
+            boundary="reaction_provider_return",
+            consumer_frame_id=frame_ref.frame_id,
+            phase="reaction",
+            iteration=audit_iteration,
+            expire_call_transients=True,
+        )
+        self._clear_provider_interruption_recovery_state()
+        self._update_token_usage(
+            iter_result,
+            round_num=round_num,
+            phase="reaction",
+            iteration=audit_iteration,
+        )
 
         iteration_parse = parse_reaction_iteration_result(
             iter_result,
@@ -1025,7 +1329,6 @@ def _run_reaction_frames(session):
             ):
                 candidate_check = self._validate_natural_final_reply_candidate(
                     reaction_obligations=reaction_obligations,
-                    write_pending_tracker=write_pending_tracker,
                     current_state=current_state,
                     round_type=round_type,
                     runtime_guide_completed_flags=runtime_guide_completed_flags,
@@ -1132,6 +1435,16 @@ def _run_reaction_frames(session):
                     })
                     i += 1
                     continue
+                budget_status = settle_final_response_guards(
+                    natural_final_reply_candidate,
+                    "natural_final_reply_candidate",
+                    parsed_reaction,
+                    audit_iteration,
+                )
+                if budget_status:
+                    if budget_status == "blocked":
+                        break
+                    continue
                 settlement_ledger = candidate_check.get(
                     "settlement_ledger") or {}
                 if settlement_ledger:
@@ -1186,35 +1499,6 @@ def _run_reaction_frames(session):
                 validation = reaction_obligations.validate_closeout_form(
                     parsed_reaction.get("closeout_form"))
                 settlement_ledger = validation.get("settlement_ledger") or {}
-                write_pending_blocker = write_pending_tracker.finalize_blocker()
-                if (
-                    not validation.get("blocked")
-                    and write_pending_blocker.get("blocked")
-                ):
-                    reaction_loop_guard_receipts.append({
-                        "tool_id": "reaction_finalize",
-                        "tool_family": "substrate_tool",
-                        "tool_class": "sync_tool",
-                        "status": "write_pending_blocked",
-                        "source": "reaction_finalize",
-                        "reason": write_pending_blocker.get("reason"),
-                        "pendings": write_pending_blocker.get("pendings", []),
-                    })
-                    accumulated_messages.append({
-                        "role": "user",
-                        "content": render_write_pending_blocker(
-                            write_pending_blocker),
-                    })
-                    reaction_loop = dict(reaction_loop)
-                    reaction_loop["reaction_loop_done"] = False
-                    iteration_records.append({
-                        "index": i,
-                        "response": response_text[:200],
-                        "containers_created": [],
-                        "exit_signal": "write_pending_blocked",
-                    })
-                    i += 1
-                    continue
                 rhythm_acceptance = {"allowed": True}
                 if not validation.get("blocked"):
                     rhythm_acceptance = self._rhythm_guide_closeout_acceptance(
@@ -1253,6 +1537,16 @@ def _run_reaction_frames(session):
                     parsed_reaction.get("closeout_form"))
                 if not task_acceptance.get("allowed", True):
                     if task_acceptance.get("terminal_blocked") is True:
+                        budget_status = settle_final_response_guards(
+                            response_text,
+                            "reaction_finalize_terminal_blocked",
+                            parsed_reaction,
+                            audit_iteration,
+                        )
+                        if budget_status:
+                            if budget_status == "blocked":
+                                break
+                            continue
                         settlement_ledger = _terminal_blocked_ledger(
                             task_acceptance,
                             "reaction_finalize",
@@ -1389,16 +1683,13 @@ def _run_reaction_frames(session):
                     })
                     i += 1
                     continue
-                if settlement_ledger:
-                    parsed_reaction["settlement_ledger"] = settlement_ledger
-                    all_settlement_ledgers.append(settlement_ledger)
             if native_terminal_finalize_only:
                 iter_tool_summaries = parsed_reaction.get("tool_summaries", [])
                 all_tool_summaries.extend(iter_tool_summaries)
                 self._write_reaction_tool_summaries(
                     iter_tool_summaries,
                     round_num,
-                    i,
+                    audit_iteration,
                     interaction_meta or {},
                 )
                 if (
@@ -1508,6 +1799,24 @@ def _run_reaction_frames(session):
                         pending_target_from_file_reads(
                             all_general_tool_results) or {}
                     )
+                closeout_decision = str(
+                    settlement_ledger.get("closeout_decision") or ""
+                ).strip().lower()
+                budget_status = ""
+                if closeout_decision in {"finish", "blocked"}:
+                    budget_status = settle_final_response_guards(
+                        response_text,
+                        "reaction_finalize",
+                        parsed_reaction,
+                        audit_iteration,
+                    )
+                if budget_status:
+                    if budget_status == "blocked":
+                        break
+                    continue
+                if settlement_ledger:
+                    parsed_reaction["settlement_ledger"] = settlement_ledger
+                    all_settlement_ledgers.append(settlement_ledger)
                 reaction_finalize_validated = True
                 final_reply_pending = True
                 closeout_projection_text = str(response_text or "").strip()
@@ -1690,7 +1999,7 @@ def _run_reaction_frames(session):
             all_general_tool_results=all_general_tool_results,
             iter_native_feedbacks=iter_native_feedbacks,
             round_num=round_num,
-            iteration=i,
+            iteration=audit_iteration,
             interaction_meta=interaction_meta,
         )
         duplicate_general_tool_results = []
@@ -1744,7 +2053,7 @@ def _run_reaction_frames(session):
             parsed_reaction=parsed_reaction,
             all_tool_summaries=all_tool_summaries,
             round_num=round_num,
-            iteration=i,
+            iteration=audit_iteration,
             interaction_meta=interaction_meta,
         )
         iter_memory_write_declarations = parsed_reaction.get(
@@ -1754,10 +2063,6 @@ def _run_reaction_frames(session):
             "memory_annotation_declarations", [])
         all_memory_annotation_declarations.extend(
             iter_memory_annotation_declarations)
-        iter_memory_recall_completion_requests = parsed_reaction.get(
-            "memory_recall_completion_requests", [])
-        all_memory_recall_completion_requests.extend(
-            iter_memory_recall_completion_requests)
         iter_memory_link_update_declarations = parsed_reaction.get(
             "memory_link_update_declarations", [])
         all_memory_link_update_declarations.extend(
@@ -1801,9 +2106,6 @@ def _run_reaction_frames(session):
         iter_mount_cancel_requests = parsed_reaction.get(
             "mount_cancel_requests", [])
         all_mount_cancel_requests.extend(iter_mount_cancel_requests)
-        iter_pending_cancel_requests = parsed_reaction.get(
-            "pending_cancel_requests", [])
-        all_pending_cancel_requests.extend(iter_pending_cancel_requests)
         iter_relay_intent_settle_requests = parsed_reaction.get(
             "relay_intent_settle_requests", [])
         all_relay_intent_settle_requests.extend(
@@ -1831,14 +2133,21 @@ def _run_reaction_frames(session):
             if normalize_tool_id(request.get("tool_id") if isinstance(request, dict) else request)
             == "index_view"
         ]
+        iter_memory_search_requests = [
+            request for request in parsed_reaction.get("protocol_tool_requests", [])
+            if normalize_tool_id(request.get("tool_id") if isinstance(request, dict) else request)
+            == "memory_search"
+        ]
         iter_relation_read_requests = [
             request for request in parsed_reaction.get("protocol_tool_requests", [])
             if normalize_tool_id(request.get("tool_id") if isinstance(request, dict) else request)
             == "relation_read"
         ]
         all_index_view_requests.extend(iter_index_view_requests)
+        all_memory_search_requests.extend(iter_memory_search_requests)
         all_relation_read_requests.extend(iter_relation_read_requests)
         tool_settlement.handle_guide_submit(
+            current_reaction_iteration=audit_iteration,
             iter_accepted_tools=iter_accepted_tools,
             iter_guide_submit_requests=iter_guide_submit_requests,
             current_general_tool_requests=iter_general_tool_requests,
@@ -1850,6 +2159,19 @@ def _run_reaction_frames(session):
         )
         iter_guide_submit_receipts = all_guide_submit_receipts[
             guide_submit_receipt_start:]
+        frame_guide_pending_memory_ids = {}
+        mount_ids = tool_settlement.settle_guide_memory_writes(
+            iter_guide_submit_receipts,
+            round_num=round_num,
+            accumulated_messages=accumulated_messages,
+            all_memory_write_receipts=all_memory_write_receipts,
+            all_protocol_tool_receipts=all_protocol_tool_receipts,
+            pending_memory_ids=pending_memory_ids,
+            hidden_stm_memory_ids=hidden_stm_memory_ids,
+            boosted_memory_ids=boosted_memory_ids,
+            mount_ids=mount_ids,
+            frame_pending_memory_ids=frame_guide_pending_memory_ids,
+        )
         if (
             not mixed_reaction_finalize
             and any(
@@ -1889,6 +2211,8 @@ def _run_reaction_frames(session):
             hidden_stm_memory_ids=hidden_stm_memory_ids,
             boosted_memory_ids=boosted_memory_ids,
             mount_ids=mount_ids,
+            memory_write_rewrite_tracker=rewrite_tracker,
+            rewrite_pending_at_frame_start=rewrite_pending_at_frame_start,
         )
         tool_settlement.handle_memory_link_update(
             iter_accepted_tools=iter_accepted_tools,
@@ -1911,6 +2235,7 @@ def _run_reaction_frames(session):
             all_memory_container_create_receipts=all_memory_container_create_receipts,
             all_protocol_tool_receipts=all_protocol_tool_receipts,
             all_created_containers=all_created_containers,
+            pending_memory_ids=frame_guide_pending_memory_ids,
         )
         tool_settlement.handle_memory_container_write(
             iter_accepted_tools=iter_accepted_tools,
@@ -1922,6 +2247,7 @@ def _run_reaction_frames(session):
             iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
             all_memory_container_write_receipts=all_memory_container_write_receipts,
             all_protocol_tool_receipts=all_protocol_tool_receipts,
+            pending_memory_ids=frame_guide_pending_memory_ids,
         )
         tool_settlement.handle_corpus_read(
             iter_corpus_read_requests=iter_corpus_read_requests,
@@ -1941,6 +2267,13 @@ def _run_reaction_frames(session):
             accumulated_messages=accumulated_messages,
             iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
             all_index_view_receipts=all_index_view_receipts,
+            all_protocol_tool_receipts=all_protocol_tool_receipts,
+        )
+        tool_settlement.handle_memory_search(
+            iter_memory_search_requests=iter_memory_search_requests,
+            accumulated_messages=accumulated_messages,
+            iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
+            all_memory_search_receipts=all_memory_search_receipts,
             all_protocol_tool_receipts=all_protocol_tool_receipts,
         )
         mount_ids = tool_settlement.handle_relation_read(
@@ -1972,6 +2305,7 @@ def _run_reaction_frames(session):
             all_protocol_tool_receipts=all_protocol_tool_receipts,
             hidden_stm_memory_ids=hidden_stm_memory_ids,
             boosted_memory_ids=boosted_memory_ids,
+            memory_reconsolidation_tracker=reconsolidation_tracker,
             round_num=round_num,
             mount_ids=mount_ids,
         )
@@ -2023,16 +2357,6 @@ def _run_reaction_frames(session):
             accumulated_messages=accumulated_messages,
             iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
             all_memory_annotation_receipts=all_memory_annotation_receipts,
-            all_protocol_tool_receipts=all_protocol_tool_receipts,
-        )
-        tool_settlement.handle_memory_recall_complete(
-            iter_accepted_tools=iter_accepted_tools,
-            active_protocol_tool_guides=active_protocol_tool_guides,
-            iter_memory_recall_completion_requests=iter_memory_recall_completion_requests,
-            interaction_meta=interaction_meta,
-            accumulated_messages=accumulated_messages,
-            iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
-            all_memory_recall_completion_receipts=all_memory_recall_completion_receipts,
             all_protocol_tool_receipts=all_protocol_tool_receipts,
         )
         tool_settlement.handle_chronicle_write(
@@ -2087,8 +2411,6 @@ def _run_reaction_frames(session):
         )
         iteration_protocol_receipts = all_protocol_tool_receipts[
             protocol_receipt_start:]
-        created_write_pendings = write_pending_tracker.observe_receipts(
-            iteration_protocol_receipts)
         if any(
                 receipt.get("tool_id") == "chronicle_write"
                 and receipt.get("reason") == "no_active_chronicle_focus"
@@ -2104,41 +2426,11 @@ def _run_reaction_frames(session):
                     "  reason: no_active_chronicle_focus\n"
                     "  next_action: stop_repeating_or_reply_naturally\n"
                     "  message: |\n"
-                    "    当前没有编年史写入焦点；不要继续调用 chronicle_write。\n"
-                    "    下一迭代停止重复 chronicle_write；完成就自然回复用户，确需跨轮继续才调用 reaction_finalize(handoff_text)。"
+                    "    当前没有编年史写入焦点；不要重复提交当前编年 guide 选项。\n"
+                    "    下一迭代停止重复提交；完成就自然回复用户，确需跨轮继续才调用 reaction_finalize(handoff_text)。"
                 )
                 pending_native_tool_feedbacks.append(feedback)
                 all_native_tool_feedbacks.append(feedback)
-        resolved_write_pendings = (
-            write_pending_tracker.consume_recently_resolved_pendings()
-        )
-        if resolved_write_pendings:
-            remove_settled_write_pending_context(
-                accumulated_messages,
-                pending_native_tool_feedbacks,
-                resolved_write_pendings,
-            )
-        write_pending_notice = format_write_pending_notice(
-            created_write_pendings)
-        if write_pending_notice:
-            write_pending_notice_call_ids_value = (
-                write_pending_notice_call_ids(created_write_pendings))
-            accumulated_messages.append({
-                "role": "user",
-                "kind": "tool_fact",
-                "content": write_pending_notice,
-                "_tool_fact_receipt_call_ids": (
-                    write_pending_notice_call_ids_value),
-            })
-        tool_settlement.handle_pending_cancel(
-            iter_accepted_tools=iter_accepted_tools,
-            iter_pending_cancel_requests=iter_pending_cancel_requests,
-            write_pending_tracker=write_pending_tracker,
-            accumulated_messages=accumulated_messages,
-            iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
-            all_pending_cancel_receipts=all_pending_cancel_receipts,
-            all_protocol_tool_receipts=all_protocol_tool_receipts,
-        )
         emergency_attempts_this_iter = self._emergency_tool_attempt_count(
             iter_protocol_submissions,
             iter_general_tool_requests,
@@ -2196,13 +2488,18 @@ def _run_reaction_frames(session):
                     })
         iter_protocol_receipts = all_protocol_tool_receipts[protocol_receipt_start:]
         if iter_protocol_receipts:
-            self._write_protocol_tool_receipts(iter_protocol_receipts)
+            self._write_protocol_tool_receipts(
+                iter_protocol_receipts,
+                round_num,
+                audit_iteration,
+                interaction_meta or {},
+            )
         self._write_reasoning_context_if_needed(
             iter_native_tool_call_envelopes,
             iter_general_tool_results,
             iter_protocol_receipts,
             round_num,
-            i,
+            audit_iteration,
             interaction_meta or {},
         )
         runtime_guide_completed_flags.update(
@@ -2212,6 +2509,8 @@ def _run_reaction_frames(session):
                 round_type=round_type,
                 completed_flags=runtime_guide_completed_flags,
             ))
+        runtime_guide_completed_flags.difference_update(
+            self._guide_reopened_flags_from_receipts(iter_protocol_receipts))
         if (
             round_type == "relay"
             and self._relay_iteration_has_execution_progress(
@@ -2345,6 +2644,35 @@ def _run_reaction_frames(session):
                 "response": response_text[:200],
                 "containers_created": iter_created,
                 "exit_signal": "task_guide_correction_exhausted_auto_blocked",
+            })
+            i += 1
+            break
+
+        effective_tool_progress = (
+            iter_general_tool_has_effective_progress
+            or _has_effective_protocol_progress(iter_protocol_receipts)
+        )
+        protocol_read_block = protocol_read_duplicate_guard.observe(
+            iter_protocol_receipts,
+            effective_tool_progress,
+        )
+        if protocol_read_block:
+            blocked_reason = protocol_read_block["blocked_reason"]
+            auto_blocked_ledger = protocol_read_block["settlement_ledger"]
+            parsed_reaction["settlement_ledger"] = auto_blocked_ledger
+            all_settlement_ledgers.append(auto_blocked_ledger)
+            reaction_loop_guard_receipts.append(
+                protocol_read_block["guard_receipt"])
+            all_native_tool_feedbacks.extend(iter_native_feedbacks)
+            reaction_finalize_validated = True
+            final_reply_pending = True
+            result_state.local_blocked_reason = blocked_reason
+            exit_signal = "final_reply_pending"
+            iteration_records.append({
+                "index": i,
+                "response": response_text[:200],
+                "containers_created": iter_created,
+                "exit_signal": "protocol_read_correction_exhausted_auto_blocked",
             })
             i += 1
             break
@@ -2524,31 +2852,21 @@ def _run_reaction_frames(session):
                 })
                 i += 1
                 continue
-            write_pending_blocker = write_pending_tracker.finalize_blocker()
-            if write_pending_blocker.get("blocked"):
-                reaction_loop_guard_receipts.append({
-                    "tool_id": "reaction_finalize",
-                    "tool_family": "substrate_tool",
-                    "tool_class": "sync_tool",
-                    "status": "write_pending_blocked",
-                    "source": "reaction_finalize_mixed_post_settlement",
-                    "reason": write_pending_blocker.get("reason"),
-                    "pendings": write_pending_blocker.get("pendings", []),
-                })
-                pending_native_tool_feedbacks.append(
-                    render_write_pending_blocker(write_pending_blocker))
-                iteration_records.append({
-                    "index": i,
-                    "response": response_text[:200],
-                    "containers_created": iter_created,
-                    "exit_signal": "write_pending_blocked",
-                })
-                i += 1
-                continue
             task_acceptance = self._task_closeout_acceptance(
                 mixed_reaction_finalize.get("closeout_form"))
             if not task_acceptance.get("allowed", True):
                 if task_acceptance.get("terminal_blocked") is True:
+                    budget_status = settle_final_response_guards(
+                        response_text,
+                        "reaction_finalize_mixed_terminal_blocked",
+                        parsed_reaction,
+                        audit_iteration,
+                        iter_created,
+                    )
+                    if budget_status:
+                        if budget_status == "blocked":
+                            break
+                        continue
                     settlement_ledger = _terminal_blocked_ledger(
                         task_acceptance,
                         "reaction_finalize_mixed_post_settlement",
@@ -2595,9 +2913,6 @@ def _run_reaction_frames(session):
                 })
                 i += 1
                 continue
-            if settlement_ledger:
-                parsed_reaction["settlement_ledger"] = settlement_ledger
-                all_settlement_ledgers.append(settlement_ledger)
             if (
                 round_type == "relay"
                 and settlement_ledger.get("relay_receipt")
@@ -2658,6 +2973,25 @@ def _run_reaction_frames(session):
                     pending_target_from_file_reads(
                         all_general_tool_results) or {}
                 )
+            closeout_decision = str(
+                settlement_ledger.get("closeout_decision") or ""
+            ).strip().lower()
+            budget_status = ""
+            if closeout_decision in {"finish", "blocked"}:
+                budget_status = settle_final_response_guards(
+                    response_text,
+                    "reaction_finalize_mixed_post_settlement",
+                    parsed_reaction,
+                    audit_iteration,
+                    iter_created,
+                )
+            if budget_status:
+                if budget_status == "blocked":
+                    break
+                continue
+            if settlement_ledger:
+                parsed_reaction["settlement_ledger"] = settlement_ledger
+                all_settlement_ledgers.append(settlement_ledger)
             reaction_loop_guard_receipts.append({
                 "tool_id": "reaction_finalize",
                 "tool_family": "substrate_tool",
@@ -2900,9 +3234,10 @@ def _run_reaction_frames(session):
     result_state.final_reply_pending = final_reply_pending
     result_state.final_reply_done = final_reply_done
     result_state.final_response_source = final_response_source
+    result_state.final_response_length_rejections = (
+        final_response_length_rejections)
+    result_state.response_contract = dict(loop_state.response_contract)
     result_state.interaction_meta = interaction_meta or {}
-    result_state.evolution_context = evolution_context
-    result_state.evolution_stats = evolution_stats or {}
 
     if session.pending_frame_ref is not None:
         frame_ref = session.pending_frame_ref
@@ -2944,17 +3279,17 @@ def _run_reaction_frames(session):
             "corpus_read_receipts": all_corpus_read_receipts,
             "index_view_requests": all_index_view_requests,
             "index_view_receipts": all_index_view_receipts,
+            "memory_search_requests": all_memory_search_requests,
+            "memory_search_receipts": all_memory_search_receipts,
             "relation_read_requests": all_relation_read_requests,
             "relation_read_receipts": all_relation_read_receipts,
             "mount_cancel_requests": all_mount_cancel_requests,
             "mount_cancel_receipts": all_mount_cancel_receipts,
-            "pending_cancel_requests": all_pending_cancel_requests,
-            "pending_cancel_receipts": all_pending_cancel_receipts,
             "relay_intent_settle_requests": all_relay_intent_settle_requests,
             "relay_intent_settle_receipts": all_relay_intent_settle_receipts,
             "guide_submit_requests": all_guide_submit_requests,
             "guide_submit_receipts": all_guide_submit_receipts,
-            "write_pending_settlement": write_pending_tracker.audit(),
+            "memory_write_rewrite": rewrite_tracker.audit_state(),
             "chronicle_write_declarations": all_chronicle_write_declarations,
             "chronicle_write_receipts": all_chronicle_write_receipts,
             "alert_mode_settle_declarations": all_alert_mode_settle_declarations,

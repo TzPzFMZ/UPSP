@@ -4,6 +4,8 @@ import os
 import re
 from datetime import datetime, timezone
 
+from data.round_audit_codec import read_round_audit_file
+
 
 def _coerce_round_num(round_num):
     if isinstance(round_num, int):
@@ -71,22 +73,28 @@ def load_round_events(round_dir, round_num):
     path = _round_path(round_dir, round_num)
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
-    events = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            events.append(json.loads(line))
-    return events
+    return read_round_audit_file(path)
 
 
 def _event_text(event):
     payload = event.get("payload") or {}
     event_type = event.get("event_type")
     if event_type == "step_input_snapshot":
-        messages = payload.get("messages") or []
-        return "\n\n".join(str(msg.get("content", "")) for msg in messages)
+        snapshot = payload.get("layers_snapshot") or {}
+        layers = snapshot.get("layers") if isinstance(snapshot, dict) else []
+        if isinstance(layers, list):
+            content = "\n\n".join(
+                str(layer.get("content") or "")
+                for layer in layers
+                if isinstance(layer, dict)
+            )
+            if content:
+                return content
+        return "\n\n".join(
+            str(message.get("content") or "")
+            for message in payload.get("messages") or []
+            if isinstance(message, dict)
+        )
     if event_type == "llm_output_raw":
         return str(payload.get("response") or "")
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)

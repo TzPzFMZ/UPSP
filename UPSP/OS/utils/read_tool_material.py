@@ -16,7 +16,7 @@ def _status(result: dict[str, Any]) -> str:
     return str(result.get("status") or "").strip().lower()
 
 
-def _file_search_material_content(result: dict[str, Any]) -> str:
+def _file_glob_material_content(result: dict[str, Any]) -> str:
     matches = result.get("matches")
     if not isinstance(matches, list) or not matches:
         return ""
@@ -28,6 +28,25 @@ def _file_search_material_content(result: dict[str, Any]) -> str:
         lines.append(
             f"{index}. [{marker}] {item.get('name') or ''} - {item.get('path') or ''}"
         )
+    return "\n".join(lines).strip()
+
+
+def _file_grep_material_content(result: dict[str, Any]) -> str:
+    matches = result.get("matches")
+    if not isinstance(matches, list) or not matches:
+        return ""
+    lines = ["正文命中："]
+    for index, item in enumerate(matches, start=1):
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        line_number = item.get("line_number")
+        lines.append(f"{index}. {path}:{line_number}")
+        for before in item.get("context_before") or []:
+            lines.append(f"   - {before}")
+        lines.append(f"   > {item.get('line') or ''}")
+        for after in item.get("context_after") or []:
+            lines.append(f"   + {after}")
     return "\n".join(lines).strip()
 
 
@@ -88,8 +107,10 @@ def read_tool_material_content(result: Any) -> str:
     tool_id = _tool_id(result)
     if tool_id == "file_read":
         return str(result.get("content") or "")
-    if tool_id == "file_search":
-        return _file_search_material_content(result)
+    if tool_id == "file_glob":
+        return _file_glob_material_content(result)
+    if tool_id == "file_grep":
+        return _file_grep_material_content(result)
     if tool_id == "web_fetch":
         return _web_fetch_material_content(result)
     if tool_id == "web_search":

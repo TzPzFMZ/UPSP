@@ -28,22 +28,30 @@
         </div>
       </div>
       <div class="persona-row" aria-label="当前位格" data-i18n-aria-label="当前位格">
-        <details class="persona-name-selector" id="personaNameSelector">
-          <summary id="personaNameSummary" data-i18n-aria-label="选择位格显示名称" aria-label="选择位格显示名称">
-            <span id="personaNameValue">UPSP</span>
-          </summary>
-          <div class="persona-name-options" id="personaNameOptions"></div>
-        </details>
-        <span class="future-note" data-i18n="多位格系统正在开发中">多位格系统正在开发中</span>
+        <nav class="identity-tab-strip" id="personaTabs" role="tablist" aria-label="位格标签" data-i18n-aria-label="位格标签"></nav>
+        <div class="identity-row-actions">
+          <details class="identity-more" id="personaMoreMenu">
+            <summary id="personaMoreToggle" aria-label="位格选项" data-i18n-aria-label="位格选项" title="位格选项" data-i18n-title="位格选项">⋯</summary>
+            <div class="identity-more-panel" id="personaNameOptions"></div>
+          </details>
+          <button class="identity-create" id="createPersonaButton" type="button" data-create-persona data-i18n="新建位格">新建位格</button>
+        </div>
       </div>
       <div class="command-row" aria-label="当前分身与运行状态" data-i18n-aria-label="当前分身与运行状态">
         <button class="persona-avatar" data-page="persona" data-tab="core" aria-label="打开位格主体" data-i18n-aria-label="打开位格主体">
           <span data-persona-abbreviation>UPSP</span>
         </button>
         <div class="identity-stack">
-          <div class="instance-row">
-            <strong data-i18n="主实例">主实例</strong>
-            <span data-i18n="多分身系统正在开发中">多分身系统正在开发中</span>
+          <div class="instance-row" aria-label="分身标签" data-i18n-aria-label="分身标签">
+            <nav class="identity-tab-strip" id="instanceTabs" role="tablist" aria-label="分身标签" data-i18n-aria-label="分身标签"></nav>
+            <span class="identity-feedback" id="identityFeedback" role="status"></span>
+            <div class="identity-row-actions">
+              <details class="identity-more" id="instanceMoreMenu">
+                <summary id="instanceMoreToggle" aria-label="分身选项" data-i18n-aria-label="分身选项" title="分身选项" data-i18n-title="分身选项">⋯</summary>
+                <div class="identity-more-panel" id="instanceOptions"></div>
+              </details>
+              <button class="identity-create" id="createInstanceButton" type="button" data-create-instance data-i18n="新建分身">新建分身</button>
+            </div>
           </div>
           <div class="status-readouts" id="statusReadouts" aria-label="简约运行状态" data-i18n-aria-label="简约运行状态"></div>
         </div>

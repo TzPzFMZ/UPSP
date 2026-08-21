@@ -13,7 +13,7 @@
 | 节律轮 | 1 | rhythm/calendar/API/token/context/cache 类心跳 flag | 写节志+复核真实 connectivity 证据+警戒结算 | 节志落盘+alerts归档进IMM |
 | 交互轮 | 1 | 用户消息到达 | 1-N次装配+生成，超时存档续轮 | 有回复·联系集+默契集+联想集更新+最小承诺 |
 | 中继轮 | 2 | `continue_requested` heartbeat flag | 中继续传：总结进度 | 无对外回复 |
-| 自主轮 | 3 | STM/evolution 类心跳 flag | 1-N次执行，超时存档续轮 | 可能无回复·进化集整理（阈值触发） |
+| 自主轮 | 3 | 历史兼容轮型；当前 Seed 无活动触发源 | 1-N次执行 | 可能无回复·不承担记忆压缩或进化整理 |
 | 待命轮 | 4 | standby/shelve 类心跳 flag | 检查既有 connectivity／breaker 证据 | 健康状态归档 |
 
 差异仅在两端（起手步触发源 + 善后步输出形态），中间反应步完全同构。
@@ -37,7 +37,7 @@ Tier 4：待命
   ├─ rhythm/calendar/API/token/context类?  ──→ 节律轮；若 user_message_waiting 同时存在则合轮
   ├─ user_message_waiting?                ──→ 交互轮
   ├─ continue_requested?                  ──→ 中继轮
-  ├─ STM/evolution类?                      ──→ 自主轮
+  ├─ memory_compression_due?               ──→ 日节律轮中的记忆压缩指南
   ├─ standby/shelve类?                     ──→ 待命轮
   └─ 以上都无                              ──→ 休眠（idle）
 ```
@@ -53,7 +53,7 @@ Tier 4：待命
 
 ---
 
-## 三、heartbeat_flags（17 个活动字段）
+## 三、heartbeat_flags（16 个活动字段）
 
 ### 基础活动字段
 
@@ -61,7 +61,6 @@ Tier 4：待命
 |------|---------|------|
 | feeling_settle_due | next_settle时间戳过期 | 感受缓冲超时 |
 | api_degraded | 当前有效模型链 endpoint 最新状态为 `error/timeout`，或 circuit_breaker=open | API降级；同 endpoint 最新 `ok` 抵消旧错误，未参与当前路由的模型不阻塞恢复 |
-| stm_degrade_pending | heat.json有降格=true且入库=false | STM降格待处理 |
 
 ### v0.7追加5个
 
@@ -77,15 +76,14 @@ Tier 4：待命
 
 | Flag | 检查条件 | 含义 |
 |------|---------|------|
-| token_usage_warning | token 用量比例 ≥ 0.7 | token预警 |
+| token_usage_warning | 历史兼容字段，当前不再由常规水位物化 | 已退役的泛化 token 预警 |
 | context_pressure | lately 归零后仍持续超窗 | Runtime／装配器置位的上下文维护义务 |
-| cache_compaction_due | lately 本轮发生删除 | Runtime 置位的缓存压缩义务 |
+| memory_compression_due | 日志写入后已冻结共享记忆压缩批次 | 当前日节律必须先完成 STM、再完成 LTM 的语义压缩 |
 | calendar_day_due | 跨日 | 日节律触发 |
 | calendar_week_due | 跨周 | 周节律触发 |
 | calendar_month_due | 跨月 | 月节律触发 |
 | calendar_quarter_due | 跨季 | 季节律触发 |
 | calendar_year_due | 跨年 | 年节律触发 |
-| evolution_pending | Raw/Tacit 或 Raw/Connection pending 行数达阈值 | 进化集整理待触发 |
 
 心跳硬约束：不计轮数 / 不调API / 不注入LLM / 不判断业务 / 不回滚 / 轮内暂停。
 
@@ -94,14 +92,14 @@ Tier 4：待命
 | 触发类 | flags |
 |--------|-------|
 | interaction | user_message_waiting |
-| rhythm | rhythm_due / calendar_day_due / calendar_week_due / calendar_month_due / calendar_quarter_due / calendar_year_due / api_degraded / token_usage_warning / context_pressure / cache_compaction_due |
+| rhythm | rhythm_due / calendar_day_due / memory_compression_due / calendar_week_due / calendar_month_due / calendar_quarter_due / calendar_year_due / api_degraded / context_pressure |
 | relay | continue_requested |
-| autonomous | stm_degrade_pending / evolution_pending |
+| autonomous | 当前 Seed 无活动触发源（仅保留历史轮型兼容） |
 | standby | standby_due / shelve_timer_expired |
 
 `feeling_settle_due` 是本地维护旗标，不创建自主轮。空闲时由常驻 Runtime 直接完成数值结算；若已有真实轮触发，则由该轮善后合并结算。
 
-当前交互对象复判来自真实 `unknown` 或未确认 subject 事实；当前自主轮只由有效 STM/evolution flags 触发；进程崩溃只由 Runtime supervisor 恢复。
+当前交互对象复判来自真实 `unknown` 或未确认 subject 事实；当前 Seed 不由记忆遗忘或进化材料创建自主轮，记忆语义压缩只在日节律中处理；进程崩溃只由 Runtime supervisor 恢复。
 
 ---
 
@@ -183,7 +181,7 @@ Tier 4：待命
 
 `runtime.next_round` 已退役。轮类型只由 heartbeat flags 判定，任何待续、节律、待命或自主唤醒都必须先形成对应事实源或明确置位 heartbeat flag。
 
-心跳触发后的脚本说明写成 `kind=setup_fact`，供本轮起手/反应链路阅读，并可在 now 水位后进入 lately/Corpus。反应步 `reaction_finalize.handoff_text` 触发的跨轮继续正文登记到 `state.base.runtime.relay_intents[]` 供调度追踪，同时写成 `kind=relay_handoff` / `role=user` 语料块；标题必须声明“上轮交接任务”，不得伪装成用户原始输入。运行期任务条、GUIDE、POPUP 和焦点投影不是 pending，也不是缓存履带；如果某段说明需要长期保留，必须由反应步协议工具写成记忆条目、故障记录或合适的工作容器内容，不能把最小承诺当长期语义载体。
+心跳触发后的脚本说明写成 `kind=setup_fact`，供本轮起手/反应链路阅读；它与 Setup ingress 一并留在 now，首个成功 Reaction 返回后进入 lately/Corpus。反应步 `reaction_finalize.handoff_text` 触发的跨轮继续正文登记到 `state.base.runtime.relay_intents[]` 供调度追踪；下一轮 relay setup 再写成 `kind=relay_handoff` / `role=user` 语料块，标题必须声明“上轮交接任务”，不得伪装成用户原始输入。运行期任务条、GUIDE、POPUP 和焦点投影不是 pending，也不是缓存履带；如果某段说明需要长期保留，必须由反应步协议工具写成记忆条目、故障记录或合适的工作容器内容，不能把最小承诺当长期语义载体。
 
 ```json
 {

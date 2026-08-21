@@ -1,5 +1,6 @@
 """Runtime guard helpers for reaction loop retries and recovery."""
 
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from constants import local_now
@@ -15,6 +16,75 @@ PROVIDER_RECOVERABLE_INTERRUPTION_KINDS = {
     "provider_native_tool_empty_output",
 }
 PROVIDER_INTERRUPTION_RECOVERY_LIMIT = 3
+DUPLICATE_PROTOCOL_READ_REASONS = {
+    "duplicate_protocol_read_satisfied",
+    "duplicate_protocol_read_failure_repeated",
+}
+
+
+@dataclass
+class ProtocolReadDuplicateGuard:
+    signature: str = ""
+    rejection_count: int = 0
+    receipts: list = field(default_factory=list)
+
+    def observe(self, receipts, effective_progress):
+        if effective_progress:
+            self.signature = ""
+            self.rejection_count = 0
+            self.receipts = []
+            return {}
+        grouped = {}
+        for receipt in receipts or []:
+            if not isinstance(receipt, dict):
+                continue
+            reason = str(receipt.get("reason") or "").strip()
+            signature = str(receipt.get("protocol_read_signature") or "").strip()
+            if reason in DUPLICATE_PROTOCOL_READ_REASONS and signature:
+                grouped.setdefault(signature, []).append(receipt)
+        if not grouped:
+            self.signature = ""
+            self.rejection_count = 0
+            self.receipts = []
+            return {}
+        signature = self.signature if self.signature in grouped else sorted(grouped)[0]
+        if signature == self.signature:
+            self.rejection_count += 1
+        else:
+            self.signature = signature
+            self.rejection_count = 1
+            self.receipts = []
+        self.receipts = (self.receipts + [grouped[signature][0]])[-3:]
+        if self.rejection_count < 3:
+            return {}
+        blocked_reason = "blocked/protocol_read_correction_exhausted"
+        blockers = [
+            str(receipt.get("reason") or "protocol_read_rejected")
+            for receipt in self.receipts
+        ]
+        return {
+            "blocked_reason": blocked_reason,
+            "settlement_ledger": {
+                "closeout_decision": "blocked",
+                "handoff_text": "",
+                "auto_blocked": True,
+                "blocked_reason": blocked_reason,
+                "blockers": blockers,
+                "source": "reaction_protocol_read_correction",
+            },
+            "guard_receipt": {
+                "tool_id": "protocol_read",
+                "tool_family": "protocol_tool",
+                "tool_class": "runtime_guard",
+                "status": "protocol_read_correction_exhausted_auto_blocked",
+                "source": "reaction_protocol_read_correction",
+                "reason": blocked_reason,
+                "duplicate_signature": self.signature,
+                "rejection_count": self.rejection_count,
+                "rejected_receipt_count": len(self.receipts),
+                "blockers": blockers,
+            },
+        }
 
 
 def has_reaction_empty_output(parsed_reaction):

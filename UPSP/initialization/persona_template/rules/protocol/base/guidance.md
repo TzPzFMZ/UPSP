@@ -89,7 +89,7 @@
 
 `tools.md` 管工具行为契约、工具家族、工具姿态、provider-native 调用边界和旧接口退役。它区分 `protocol_tool`、`general_tool`、`substrate_tool`，也区分 `read_tool`、`sync_tool`、`focus_tool`。它说明哪些工具能由 reaction LLM 直接通过 provider-native tool call 调用，哪些只是 Runtime 基座动作，哪些只产生 `general_tool_result`，哪些必须以 processor receipt 作为真实执行事实。
 
-当任务涉及工具权限、工具 schema、原生 tool_calls、旧 markdown fallback、`file_read`、`container_read`、`fault_record`、`reaction_finalize` 双段收束、`setup_security_gate` 或是否需要新增协议工具时，必须读取全文。摘要不能替代 provider-native schema 与 processor receipt，也不能授权高风险工具。
+当任务涉及工具权限、工具 schema、原生 tool_calls、旧 markdown fallback、`file_read`、`container_read`、退役工具边界、`reaction_finalize` 双段收束、`setup_security_gate` 或是否需要新增协议工具时，必须读取全文。摘要不能替代 provider-native schema 与 processor receipt，也不能授权高风险工具。
 
 ## §GDE-03 rules、POPUP、工具与证据
 

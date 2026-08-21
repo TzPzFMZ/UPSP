@@ -28,7 +28,7 @@
 |---|---|
 | `CONTENT` | 当前迭代可阅读和改写参考材料面。read tool 结果、记忆正文、关系正文、容器正文可投到这里。 |
 | `WB focus` | 工作台焦点投影，展示当前焦点容器的元数据、可写目标和正文片段。 |
-| `kind=setup_fact` | 起手步或心跳触发说明的自然语言短事实，不等于 POPUP，不承载自由文本暗层，可随 now 水位进入 lately/Corpus。 |
+| `kind=setup_fact` | 起手步或心跳触发说明的自然语言短事实，不等于 POPUP，不承载自由文本暗层；与起手包留在 now，首个成功 Reaction 后进入 lately/Corpus。 |
 | `runtime_call_request` | 每次 provider 调用固定占位，文本为“请根据上下文继续本次调用。”；只出现在实际调用上下文，不写 cache。 |
 | `relay_handoff` | `reaction_finalize.handoff_text` 形成的跨轮交接语料，role=user，但标题声明不是用户原始输入。 |
 | `relay_intents[]` | Runtime 中继意图池，承载 `reaction_finalize.handoff_text` 调度 payload；模型可见层同时有 `relay_handoff` 和目标卡/意图指针。 |
@@ -87,7 +87,7 @@ provider-native tool call 是当前 reaction 的 LLM-facing 工具入口。
 完成时不要调用 `reaction_finalize`，直接自然语言回复用户；Runtime 在账本无阻断时派生 `finish`。`blocked` 只由 Runtime 蓝屏类事故派生。记忆、读取、pending 和身份结算由 Runtime 根据真实回执、读取游标、pending tracker 与当前 interaction meta 生成 `settlement_ledger`；模型不再填写对应状态字段。
 
 <!-- SETUP_FORMAT_START -->
-起手步：审阅索引、选择挂载、安全裁决、身份入口确认、轮型确认、standby 判断和任务债务入口判断。起手步只能通过 provider-native setup_finalize 收束；裸文本、旧表格和自然语言判断只进 audit，不作为事实或执行证据。setup_finalize 结构字段：mount_requests, security_verdict, reject_reason, rules_selection, round_type_confirm, suggested_mode, standby_skip_reaction, task_guidance_required, task_guidance_route, task_guidance_reason, interaction_object, identity_status, interaction_source, interaction_basis。起手步只声明任务债务，不读取材料、不创建任务账本、不写产物、不运行命令；Runtime 在反应步把真实债务显影为 task_bootstrap 或登记 active task pending input。Runtime 会把结构化 setup_finalize 投影为自然语言 kind=setup_fact 交给反应步；setup_fact 不承载模型自由文本，可随 now 水位进入 lately/Corpus。
+起手步：审阅索引、选择挂载、安全裁决、身份入口确认、standby 判断和任务债务入口判断。起手步只能通过 provider-native setup_finalize 收束；裸文本、旧表格和自然语言判断只进 audit，不作为事实或执行证据。setup_finalize 结构字段：mount_requests[{type,ids}], security_verdict, reject_reason, suggested_mode, standby_skip_reaction, task_guidance_required, task_guidance_route, task_guidance_reason, interaction_object, identity_status, interaction_source, interaction_basis。`suggested_mode` 当前仅进入 Setup intent/audit，不切换模式、不注入规则、不投影 Reaction、不积累默契。起手步只声明任务债务，不读取材料、不创建任务账本、不写产物、不运行命令；用户请求本身要求多步骤/多来源研究、跨轮、执行命令、独立产物、验收或证据链交付时判 true，PRJ 因跨轮也为 true；直接回答即使使用 `memory_search`、`index_view`、`memory_content_read` 或有界只读查证也判 false，内部工具步骤不形成任务债务。无需独立产物或验收债务的单轮 `memory_write` 或 DC/EC/FUT 沉淀也判 false，但不能豁免它所属的更大任务。Runtime 在反应步把真实债务显影为 task_bootstrap 或登记 active task pending input。Runtime 会把结构化 setup_finalize 投影为自然语言 kind=setup_fact 交给反应步；setup_fact 不承载模型自由文本，与起手输入一并留在 now，首个成功 Reaction 返回后进入 lately/Corpus。
 <!-- SETUP_FORMAT_END -->
 
 <!-- STANDBY_SETUP_FORMAT_START -->
@@ -95,7 +95,7 @@ provider-native tool call 是当前 reaction 的 LLM-facing 工具入口。
 <!-- STANDBY_SETUP_FORMAT_END -->
 
 <!-- CLEANUP_FORMAT_START -->
-善后步：落账、归档、收尾。connection_material_settle: 联系材料整理结构；tacit_material_settle: 默契材料整理结构；最近缓存压缩改由维护节律处理。善后本轮材料作为 C 轨 `transient_scope=cleanup_round`、`transient_target_step=cleanup` 临时语料块进入上下文，目标 cleanup 调用完成后清除，不进入 lately/Corpus，不降解成历史摘要。最近缓存发生水位删除时，善后只记录 pending metadata 并由 Runtime 置位 `cache_compaction_due`；下一轮 rhythm agenda 物化 `cache_compaction_rhythm_guide` 后再通过 `guide_submit(submit_cache_compaction_shard)` 调用后台 `cache_compact`。cleanup_finalize 结构字段：connection_materials, tacit_materials, lately_compression。本步必须以 cleanup_finalize 收尾；善后裸文本只进 audit，不作为训练材料、缓存决策、中继或落账输入。
+善后步：落账、归档、收尾。connection_material_settle: 联系材料整理结构；tacit_material_settle: 默契材料整理结构。善后本轮材料作为 C 轨 `transient_scope=cleanup_round`、`transient_target_step=cleanup` 临时语料块进入上下文，目标 cleanup 调用完成后清除，不进入 lately/Corpus。成功调用完整输入 Token 达三步共同逻辑窗口 90% 时 Runtime 记录压力；善后最终缓存落账后只冻结 `cache_compaction_debt.v3`，不改写 lately、不置 heartbeat。下一自然轮 Setup 照常，Reaction 以即时 `guide_submit(submit_cache_compaction_batch)` 分片暂存，随后由 v3 `ContextStore` 原子事务写回。cleanup_finalize 结构字段仍为 connection_materials, tacit_materials, lately_compression；善后裸文本只进 audit。
 <!-- CLEANUP_FORMAT_END -->
 
 <!-- REACTION_RESULT_FORMAT_START -->
@@ -104,7 +104,7 @@ provider-native tool call 是当前 reaction 的 LLM-facing 工具入口。
 
 ## general tool structure names
 
-当前通用工具结构名：`file_read`、`file_search`、`file_edit`、`web_fetch`、`web_search`、`shell_command`、`subagent_dispatch`。内部账本结构包括 `general_tool_request`、`general_tool_call`、`general_tool_result`。通用工具 backend 字段包括 `backend_candidates`、`active_backend`、`backend_type`、`handler`、`permission_scope`。`file_read` 续读使用 `next_line_start` / `line_start`；除 `path/line_start/encoding/reason` 外的范围或窗口字段都不是当前 provider-native `file_read` 正向字段。
+当前活动通用工具结构名：`file_read`、`file_glob`、`file_grep`、`file_edit`、`file_write`、`web_fetch`、`web_search`、`shell_command`、`subagent_dispatch`。`shell_command` 在 limited 不导出、guarded 逐次审批、unlimited 直接执行；sandbox grant 只约束初始 cwd，不构成进程级文件系统沙箱。内部账本结构包括 `general_tool_request`、`general_tool_call`、`general_tool_result`。通用工具 backend 字段包括 `backend_candidates`、`active_backend`、`backend_type`、`handler`、`permission_scope`。`file_read` 续读使用 `next_line_start` / `line_start`；除 `path/line_start/encoding/reason` 外的范围或窗口字段都不是当前 provider-native `file_read` 正向字段。
 
 ## audit structure names
 

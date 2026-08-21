@@ -17,6 +17,7 @@ if str(PROGRAM_OS_ROOT) not in sys.path:
     sys.path.insert(0, str(PROGRAM_OS_ROOT))
 
 from data.round_audit_viewer import list_rounds, load_round_events  # noqa: E402
+from data.round_audit_codec import RoundAuditDecoder  # noqa: E402
 from data.round_live_viewer import build_live_state, events_after  # noqa: E402
 from paths import AUDIT_HTML_DIR, STM_CTX_ROUND_DIR  # noqa: E402
 
@@ -121,6 +122,7 @@ class RoundLiveHandler(BaseHTTPRequestHandler):
                     "pending": b"",
                     "tail": b"",
                     "events": [],
+                    "decoder": RoundAuditDecoder(),
                 }
             offset = int(cache.get("offset") or 0)
             tail = bytes(cache.get("tail") or b"")
@@ -135,6 +137,7 @@ class RoundLiveHandler(BaseHTTPRequestHandler):
                             "pending": b"",
                             "tail": b"",
                             "events": [],
+                            "decoder": RoundAuditDecoder(),
                         }
                         offset = 0
                 if stat.st_size > offset:
@@ -144,11 +147,17 @@ class RoundLiveHandler(BaseHTTPRequestHandler):
                     lines = data.split(b"\n")
                     cache["pending"] = lines.pop()
                     events = list(cache.get("events") or [])
+                    decoder = cache.get("decoder")
+                    if not isinstance(decoder, RoundAuditDecoder):
+                        decoder = RoundAuditDecoder()
                     for line in lines:
                         line = line.strip()
                         if line:
-                            events.append(json.loads(line.decode("utf-8")))
+                            events.append(decoder.feed(
+                                json.loads(line.decode("utf-8"))
+                            ))
                     cache["events"] = events
+                    cache["decoder"] = decoder
                     cache["offset"] = offset + len(chunk)
                 marker_offset = int(cache.get("offset") or 0)
                 handle.seek(max(0, marker_offset - 256))

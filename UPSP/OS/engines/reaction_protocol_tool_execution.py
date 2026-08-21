@@ -120,6 +120,7 @@ def apply_index_view_requests(
             receipt = assembler.build_index_view(
                 scope=request.get("scope", ""),
                 zone=request.get("zone", ""),
+                query_terms=request.get("query_terms"),
                 offset=request.get("offset", 0),
                 limit=request.get("limit", 8),
                 current_input_text=getattr(assembler, "_current_input_text", None),
@@ -139,6 +140,30 @@ def apply_index_view_requests(
                 "content": "",
             }
         receipts.append(receipt)
+    return receipts
+
+
+def apply_memory_search_requests(assembler, requests):
+    receipts = []
+    for request in requests or []:
+        if not isinstance(request, dict):
+            receipts.append({
+                "tool_id": "memory_search",
+                "tool_family": "protocol_tool",
+                "tool_class": "read_tool",
+                "status": "rejected",
+                "source": "protocol_tool_request",
+                "reason": "invalid_request",
+                "content": "",
+                "candidates": [],
+                "protocol_tool_receipt": True,
+            })
+            continue
+        receipts.append(assembler.build_memory_search(
+            query_terms=request.get("query_terms"),
+            offset=request.get("offset", 0),
+            limit=request.get("limit", 8),
+        ))
     return receipts
 
 
@@ -420,6 +445,23 @@ def model_visible_error_hint(result):
         "validation", "state_conflict", "permission_security",
         "transient_external", "unknown_internal",
     }
+    if reason == "focus_tool_iteration_conflict":
+        return {
+            "kind": "validation",
+            "retry": "next_frame",
+            "attempted": {
+                "tool_id": str(result.get("tool_id") or "").strip(),
+            },
+            "current": {
+                "accepted_focus_tool": str(
+                    result.get("accepted_focus_tool") or ""
+                ).strip(),
+            },
+            "expected": {"max_focus_tools_per_iteration": 1},
+            "next_action": (
+                "本帧已有焦点工具被接受；等待其回执，下一帧只提交一个焦点工具。"
+            ),
+        }
     if existing:
         kind = str(existing.get("kind") or "unknown_internal")
         if kind not in valid_kinds:
@@ -513,6 +555,7 @@ def _safe_error_hint_value(value):
         "url", "find_text", "char_start", "next_char_start",
         "source_content_sha256", "expected_source_content_sha256",
         "source_bytes_incomplete", "backend_ids", "next_state",
+        "accepted_focus_tool", "max_focus_tools_per_iteration",
     }
     if isinstance(value, dict):
         return {str(key): _safe_error_hint_value(child) for key, child in value.items()

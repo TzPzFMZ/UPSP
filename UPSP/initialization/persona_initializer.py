@@ -372,11 +372,24 @@ class PersonaInitializer:
         preset_dir: str | Path,
         *,
         pid: str | None = None,
+        shared_persona_dir: str | Path | None = None,
     ):
         self.persona_dir = Path(persona_dir)
+        self.shared_persona_dir = Path(
+            shared_persona_dir if shared_persona_dir is not None else persona_dir
+        )
         self.template_dir = Path(template_dir)
         self.preset_dir = Path(preset_dir)
         self.pid = validate_pid(pid) if pid is not None else None
+
+    def _status_path(self, relative: str) -> Path:
+        shared = (
+            relative == "core.md"
+            or relative.startswith("rules/")
+            or relative.startswith("docs/")
+            or relative.startswith("LTM/Memory/")
+        )
+        return (self.shared_persona_dir if shared else self.persona_dir) / relative
 
     def status(self) -> dict:
         if not self.persona_dir.exists():
@@ -386,21 +399,21 @@ class PersonaInitializer:
         required_files = tuple(dict.fromkeys((*REQUIRED_TEMPLATE_FILES, *REQUIRED_PERSONA_FILES)))
         missing = [
             item for item in required_files
-            if not (self.persona_dir / item).is_file()
+            if not self._status_path(item).is_file()
         ]
         missing.extend(
             item for item in REQUIRED_TEMPLATE_DIRS
-            if not (self.persona_dir / item).is_dir()
+            if not self._status_path(item).is_dir()
         )
         if missing:
             return {"state": "incomplete", "ready": False, "missing": missing}
         try:
-            core = (self.persona_dir / "core.md").read_text(encoding="utf-8")
+            core = self._status_path("core.md").read_text(encoding="utf-8")
             birth = (
-                self.persona_dir / "LTM/Immune/birth.md"
+                self._status_path("LTM/Immune/birth.md")
             ).read_text(encoding="utf-8")
             parsed_json = {
-                item: json.loads((self.persona_dir / item).read_text(encoding="utf-8"))
+                item: json.loads(self._status_path(item).read_text(encoding="utf-8"))
                 for item in required_files
                 if item.endswith(".json")
             }

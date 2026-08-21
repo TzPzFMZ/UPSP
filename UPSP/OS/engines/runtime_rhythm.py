@@ -9,6 +9,71 @@ from logic.rhythm_guide_materializer import reconcile_recovered_emergency_flags
 from logic.single_round_probe_policy import validate_single_round_probe_round
 
 
+def new_runtime_trigger(runtime, round_type, flags, state=None):
+    """Freeze queued input and continuation-local options into one trigger."""
+    runtime._trigger_seq += 1
+    flags = dict(flags or {})
+    messages = []
+    if flags.get("user_message_waiting") and round_type in {
+            "interactive", "rhythm"}:
+        dequeue = getattr(runtime.hb, "dequeue_messages", None)
+        if callable(dequeue):
+            messages = list(dequeue() or [])
+    permission_level = runtime.permission_chain.consume(messages, flags)
+    final_response_max_chars = None
+    final_response_length_rejections = 0
+    response_contract = {}
+    task_guidance_enabled = True
+    if messages:
+        final_response_max_chars = runtime._pending_final_response_max_chars
+        runtime._pending_final_response_max_chars = None
+        runtime._continuation_final_response_budget = None
+        response_contract = dict(runtime._pending_response_contract or {})
+        runtime._pending_response_contract = {}
+        task_guidance_enabled = runtime._pending_task_guidance_enabled
+        runtime._pending_task_guidance_enabled = True
+    elif flags.get("continue_requested"):
+        continuation = runtime._continuation_final_response_budget or {}
+        value = continuation.get("max_chars")
+        if isinstance(value, int) and value > 0:
+            final_response_max_chars = value
+            final_response_length_rejections = int(
+                continuation.get("rejections") or 0)
+        response_state = runtime._continuation_final_response_budget or {}
+        response_contract = dict(response_state.get("response_contract") or {})
+        task_guidance_enabled = response_state.get(
+            "task_guidance_enabled", True) is not False
+    return RuntimeTrigger(
+        trigger_id=f"T{runtime._trigger_seq:08d}",
+        trigger_seq=runtime._trigger_seq,
+        observed_at=local_now().isoformat(),
+        round_type=round_type,
+        flags=flags,
+        messages=tuple(messages),
+        execution_permission_level=permission_level,
+        final_response_max_chars=final_response_max_chars,
+        final_response_length_rejections=final_response_length_rejections,
+        response_contract=response_contract,
+        task_guidance_enabled=task_guidance_enabled,
+    )
+
+
+def continuation_response_policy(runtime, context, result):
+    if (
+            context.final_response_max_chars is None
+            and not context.response_contract
+            and context.task_guidance_enabled):
+        return None
+    if not runtime.sm.get_flags().get("continue_requested"):
+        return None
+    return {
+        "max_chars": context.final_response_max_chars,
+        "rejections": int(result.get("_final_response_length_rejections") or 0),
+        "response_contract": dict(context.response_contract),
+        "task_guidance_enabled": context.task_guidance_enabled,
+    }
+
+
 def prepare_round_before_setup(runtime, round_type, state, flags):
     """Pause heartbeat, reconcile recovered alerts, and freeze the effective round."""
     runtime.hb.pause()
@@ -107,6 +172,10 @@ def park_interaction_for_api_probe(runtime, trigger, flags):
     if not (flags.get("api_degraded") and trigger.messages):
         return trigger, False
     runtime.hb.prepend_messages(trigger.messages)
+    runtime._pending_final_response_max_chars = (
+        trigger.final_response_max_chars)
+    runtime._pending_response_contract = dict(trigger.response_contract)
+    runtime._pending_task_guidance_enabled = trigger.task_guidance_enabled
     return RuntimeTrigger(
         trigger_id=trigger.trigger_id,
         trigger_seq=trigger.trigger_seq,
@@ -114,6 +183,12 @@ def park_interaction_for_api_probe(runtime, trigger, flags):
         round_type=trigger.round_type,
         flags=dict(trigger.flags),
         messages=(),
+        execution_permission_level=trigger.execution_permission_level,
+        final_response_max_chars=trigger.final_response_max_chars,
+        final_response_length_rejections=(
+            trigger.final_response_length_rejections),
+        response_contract=dict(trigger.response_contract),
+        task_guidance_enabled=trigger.task_guidance_enabled,
     ), True
 
 
@@ -128,6 +203,12 @@ def restore_interaction_after_api_probe(
         and (probe_result or {}).get("reason") != "executor_probe_unavailable"
     )
     messages = () if probe_failed else tuple(runtime.hb.dequeue_messages() or [])
+    final_response_max_chars = (
+        trigger.final_response_max_chars if messages else None)
+    if messages:
+        runtime._pending_final_response_max_chars = None
+        runtime._pending_response_contract = {}
+        runtime._pending_task_guidance_enabled = True
     flags = {**flags, "user_message_waiting": bool(messages)}
     return RuntimeTrigger(
         trigger_id=trigger.trigger_id,
@@ -136,6 +217,13 @@ def restore_interaction_after_api_probe(
         round_type=trigger.round_type,
         flags=dict(trigger.flags),
         messages=messages,
+        execution_permission_level=trigger.execution_permission_level,
+        final_response_max_chars=final_response_max_chars,
+        final_response_length_rejections=(
+            trigger.final_response_length_rejections if messages else 0),
+        response_contract=(dict(trigger.response_contract) if messages else {}),
+        task_guidance_enabled=(
+            trigger.task_guidance_enabled if messages else True),
     ), flags
 
 

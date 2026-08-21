@@ -26,13 +26,11 @@ from data.state_store import StateStore
 from data.config_store import ConfigStore
 from data.connectivity_store import ConnectivityStore
 from data.memory_heat import MemoryHeat
-from data.evolution_store import EvolutionStore
 from constants import local_now
 from constants import (
     HEARTBEAT_DEFAULT_INTERVAL,
     RHYTHM_INTERVAL_ROUNDS,
     STANDBY_IDLE_MINUTES,
-    TOKEN_WARNING_RATIO,
 )
 
 
@@ -47,18 +45,14 @@ HEARTBEAT_TRIGGER_GROUPS = {
         "calendar_month_due",
         "calendar_quarter_due",
         "calendar_year_due",
+        "memory_compression_due",
         "api_degraded",
-        "token_usage_warning",
         "context_pressure",
-        "cache_compaction_due",
     ),
     "relay": (
         "continue_requested",
     ),
-    "autonomous": (
-        "stm_degrade_pending",
-        "evolution_pending",
-    ),
+    "autonomous": (),
     "standby": (
         "standby_due",
         "shelve_timer_expired",
@@ -83,7 +77,7 @@ HEARTBEAT_GROUP_ROUND_TYPES = {
 
 HEARTBEAT_QUALIFIER_FLAGS = ()
 
-HEARTBEAT_HEALTH_ONLY_FLAGS = ()
+HEARTBEAT_HEALTH_ONLY_FLAGS = ("token_usage_warning",)
 
 HEARTBEAT_LOCAL_MAINTENANCE_FLAGS = (
     "feeling_settle_due",
@@ -94,14 +88,9 @@ EMERGENCY_GUIDE_FLAGS = (
     "api_degraded",
 )
 
-CONTEXT_PRESSURE_GUIDE_FLAGS = (
-    "token_usage_warning",
-    "context_pressure",
-)
+CONTEXT_PRESSURE_GUIDE_FLAGS = ("context_pressure",)
 
-CACHE_COMPACTION_GUIDE_FLAGS = (
-    "cache_compaction_due",
-)
+CACHE_COMPACTION_GUIDE_FLAGS = ()
 
 MAIN_AXIS_GUIDE_FLAGS = (
     "rhythm_due",
@@ -164,6 +153,17 @@ def round_decision_from_heartbeat_flags(flags):
     if main_flags:
         guide_queue.append({"kind": "main_axis_rhythm", "flags": main_flags})
 
+    # An already-active compression cycle is recovery debt from an earlier
+    # successful daily chronicle.  It must close before a newly due day can
+    # create another cycle.  In the normal path this flag is still false until
+    # today's chronicle has been written, so the day -> compression order is
+    # unchanged.
+    if flags.get("memory_compression_due"):
+        guide_queue.append({
+            "kind": "memory_compression",
+            "flags": ["memory_compression_due"],
+        })
+
     for kind, flag in CALENDAR_GUIDE_ITEMS:
         if flags.get(flag):
             guide_queue.append({"kind": kind, "flags": [flag]})
@@ -198,12 +198,12 @@ class HeartbeatManager:
     心跳闹钟管理器
 
     后台线程每隔 interval 秒 tick。
-    每次 tick 做 18 项布尔检查，有满足就置位。
+    每次 tick 只做活动布尔检查，有满足就置位。
     善后步是 flag 的唯一消费者（清零）。
     """
 
     def __init__(self, state_store=None, config_store=None, interval=None,
-                 memory_heat=None, connectivity_store=None, evolution_store=None):
+                 memory_heat=None, connectivity_store=None):
         self.sm = state_store or StateStore()
         self.cfg = config_store or ConfigStore()
         active_endpoint_ids = getattr(self.cfg, "get_active_model_profile_ids", None)
@@ -217,7 +217,6 @@ class HeartbeatManager:
                 else None
             ),
         )
-        self.evolution_store = evolution_store or EvolutionStore()
         self.interval = interval or self._load_interval()
         self.memory_heat = memory_heat or MemoryHeat()
 
@@ -241,15 +240,6 @@ class HeartbeatManager:
         except Exception:
             return HEARTBEAT_DEFAULT_INTERVAL
 
-    def _load_evolution_thresholds(self):
-        try:
-            return self.cfg.get_autonomous_trigger_params()
-        except Exception:
-            return {
-                "tacit_pending_threshold": 512,
-                "connection_pending_threshold": 512,
-            }
-
     def _load_rhythm_interval(self):
         try:
             return int(self.cfg.get_rhythm_interval() or RHYTHM_INTERVAL_ROUNDS)
@@ -261,13 +251,6 @@ class HeartbeatManager:
             return int(self.cfg.get_standby_threshold() or STANDBY_IDLE_MINUTES)
         except Exception:
             return STANDBY_IDLE_MINUTES
-
-    def _load_token_warning_ratio(self):
-        try:
-            params = self.cfg.get_token_params()
-            return float(params.get("warning_ratio", TOKEN_WARNING_RATIO))
-        except Exception:
-            return TOKEN_WARNING_RATIO
 
     # ----------------------------------------------------------
     # 启动/停止
@@ -390,7 +373,6 @@ class HeartbeatManager:
         base = state.get("base", {})
         meta = base.get("meta", {})
         flags = base.get("heartbeat_flags", {})
-        token = base.get("token_usage", {})
         alert_deferrals = base.get("alert_deferrals", {})
 
         new_flags = {}
@@ -418,21 +400,17 @@ class HeartbeatManager:
         elif flags.get("api_degraded") and self._check_api_recovered():
             clear_flags.append("api_degraded")
 
-        # --- 4. stm_degrade_pending ---
-        if not flags.get("stm_degrade_pending"):
-            try:
-                if self.memory_heat.has_pending_degrade():
-                    new_flags["stm_degrade_pending"] = True
-            except Exception:
-                pass
+        # --- 4. memory_compression_due：只投影已冻结的共享日周期 ---
+        try:
+            from data.memory_compression_store import MemoryCompressionManager
 
-        # --- 4b. evolution_pending ---
-        if not flags.get("evolution_pending"):
-            try:
-                if self.evolution_store.should_trigger(self._load_evolution_thresholds()):
-                    new_flags["evolution_pending"] = True
-            except Exception as e:
-                tick_errors.append(f"evolution_pending: {e}")
+            compression_due = MemoryCompressionManager().has_active_cycle()
+            if compression_due and not flags.get("memory_compression_due"):
+                new_flags["memory_compression_due"] = True
+            elif not compression_due and flags.get("memory_compression_due"):
+                clear_flags.append("memory_compression_due")
+        except Exception as exc:
+            tick_errors.append(f"memory_compression_due: {exc}")
 
         # --- 6. user_message_waiting ---
         if not flags.get("user_message_waiting"):
@@ -506,19 +484,8 @@ class HeartbeatManager:
         else:
             meta_updates["base.meta.last_calendar_check_at"] = now.isoformat()
 
-        # --- 12. token_usage_warning（V2 新增）---
-        try:
-            ratio = float(token.get("usage_ratio", 0) or 0)
-        except (TypeError, ValueError):
-            ratio = 0.0
-        token_warning = ratio >= self._load_token_warning_ratio()
-        if self._alert_deferred(alert_deferrals, "token_usage_warning", now):
-            if flags.get("token_usage_warning"):
-                clear_flags.append("token_usage_warning")
-        elif token_warning:
-            if not flags.get("token_usage_warning"):
-                new_flags["token_usage_warning"] = True
-        elif flags.get("token_usage_warning"):
+        # 旧泛化告警已退役；真实输入水位只生成 cache_compaction_due。
+        if flags.get("token_usage_warning"):
             clear_flags.append("token_usage_warning")
 
         # 批量置位

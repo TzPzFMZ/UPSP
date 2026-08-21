@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import pytest
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TESTS_DIR)
@@ -10,6 +11,79 @@ from runtime_test_helpers import RuntimeTestMixin
 
 
 class TestRuntimeRoundFlow(RuntimeTestMixin):
+    @staticmethod
+    def _prepare_cache_compaction_debt(rt, round_num):
+        blocks = [{
+            "id": f"R000001-assistant-{index:04d}",
+            "role": "assistant",
+            "kind": "assistant_reply",
+            "text": chr(65 + index) * 50000,
+            "loc": {"round": 1, "step": "reaction", "iter": index},
+            "policy": {"now": False, "lately": True},
+            "ref": {"active_corpus_id": f"C-{index + 1:05d}"},
+        } for index in range(9)]
+        rt.ctx_store._write_jsonl_atomic(rt.ctx_store._lately_cache_jsonl(), blocks)
+        return rt.ctx_store.prepare_lately_pressure_compaction(
+            round_num,
+            {"kind": "token_ratio", "input_tokens": 900000, "context_window": 1000000},
+        )
+
+    def test_spec738_direct_query_ignores_setup_task_guidance_declaration(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        task_root = tmp_path / "irrelevant-engineering-task"
+        task_root.mkdir()
+        monkeypatch.setenv(
+            "UPSP_ENGINEERING_SANDBOX_GRANT_JSON",
+            json.dumps({"phase": "agent_eval", "task_root": str(task_root)}),
+        )
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        monkeypatch.setattr(rt.hb, "pause", lambda: None)
+        monkeypatch.setattr(rt.hb, "resume", lambda *args, **kwargs: None)
+        monkeypatch.setattr(rt.executor, "call", lambda *args, **kwargs: {
+            "response": "",
+            "tool_call_envelopes": [self._native_tool_envelope(
+                "setup_finalize",
+                {
+                    "security_verdict": "pass",
+                    "task_guidance_required": True,
+                    "task_guidance_route": "new_work",
+                    "task_guidance_reason": "model misclassified direct query",
+                },
+                tool_family="substrate_tool",
+                tool_class="sync_tool",
+                risk="high",
+            )],
+        })
+
+        def fake_reaction(*_args, **kwargs):
+            intent = kwargs["setup_result"].intent
+            assert intent["task_guidance_required"] is False
+            assert intent["task_guidance_route"] == "none"
+            assert intent["task_guidance_reason"] is None
+            assert rt.workbench.get("base.active_guides.work") in (None, "")
+            return {"response": "short answer"}
+
+        monkeypatch.setattr(rt, "_run_reaction_loop", fake_reaction)
+        monkeypatch.setattr(rt, "_run_cleanup", lambda *args, **kwargs: None)
+        assert rt.submit_message(
+            "bounded direct query", "limited", task_guidance_enabled=False)
+        trigger = rt._new_trigger(
+            "interactive", {"user_message_waiting": True}, rt.sm.load())
+
+        rt._run_one_round(
+            "interactive",
+            rt.sm.load(),
+            {"user_message_waiting": True},
+            trigger=trigger,
+        )
+
+        assert not rt.sm.get("base.runtime.work_intent_debt")
+
     def test_spec383_coalesced_rhythm_dequeues_waiting_user_message(
             self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
@@ -355,7 +429,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
 
         assert "work_intent_debt" in feedback
         assert "task_bootstrap" in feedback
-        assert "先建立任务指南清单" in feedback
+        assert "任务清单入口未闭合" in feedback
 
     def test_spec592_cleanup_treats_open_work_intent_debt_as_task_blocker(self):
         from engines.cleanup_pipeline import CleanupPipeline
@@ -492,10 +566,9 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             }
 
         monkeypatch.setattr(rt, "_call_llm_with_round_audit", fake_cleanup_provider)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "")
-        monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None)
+        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
+        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "pause", lambda: None)
         monkeypatch.setattr(rt.hb, "resume", lambda: None)
@@ -697,206 +770,40 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
         assert guide.get("pending_inputs") in (None, [])
         assert cleanup_calls
 
-    def test_spec471_lately_trim_sets_cache_compaction_due_without_active_guide(
-            self, tmp_path, monkeypatch):
-        from engines.round_context import SetupResult
 
-        rt = self._make_runtime(tmp_path)
-        setup_result = SetupResult(
-            raw_result={"response": ""},
-            intent={"security_verdict": "pass", "mount_requests": []},
-            interaction_meta=self._confirmed_meta(),
-            user_input_text="继续。",
-            setup_messages=[],
-            internal_handoff=[],
-        )
-        monkeypatch.setattr(rt.setup_runner, "run", lambda context: setup_result)
-        monkeypatch.setattr(rt, "_run_reaction_loop", lambda *args, **kwargs: {
-            "response": "反应步完成",
-            "_interaction_meta": self._confirmed_meta(),
-        })
-        monkeypatch.setattr(rt, "_run_cleanup", lambda *args, **kwargs: None)
-        monkeypatch.setattr(rt.hb, "pause", lambda: None)
-        monkeypatch.setattr(rt.hb, "resume", lambda: None)
-        monkeypatch.setattr(rt.ctx_store, "get_last_cache_stats", lambda: {
-            "lately_trimmed": True,
-            "cache_compaction_required": True,
-            "lately_deleted_blocks": 2,
-            "lately_deleted_chars": 9000,
-            "lately_surviving_chars": 12000,
-            "lately_compact_ratio": 0.618,
-            "lately_compact_shard_chars": 8192,
-            "lately_compact_shard_ratio": 0.314,
-        })
-        monkeypatch.setattr(rt.ctx_store, "get_lately_compaction_params", lambda: {
-            "compact_ratio": 0.618,
-            "compact_shard_chars": 8192,
-            "compact_shard_ratio": 0.314,
-        }, raising=False)
-        monkeypatch.setattr(
-            rt.ctx_store,
-            "build_lately_compression_candidates",
-            lambda max_blocks=None: [
-                {"id": "R000001-user-0000", "chars": 4000, "text": "A" * 4000},
-                {"id": "R000002-assistant-0000", "chars": 4000, "text": "B" * 4000},
-                {"id": "R000003-tool-0000", "chars": 4000, "text": "C" * 4000},
-            ],
-        )
 
-        rt._run_one_round("interactive", rt.sm.load(), {"user_message_waiting": True})
 
-        assert rt.sm.get("base.heartbeat_flags.cache_compaction_due") is True
-        assert rt.workbench.get("base.active_guides.rhythm") is None
-        assert rt.workbench.get("base.active_guide") is None
 
-    def test_spec471_cache_compaction_due_materializes_in_next_rhythm_agenda(
-            self, tmp_path, monkeypatch):
-        from engines.round_context import RoundContext
 
-        rt = self._make_runtime(tmp_path)
-        monkeypatch.setattr(rt.ctx_store, "get_last_cache_stats", lambda: {
-            "lately_trimmed": True,
-            "cache_compaction_required": True,
-            "lately_deleted_blocks": 2,
-            "lately_deleted_chars": 9000,
-            "lately_surviving_chars": 12000,
-            "lately_compact_ratio": 0.618,
-            "lately_compact_shard_chars": 8192,
-            "lately_compact_shard_ratio": 0.314,
-        })
-        monkeypatch.setattr(rt.ctx_store, "get_lately_compaction_params", lambda: {
-            "compact_ratio": 0.618,
-            "compact_shard_chars": 8192,
-            "compact_shard_ratio": 0.314,
-        }, raising=False)
-        monkeypatch.setattr(
-            rt.ctx_store,
-            "build_lately_compression_candidates",
-            lambda max_blocks=None: [
-                {"id": "R000001-user-0000", "chars": 4000, "text": "A" * 4000},
-                {"id": "R000002-assistant-0000", "chars": 4000, "text": "B" * 4000},
-                {"id": "R000003-tool-0000", "chars": 4000, "text": "C" * 4000},
-            ],
-        )
-        rt.sm.set_flag("cache_compaction_due", True)
-        state = rt.sm.load()
-        context = RoundContext(
-            round_num=2,
-            round_type="rhythm",
-            state=state,
-            flags=state["base"]["heartbeat_flags"],
-        )
-
-        guide_id = rt._materialize_runtime_rhythm_guide(context)
-
-        assert guide_id == "cache_compaction:R000002"
-        assert rt.workbench.get("base.active_guides.rhythm") == "cache_compaction:R000002"
-        assert rt.workbench.get("base.active_guide") == "cache_compaction:R000002"
-        guide = rt.workbench.load_active_guide()
-        assert guide["kind"] == "cache_compaction_rhythm_guide"
-        assert guide["compaction_plan"]["before_chars"] == 12000
-        assert guide["compaction_plan"]["shards"][0]["target_chars"] == int(8000 * 0.314)
-
-    def test_spec474_fresh_runtime_materializes_cache_compaction_from_persisted_debt(
-            self, tmp_path, monkeypatch):
-        from engines.round_context import RoundContext
-
-        first = self._make_runtime(tmp_path)
-        monkeypatch.setattr(first.ctx_store, "get_last_cache_stats", lambda: {
-            "lately_trimmed": True,
-            "cache_compaction_required": True,
-            "lately_deleted_blocks": 2,
-            "lately_deleted_chars": 9000,
-            "lately_surviving_chars": 12000,
-            "lately_compact_ratio": 0.618,
-            "lately_compact_shard_chars": 8192,
-            "lately_compact_shard_ratio": 0.314,
-        })
-        monkeypatch.setattr(first.ctx_store, "get_lately_compaction_params", lambda: {
-            "compact_ratio": 0.618,
-            "compact_shard_chars": 8192,
-            "compact_shard_ratio": 0.314,
-        }, raising=False)
-        monkeypatch.setattr(
-            first.ctx_store,
-            "build_lately_compression_candidates",
-            lambda max_blocks=None: [
-                {"id": "R000001-user-0000", "chars": 4000, "text": "A" * 4000},
-                {"id": "R000002-assistant-0000", "chars": 4000, "text": "B" * 4000},
-                {"id": "R000003-tool-0000", "chars": 4000, "text": "C" * 4000},
-            ],
-        )
-
-        first._record_cache_compaction_rhythm_if_needed(474)
-        assert first.sm.get("base.heartbeat_flags.cache_compaction_due") is True
-        assert os.path.isfile(first.ctx_store.cache_compaction_debt_path())
-
-        fresh = self._make_runtime(tmp_path)
-        state = fresh.sm.load()
-        context = RoundContext(
-            round_num=475,
-            round_type="rhythm",
-            state=state,
-            flags=state["base"]["heartbeat_flags"],
-        )
-
-        guide_id = fresh._materialize_runtime_rhythm_guide(context)
-
-        assert guide_id == "cache_compaction:R000475"
-        guide = fresh.workbench.load_active_guide()
-        assert guide["kind"] == "cache_compaction_rhythm_guide"
-        assert guide["compaction_plan"]["before_chars"] == 12000
-        assert guide["source_refs"] == ["cache_compaction_debt"]
-
-    def test_spec474_stale_cache_compaction_due_flag_is_cleared(
-            self, tmp_path):
-        from engines.round_context import RoundContext
-
-        rt = self._make_runtime(tmp_path)
-        rt.sm.set_flag("cache_compaction_due", True)
-        state = rt.sm.load()
-        context = RoundContext(
-            round_num=475,
-            round_type="rhythm",
-            state=state,
-            flags=state["base"]["heartbeat_flags"],
-        )
-
-        guide_id = rt._materialize_runtime_rhythm_guide(context)
-
-        assert guide_id is None
-        assert rt.sm.get("base.heartbeat_flags.cache_compaction_due") is False
-        assert rt.workbench.get("base.active_guides.rhythm") is None
-
-    def test_spec474_cleanup_does_not_rewrite_existing_compaction_debt(
+    def test_spec765_startup_clears_retired_projection_and_keeps_v3_debt(
             self, tmp_path):
         rt = self._make_runtime(tmp_path)
-        rt.ctx_store.save_cache_compaction_debt({
-            "status": "due",
-            "source": "last_cache_stats",
-            "cache_stats": {
-                "lately_trimmed": True,
-                "cache_compaction_required": True,
-            },
-            "candidate_ids": ["R1", "R2"],
-            "plan": {
-                "before_chars": 180,
-                "target_chars": 111,
-                "shards": [
-                    {"shard_id": "shard_01", "source_block_ids": ["R1"]},
-                    {"shard_id": "shard_02", "source_block_ids": ["R2"]},
-                ],
-            },
-        }, 474)
-        rt.ctx_store.update_cache_compaction_debt(completed_shards=["shard_01"])
+        state = rt.sm.load()
+        state["base"]["heartbeat_flags"]["cache_compaction_due"] = True
+        with open(rt.sm.path, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, ensure_ascii=False, indent=2)
+        rt.sm._cache = None
+        migrated = rt.sm.migrate_memory_compression_flags()
+        assert migrated["status"] == "migrated"
+        assert "cache_compaction_due" not in rt.sm.get_flags()
 
-        receipt = rt._record_cache_compaction_rhythm_if_needed(475)
-        debt = rt.ctx_store.load_cache_compaction_debt()
+        prepared = self._prepare_cache_compaction_debt(rt, 765)
+        assert prepared["status"] == "prepared"
+        debt_before = rt.ctx_store.load_cache_compaction_debt()
+        rt.workbench.save_guide({
+            "guide_id": "cache-compaction-retired:R000765",
+            "kind": "cache_compaction_rhythm_guide",
+            "guide_slot": "rhythm",
+            "items": [],
+        }, active=True)
 
-        assert receipt["status"] == "due"
-        assert receipt["source"] == "cache_compaction_debt"
-        assert debt["created_round"] == 474
-        assert debt["completed_shards"] == ["shard_01"]
+        rt.services.restore_cache_compaction_due_on_startup()
+
+        assert rt.workbench.get("base.active_guides.rhythm") is None
+        debt_after = rt.ctx_store.load_cache_compaction_debt()
+        assert debt_after["schema_version"] == "cache_compaction_debt.v3"
+        assert debt_after["source_fingerprint"] == debt_before["source_fingerprint"]
+
 
     def test_spec472_reaction_iteration_materializes_next_rhythm_guide_after_settlement(
             self, tmp_path):

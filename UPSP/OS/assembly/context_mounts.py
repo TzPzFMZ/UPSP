@@ -4,6 +4,7 @@
 这里不直接改写 persona 真源，也不改变挂载策略或上下文层顺序。
 """
 import os
+from paths import ACTIVE_INSTANCE_ID
 
 from assembly.context_helpers import (
     format_round_id,
@@ -16,16 +17,17 @@ def _mount_marker(current_round=None, meta=None):
     parts = []
     visible = format_round_id(current_round)
     if visible:
-        parts.append(f"当前可见轮次：{visible}")
+        parts.append(f"当前可见轮次：{ACTIVE_INSTANCE_ID}/{visible}")
     labels = {
-        "source_round": "来源轮次",
-        "created_round": "创建轮次",
-        "last_recalled_round": "最近召回轮次",
+        "source_round": ("来源轮次", "source_instance_id"),
+        "created_round": ("创建轮次", "created_instance_id"),
+        "last_recalled_round": ("最近召回轮次", "last_recalled_instance_id"),
     }
-    for key, label in labels.items():
+    for key, (label, instance_key) in labels.items():
         value = format_round_id((meta or {}).get(key))
         if value:
-            parts.append(f"{label}：{value}")
+            instance_id = str((meta or {}).get(instance_key) or "meta")
+            parts.append(f"{label}：{instance_id}/{value}")
     if not parts:
         return ""
     return "<!-- " + "; ".join(parts) + " -->"
@@ -246,8 +248,9 @@ def memory_mount_meta(mem_ids_str):
         except Exception:
             continue
         for key in (
-            "source_round", "created_round", "created_at",
-            "last_recalled_round", "last_recalled_at",
+            "source_round", "source_instance_id",
+            "created_round", "created_instance_id", "created_at",
+            "last_recalled_round", "last_recalled_instance_id", "last_recalled_at",
             "current_overview", "current_overview_updated_at",
             "linked_containers",
         ):

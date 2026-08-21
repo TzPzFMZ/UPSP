@@ -64,15 +64,7 @@ class TestRuntimeReactionGuidesMemory(RuntimeTestMixin):
             and event.get("phase") == "reaction"
         ]
         assert [event["iteration"] for event in reaction_inputs[:2]] == [1, 2]
-        second_input_messages = reaction_inputs[1]["payload"]["messages"]
-        assert any(
-            "first reaction progress" in m.get("content", "")
-            for m in second_input_messages
-        )
-        assert any(
-            "【轮中进展记录】" in m.get("content", "")
-            for m in second_input_messages
-        )
+        assert all("messages" not in event["payload"] for event in reaction_inputs)
         assert reaction_raw_outputs[0]["payload"]["response"] == "first reaction progress"
         assert reaction_raw_outputs[0]["payload"]["tool_call_envelopes"][0]["tool_id"] == (
             "reaction_finalize")
@@ -150,6 +142,16 @@ class TestRuntimeReactionGuidesMemory(RuntimeTestMixin):
             def append_to_cache(self, round_num, role, text, *, kind, **kwargs):
                 self.entries.append((round_num, role, text, kind, kwargs))
 
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                    "boundary": kwargs["boundary"],
+                }
+
+            def load_cache_compaction_debt(self):
+                return {}
+
         rt.ctx_store = ReceiptContext()
 
         result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
@@ -177,7 +179,7 @@ class TestRuntimeReactionGuidesMemory(RuntimeTestMixin):
         monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
-        memory_store, memory_index, _container_store = self._patch_memory_immediate_stores(
+        memory_store, _memory_index, _container_store = self._patch_memory_immediate_stores(
             monkeypatch,
             runtime=rt,
         )
@@ -226,7 +228,8 @@ class TestRuntimeReactionGuidesMemory(RuntimeTestMixin):
             m.get("content", "") for m in rt.executor.calls[1])
 
         assert memory_store.entries[0][0] == "MEM-131000AA"
-        assert memory_index.keywords == [("MEM-131000AA", ["Spec131", "immediate"])]
+        assert memory_store.ltm["MEM-131000AA"]["meta"]["tags"] == [
+            "Spec131", "immediate"]
         assert "memory_write" in second_call_text
         assert "applied" in second_call_text
         assert "MEM-131000AA" in second_call_text
@@ -264,79 +267,11 @@ class TestRuntimeReactionGuidesMemory(RuntimeTestMixin):
 
         monkeypatch.setattr(assembler, "_build_stm_heat_index", fake_stm_heat_index)
 
-        class DummyMemoryStore:
-            def __init__(self):
-                self.bodies = {}
-                self.meta = {}
-                self.index_rows = []
-
-            def write_entry(self, mem_id, title, summary, **kwargs):
-                self.bodies[mem_id] = f"## {mem_id}\n{summary}"
-
-            def set_meta(self, mem_id, meta):
-                self.meta[mem_id] = dict(meta)
-
-            def append_index(self, mem_id, entry_type, weight, title, **kwargs):
-                self.index_rows.append((mem_id, entry_type, weight, title, kwargs))
-
-            def read_meta_by_id(self, mem_id):
-                return dict(self.meta[mem_id])
-
-            def get_meta(self, mem_id):
-                return dict(self.meta[mem_id])
-
-            def read_body_by_id(self, mem_id, max_chars=2048):
-                body = self.bodies[mem_id][:max_chars]
-                return {
-                    "body": body,
-                    "meta": dict(self.meta[mem_id]),
-                    "truncated": len(self.bodies[mem_id]) > max_chars,
-                    "memory_layer": "STM",
-                }
-
-            def read_entry(self, mem_id):
-                return self.bodies[mem_id]
-
-        class DummyMemoryIndex:
-            def add_stm_keywords(self, *args, **kwargs):
-                pass
-
-        class DummyContainerStore:
-            def append_entry(self, *args, **kwargs):
-                pass
-
-        class DummyHeat:
-            def __init__(self):
-                self.entries = {}
-                self.boosted = []
-
-            def new_entry(self, weight=2):
-                from schemas.config import default_memory_config
-                from schemas.memory import default_heat_entry
-                config = default_memory_config()["heat"]
-                return default_heat_entry(
-                    weight,
-                    initial_by_weight=config["initial_by_weight"],
-                    significant_threshold=config["zone_thresholds"]["significant"],
-                    uncertain_threshold=config["zone_thresholds"]["uncertain"],
-                )
-
-            def set_entry(self, mem_id, entry):
-                self.entries[mem_id] = dict(entry)
-
-            def recall_boost(self, mem_id, round_num=None):
-                self.boosted.append((mem_id, round_num))
-
-        store = DummyMemoryStore()
-        memory_index = DummyMemoryIndex()
-        container_store = DummyContainerStore()
-        heat = DummyHeat()
+        store, _memory_index, _container_store = self._patch_memory_immediate_stores(
+            monkeypatch, runtime=rt)
         monkeypatch.setattr(memory_write_mod, "generate_mem_id", lambda: "MEM-221WRITE")
         monkeypatch.setattr(memory_store_mod, "MemoryStore", lambda: store)
-        rt.memory_store = store
-        rt.memory_index = memory_index
-        rt.container_store = container_store
-        rt.heat = heat
+        heat = rt.heat
         helper = self
 
         class MemoryWriteMountExecutor:
@@ -416,53 +351,10 @@ class TestRuntimeReactionGuidesMemory(RuntimeTestMixin):
 
         monkeypatch.setattr(assembler, "_build_stm_heat_index", fake_stm_heat_index)
 
-        class DummyMemoryStore:
-            def __init__(self):
-                self.bodies = {}
-                self.meta = {}
-
-            def write_entry(self, mem_id, title, summary, **kwargs):
-                self.bodies[mem_id] = f"## {mem_id}\n{summary}"
-
-            def set_meta(self, mem_id, meta):
-                self.meta[mem_id] = dict(meta)
-
-            def append_index(self, *args, **kwargs):
-                pass
-
-            def read_meta_by_id(self, mem_id):
-                return dict(self.meta[mem_id])
-
-            def get_meta(self, mem_id):
-                return dict(self.meta[mem_id])
-
-            def read_body_by_id(self, mem_id, max_chars=2048):
-                return {
-                    "body": self.bodies[mem_id][:max_chars],
-                    "meta": dict(self.meta[mem_id]),
-                    "truncated": len(self.bodies[mem_id]) > max_chars,
-                    "memory_layer": "STM",
-                }
-
-            def read_entry(self, mem_id):
-                return self.bodies[mem_id]
-
-        class DummyMemoryIndex:
-            def add_stm_keywords(self, *args, **kwargs):
-                pass
-
-        class DummyContainerStore:
-            def append_entry(self, *args, **kwargs):
-                pass
-
-        store = DummyMemoryStore()
-        memory_index = DummyMemoryIndex()
-        container_store = DummyContainerStore()
+        store, _memory_index, _container_store = self._patch_memory_immediate_stores(
+            monkeypatch, runtime=rt)
         monkeypatch.setattr(memory_write_mod, "generate_mem_id", lambda: "MEM-221WRITE")
         monkeypatch.setattr(memory_store_mod, "MemoryStore", lambda: store)
-        rt.memory_store = store
-        rt.memory_index = memory_index
-        rt.container_store = container_store
         helper = self
 
         class MemoryWriteThenUnmountExecutor:
@@ -580,7 +472,6 @@ class TestRuntimeReactionGuidesMemory(RuntimeTestMixin):
                                 "mem_id": "MEM-131000AA",
                                 "operation": "add",
                                 "container_refs": ["DC-1"],
-                                "current_overview": "linked in DC-1",
                                 "reason": "bridge",
                             },
                             call_id="call_memory_link_update",
@@ -609,12 +500,11 @@ class TestRuntimeReactionGuidesMemory(RuntimeTestMixin):
         assert container_store.entries == []
         assert "memory_write" in third_call_text
         assert "memory_link_update" in third_call_text
-        assert "MEM-131000AA" in third_call_text
+        assert "remove" in third_call_text
         assert result["_memory_write_receipts"][0]["status"] == "applied"
-        assert result["_memory_link_update_receipts"][0]["status"] == "rejected"
-        assert (
-            result["_memory_link_update_receipts"][0]["reason"]
-            == "retired_use_memory_container_create_or_write"
+        assert result["_memory_link_update_receipts"] == []
+        assert result["_invalid_tool_requests"][0]["reason"] == (
+            "native_argument_invalid_enum"
         )
         assert result["response"] == "retired link receipt observed"
 

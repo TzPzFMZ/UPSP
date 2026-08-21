@@ -3,10 +3,6 @@
 from datetime import datetime
 
 from constants import local_now
-from logic.cache_compaction_guide import (
-    CACHE_COMPACTION_ITEM_ID,
-    materialize_cache_compaction_rhythm_guide,
-)
 from logic.rhythm_guidance import current_guide
 
 
@@ -15,6 +11,7 @@ RHYTHM_GUIDE_KINDS = {
     "calendar_rhythm_guide",
     "emergency_handling_guide",
     "context_pressure_rhythm_guide",
+    "memory_compression_rhythm_guide",
 }
 
 
@@ -47,19 +44,6 @@ def materialize_current_rhythm_guide(
             round_num=round_num,
             desired_kind=kind,
             desired_items=desired_items,
-        )
-    if kind == "cache_compaction_rhythm_guide":
-        if context_store is None:
-            return None
-        guide_id = f"cache_compaction:R{int(round_num or 0):06d}"
-        if guide_id == superseded:
-            guide_id = _next_guide_revision(workbench_store, guide_id)
-        return materialize_cache_compaction_rhythm_guide(
-            workbench_store,
-            context_store,
-            round_num,
-            state_store=state_store,
-            guide_id=guide_id,
         )
     if kind not in RHYTHM_GUIDE_KINDS:
         return None
@@ -131,8 +115,6 @@ def _active_rhythm_guide_id(workbench_store):
 
 
 def _desired_item_ids(kind, guide):
-    if kind == "cache_compaction_rhythm_guide":
-        return [CACHE_COMPACTION_ITEM_ID]
     if kind not in RHYTHM_GUIDE_KINDS:
         return []
     return [
@@ -260,6 +242,8 @@ def _guide_id(kind, round_num, guide=None):
         name = first_flag.replace("_due", "") or "calendar"
     elif kind == "context_pressure_rhythm_guide":
         name = "context_pressure"
+    elif kind == "memory_compression_rhythm_guide":
+        name = "memory_compression"
     else:
         name = "emergency"
     return f"rhythm:{name}:R{current_round:06d}"
@@ -272,6 +256,8 @@ def _title_for(kind):
         return "日历节律清单"
     if kind == "context_pressure_rhythm_guide":
         return "上下文压力维护清单"
+    if kind == "memory_compression_rhythm_guide":
+        return "记忆语义压缩清单"
     return "紧急处理清单"
 
 
@@ -280,6 +266,17 @@ def _materialize_item(kind, item):
     if not flag:
         return None
     title = str(item.get("title") or flag).strip()
+    if kind == "memory_compression_rhythm_guide":
+        return {
+            "item_id": flag,
+            "title": title,
+            "status": "open",
+            "options": [{
+                "option_id": "submit_memory_compressions",
+                "required_fields": ["results"],
+                "allowed_fields": ["results", "reason"],
+            }],
+        }
     if kind in {"main_axis_rhythm_guide", "calendar_rhythm_guide"}:
         return {
             "item_id": flag,

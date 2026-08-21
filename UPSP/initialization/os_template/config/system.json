@@ -1,6 +1,6 @@
 {
   "_comment": "系统级基础配置",
-  "_version": "Base-0.47.9",
+  "_version": "Base-0.48.17",
   "_deferred_fields": [
     "identity_timeout",
     "emergency.contact",
@@ -22,7 +22,9 @@
   },
 
   "round": {
-    "time_limit": 600
+    "reminder_seconds": 600,
+    "warning_seconds": 1200,
+    "auto_relay_seconds": 1800
   },
 
   "rhythm": {
@@ -47,21 +49,22 @@
     "force_sleep_hours": 0
   },
 
-  "autonomous_trigger": {
-    "tacit_pending_threshold": 512,
-    "connection_pending_threshold": 512
-  },
-
   "audit": {
-    "round_snapshot_retention": 64,
+    "round_snapshot_retention": 8,
+    "round_snapshot_max_mib": 256,
+    "round_snapshot_policy_version": 2,
     "state_backup_retention": 8
   },
 
   "token_usage": {
-    "warning_ratio": 0.7,
+    "watermark_policy_version": 2,
     "critical_ratio": 0.85,
     "forced_rhythm_on_usage": false,
     "_comment_forced_rhythm": "Base版关闭：单步API无持续上下文积累。Plus/Pro版开启。"
+  },
+
+  "response_anchor": {
+    "prompt": ""
   },
 
   "connectivity": {

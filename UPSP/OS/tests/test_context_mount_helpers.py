@@ -53,8 +53,10 @@ def test_spec724_memory_mount_replaces_stale_snapshot_metadata():
     adapter = _FakeMountAdapter()
     adapter._memory_mount_meta = lambda _ids: {
         "created_round": 1,
+        "created_instance_id": "meta",
         "created_at": "2026-08-01T01:02:03+08:00",
         "last_recalled_round": 9,
+        "last_recalled_instance_id": "I20260806-120000-ABCD",
         "last_recalled_at": "2026-08-06T12:00:00+08:00",
         "current_overview": "新备注",
         "current_overview_updated_at": "2026-08-06T11:00:00+08:00",
@@ -67,6 +69,6 @@ def test_spec724_memory_mount_replaces_stale_snapshot_metadata():
     }])
 
     assert "旧备注" not in text and "DC-1" not in text
-    assert "**最近调用轮次**：R000009" in text
+    assert "**最近调用轮次**：I20260806-120000-ABCD/R000009" in text
     assert "**挂接备注**：新备注" in text
     assert "**关联容器**：DC-2" in text

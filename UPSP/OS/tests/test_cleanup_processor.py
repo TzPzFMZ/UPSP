@@ -277,9 +277,6 @@ class TestCleanupProcessor:
             def add_stm_keywords(self, *args, **kwargs):
                 pass
 
-            def add_ltm_keywords(self, *args, **kwargs):
-                pass
-
         class DummyMemoryHeat:
             def set_entry(self, *args, **kwargs):
                 raise AssertionError("no archive should not write heat")
@@ -326,9 +323,6 @@ class TestCleanupProcessor:
             def add_stm_keywords(self, *args, **kwargs):
                 raise AssertionError("bare scaffold should not write keywords")
 
-            def add_ltm_keywords(self, *args, **kwargs):
-                raise AssertionError("bare scaffold should not write keywords")
-
         class DummyMemoryHeat:
             def set_entry(self, *args, **kwargs):
                 raise AssertionError("bare scaffold should not write heat")
@@ -372,9 +366,6 @@ class TestCleanupProcessor:
 
         class DummyMemoryIndex:
             def add_stm_keywords(self, *args, **kwargs):
-                raise AssertionError("no-new-memory commitment should not write keywords")
-
-            def add_ltm_keywords(self, *args, **kwargs):
                 raise AssertionError("no-new-memory commitment should not write keywords")
 
         class DummyMemoryHeat:
@@ -560,13 +551,9 @@ class TestCleanupProcessor:
             def __init__(self):
                 self.relation_calls = []
                 self.stm_calls = []
-                self.ltm_calls = []
 
             def add_stm_keywords(self, *args, **kwargs):
                 self.stm_calls.append((args, kwargs))
-
-            def add_ltm_keywords(self, *args, **kwargs):
-                self.ltm_calls.append((args, kwargs))
 
             def add_relation_keywords(self, *args, **kwargs):
                 self.relation_calls.append((args, kwargs))
@@ -619,7 +606,6 @@ class TestCleanupProcessor:
         assert memory_store.meta is None
         assert memory_store.index is None
         assert memory_index.stm_calls == []
-        assert memory_index.ltm_calls == []
 
     def test_process_cleanup_ignores_legacy_relation_note_from_archive(self, monkeypatch):
         from logic import cleanup_processor as cp
@@ -640,9 +626,6 @@ class TestCleanupProcessor:
                 self.relation_calls = []
 
             def add_stm_keywords(self, *args, **kwargs):
-                pass
-
-            def add_ltm_keywords(self, *args, **kwargs):
                 pass
 
             def add_relation_keywords(self, *args, **kwargs):

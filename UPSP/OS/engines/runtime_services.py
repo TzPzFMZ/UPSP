@@ -1,5 +1,6 @@
 """Shared dependencies for Runtime step runners."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import math
 import os
 
 from assembly.context import ContextAssembler
@@ -9,10 +10,10 @@ from data.connectivity_store import ConnectivityStore
 from data.context_store import ContextStore
 from data.container_store import ContainerStore
 from data.dream_store import DreamStore
-from data.evolution_store import EvolutionStore
 from data.memory_heat import MemoryHeat
 from data.memory_index import MemoryIndex
 from data.memory_store import MemoryStore
+from data.prompt_cache_telemetry import total_input_tokens
 from data.relation_store import RelationStore
 from data.state_backup_store import StateBackupStore
 from data.state_store import StateStore
@@ -31,6 +32,7 @@ from logic.interaction_meta import (
     set_local_default_relation,
     switch_interaction_relation,
 )
+from logic.memory_recall import MemoryRecallProcessor
 from logic.state_settlement import StateSettlementError, settle_due_state
 
 
@@ -40,7 +42,6 @@ class RuntimeServices:
     heat: MemoryHeat
     cfg: ConfigStore
     connectivity_store: ConnectivityStore
-    evolution_store: EvolutionStore
     hb: HeartbeatManager
     executor: APIExecutor
     ctx_store: ContextStore
@@ -55,13 +56,15 @@ class RuntimeServices:
     relation_store: RelationStore
     protocol_tool_dispatcher: ProtocolToolDispatcher
     general_tool_dispatcher: GeneralToolDispatcher
+    memory_recall: object = None
     on_round_complete: object = None
+    cache_pressure_observation: dict = field(default_factory=dict)
 
     @classmethod
     def create(cls, state_store=None, heartbeat=None, executor=None,
                assembler=None, heat=None, ctx_store=None, config_store=None,
                alert_store=None, connectivity_store=None, workbench_store=None,
-               dream_store=None, evolution_store=None,
+               dream_store=None,
                state_backup_store=None, memory_store=None, memory_index=None,
                container_store=None, relation_store=None):
         sm = state_store or StateStore()
@@ -77,13 +80,11 @@ class RuntimeServices:
                 else None
             ),
         )
-        evolution_store = evolution_store or EvolutionStore()
         hb = heartbeat or HeartbeatManager(
             sm,
             config_store=cfg,
             memory_heat=heat,
             connectivity_store=connectivity_store,
-            evolution_store=evolution_store,
         )
         ctx_store = ctx_store or ContextStore(state_store=sm, config_store=cfg)
         if getattr(ctx_store, "state_store", None) is None:
@@ -91,11 +92,14 @@ class RuntimeServices:
         assembler = assembler or ContextAssembler(
             state_store=sm,
             context_store=ctx_store,
+            config_store=cfg,
         )
         if getattr(assembler, "state_store", None) is None:
             assembler.state_store = sm
         if getattr(assembler, "context_store", None) is None:
             assembler.context_store = ctx_store
+        if getattr(assembler, "config_store", None) is None:
+            assembler.config_store = cfg
         if getattr(getattr(assembler, "popup", None), "state_store", None) is None:
             try:
                 assembler.popup.state_store = sm
@@ -113,7 +117,6 @@ class RuntimeServices:
             heat=heat,
             cfg=cfg,
             connectivity_store=connectivity_store,
-            evolution_store=evolution_store,
             hb=hb,
             executor=executor,
             ctx_store=ctx_store,
@@ -134,10 +137,33 @@ class RuntimeServices:
             general_tool_dispatcher=GeneralToolDispatcher(),
         )
         services.state_backup_store = state_backup_store or services.default_state_backup_store()
+        services.memory_recall = MemoryRecallProcessor(
+            memory_store=services.memory_store,
+            heat=services.heat,
+        )
         return services
 
     def audit_params(self):
         return self.cfg.get_audit_params()
+
+    def restore_cache_compaction_due_on_startup(self):
+        if self.ctx_store.has_cache_compaction_debt():
+            self.ctx_store.recover_cache_compaction_debt()
+        # v3 is consumed by the next natural Round's Reaction loop. It is not
+        # a heartbeat source and must never open a rhythm Round by itself.
+        if bool((self.sm.get_flags() or {}).get("cache_compaction_due")):
+            self.sm.clear_flags(["cache_compaction_due"])
+        try:
+            slots = self.workbench.active_guide_slots()
+            guide_id = str((slots or {}).get("rhythm") or "").strip()
+            guide = self.workbench.load_guide(guide_id) if guide_id else {}
+            if str(guide.get("kind") or "") == "cache_compaction_rhythm_guide":
+                self.workbench.clear_active_guide(guide_id)
+        except (AttributeError, FileNotFoundError, ValueError):
+            pass
+
+    def reconcile_context_cache_lifecycle_on_startup(self):
+        return self.ctx_store.reconcile_now_cache_lifecycle_on_startup()
 
     def set_local_default_relation(self, card_id):
         return set_local_default_relation(self.sm, self.relation_store, card_id)
@@ -198,6 +224,34 @@ class EngineComponent:
     def _round_audit_settlement(self, round_num, phase, iteration, settlement):
         self.audit.record_settlement(round_num, phase, iteration, settlement)
 
+    def _transition_current_cache(
+            self, round_num, *, boundary, consumer_frame_id, phase,
+            iteration=None, **kwargs):
+        transition_kwargs = dict(kwargs)
+        if (
+                transition_kwargs.get("expire_call_transients") is True
+                and boundary in {
+                    "reaction_provider_return", "cleanup_provider_return",
+                }):
+            transition_kwargs.setdefault("transient_round", round_num)
+            transition_kwargs.setdefault("transient_target_step", phase)
+            transition_kwargs.setdefault(
+                "transient_target_iteration", iteration)
+        receipt = self.ctx_store.transition_current_cache(
+            boundary=boundary,
+            consumer_frame_id=consumer_frame_id,
+            **transition_kwargs,
+        )
+        if self.audit is not None:
+            self._get_round_audit_store().append_event(
+                round_num,
+                "current_cache_transition",
+                receipt,
+                phase=phase,
+                iteration=iteration,
+            )
+        return receipt
+
     def _call_llm_with_round_audit(
             self,
             phase,
@@ -205,66 +259,137 @@ class EngineComponent:
             messages,
             round_num,
             iteration=1,
-            active_protocol_tool_guides=None):
-        return self.audit.call_llm(
-            phase,
-            system,
-            messages,
-            round_num,
-            iteration=iteration,
-            active_protocol_tool_guides=active_protocol_tool_guides,
-        )
+            active_protocol_tool_guides=None,
+            cache_compaction_call=False):
+        try:
+            return self.audit.call_llm(
+                phase,
+                system,
+                messages,
+                round_num,
+                iteration=iteration,
+                active_protocol_tool_guides=active_protocol_tool_guides,
+                cache_compaction_call=cache_compaction_call,
+            )
+        except Exception as exc:
+            if self._is_context_too_long_error(exc):
+                self._remember_cache_pressure({
+                    "kind": "context_too_long",
+                    "frame_id": f"R{int(round_num):06d}:{phase}:{int(iteration)}",
+                    "endpoint": str(getattr(exc, "endpoint", "") or ""),
+                    "input_tokens": None,
+                    "context_window": None,
+                    "usage_ratio": None,
+                })
+            raise
 
-    def _load_time_limit(self):
-        return self.cfg.get_round_time_limit()
+    def _load_time_milestones(self):
+        return self.cfg.get_round_time_milestones()
 
     @staticmethod
     def _runtime_usage_token_count(value):
-        if value is None or isinstance(value, bool):
+        if isinstance(value, bool) or not isinstance(value, int):
             return None
-        if isinstance(value, float) and not value.is_integer():
-            return None
-        try:
-            count = int(value)
-        except (TypeError, ValueError, OverflowError):
-            return None
-        return count if count >= 0 else None
+        return value if value >= 0 else None
 
-    def _update_token_usage(self, result):
+    @staticmethod
+    def _is_context_too_long_error(exc):
+        try:
+            if int(getattr(exc, "status_code", 0) or 0) == 413:
+                return True
+        except (TypeError, ValueError):
+            pass
+        text = str(exc or "").lower()
+        return any(marker in text for marker in (
+            "context_length_exceeded",
+            "maximum context length",
+            "context window exceeded",
+            "exceeds the context window",
+            "too many tokens",
+            "request too large",
+        ))
+
+    def _remember_cache_pressure(self, observation):
+        if self.ctx_store.has_cache_compaction_debt():
+            return
+        current = self.services.cache_pressure_observation
+        if current and current.get("kind") != "unknown_window_fallback":
+            return
+        self.services.cache_pressure_observation = dict(observation or {})
+
+    def _update_token_usage(
+            self, result, *, round_num=None, phase=None, iteration=None):
         result = result if isinstance(result, dict) else {}
-        input_count = self._runtime_usage_token_count(
-            result.get("tokens_input", 0)
+        raw_usage = result.get("raw_usage")
+        input_count = (
+            total_input_tokens(raw_usage)
+            if isinstance(raw_usage, dict) and raw_usage
+            else self._runtime_usage_token_count(result.get("tokens_input"))
         )
         output_count = self._runtime_usage_token_count(
-            result.get("tokens_output", 0)
+            result.get("tokens_output")
         )
-        usage_valid = input_count is not None and output_count is not None
-        input_tokens = input_count if input_count is not None else 0
-        output_tokens = output_count if output_count is not None else 0
-        if not usage_valid:
-            input_tokens = 0
-            output_tokens = 0
-        current = input_tokens + output_tokens if usage_valid else 0
         endpoint = str(result.get("endpoint") or "primary").strip() or "primary"
-        window_size = 0
-        try:
-            if self.cfg and hasattr(
-                    self.cfg, "get_context_window_for_endpoint"):
-                window_size = self.cfg.get_context_window_for_endpoint(endpoint) or 0
-        except Exception:
-            window_size = 0
-        usage_ratio = (
-            min(1.0, current / window_size)
-            if current > 0 and window_size > 0
-            else 0
+        envelope = result.get("provider_request_envelope")
+        frozen_window_present = (
+            isinstance(envelope, dict) and "context_window_tokens" in envelope
         )
+        window_size = (
+            envelope.get("context_window_tokens")
+            if frozen_window_present else None
+        )
+        if not frozen_window_present:
+            try:
+                if self.cfg and hasattr(
+                        self.cfg, "get_context_window_for_endpoint"):
+                    window_size = self.cfg.get_context_window_for_endpoint(endpoint)
+            except Exception:
+                window_size = None
+        window_size = self._runtime_usage_token_count(window_size)
+        if input_count is None:
+            return
+        if not window_size:
+            self._remember_cache_pressure({
+                "kind": "unknown_window_fallback",
+                "endpoint": endpoint,
+                "input_tokens": input_count,
+                "context_window": None,
+                "usage_ratio": None,
+            })
+            return
+
+        usage_ratio = input_count / window_size
         try:
             self.sm.update_token_usage(
-                current_tokens=current,
+                current_tokens=input_count,
                 window_size=window_size,
                 usage_ratio=usage_ratio,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+                input_tokens=input_count,
+                output_tokens=output_count,
             )
         except Exception:
             pass
+
+        try:
+            warning_ratio = float(
+                (self.cfg.get_token_params() or {})["warning_ratio"]
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return
+        if not math.isfinite(warning_ratio) or not 0 < warning_ratio <= 1:
+            return
+        if usage_ratio >= warning_ratio:
+            observation = {
+                "kind": "token_ratio",
+                "endpoint": endpoint,
+                "input_tokens": input_count,
+                "context_window": window_size,
+                "round_context_window_tokens": window_size,
+                "usage_ratio": usage_ratio,
+                "threshold": warning_ratio,
+            }
+            if round_num is not None and phase and iteration is not None:
+                observation["frame_id"] = (
+                    f"R{int(round_num):06d}:{phase}:{int(iteration)}"
+                )
+            self._remember_cache_pressure(observation)

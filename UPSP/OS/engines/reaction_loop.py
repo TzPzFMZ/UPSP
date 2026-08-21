@@ -31,7 +31,6 @@ from engines.reaction_protocol_tool_execution import (
 from engines.product_committer import build_protocol_processor_state
 from engines.runtime_services import EngineComponent
 from logic.closeout_copy import closeout_final_reply_reminder
-from logic.evolution_set import build_evolution_context, summarize_pending
 from logic.interaction_meta import cache_interaction_meta
 from logic.protocol_tools import normalize_tool_id
 from logic.reaction_time_policy import reaction_time_milestone_seconds
@@ -211,7 +210,7 @@ class ReactionLoopRunner(EngineComponent):
                 f"- layer: {focus.get('layer')}",
                 f"- path: {path}",
                 f"- title: {focus.get('title') or ''}",
-                "- 工具约束：chronicle_write 只填写正文，Runtime 使用本焦点决定写入层与路径。",
+                "- 提交约束：按当前节律 guide 调用 guide_submit；只填写 guide 要求的正文，Runtime 使用本焦点决定写入层与路径。",
                 "",
                 "### 当前正文写入框",
                 content,
@@ -253,29 +252,6 @@ class ReactionLoopRunner(EngineComponent):
             except Exception:
                 pass
         return wrote
-
-    def _clear_consumed_reasoning_replay(self, round_num, iteration):
-        """仅在目标 reaction 成功返回后清除已消费的 C 轨推理续接。"""
-        stores = []
-        primary = getattr(self, "ctx_store", None)
-        if primary is not None:
-            stores.append(primary)
-        assembler_store = getattr(getattr(self, "assembler", None), "context_store", None)
-        if assembler_store is not None and not any(
-                assembler_store is store for store in stores):
-            stores.append(assembler_store)
-        reports = []
-        for store in stores:
-            try:
-                reports.append(store.clear_transient_entries(
-                    round_num=round_num,
-                    transient_scope="reasoning_replay",
-                    transient_target_step="reaction",
-                    transient_target_iteration=iteration,
-                ))
-            except Exception:
-                pass
-        return reports
 
     @staticmethod
     def _provider_interruption_kind(exc):
@@ -485,6 +461,21 @@ class ReactionLoopRunner(EngineComponent):
                     completed.add(pending[0])
         return completed
 
+    @classmethod
+    def _guide_reopened_flags_from_receipts(cls, receipts):
+        reopened = set()
+        for receipt in receipts or []:
+            if not isinstance(receipt, dict):
+                continue
+            for flag in receipt.get("reopened_flags") or []:
+                flag = str(flag or "").strip()
+                if flag:
+                    reopened.add(flag)
+            reopened.update(cls._guide_reopened_flags_from_receipts(
+                receipt.get("backend_receipts") or [],
+            ))
+        return reopened
+
     def _active_guide_protocol_tools(self):
         try:
             if hasattr(self.workbench, "current_active_guide_id"):
@@ -561,7 +552,7 @@ class ReactionLoopRunner(EngineComponent):
             "calendar_rhythm_guide",
             "emergency_handling_guide",
             "context_pressure_rhythm_guide",
-            "cache_compaction_rhythm_guide",
+            "memory_compression_rhythm_guide",
         }
 
     def _should_suppress_active_guide_feedback(self, round_type, state):
@@ -635,7 +626,6 @@ class ReactionLoopRunner(EngineComponent):
             self,
             *,
             reaction_obligations,
-            write_pending_tracker,
             current_state,
             round_type,
             runtime_guide_completed_flags,
@@ -649,7 +639,6 @@ class ReactionLoopRunner(EngineComponent):
         return validate_natural_final_reply_candidate(
             closeout_form_validator=(
                 reaction_obligations.validate_closeout_form),
-            write_pending_tracker=write_pending_tracker,
             current_state=current_state,
             round_type=round_type,
             runtime_guide_completed_flags=runtime_guide_completed_flags,
@@ -672,7 +661,7 @@ class ReactionLoopRunner(EngineComponent):
         return (
             "紧急处理循环提醒："
             f"{alert_type} 已经消耗 {attempts} 次工具动作仍未结算。"
-            "如果当前无法恢复，直接用 alert_mode_settle(status=\"deferred\") 搁置，"
+            "如果当前无法恢复，按当前告警 guide 用 guide_submit 选择 deferred 搁置，"
             "不要继续困在同一个无解处理里。"
         )
 
@@ -709,6 +698,7 @@ class ReactionLoopRunner(EngineComponent):
                 context.state,
                 context.round_type,
                 setup_result.intent.get("mount_requests", []),
+                round_num=context.round_num,
                 interaction_meta=setup_result.interaction_meta,
                 trigger_id=(
                     context.trigger.trigger_id if context.trigger else ""),
@@ -716,20 +706,43 @@ class ReactionLoopRunner(EngineComponent):
                     setup_result.frame_ref.frame_id
                     if setup_result.frame_ref else ""),
                 topology_version=context.topology_version,
+                final_response_max_chars=context.final_response_max_chars,
+                final_response_length_rejections=(
+                    context.final_response_length_rejections),
+                response_contract=dict(context.response_contract),
+                memory_heat_boosted_ids=context.memory_heat_boosted_ids,
+                memory_reconsolidation_tracker=(
+                    context.memory_reconsolidation_tracker
+                ),
+                memory_write_rewrite_tracker=(
+                    context.memory_write_rewrite_tracker
+                ),
             )
         return self._run_loop(*args, **kwargs)
 
     def _run_loop(
             self, state, round_type, mount_ids, interaction_meta=None,
-            trigger_id="", caused_by="", topology_version=""):
+            trigger_id="", caused_by="", topology_version="", round_num=None,
+            final_response_max_chars=None,
+            final_response_length_rejections=0,
+            response_contract=None, memory_heat_boosted_ids=None,
+            memory_reconsolidation_tracker=None,
+            memory_write_rewrite_tracker=None):
         session = self.start_session(
             state,
             round_type,
             mount_ids,
+            round_num=round_num,
             interaction_meta=interaction_meta,
             trigger_id=trigger_id,
             caused_by=caused_by,
             topology_version=topology_version,
+            final_response_max_chars=final_response_max_chars,
+            final_response_length_rejections=final_response_length_rejections,
+            response_contract=response_contract,
+            memory_heat_boosted_ids=memory_heat_boosted_ids,
+            memory_reconsolidation_tracker=memory_reconsolidation_tracker,
+            memory_write_rewrite_tracker=memory_write_rewrite_tracker,
         )
         while not session.completed:
             self.run_frame(session)
@@ -737,16 +750,34 @@ class ReactionLoopRunner(EngineComponent):
 
     def start_session(
             self, state, round_type, mount_ids, interaction_meta=None,
-            trigger_id="", caused_by="", topology_version=""):
+            trigger_id="", caused_by="", topology_version="", round_num=None,
+            final_response_max_chars=None,
+            final_response_length_rejections=0,
+            response_contract=None, memory_heat_boosted_ids=None,
+            memory_reconsolidation_tracker=None,
+            memory_write_rewrite_tracker=None):
         return ReactionSession(ReactionLoopState(
             runner=self,
             state=state,
+            round_num=int(
+                self.sm.get_total_round() if round_num is None else round_num
+            ),
             round_type=round_type,
             mount_ids=mount_ids,
             interaction_meta=interaction_meta,
             trigger_id=trigger_id,
             caused_by=caused_by,
             topology_version=topology_version,
+            final_response_max_chars=final_response_max_chars,
+            final_response_length_rejections=final_response_length_rejections,
+            response_contract=dict(response_contract or {}),
+            memory_heat_boosted_ids=(
+                memory_heat_boosted_ids
+                if isinstance(memory_heat_boosted_ids, set)
+                else set()
+            ),
+            memory_reconsolidation_tracker=memory_reconsolidation_tracker,
+            memory_write_rewrite_tracker=memory_write_rewrite_tracker,
         ))
 
     @staticmethod
@@ -811,43 +842,28 @@ class ReactionLoopRunner(EngineComponent):
             return set()
 
     def _boost_mounted_memory_once(
-            self, mem_id, round_num, boosted_memory_ids, memory_layer="STM"):
+            self, mem_id, round_num, boosted_memory_ids, memory_layer="STM",
+            reconsolidation_tracker=None):
         mem_id = str(mem_id or "").strip()
         if not mem_id or mem_id in boosted_memory_ids:
             return
         try:
-            if str(memory_layer or "STM").strip() == "STM":
-                self.heat.recall_boost(mem_id, round_num=round_num)
-            else:
-                self.memory_store.mark_recalled(mem_id, round_num=round_num)
-            boosted_memory_ids.add(mem_id)
-        except Exception:
-            pass
-
-    def _build_evolution_reaction_context(self, state):
-        flags = state.get("base", {}).get("heartbeat_flags", {}) if isinstance(state, dict) else {}
-        flagged = flags.get("evolution_pending")
-        thresholds = self._load_evolution_thresholds()
-        if not flagged and not self.evolution_store.should_trigger(thresholds):
-            return "", None
-        pending = self.evolution_store.load_pending()
-        tacit_records = pending.get("tacit", [])
-        connection_records = pending.get("connection", [])
-        if not tacit_records and not connection_records:
-            return "", None
-        stats = summarize_pending(tacit_records, connection_records)
-        return build_evolution_context(stats, tacit_records, connection_records), stats
-
-    def _load_evolution_thresholds(self):
-        try:
-            if self.cfg:
-                return self.cfg.get_autonomous_trigger_params()
-        except Exception:
-            pass
-        return {
-            "tacit_pending_threshold": 512,
-            "connection_pending_threshold": 512,
-        }
+            processor = getattr(self, "memory_recall", None)
+            if not (
+                processor is not None
+                and getattr(processor, "memory_store", None) is self.memory_store
+                and getattr(processor, "heat", None) is self.heat
+            ):
+                raise RuntimeError("memory_recall_processor_unavailable")
+            return processor.recall(
+                mem_id,
+                round_num=round_num,
+                boosted_ids=boosted_memory_ids,
+                reconsolidation_tracker=reconsolidation_tracker,
+            )
+        except Exception as exc:
+            from errors import RequiredContextError
+            raise RequiredContextError("recall", f"memory:{mem_id}", exc) from exc
 
     def _apply_reaction_identity_resolution(self, resolution, interaction_meta):
         current = dict(interaction_meta or {})
@@ -1043,7 +1059,7 @@ class ReactionLoopRunner(EngineComponent):
         if not isinstance(result, dict):
             return
         tool_id = str(result.get("tool_id") or "").strip()
-        if tool_id not in {"file_read", "web_fetch"}:
+        if tool_id not in {"file_read", "file_grep", "web_fetch"}:
             return
         payload = {
             "tool_id": tool_id,
@@ -1054,6 +1070,21 @@ class ReactionLoopRunner(EngineComponent):
         }
         if tool_id == "file_read":
             payload["path"] = result.get("path") or result.get("file_path")
+        elif tool_id == "file_grep":
+            paths = list(dict.fromkeys(
+                str(item.get("path") or "").strip()
+                for item in result.get("matches") or []
+                if isinstance(item, dict) and str(item.get("path") or "").strip()
+            ))
+            for path in paths:
+                item_payload = dict(payload)
+                item_payload["path"] = path
+                try:
+                    self.workbench.append_source_read_evidence(item_payload)
+                except Exception as exc:
+                    raise RequiredContextError(
+                        "projection", "source_read_evidence", exc) from exc
+            return
         else:
             payload["url"] = result.get("url") or result.get("source_url")
         try:
@@ -1062,10 +1093,14 @@ class ReactionLoopRunner(EngineComponent):
             raise RequiredContextError(
                 "projection", "source_read_evidence", exc) from exc
 
-    def _write_protocol_tool_receipts(self, receipts):
+    def _write_protocol_tool_receipts(
+            self, receipts, round_num=None, iteration=0, interaction_meta=None):
         """把协议工具结构化回执投影成短事实条和必要资料块。"""
         if not receipts:
             return
+        if round_num is None:
+            round_num = self.sm.get_total_round()
+        cache_meta = cache_interaction_meta(interaction_meta or {})
         lines = []
         for receipt in receipts:
             if not protocol_receipt_should_enter_tool_fact(receipt):
@@ -1079,12 +1114,14 @@ class ReactionLoopRunner(EngineComponent):
         if lines:
             try:
                 wrote = self._append_to_context_cache(
-                    self.sm.get_total_round(),
+                    round_num,
                     "system",
                     "\n".join(lines),
                     kind="tool_fact",
                     step="reaction",
+                    iter=iteration,
                     protocol_receipts=receipts,
+                    **cache_meta,
                 )
                 if not wrote:
                     raise RuntimeError("context_store_write_failed")
@@ -1097,12 +1134,14 @@ class ReactionLoopRunner(EngineComponent):
                 continue
             try:
                 wrote = self._append_to_context_cache(
-                    self.sm.get_total_round(),
+                    round_num,
                     material.get("role") or "system",
                     material.get("content") or "",
                     kind="material",
                     step="reaction",
+                    iter=iteration,
                     protocol_receipt=receipt,
+                    **cache_meta,
                 )
                 if not wrote:
                     raise RuntimeError("context_store_write_failed")

@@ -24,10 +24,15 @@ from typing import Callable, Mapping
 DATA_ROOT_ENV = "UPSP_DATA_ROOT"
 LOCAL_STATE_ROOT_ENV = "UPSP_LOCAL_STATE_ROOT"
 RETIRED_PERSONA_ROOT_ENV = "UPSP_PERSONA_DIR"
-ACTIVE_INSTANCE_SCHEMA = "upsp_active_instance.v1"
+ACTIVE_INSTANCE_SCHEMA = "upsp_active_instance.v2"
+LEGACY_ACTIVE_INSTANCE_SCHEMA = "upsp_active_instance.v1"
+INSTANCE_MANIFEST_SCHEMA = "upsp_instance.v1"
 ACTIVE_INSTANCE_FILENAME = "active_instance.json"
+INSTANCE_MANIFEST_FILENAME = "instance.json"
+META_INSTANCE_ID = "meta"
 PRODUCT_DIRNAME = "UPSP"
 PID_RE = re.compile(r"^B\d{8}-\d{6}-[0-9A-F]{4}-[0-9A-F]{2}$")
+INSTANCE_ID_RE = re.compile(r"^(?:meta|I\d{8}-\d{6}-[0-9A-F]{4})$")
 REQUIRED_OS_CONFIG_FILES = frozenset(
     {
         "system.json",
@@ -64,6 +69,14 @@ PERSONA_PROTOCOL_RELATIVE_PATHS = PERSONA_PROTOCOL_FILES + tuple(
     )
 )
 PERSONA_PROTOCOL_FILE_COUNT = len(PERSONA_PROTOCOL_RELATIVE_PATHS)
+MEMORY_OVERLAY_SCHEMA = "upsp_memory_links.v1"
+MEMORY_OVERLAY_FIELDS = (
+    "linked_containers", "current_overview", "current_overview_updated_at",
+)
+LTM_META_RELATIVE_PATHS = tuple(
+    f"LTM/Memory/{tier}/meta.json"
+    for tier in ("Full", "Summary", "Abstract", "Backup", "Pinned")
+)
 
 KNOWN_FOLDER_DOCUMENTS = uuid.UUID("FDD39AD0-238F-46AF-ADB4-6C85480369C7")
 KNOWN_FOLDER_LOCAL_APP_DATA = uuid.UUID("F1B32785-6FBA-4FCF-9D55-7B8E7F157091")
@@ -106,9 +119,13 @@ class ActiveLayout:
     manifest_path: Path
     personas_root: Path
     pid: str
+    pid_root: Path
+    instance_id: str
     instance_root: Path
+    meta_root: Path
     os_root: Path
     persona_dir: Path
+    shared_persona_dir: Path
     config_dir: Path
     files_dir: Path
     trash_dir: Path
@@ -163,6 +180,13 @@ def validate_pid(value: object) -> str:
     if check != expected:
         raise DataRootError("active_instance_pid_invalid")
     return pid
+
+
+def validate_instance_id(value: object) -> str:
+    instance_id = str(value or "").strip()
+    if not INSTANCE_ID_RE.fullmatch(instance_id):
+        raise DataRootError("active_instance_id_invalid")
+    return instance_id
 
 
 def _is_within(path: Path, parent: Path) -> bool:
@@ -251,18 +275,30 @@ def _atomic_write_json(path: Path, value: dict) -> None:
             pass
 
 
-def _read_manifest(path: Path) -> str:
+def _read_manifest(path: Path) -> tuple[str, str]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise DataRootError("active_instance_manifest_missing") from exc
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise DataRootError("active_instance_manifest_invalid") from exc
-    if (
-        not isinstance(value, dict)
-        or set(value) != {"schema_version", "pid"}
-        or value.get("schema_version") != ACTIVE_INSTANCE_SCHEMA
-    ):
+    if not isinstance(value, dict) or value.get("schema_version") != ACTIVE_INSTANCE_SCHEMA:
+        raise DataRootError("active_instance_manifest_invalid")
+    if set(value) != {"schema_version", "pid", "instance_id"}:
+        raise DataRootError("active_instance_manifest_invalid")
+    return validate_pid(value.get("pid")), validate_instance_id(value.get("instance_id"))
+
+
+def _read_legacy_manifest(path: Path) -> str | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise DataRootError("active_instance_manifest_invalid") from exc
+    if not isinstance(value, dict):
+        raise DataRootError("active_instance_manifest_invalid")
+    if value.get("schema_version") != LEGACY_ACTIVE_INSTANCE_SCHEMA:
+        return None
+    if set(value) != {"schema_version", "pid"}:
         raise DataRootError("active_instance_manifest_invalid")
     return validate_pid(value.get("pid"))
 
@@ -295,13 +331,18 @@ def _build_layout(
     data_root: Path,
     local_root: Path,
     pid: str,
+    instance_id: str,
 ) -> ActiveLayout:
     personas_root = data_root / "personas"
-    instance_root = personas_root / pid
+    pid_root = personas_root / pid
     expected_parent = personas_root.resolve()
-    if instance_root.resolve().parent != expected_parent:
+    if pid_root.resolve().parent != expected_parent:
         raise DataRootError("active_instance_path_invalid")
-    os_root = instance_root / "OS"
+    instance_root = pid_root / validate_instance_id(instance_id)
+    if instance_root.resolve().parent != pid_root.resolve():
+        raise DataRootError("active_instance_path_invalid")
+    meta_root = pid_root / META_INSTANCE_ID
+    os_root = instance_root
     return ActiveLayout(
         program_upsp_root=program_root,
         program_os_root=program_root / "OS",
@@ -311,23 +352,33 @@ def _build_layout(
         manifest_path=data_root / ACTIVE_INSTANCE_FILENAME,
         personas_root=personas_root,
         pid=pid,
+        pid_root=pid_root,
+        instance_id=instance_id,
         instance_root=instance_root,
+        meta_root=meta_root,
         os_root=os_root,
         persona_dir=os_root / "persona",
+        shared_persona_dir=meta_root / "persona",
         config_dir=os_root / "config",
         files_dir=os_root / "files",
         trash_dir=os_root / "trash",
         global_config_dir=local_root / "config",
-        audit_cache_dir=local_root / "cache" / "audit" / pid,
+        audit_cache_dir=local_root / "cache" / "audit" / pid / instance_id,
     )
 
 
 def _validate_layout(layout: ActiveLayout) -> None:
-    if not layout.instance_root.is_dir() or not layout.os_root.is_dir():
+    if (
+        not layout.pid_root.is_dir()
+        or not layout.instance_root.is_dir()
+        or not layout.meta_root.is_dir()
+        or layout.instance_root.is_symlink()
+        or layout.meta_root.is_symlink()
+    ):
         raise DataRootError("active_instance_layout_incomplete")
     if not _is_within(
         layout.os_root.resolve(),
-        layout.instance_root.resolve(),
+        layout.pid_root.resolve(),
     ):
         raise DataRootError("active_instance_path_invalid")
     for directory in (layout.config_dir, layout.files_dir, layout.trash_dir):
@@ -358,6 +409,106 @@ def _validate_layout(layout: ActiveLayout) -> None:
             layout.os_root.resolve(),
         ):
             raise DataRootError("active_instance_path_invalid")
+    if layout.shared_persona_dir.exists() and (
+        not layout.shared_persona_dir.is_dir()
+        or not _is_within(
+            layout.shared_persona_dir.resolve(), layout.meta_root.resolve()
+        )
+    ):
+        raise DataRootError("active_instance_path_invalid")
+    try:
+        instance = json.loads(
+            (layout.instance_root / INSTANCE_MANIFEST_FILENAME).read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise DataRootError("active_instance_manifest_invalid") from exc
+    expected_kind = "meta" if layout.instance_id == META_INSTANCE_ID else "branch"
+    if not (
+        isinstance(instance, dict)
+        and instance.get("schema_version") == INSTANCE_MANIFEST_SCHEMA
+        and instance.get("pid") == layout.pid
+        and instance.get("instance_id") == layout.instance_id
+        and instance.get("kind") == expected_kind
+    ):
+        raise DataRootError("active_instance_manifest_invalid")
+
+
+def validate_instance_layout(
+    base_layout: ActiveLayout,
+    pid: object,
+    instance_id: object,
+) -> ActiveLayout:
+    """Validate one existing instance before making it globally active."""
+    candidate = _build_layout(
+        base_layout.program_upsp_root,
+        base_layout.data_root,
+        base_layout.local_state_root,
+        validate_pid(pid),
+        validate_instance_id(instance_id),
+    )
+    _validate_layout(candidate)
+    from .persona_initializer import REQUIRED_TEMPLATE_DIRS, REQUIRED_TEMPLATE_FILES
+
+    def owner(relative: str) -> Path:
+        return (
+            candidate.shared_persona_dir
+            if relative == "core.md"
+            or relative.startswith(("rules/", "docs/", "LTM/Memory/"))
+            else candidate.persona_dir
+        )
+
+    for relative in REQUIRED_TEMPLATE_FILES:
+        if not (owner(relative) / relative).is_file():
+            raise DataRootError("active_instance_layout_incomplete")
+    for relative in REQUIRED_TEMPLATE_DIRS:
+        if not (owner(relative) / relative).is_dir():
+            raise DataRootError("active_instance_layout_incomplete")
+    return candidate
+
+
+def _write_instance_manifest(path: Path, *, pid: str, instance_id: str) -> None:
+    _atomic_write_json(
+        path / INSTANCE_MANIFEST_FILENAME,
+        {
+            "schema_version": INSTANCE_MANIFEST_SCHEMA,
+            "pid": pid,
+            "instance_id": instance_id,
+            "kind": "meta" if instance_id == META_INSTANCE_ID else "branch",
+        },
+    )
+
+
+def _migrate_legacy_layout(
+    program_root: Path,
+    data_root: Path,
+    local_root: Path,
+    pid: str,
+) -> ActiveLayout:
+    pid_root = data_root / "personas" / pid
+    legacy_root = pid_root / "OS"
+    meta_root = pid_root / META_INSTANCE_ID
+    if legacy_root.exists() and meta_root.exists():
+        raise DataRootError("active_instance_legacy_migration_conflict")
+    if legacy_root.exists():
+        os.replace(legacy_root, meta_root)
+    if not meta_root.is_dir():
+        raise DataRootError("active_instance_layout_incomplete")
+    _write_instance_manifest(meta_root, pid=pid, instance_id=META_INSTANCE_ID)
+    layout = _build_layout(
+        program_root, data_root, local_root, pid, META_INSTANCE_ID
+    )
+    _validate_layout(layout)
+    _atomic_write_json(
+        data_root / ACTIVE_INSTANCE_FILENAME,
+        {
+            "schema_version": ACTIVE_INSTANCE_SCHEMA,
+            "pid": pid,
+            "instance_id": META_INSTANCE_ID,
+        },
+    )
+    return layout
 
 
 def _create_active_layout(
@@ -381,8 +532,12 @@ def _create_active_layout(
 
     temp_root = data_root.parent / f".{data_root.name}-init-{secrets.token_hex(8)}"
     pid = generate_pid()
-    temp_layout = _build_layout(program_root, temp_root, local_root, pid)
-    final_layout = _build_layout(program_root, data_root, local_root, pid)
+    temp_layout = _build_layout(
+        program_root, temp_root, local_root, pid, META_INSTANCE_ID
+    )
+    final_layout = _build_layout(
+        program_root, data_root, local_root, pid, META_INSTANCE_ID
+    )
     try:
         # 安装目录可能整体只读；用户数据副本不得继承模板文件的只读属性。
         shutil.copytree(
@@ -392,9 +547,18 @@ def _create_active_layout(
         )
         temp_layout.files_dir.mkdir(parents=True, exist_ok=True)
         temp_layout.trash_dir.mkdir(parents=True, exist_ok=True)
+        _write_instance_manifest(
+            temp_layout.instance_root,
+            pid=pid,
+            instance_id=META_INSTANCE_ID,
+        )
         _atomic_write_json(
             temp_layout.manifest_path,
-            {"schema_version": ACTIVE_INSTANCE_SCHEMA, "pid": pid},
+            {
+                "schema_version": ACTIVE_INSTANCE_SCHEMA,
+                "pid": pid,
+                "instance_id": META_INSTANCE_ID,
+            },
         )
         _validate_layout(temp_layout)
         os.replace(temp_root, data_root)
@@ -403,8 +567,10 @@ def _create_active_layout(
             shutil.rmtree(temp_root, ignore_errors=True)
         if not final_layout.manifest_path.is_file():
             raise DataRootError("active_instance_create_conflict")
-        pid = _read_manifest(final_layout.manifest_path)
-        final_layout = _build_layout(program_root, data_root, local_root, pid)
+        pid, instance_id = _read_manifest(final_layout.manifest_path)
+        final_layout = _build_layout(
+            program_root, data_root, local_root, pid, instance_id
+        )
     except Exception:
         if temp_root.exists():
             shutil.rmtree(temp_root, ignore_errors=True)
@@ -437,14 +603,14 @@ def _persona_protocol_sources(initialization_root: Path) -> list[Path]:
 
 def _sync_persona_protocol(layout: ActiveLayout, sources: list[Path]) -> int:
     """Restore tracked common protocol files without touching persona-local data."""
-    if not layout.persona_dir.exists():
+    if not layout.shared_persona_dir.exists():
         return 0
 
     changed = 0
     template = layout.initialization_root / "persona_template"
     for source in sources:
         relative = source.relative_to(template)
-        target = layout.persona_dir / relative
+        target = layout.shared_persona_dir / relative
         source_hash = _file_sha256(source)
         if target.is_file() and _file_sha256(target) == source_hash:
             continue
@@ -459,6 +625,82 @@ def _sync_persona_protocol(layout: ActiveLayout, sources: list[Path]) -> int:
             raise DataRootError("persona_protocol_sync_failed")
         changed += 1
     return changed
+
+
+def _migrate_memory_overlay(layout: ActiveLayout) -> None:
+    persona = layout.shared_persona_dir
+    if not persona.is_dir():
+        return
+    overlay_path = layout.persona_dir / "LTM" / "memory_links.json"
+    if overlay_path.is_file():
+        try:
+            overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise DataRootError("memory_overlay_invalid") from exc
+        if (
+            not isinstance(overlay, dict)
+            or overlay.get("schema_version") != MEMORY_OVERLAY_SCHEMA
+            or not isinstance(overlay.get("entries"), dict)
+        ):
+            raise DataRootError("memory_overlay_invalid")
+    else:
+        overlay = {"schema_version": MEMORY_OVERLAY_SCHEMA, "entries": {}}
+    overlay_changed = False
+    for relative in LTM_META_RELATIVE_PATHS:
+        path = persona / relative
+        if not path.is_file():
+            continue
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise DataRootError("memory_meta_invalid") from exc
+        if not isinstance(meta, dict):
+            raise DataRootError("memory_meta_invalid")
+        changed = False
+        for mem_id, entry in meta.items():
+            if not isinstance(entry, dict):
+                continue
+            if "created_instance_id" not in entry:
+                entry["created_instance_id"] = META_INSTANCE_ID
+                changed = True
+            if "last_recalled_instance_id" not in entry:
+                entry["last_recalled_instance_id"] = META_INSTANCE_ID
+                changed = True
+            existing = overlay["entries"].get(mem_id)
+            if not isinstance(existing, dict):
+                overlay["entries"][mem_id] = {
+                    key: entry.get(key, [] if key == "linked_containers" else "")
+                    for key in MEMORY_OVERLAY_FIELDS
+                }
+                overlay_changed = True
+            for key in MEMORY_OVERLAY_FIELDS:
+                if key in entry:
+                    del entry[key]
+                    changed = True
+        if changed:
+            _atomic_write_json(path, meta)
+    if overlay_changed or not overlay_path.exists():
+        _atomic_write_json(overlay_path, overlay)
+    stm_meta_path = layout.persona_dir / "STM" / "memory" / "meta.json"
+    if stm_meta_path.is_file():
+        try:
+            stm_meta = json.loads(stm_meta_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise DataRootError("memory_meta_invalid") from exc
+        if not isinstance(stm_meta, dict):
+            raise DataRootError("memory_meta_invalid")
+        changed = False
+        for entry in stm_meta.values():
+            if not isinstance(entry, dict):
+                continue
+            if "created_instance_id" not in entry:
+                entry["created_instance_id"] = layout.instance_id
+                changed = True
+            if "last_recalled_instance_id" not in entry:
+                entry["last_recalled_instance_id"] = layout.instance_id
+                changed = True
+        if changed:
+            _atomic_write_json(stm_meta_path, stm_meta)
 
 
 def ensure_active_instance(
@@ -477,10 +719,18 @@ def ensure_active_instance(
     )
     manifest = data_root / ACTIVE_INSTANCE_FILENAME
     if manifest.is_file():
-        layout = _load_layout(program_root, data_root, local_root)
+        legacy_pid = _read_legacy_manifest(manifest)
+        layout = (
+            _migrate_legacy_layout(
+                program_root, data_root, local_root, legacy_pid
+            )
+            if legacy_pid
+            else _load_layout(program_root, data_root, local_root)
+        )
     else:
         layout = _create_active_layout(program_root, data_root, local_root)
     _sync_persona_protocol(layout, protocol_sources)
+    _migrate_memory_overlay(layout)
     return layout
 
 
@@ -506,8 +756,10 @@ def _load_layout(
     data_root: Path,
     local_root: Path,
 ) -> ActiveLayout:
-    pid = _read_manifest(data_root / ACTIVE_INSTANCE_FILENAME)
-    layout = _build_layout(program_root, data_root, local_root, pid)
+    pid, instance_id = _read_manifest(data_root / ACTIVE_INSTANCE_FILENAME)
+    layout = _build_layout(
+        program_root, data_root, local_root, pid, instance_id
+    )
     _validate_layout(layout)
     return layout
 

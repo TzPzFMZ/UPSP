@@ -32,7 +32,7 @@ _ASSISTANT_TEXT_TOOL_PAYLOAD_RE = re.compile(
     r"to_next_reaction|tool_request|protocol_tool_submission|"
     r"protocol_tool_request|general_tool_request|relation_card_declaration|"
     r"memory_write_declaration|memory_annotation_declaration|"
-    r"memory_recall_complete|memory_link_update|memory_privacy_mark|"
+    r"memory_link_update|memory_privacy_mark|"
     r"memory_privacy_declassify|fault_record|退出信号|对外回复|轮内回复|"
     r"反应循环结束|工具唤醒入口|工具请求|工具唤醒)\s*[:：]"
     r"|^\s*\|[^\r\n]*(?:exit_signal|assistant_reply|assistant_progress|"

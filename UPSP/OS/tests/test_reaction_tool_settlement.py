@@ -369,11 +369,13 @@ class _Spec566Assembler:
         }
         self._pending_corpus_expand_once_keys = set()
         self._current_input_text = "query"
+        self.last_index_kwargs = None
 
     def _derive_input_keywords(self, state, step, mount_ids):
         return ["query"]
 
     def build_index_view(self, **kwargs):
+        self.last_index_kwargs = kwargs
         return {
             "tool_id": "index_view",
             "tool_family": "protocol_tool",
@@ -382,6 +384,18 @@ class _Spec566Assembler:
             "source": "protocol_tool_request",
             "scope": kwargs.get("scope"),
             "content": "INDEX",
+        }
+
+    def build_memory_search(self, **kwargs):
+        self.last_index_kwargs = kwargs
+        return {
+            "tool_id": "memory_search",
+            "tool_family": "protocol_tool",
+            "tool_class": "read_tool",
+            "status": "accepted",
+            "source": "protocol_tool_request",
+            "content": "MEMORY SEARCH",
+            "locator_only": True,
         }
 
 
@@ -407,26 +421,57 @@ def test_spec566_dispatcher_executes_corpus_read_without_runner_private_apply():
     assert "dialogue-progress-key" in runner.assembler._pending_corpus_expand_once_keys
 
 
-def test_spec566_dispatcher_executes_index_view_without_runner_private_apply():
+def test_spec756_dispatcher_executes_memory_search_without_runner_private_apply():
     from engines.reaction_tool_settlement import ReactionToolSettlementDispatcher
 
     dispatcher = ReactionToolSettlementDispatcher(runner=_Spec566NoPrivateApplyRunner())
-    receipts = dispatcher.handle_index_view(
-        active_protocol_tool_guides=[],
-        iter_index_view_requests=[{"tool_id": "index_view", "scope": "ltm_heat"}],
-        current_state={},
-        round_type="interactive",
-        mount_ids_current=[],
-        interaction_meta={},
-        hidden_stm_memory_ids=set(),
+    receipts = dispatcher.handle_memory_search(
+        iter_memory_search_requests=[{
+            "tool_id": "memory_search",
+            "query_terms": ["露营"],
+        }],
         accumulated_messages=[],
         iter_native_tool_call_envelopes=[],
-        all_index_view_receipts=[],
+        all_memory_search_receipts=[],
         all_protocol_tool_receipts=[],
     )
 
     assert receipts[0]["status"] == "accepted"
     assert receipts[0]["protocol_read_signature"]
+    assert dispatcher.runner.assembler.last_index_kwargs["query_terms"] == ["露营"]
+
+
+def test_spec756_memory_search_signature_uses_normalized_query_terms():
+    from engines.reaction_tool_settlement import _read_signature
+
+    first = _read_signature("memory_search", {
+        "query_terms": [" ＣＡＭＰ ", "孩子"],
+        "offset": 0, "limit": 8,
+    })
+    same = _read_signature("memory_search", {
+        "query_terms": ["孩子", "camp", "camp"],
+        "offset": 0, "limit": 8,
+    })
+    next_page = _read_signature("memory_search", {
+        "query_terms": ["camp", "孩子"],
+        "offset": 8, "limit": 8,
+    })
+    implicit_page = _read_signature("memory_search", {
+        "query_terms": ["camp", "孩子"],
+    })
+    clamped = _read_signature("memory_search", {
+        "query_terms": ["camp", "孩子"],
+        "offset": "0", "limit": 100,
+    })
+    max_page = _read_signature("memory_search", {
+        "query_terms": ["camp", "孩子"],
+        "offset": 0, "limit": 32,
+    })
+
+    assert first == same
+    assert implicit_page == first
+    assert clamped == max_page
+    assert next_page != first
 
 
 def test_spec566_dispatcher_executes_relation_card_write_without_runner_private_apply():

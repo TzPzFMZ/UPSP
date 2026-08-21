@@ -112,18 +112,19 @@ def _write_alert_settlement(item, round_num, stores, interaction_meta):
     if item["status"] == "deferred":
         now = local_now()
         defer_until = now + timedelta(seconds=DEFAULT_DEFER_SECONDS)
-        data = state_store.load()
-        base = data.setdefault("base", {})
-        deferrals = base.setdefault("alert_deferrals", {})
-        deferrals[item["alert_type"]] = {
-            "status": "deferred",
-            "defer_seconds": DEFAULT_DEFER_SECONDS,
-            "defer_until": defer_until.isoformat(),
-            "reason": item["reason"],
-            "summary": item["summary"],
-            "round_num": round_num,
-        }
-        state_store.save(data)
+        def defer(data):
+            base = data.setdefault("base", {})
+            deferrals = base.setdefault("alert_deferrals", {})
+            deferrals[item["alert_type"]] = {
+                "status": "deferred",
+                "defer_seconds": DEFAULT_DEFER_SECONDS,
+                "defer_until": defer_until.isoformat(),
+                "reason": item["reason"],
+                "summary": item["summary"],
+                "round_num": round_num,
+            }
+
+        state_store.mutate(defer)
     alert_store.append_alert(
         round_num=round_num,
         step="reaction",

@@ -6,10 +6,183 @@
 import json
 import os
 import re
+import unicodedata
 
 from constants import DREAMS_DISPLAY_LIMIT, STM_INDEX_DISPLAY_LIMIT
 from assembly.context_helpers import fold_marker, slice_entries
 from paths import CORE_MD, DREAMS_MD
+
+
+def normalize_ltm_query_terms(value):
+    """Validate and canonicalise model-supplied literal LTM query terms."""
+    if value in (None, []):
+        raise ValueError("query_terms_empty")
+    if not isinstance(value, list):
+        raise ValueError("query_terms_must_be_array")
+    if len(value) > 8:
+        raise ValueError("query_terms_too_many")
+    result = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("query_term_must_be_string")
+        term = " ".join(unicodedata.normalize("NFKC", item).casefold().split())
+        if not term:
+            raise ValueError("query_term_empty")
+        if len(term) > 64:
+            raise ValueError("query_term_too_long")
+        if term not in result:
+            result.append(term)
+    return result
+
+
+def normalize_index_view_page(offset=0, limit=8):
+    try:
+        offset = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = max(1, min(32, int(limit or 8)))
+    except (TypeError, ValueError):
+        limit = 8
+    return offset, limit
+
+
+def _normalised_search_text(value):
+    return " ".join(unicodedata.normalize("NFKC", str(value or "")).casefold().split())
+
+
+def _summary_text(body):
+    values = []
+    for line in str(body or "").splitlines():
+        match = re.match(r"^\s*(?:\*\*)?(?:梗概|摘要)(?:\*\*)?(?:（[^）]*）)?[：:]\s*(.*)$", line)
+        if match and match.group(1).strip():
+            values.append(match.group(1).strip())
+    return "\n".join(values)
+
+
+def _fold_with_offsets(value):
+    text = " ".join(str(value or "").split())
+    folded = []
+    offsets = []
+    clusters = []
+    for index, char in enumerate(text):
+        if clusters and unicodedata.combining(char):
+            clusters[-1][1] += char
+        else:
+            clusters.append([index, char])
+    for index, cluster in clusters:
+        for normalized in unicodedata.normalize("NFKC", cluster).casefold():
+            folded.append(normalized)
+            offsets.append(index)
+    return text, "".join(folded), offsets
+
+
+def _locator_snippet(body, terms, limit=32):
+    """Return original-text context around the first normalized literal hit."""
+    text, folded, offsets = _fold_with_offsets(body)
+    positions = [folded.find(term) for term in terms if term in folded]
+    anchor = offsets[min(positions)] if positions and offsets else 0
+    start = max(0, anchor - limit // 4)
+    prefix = "…" if start else ""
+    room = limit - len(prefix)
+    end = min(len(text), start + room)
+    suffix = "…" if end < len(text) else ""
+    if suffix:
+        end = max(start, end - 1)
+    return f"{prefix}{text[start:end]}{suffix}"
+
+
+def build_ltm_memory_search(query_terms, limit=8, offset=0):
+    """Search active public LTM and return locator-only structured candidates."""
+    from data.memory_store import MemoryStore, extract_memory_semantic
+
+    query_terms = normalize_ltm_query_terms(query_terms)
+    offset, limit = normalize_index_view_page(offset, limit)
+    store = MemoryStore()
+    matches = []
+    for meta in store.list_public_ltm_entries():
+        layer = str(meta.get("memory_layer") or "")
+        mem_id = str(meta.get("id") or "")
+        raw_body = str(meta.get("body") or "")
+        body = extract_memory_semantic(raw_body)
+        title = " ".join(str(meta.get("title") or mem_id).split())
+        tags = " ".join(str(item) for item in meta.get("tags", []) if str(item).strip())
+        fields = {
+            "title": (_normalised_search_text(title), 4),
+            "tags": (_normalised_search_text(tags), 4),
+            "summary": (_normalised_search_text(_summary_text(raw_body)), 2),
+            "body": (_normalised_search_text(body), 1),
+        }
+        matched_terms = [
+            term for term in query_terms
+            if any(term in text for text, _weight in fields.values())
+        ]
+        if not matched_terms:
+            continue
+        matched_fields = [
+            name for name, (text, _weight) in fields.items()
+            if any(term in text for term in query_terms)
+        ]
+        field_score = sum(
+            weight
+            for text, weight in fields.values()
+            for term in query_terms
+            if term in text
+        )
+        matches.append({
+            "mem_id": mem_id,
+            "ltm_layer": layer,
+            "title": title,
+            "matched_terms": matched_terms,
+            "matched_fields": matched_fields,
+            "field_score": field_score,
+            "snippet": _locator_snippet(body, matched_terms),
+            "created_instance_id": str(meta.get("created_instance_id") or "meta"),
+            "created_round": meta.get("created_round"),
+        })
+
+    matches.sort(key=lambda item: (
+        -len(item["matched_terms"]), -item["field_score"], item["mem_id"],
+    ))
+    parts = [
+        "## 记忆候选检索",
+        f"查询词：{json.dumps(query_terms, ensure_ascii=False)}",
+        "定位片段只用于筛选候选，不是事实证据；必须继续调用 memory_content_read 读取完整正文。",
+    ]
+    selected = slice_entries(matches, offset, limit)
+    if not selected:
+        parts.append("（没有命中当前公共活跃 LTM）")
+    for item in selected:
+        created_round = item["created_round"]
+        coordinate = (
+            f"{item['created_instance_id']}/R{created_round:06d}"
+            if isinstance(created_round, int) and not isinstance(created_round, bool)
+            else f"{item['created_instance_id']}/未记录"
+        )
+        parts.extend((
+            f"- {item['mem_id']} [{item['ltm_layer']}] {item['title']}",
+            f"  - 创建坐标：{coordinate}",
+            f"  - 命中词：{', '.join(item['matched_terms'])}",
+            f"  - 命中字段：{', '.join(item['matched_fields'])}",
+            f"  - 定位片段：{item['snippet']}",
+        ))
+    next_offset = offset + len(selected)
+    if next_offset < len(matches):
+        parts.append(
+            f"（另有 {len(matches) - next_offset} 条；继续调用 memory_search("
+            f"query_terms={json.dumps(query_terms, ensure_ascii=False)}; "
+            f"offset={next_offset}; limit={limit})）"
+        )
+    return {
+        "query_terms": query_terms,
+        "offset": offset,
+        "limit": limit,
+        "total_matches": len(matches),
+        "has_more": next_offset < len(matches),
+        "next_offset": next_offset if next_offset < len(matches) else None,
+        "candidates": selected,
+        "content": "\n".join(parts),
+    }
 
 
 def _stm_projection_visible(assembler, mem_id, meta):
@@ -212,7 +385,7 @@ def build_keyword_index(assembler, source, limit=8, offset=0):
     parts = [f"## {source.upper()} 倒排索引"]
     try:
         import json as _json
-        from paths import LTM_KEYWORDS_JSON, LTM_DIR
+        from paths import LTM_KEYWORDS_JSON, LTM_DIR, RELATION_DIR
         from paths import STM_MEMORY_DIR, LTM_FULL_META_JSON, LTM_SUMMARY_META_JSON
         from paths import LTM_ABSTRACT_META_JSON, LTM_PINNED_META_JSON
         import os as _os
@@ -220,8 +393,8 @@ def build_keyword_index(assembler, source, limit=8, offset=0):
         kw_paths = {
             "stm": os.path.join(STM_MEMORY_DIR, "keywords.json"),
             "ltm": LTM_KEYWORDS_JSON,
-            "skills": os.path.join(os.path.dirname(LTM_KEYWORDS_JSON), "..", "Skills", "keywords.json"),
-            "relation": os.path.join(os.path.dirname(LTM_DIR), "relation", "_index", "keywords.json"),
+            "skills": os.path.join(LTM_DIR, "Skills", "keywords.json"),
+            "relation": os.path.join(RELATION_DIR, "_index", "keywords.json"),
         }
         kw_path = kw_paths.get(source)
         if not kw_path or not _os.path.isfile(kw_path):
@@ -378,16 +551,19 @@ def get_keywords_for_mem_id(mem_id):
     """反查：某个记忆条目被哪些关键词标记。"""
     try:
         import json as _json, os as _os
-        from paths import KEYWORDS_JSON
-        if not _os.path.isfile(KEYWORDS_JSON):
-            return []
-        with open(KEYWORDS_JSON, "r", encoding="utf-8") as f:
-            kw_data = _json.load(f)
-        index = kw_data.get("index", {})
+        from paths import KEYWORDS_JSON, LTM_KEYWORDS_JSON
         result = []
-        for kw, ids in index.items():
-            if isinstance(ids, list) and mem_id in ids:
-                result.append(kw)
+        for path in (KEYWORDS_JSON, LTM_KEYWORDS_JSON):
+            if not _os.path.isfile(path):
+                continue
+            with open(path, "r", encoding="utf-8") as f:
+                index = _json.load(f).get("index", {})
+            for kw, ids in index.items():
+                if not isinstance(ids, list):
+                    continue
+                clean_ids = [str(item).split("[", 1)[0] for item in ids]
+                if mem_id in clean_ids and kw not in result:
+                    result.append(kw)
         return result
     except Exception:
         return []
@@ -404,6 +580,8 @@ def build_association_index(assembler, limit=16, input_keywords=None, offset=0):
                          KEYWORDS_JSON, LTM_KEYWORDS_JSON,
                          STM_MEMORY_DIR, LTM_FULL_META_JSON, LTM_SUMMARY_META_JSON,
                          LTM_ABSTRACT_META_JSON, LTM_PINNED_META_JSON)
+        from data.training_material_store import keyword_degree_snapshot
+        keyword_degrees = keyword_degree_snapshot(ASSOCIATION_SET_DIR)
 
         # 联想集表名映射
         table_files = {
@@ -429,9 +607,11 @@ def build_association_index(assembler, limit=16, input_keywords=None, offset=0):
                 a, b = parts_kv[0], parts_kv[1]
                 if input_keywords:
                     # 输入驱动：只收集与输入关键词共现的词
-                    if a in input_keywords and b not in input_keywords:
+                    if (a in input_keywords and b not in input_keywords
+                            and keyword_degrees.get(a, 0) >= 16):
                         assoc_candidates[b] = assoc_candidates.get(b, 0) + count
-                    elif b in input_keywords and a not in input_keywords:
+                    elif (b in input_keywords and a not in input_keywords
+                            and keyword_degrees.get(b, 0) >= 16):
                         assoc_candidates[a] = assoc_candidates.get(a, 0) + count
                 else:
                     # 无输入关键词：收集全部词对（兜底）
@@ -439,7 +619,7 @@ def build_association_index(assembler, limit=16, input_keywords=None, offset=0):
                     assoc_candidates[b] = assoc_candidates.get(b, 0) + count
 
         def add_mem_match(mem_id, keyword, score):
-            mem_id = str(mem_id or "").strip()
+            mem_id = re.sub(r"\[[FSAP]\]$", "", str(mem_id or "").strip())
             if not mem_id:
                 return
             existing_kws, existing_score = mem_matches.get(mem_id, ([], 0))
@@ -469,10 +649,12 @@ def build_association_index(assembler, limit=16, input_keywords=None, offset=0):
                     if not wa or not wb or not ea or not eb:
                         continue
                     if input_set:
-                        if wa in input_set and wb not in input_set:
+                        if (wa in input_set and wb not in input_set
+                                and keyword_degrees.get(wa, 0) >= 16):
                             contact_candidates[wb] = contact_candidates.get(wb, 0) + 1
                             add_mem_match(eb, wb, 2)
-                        elif wb in input_set and wa not in input_set:
+                        elif (wb in input_set and wa not in input_set
+                                and keyword_degrees.get(wb, 0) >= 16):
                             contact_candidates[wa] = contact_candidates.get(wa, 0) + 1
                             add_mem_match(ea, wa, 2)
                         elif wa in input_set and wb in input_set:
@@ -485,7 +667,9 @@ def build_association_index(assembler, limit=16, input_keywords=None, offset=0):
                         add_mem_match(eb, wb, 2)
 
         # —— Step 3: 合并排序（联想集分 + 联系集分×2）——
-        scored_keywords = {}
+        # Direct inverted-index hits are always eligible. Degree only gates
+        # the one-hop association expansion added below.
+        scored_keywords = {keyword: 1 for keyword in input_set if keyword}
         for kw, score in assoc_candidates.items():
             if kw:  # 过滤空关键词
                 scored_keywords[kw] = score
@@ -512,9 +696,6 @@ def build_association_index(assembler, limit=16, input_keywords=None, offset=0):
                     for mid in ids:
                         add_mem_match(mid, kw, score)
 
-        # —— Step 5: 按总分排序，输出记忆条目 ——
-        sorted_mems = sorted(mem_matches.items(), key=lambda x: -x[1][1])
-
         # 标题查找表
         title_map = {}
         meta_map = {}
@@ -535,26 +716,30 @@ def build_association_index(assembler, limit=16, input_keywords=None, offset=0):
                     if title and mid not in title_map:
                         title_map[mid] = title
 
-        shown = 0
+        # —— Step 5: 先过滤不可见条目，再排序和分页 ——
+        visible_mems = []
+        for mem_id, match in mem_matches.items():
+            if not str(mem_id).startswith("MEM-"):
+                continue
+            mem_meta = meta_map.get(mem_id)
+            if not mem_meta:
+                continue
+            if not _stm_projection_visible(
+                    assembler, mem_id, mem_meta):
+                continue
+            visible_mems.append((mem_id, match))
+        sorted_mems = sorted(visible_mems, key=lambda x: -x[1][1])
+
         for mem_id, (matched_kws, total_score) in slice_entries(
                 sorted_mems, offset, limit):
-            if shown >= limit:
-                break
-            clean_id = mem_id.split("[")[0] if "[" in mem_id else mem_id
-            if str(clean_id).startswith("MEM-"):
-                mem_meta = meta_map.get(mem_id, meta_map.get(clean_id, {}))
-                if mem_meta and not _stm_projection_visible(
-                        assembler, clean_id, mem_meta):
-                    continue
-            title = title_map.get(mem_id, title_map.get(clean_id, ""))
+            title = title_map.get(mem_id, "")
             kw_str = ", ".join(matched_kws[:3])
             if title:
-                parts.append(f"- {clean_id} [{total_score}] {title} (联想: {kw_str})")
+                parts.append(f"- {mem_id} [{total_score}] {title} (联想: {kw_str})")
             else:
-                parts.append(f"- {clean_id} [{total_score}] (联想: {kw_str})")
-            shown += 1
+                parts.append(f"- {mem_id} [{total_score}] (联想: {kw_str})")
 
-        if shown == 0 and (sorted_kws or mem_matches):
+        if not sorted_mems and (sorted_kws or mem_matches):
             parts.append("（无高置信记忆条目）")
 
         marker = fold_marker(

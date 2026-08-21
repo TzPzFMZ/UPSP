@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ReactionLoopResultState:
-    write_pending_tracker: object = None
     reaction_obligations: object = None
     provider_call_hard_stop: dict = field(default_factory=dict)
     single_round_probe_hard_stop: dict = field(default_factory=dict)
@@ -44,12 +43,12 @@ class ReactionLoopResultState:
     all_container_read_receipts: list = field(default_factory=list)
     all_index_view_requests: list = field(default_factory=list)
     all_index_view_receipts: list = field(default_factory=list)
+    all_memory_search_requests: list = field(default_factory=list)
+    all_memory_search_receipts: list = field(default_factory=list)
     all_relation_read_requests: list = field(default_factory=list)
     all_relation_read_receipts: list = field(default_factory=list)
     all_mount_cancel_requests: list = field(default_factory=list)
     all_mount_cancel_receipts: list = field(default_factory=list)
-    all_pending_cancel_requests: list = field(default_factory=list)
-    all_pending_cancel_receipts: list = field(default_factory=list)
     all_relay_intent_settle_requests: list = field(default_factory=list)
     all_relay_intent_settle_receipts: list = field(default_factory=list)
     all_guide_submit_requests: list = field(default_factory=list)
@@ -75,8 +74,6 @@ class ReactionLoopResultState:
     all_identity_resolutions: list = field(default_factory=list)
     all_memory_annotation_declarations: list = field(default_factory=list)
     all_memory_annotation_receipts: list = field(default_factory=list)
-    all_memory_recall_completion_requests: list = field(default_factory=list)
-    all_memory_recall_completion_receipts: list = field(default_factory=list)
     last_reaction_loop: dict = field(default_factory=dict)
     iteration_records: list = field(default_factory=list)
     frame_settlements: list = field(default_factory=list)
@@ -85,9 +82,9 @@ class ReactionLoopResultState:
     final_reply_pending: bool = False
     final_reply_done: bool = False
     final_response_source: str = ""
+    final_response_length_rejections: int = 0
+    response_contract: dict = field(default_factory=dict)
     interaction_meta: dict = field(default_factory=dict)
-    evolution_context: str = ""
-    evolution_stats: dict = field(default_factory=dict)
 
 
 def build_reaction_loop_result(state):
@@ -140,17 +137,16 @@ def build_reaction_loop_result(state):
         "_container_read_receipts": state.all_container_read_receipts,
         "_index_view_requests": state.all_index_view_requests,
         "_index_view_receipts": state.all_index_view_receipts,
+        "_memory_search_requests": state.all_memory_search_requests,
+        "_memory_search_receipts": state.all_memory_search_receipts,
         "_relation_read_requests": state.all_relation_read_requests,
         "_relation_read_receipts": state.all_relation_read_receipts,
         "_mount_cancel_requests": state.all_mount_cancel_requests,
         "_mount_cancel_receipts": state.all_mount_cancel_receipts,
-        "_pending_cancel_requests": state.all_pending_cancel_requests,
-        "_pending_cancel_receipts": state.all_pending_cancel_receipts,
         "_relay_intent_settle_requests": state.all_relay_intent_settle_requests,
         "_relay_intent_settle_receipts": state.all_relay_intent_settle_receipts,
         "_guide_submit_requests": state.all_guide_submit_requests,
         "_guide_submit_receipts": state.all_guide_submit_receipts,
-        "_write_pending_settlement": state.write_pending_tracker.audit(),
         "_memory_link_update_declarations": state.all_memory_link_update_declarations,
         "_memory_link_update_receipts": state.all_memory_link_update_receipts,
         "_memory_container_create_declarations": state.all_memory_container_create_declarations,
@@ -173,8 +169,6 @@ def build_reaction_loop_result(state):
         "_interaction_meta": state.interaction_meta or {},
         "_memory_annotation_declarations": state.all_memory_annotation_declarations,
         "_memory_annotation_receipts": state.all_memory_annotation_receipts,
-        "_memory_recall_completion_requests": state.all_memory_recall_completion_requests,
-        "_memory_recall_completion_receipts": state.all_memory_recall_completion_receipts,
         "_reaction_loop": state.last_reaction_loop,
         "_reaction_iterations": state.iteration_records,
         "_frame_settlements": state.frame_settlements,
@@ -183,6 +177,7 @@ def build_reaction_loop_result(state):
         "_final_reply_pending": state.final_reply_pending,
         "_final_reply_done": state.final_reply_done,
         "_final_response_source": state.final_response_source,
-        "_evolution_requested": bool(state.evolution_context),
-        "_evolution_stats": state.evolution_stats or {},
+        "_final_response_length_rejections": (
+            state.final_response_length_rejections),
+        "_response_contract": dict(state.response_contract),
     }

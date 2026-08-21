@@ -78,6 +78,7 @@ def organ_runtime_context(runtime, context):
         "visible_focus_id": visible_focus_id,
         "chronicle_store": getattr(runner, "chronicle_store", None),
         "chronicle_focus": getattr(runner, "chronicle_focus", None),
+        "memory_heat_boosted_ids": context.memory_heat_boosted_ids,
     }
 
 
@@ -274,6 +275,8 @@ class OrganRuntime:
                                     "visible_relation_body_ids", ()),
                                 chronicle_store=context.get("chronicle_store"),
                                 chronicle_focus=context.get("chronicle_focus"),
+                                memory_heat_boosted_ids=context.get(
+                                    "memory_heat_boosted_ids"),
                             )
                         except Exception as exc:
                             product_receipts = [{

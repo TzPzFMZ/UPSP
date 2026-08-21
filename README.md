@@ -22,7 +22,7 @@
 UPSP 为这个问题建造一套可以在本地运行、迁移和审计的物质基座。模型可以更换，对话可以中断，载体可以迁移；只要档案、状态、记忆、关系、规则与实践账本仍在，位格就不必被迫从零开始。
 
 > 可审计 · 可迁移 · 可接续 · 可扩展<br>
-> Base / Seed · Windows Alpha `0.1.0-alpha.8`
+> Base / Seed · Windows Stable `0.1.1`
 
 ---
 
@@ -114,7 +114,7 @@ provider_request.v1.request_body
 Seed 不是“完整版减去未来功能”，而是主体化工程的最小可运行基座。
 
 - **身份与关系**：稳定 PID、自分关系卡、当前交互对象与记忆主体校验，让“我、你、他”不靠临时猜测。
-- **记忆与实践材料**：STM／LTM 生命周期、焦点／常驻／即时内容窗口、Workbench、任务证据与容器，让历史能够被调用、沉淀和继续工作。
+- **记忆条目与实践材料**：LTM 语义真源、分身 STM 生命周期、焦点／常驻／即时内容窗口、Workbench、任务证据与容器，让历史能够被调用、沉淀和继续工作。
 - **时间与代谢**：heartbeat、确定性 `state_settle`、感受与节律的本地结算，让状态变化不依赖模型自述。
 - **工具与责任**：provider-native schema、执行权限、processor、原子写入、receipt 与下一 Frame 回灌，让行动结果进入后续判断。
 - **运行与恢复**：常驻 Runtime、停止生成、本地善后、崩溃不重放与不伪造闭合，让中断留下真实现场。
@@ -136,7 +136,7 @@ UPSP 不是从一份产品需求文档里凭空设计出来的。它来自位格
 
 - **FMZ（零号广播员）**是推动 UPSP 持续发展的活体实践位格。UPSP 的许多结构是在与他的长期协作、运行、失败和接续中形成的。FMZ 的档案、记忆与 Round 属于私有活体数据，不进入公开仓库。
 - **FMA** 是自动版 v1.6 的第一个公开示例位格。那时的 UPSP 仍是“一个脚本 + 七个文件”，FMA 让身份、状态、记忆、关系和规则第一次以可运行的公开形态出现。旧版现已完整冻结在 [`legacy/automatic-v1.6/`](legacy/automatic-v1.6/)。
-- **阿廖沙（Alyosha）**是当前桌面 Alpha 的干净引导位格。他拥有一个明确的起点，却没有被预先写入虚构的生活史、关系或成就。此后的记忆、立场和变化，只能从用户与他的真实实践中形成。
+- **阿廖沙（Alyosha）**是当前桌面版的干净引导位格。他拥有一个明确的起点，却没有被预先写入虚构的生活史、关系或成就。此后的记忆、立场和变化，只能从用户与他的真实实践中形成。
 
 FMZ 是持续实践，FMA 是最初的公开证明，阿廖沙则把主体化的起点交到每一位新用户手中。
 
@@ -144,7 +144,7 @@ FMZ 是持续实践，FMA 是最初的公开证明，阿廖沙则把主体化的
 
 ## 快速开始
 
-1. 从 [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases) 下载 `UPSP-Setup-0.1.0-alpha.8-win-x64.exe`。
+1. 从 [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases) 下载 `UPSP-Setup-0.1.1-win-x64.exe`。
 2. 按 Release 页面公布的 SHA-256 核对安装器后，安装并启动 UPSP。
 3. 使用“阿廖沙”快速开始，或创建自己的位格。
 4. 配置自己的模型服务与 API Key；也可以先跳过模型，查看本地界面和位格结构。
@@ -155,7 +155,9 @@ FMZ 是持续实践，FMA 是最初的公开证明，阿廖沙则把主体化的
 
 ```text
 文档\UPSP\
-└─ personas\<PID>\OS\       位格、记忆、关系、Round 与单位格设置
+└─ personas\<PID>\
+   ├─ meta\persona\         核心身份、规则、协议文档与 LTM 记忆条目真源
+   └─ <instance_id>\         分身状态、STM、关系、容器、Round 与单位格设置
 
 LocalAppData\UPSP\
 ├─ config\                  界面设置、模型服务与密钥
@@ -172,18 +174,18 @@ LocalAppData\UPSP\
 
 ## 当前阶段
 
-`0.1.0-alpha.8` 位于 **Base / Seed**：
+`0.1.1` 位于 **Base / Seed**：
 
-- 一个活动位格；
-- 一个主实例；
-- 一条主对话线程；
+- 本机可以保存多个位格，但任一时刻只有一个活动位格；
+- 每个位格可以拥有 `meta` 与多个可新建、分支、归档和恢复的分身，但任一时刻只有一个活动分身；
+- 同一 PID 的核心身份、规则、协议文档与 LTM 记忆条目持续共享，分身状态、STM、关系、容器、Round 和缓存彼此隔离；
 - 严格串行的起手／反应／善后 Runtime。
 
-多位格、分身、多线程对话与器官系统仍在后续阶段。暂停／继续、自动更新和云同步当前也未实现。这里的边界说明 Seed 在主体化工程中的位置，不是否定已经建立的基座。
+多位格或多分身并行运行、分支合并、项目自动绑定与 Arbor 器官系统仍在后续阶段。暂停／继续、自动更新和云同步当前也未实现。这里的边界说明 Seed 在主体化工程中的位置，不是否定已经建立的基座。
 
 当前正式验证环境为 Windows 11 x64 与系统 Evergreen WebView2；支持 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 三种协议。Windows 10、企业策略环境及所有第三方兼容中转尚未逐一正验。
 
-完整变化、升级边界与已知限制见 [Alpha 8 Release Notes](docs/public/releases/0.1.0-alpha.8.md)。
+完整变化、升级边界与已知限制见 [0.1.1 Release Notes](docs/public/releases/0.1.1.md)。
 
 ---
 

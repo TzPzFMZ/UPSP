@@ -2,6 +2,8 @@ import json
 import os
 import sys
 
+import pytest
+
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TESTS_DIR)
 sys.path.insert(0, os.path.join(TESTS_DIR, ".."))
@@ -10,6 +12,36 @@ from runtime_test_helpers import RuntimeTestMixin
 
 
 class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
+    @pytest.fixture(autouse=True)
+    def _isolated_ltm(self, tmp_path, monkeypatch):
+        import paths
+        from data import memory_store
+
+        root = tmp_path / "isolated-ltm"
+        configs = {
+            "FULL": ("full.md", "F"),
+            "SUMMARY": ("summary.md", "S"),
+            "ABSTRACT": ("abstract.md", "A"),
+            "PINNED": ("pinned.md", "P"),
+            "BACKUP": ("backup.md", "B"),
+        }
+        for tier, (body_name, _code) in configs.items():
+            directory = root / tier.title()
+            directory.mkdir(parents=True)
+            body_attr = f"LTM_{tier}_{tier}_MD" if tier != "FULL" else "LTM_FULL_FULL_MD"
+            monkeypatch.setattr(paths, f"LTM_{tier}_DIR", str(directory))
+            monkeypatch.setattr(paths, body_attr, str(directory / body_name))
+            monkeypatch.setattr(paths, f"LTM_{tier}_META_JSON", str(directory / "meta.json"))
+            monkeypatch.setattr(paths, f"LTM_{tier}_INDEX_MD", str(directory / "index.md"), raising=False)
+        keywords = root / "keywords.json"
+        monkeypatch.setattr(paths, "LTM_KEYWORDS_JSON", str(keywords))
+        monkeypatch.setattr(
+            paths, "MEMORY_COMPRESSION_PENDING_JSON",
+            str(root / "memory_compression_pending.json"),
+        )
+        monkeypatch.setattr(
+            memory_store, "LTM_MEMORY_LINKS_JSON", str(tmp_path / "memory_links.json"))
+
     def _patch_ltm_tier(
             self,
             monkeypatch,
@@ -51,30 +83,108 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                     },
                     public_id: {
                         "degrade": True,
-                        "stored": True,
                         "compression": False,
                     },
                 }}
 
         monkeypatch.setattr(
             MemoryStore,
-            "get_meta",
-            lambda _self, mem_id: {
-                "id": mem_id,
-                "access": "private" if mem_id == private_id else "public",
+            "active_ltm_meta_by_id",
+            lambda _self: {
+                private_id: {
+                    "id": private_id,
+                    "access": "private",
+                    "stored_at": "",
+                },
+                public_id: {
+                    "id": public_id,
+                    "access": "public",
+                    "stored_at": "2026-08-14T00:00:00+08:00",
+                },
             },
         )
+        monkeypatch.setattr(
+            MemoryStore, "verify_ltm_entry", lambda _self, _mem_id: "Full")
         cleanup = CleanupPipeline(SimpleNamespace(
             heat=Heat(),
             memory_store=MemoryStore(),
         ))
-        removed = []
-        cleanup._remove_stm_copy = lambda mem_id, _store=None: removed.append(mem_id)
+        candidates, _to_abstract, _need_compress = cleanup._forgetting_candidates()
+        assert candidates == [public_id]
+        assert private_id not in candidates
 
-        assert cleanup._build_forgetting_context() == ""
-        cleanup._process_forgetting_result({"response": ""}, 1)
+    def test_spec735_private_upgrade_never_enters_public_ltm(self):
+        from engines.cleanup_pipeline import CleanupPipeline
+        from types import SimpleNamespace
 
-        assert removed == [public_id]
+        class Heat:
+            @staticmethod
+            def check_upgrade():
+                return ["MEM-PRIVATE1"]
+
+        class Store:
+            @staticmethod
+            def read_stm_meta_by_id(_mem_id):
+                return {"id": "MEM-PRIVATE1", "access": "private"}
+
+        result = {}
+        cleanup = CleanupPipeline(SimpleNamespace(
+            heat=Heat(),
+            memory_store=Store(),
+        ))
+
+        with pytest.raises(RuntimeError, match="memory_lifecycle_failed"):
+            cleanup._process_memory_lifecycle(10, settlement_result=result)
+
+        assert result["_memory_lifecycle_receipts"] == [{
+            "event": "memory_lifecycle_failed",
+            "status": "failed",
+            "mem_id": "MEM-PRIVATE1",
+            "tier": "Full",
+            "reason": "ValueError:private_memory_deferred",
+        }]
+
+    def test_spec746_normal_upgrade_only_fills_stored_at_and_retains_stm(self):
+        from engines.cleanup_pipeline import CleanupPipeline
+        from types import SimpleNamespace
+
+        calls = []
+
+        class Heat:
+            @staticmethod
+            def check_upgrade():
+                return ["MEM-74300008"]
+
+        class Store:
+            @staticmethod
+            def read_stm_meta_by_id(_mem_id):
+                return {
+                    "id": "MEM-74300008",
+                    "access": "public",
+                    "title": "升格后双驻留",
+                    "weight": 5,
+                }
+
+            @staticmethod
+            def ltm_entry_state(_mem_id, include_backup=False):
+                assert include_backup is False
+                return {"tier": "Full", "meta": {"weight": 5}}
+
+            @staticmethod
+            def admit_ltm_entry(mem_id):
+                calls.append(("admit", mem_id))
+                return {"stored_at": "2026-08-14T00:00:00+08:00"}
+
+        cleanup = CleanupPipeline(SimpleNamespace(
+            heat=Heat(),
+            memory_store=Store(),
+        ))
+        receipts = cleanup._process_memory_lifecycle(10)
+
+        assert calls == [("admit", "MEM-74300008")]
+        assert receipts[0]["tier"] == "Full"
+        assert receipts[0]["stored_at"] == "2026-08-14T00:00:00+08:00"
+        assert receipts[0]["stm_retained"] is True
 
     def test_ltm_degradation_candidates_use_countdown_not_weight(self, tmp_path, monkeypatch):
         import json
@@ -103,6 +213,7 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                 "type": "S",
                 "decay_period_days": 30,
                 "decay_countdown_days": 3,
+                "stored_at": "2026-08-01T00:00:00+08:00",
             },
             due: {
                 "id": due,
@@ -111,6 +222,7 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                 "type": "S",
                 "decay_period_days": 30,
                 "decay_countdown_days": 0,
+                "stored_at": "2026-08-01T00:00:00+08:00",
             },
         }, ensure_ascii=False), encoding="utf-8")
 
@@ -118,10 +230,9 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
             monkeypatch, paths, "Summary", summary_dir,
             summary_md, summary_meta, summary_index)
 
-        context = LTMDegradationManager().build_compression_context()
+        candidates = LTMDegradationManager().due_entries("Summary")
 
-        assert due in context
-        assert low_not_due not in context
+        assert [entry[0] for entry in candidates] == [due]
 
     def test_ltm_degradation_daily_countdown_decrements_positive_only(self, tmp_path, monkeypatch):
         import json
@@ -144,6 +255,7 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                 "type": "F",
                 "decay_period_days": 30,
                 "decay_countdown_days": 2,
+                "stored_at": "2026-08-01T00:00:00+08:00",
             },
             "MEM-ABC10002": {
                 "id": "MEM-ABC10002",
@@ -152,6 +264,7 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                 "type": "F",
                 "decay_period_days": 30,
                 "decay_countdown_days": 0,
+                "stored_at": "2026-08-01T00:00:00+08:00",
             },
         }, ensure_ascii=False), encoding="utf-8")
 
@@ -192,6 +305,7 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                 "type": "S",
                 "decay_period_days": 30,
                 "decay_countdown_days": 0,
+                "stored_at": "2026-08-01T00:00:00+08:00",
             },
         }, ensure_ascii=False), encoding="utf-8")
         abstract_md.write_text("", encoding="utf-8")
@@ -205,94 +319,26 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
             monkeypatch, paths, "Abstract", abstract_dir,
             abstract_md, abstract_meta, abstract_index)
 
-        LTMDegradationManager().apply_compression_results([], round_num=13)
+        candidates = LTMDegradationManager().due_entries("Summary")
 
+        assert [entry[0] for entry in candidates] == [mem_id]
         assert mem_id in summary_md.read_text(encoding="utf-8")
         assert json.loads(summary_meta.read_text(encoding="utf-8"))[mem_id]["decay_countdown_days"] == 0
         assert mem_id not in abstract_md.read_text(encoding="utf-8")
 
     def test_strip_memory_heading_removes_existing_heading(self):
-        from engines.cleanup_helpers import strip_memory_heading
+        from engines.cleanup_helpers import (
+            extract_memory_field,
+            extract_memory_free_text,
+            strip_memory_heading,
+        )
 
         text = "## MEM-0ABCDEF0  [F]\n**标题**：测试\n我确认这是一条正文。"
 
         assert strip_memory_heading(text) == "**标题**：测试\n我确认这是一条正文。"
         assert strip_memory_heading("我确认这是一条正文。") == "我确认这是一条正文。"
-
-    def test_memory_lifecycle_ltm_write_does_not_duplicate_heading(self, tmp_path, monkeypatch):
-        """Spec 024 验收 10：LTM 写端不会重复写入 ## MEM 标题"""
-
-        abstract_dir = tmp_path / "LTM" / "Memory" / "Abstract"
-        abstract_dir.mkdir(parents=True, exist_ok=True)
-        abstract_md = abstract_dir / "abstract.md"
-        abstract_meta = abstract_dir / "meta.json"
-        abstract_index = abstract_dir / "index.md"
-        abstract_meta.write_text("{}", encoding="utf-8")
-
-        full_dir = tmp_path / "LTM" / "Memory" / "Full"
-        full_dir.mkdir(parents=True, exist_ok=True)
-        full_md = full_dir / "full.md"
-        full_meta = full_dir / "meta.json"
-        full_index = full_dir / "index.md"
-        full_meta.write_text("{}", encoding="utf-8")
-
-        import paths
-        monkeypatch.setattr(paths, "LTM_ABSTRACT_DIR", str(abstract_dir))
-        monkeypatch.setattr(paths, "LTM_ABSTRACT_ABSTRACT_MD", str(abstract_md))
-        monkeypatch.setattr(paths, "LTM_ABSTRACT_META_JSON", str(abstract_meta))
-        monkeypatch.setattr(paths, "LTM_ABSTRACT_INDEX_MD", str(abstract_index))
-        monkeypatch.setattr(paths, "LTM_FULL_DIR", str(full_dir))
-        monkeypatch.setattr(paths, "LTM_FULL_FULL_MD", str(full_md))
-        monkeypatch.setattr(paths, "LTM_FULL_META_JSON", str(full_meta))
-        monkeypatch.setattr(paths, "LTM_FULL_INDEX_MD", str(full_index))
-
-        rt = self._make_runtime(tmp_path)
-
-        # 模拟 MemoryStore
-        inherited = {
-            "created_round": 12,
-            "last_recalled_round": 34,
-            "created_at": "2026-08-01T01:02:03+08:00",
-            "last_recalled_at": "2026-08-06T12:00:00+08:00",
-            "linked_containers": ["DC-1"],
-            "current_overview": "DC-1：当前挂接备注",
-            "current_overview_updated_at": "2026-08-06T11:00:00+08:00",
-        }
-
-        class _FakeMS:
-            def load_meta(self):
-                return {
-                    "MEM-0ABCDEF0": dict(inherited),
-                    "MEM-0BBBBB01": dict(inherited),
-                }
-        fake_ms = _FakeMS()
-
-        # 输入文本已含 ## MEM-... 标题
-        text_with_heading = "## MEM-0ABCDEF0  [F]  权重5\n**交互对象**：TzPz\n**标题**：测试\n**梗概**：正文内容。"
-        rt._archive_to_abstract("MEM-0ABCDEF0", text_with_heading, 100, fake_ms)
-
-        content = abstract_md.read_text(encoding="utf-8")
-        headings = [line for line in content.splitlines()
-                    if line.strip().startswith("## MEM-")]
-        assert len(headings) == 1, f"Abstract 层出现 {len(headings)} 个标题，预期 1 个：\n{content}"
-
-        # 验证 LTM Full 升格路径
-        text_with_heading2 = "## MEM-0BBBBB01  [S]  权重3\n**交互对象**：FMA\n**标题**：Full 测试\n**梗概**：Full 正文。"
-        # 这里只验证 _archive_to_abstract 不重复写 heading
-        rt._archive_to_abstract("MEM-0BBBBB01", text_with_heading2, 200, fake_ms)
-        content2 = abstract_md.read_text(encoding="utf-8")
-        headings2 = [line for line in content2.splitlines()
-                     if line.strip().startswith("## MEM-0BBBBB01")]
-        assert len(headings2) == 1, f"Abstract 层 MEM-0BBBBB01 出现 {len(headings2)} 个标题：\n{content2}"
-        archived = json.loads(abstract_meta.read_text(encoding="utf-8"))
-        for mem_id in ("MEM-0ABCDEF0", "MEM-0BBBBB01"):
-            assert archived[mem_id]["created_round"] == 12
-            assert archived[mem_id]["last_recalled_round"] == 34
-            assert archived[mem_id]["linked_containers"] == ["DC-1"]
-            assert archived[mem_id]["current_overview"] == "DC-1：当前挂接备注"
-            assert archived[mem_id]["current_overview_updated_at"] == (
-                "2026-08-06T11:00:00+08:00"
-            )
+        assert extract_memory_field("感受词：谨慎乐观", "感受词") == "谨慎乐观"
+        assert extract_memory_free_text(strip_memory_heading(text)) == "我确认这是一条正文。"
 
     def test_process_forgetting_removes_stored_stm_copy_completely(self, tmp_path, monkeypatch):
         """已入库遗忘分支必须删除 STM 正文、meta、index、keywords、heat 的整套副本"""
@@ -300,6 +346,7 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         from data import memory_heat as mh
         from data import memory_store as ms
         from data import memory_index as mi
+        import paths
 
         memory_md = tmp_path / "memory.md"
         meta_json = tmp_path / "meta.json"
@@ -312,8 +359,14 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
             "## MEM-CAFEBABE\n保留正文\n",
             encoding="utf-8",
         )
+        admitted_at = "2026-08-01T00:00:00+08:00"
         meta_json.write_text(json.dumps({
-            "MEM-DEADBEEF": {"id": "MEM-DEADBEEF", "title": "删"},
+            "MEM-DEADBEEF": {
+                "id": "MEM-DEADBEEF", "title": "删", "weight": 5,
+                "type": "F", "access": "public", "tags": ["测试"],
+                "created_at": admitted_at, "stored_at": admitted_at,
+                "decay_period_days": 30, "decay_countdown_days": 30,
+            },
             "MEM-CAFEBABE": {"id": "MEM-CAFEBABE", "title": "留"},
         }, ensure_ascii=False), encoding="utf-8")
         index_md.write_text(
@@ -329,8 +382,8 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         }, ensure_ascii=False), encoding="utf-8")
         heat_json.write_text(json.dumps({
             "entries": {
-                "MEM-DEADBEEF": {"degrade": True, "stored": True, "compression": True},
-                "MEM-CAFEBABE": {"degrade": False, "stored": True, "compression": False},
+                "MEM-DEADBEEF": {"degrade": True, "compression": True},
+                "MEM-CAFEBABE": {"degrade": False, "compression": False},
             }
         }, ensure_ascii=False), encoding="utf-8")
 
@@ -339,12 +392,33 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         monkeypatch.setattr(ms, "INDEX_MD", str(index_md))
         monkeypatch.setattr(mi, "KEYWORDS_JSON", str(keywords_json))
         monkeypatch.setattr(mh, "HEAT_JSON", str(heat_json))
+        monkeypatch.setattr(paths, "KEYWORDS_JSON", str(keywords_json))
+        monkeypatch.setattr(paths, "HEAT_JSON", str(heat_json))
 
         rt = self._make_runtime(tmp_path)
         rt.heat = mh.MemoryHeat()
         rt.memory_store = ms.MemoryStore()
         rt.memory_index = mi.MemoryIndex()
-        rt._process_forgetting_result({"response": ""}, 9)
+        rt.memory_store.store_ltm_entry(
+            "Full",
+            "MEM-DEADBEEF",
+            "已验证入库正文",
+            {
+                "id": "MEM-DEADBEEF",
+                "type": "F",
+                "weight": 5,
+                "title": "已验证入库",
+                "access": "public",
+                "tags": ["测试"],
+                "created_at": admitted_at,
+                "stored_at": admitted_at,
+                "decay_period_days": 30,
+                "decay_countdown_days": 30,
+            },
+        )
+        from data.memory_compression_store import MemoryCompressionManager
+        MemoryCompressionManager(memory_store=rt.memory_store).settle_stm_forgetting(
+            "MEM-DEADBEEF", round_num=9)
 
         assert "MEM-DEADBEEF" not in ms.MemoryStore().list_entries()
         assert "MEM-DEADBEEF" not in memory_md.read_text(encoding="utf-8")
@@ -353,6 +427,17 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         assert "MEM-DEADBEEF" not in json.loads(keywords_json.read_text(encoding="utf-8"))["index"]["测试"]
         assert "MEM-DEADBEEF" not in json.loads(heat_json.read_text(encoding="utf-8"))["entries"]
         assert "MEM-CAFEBABE" in ms.MemoryStore().list_entries()
+
+    def test_pending_stm_forgetting_target_keeps_tier_and_weight_aligned(self):
+        from data.memory_store import memory_stm_forgetting_target
+
+        assert memory_stm_forgetting_target(5) == ("Summary", 4)
+        assert memory_stm_forgetting_target(4) == ("Abstract", 2)
+        assert memory_stm_forgetting_target(3) == ("Abstract", 2)
+        assert memory_stm_forgetting_target(2) == ("Abstract", 2)
+        assert memory_stm_forgetting_target(1) == ("Abstract", 1)
+        with pytest.raises(ValueError, match="invalid_memory_weight"):
+            memory_stm_forgetting_target(True)
 
     def test_process_forgetting_archives_unstored_f_to_summary(self, tmp_path, monkeypatch):
         """未入库 F 级 STM 遗忘时走 F→S，不应直接落到 Abstract"""
@@ -388,9 +473,20 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
             f"## {s_id}\nS 原文\n",
             encoding="utf-8",
         )
+        created_at = "2026-08-01T00:00:00+08:00"
         meta_json.write_text(json.dumps({
-            f_id: {"id": f_id, "title": "F条目", "weight": 5, "type": "F"},
-            s_id: {"id": s_id, "title": "S条目", "weight": 3, "type": "S"},
+            f_id: {
+                "id": f_id, "title": "F条目", "weight": 5, "type": "F",
+                "access": "public", "tags": ["测试"], "created_at": created_at,
+                "stored_at": "", "decay_period_days": 30,
+                "decay_countdown_days": 30,
+            },
+            s_id: {
+                "id": s_id, "title": "S条目", "weight": 3, "type": "S",
+                "access": "public", "tags": ["测试"], "created_at": created_at,
+                "stored_at": "", "decay_period_days": 30,
+                "decay_countdown_days": 30,
+            },
         }, ensure_ascii=False), encoding="utf-8")
         index_md.write_text(
             "| 编号 | 类型 | 权重 | 标题 | 交互对象 | 入库轮 |\n"
@@ -405,8 +501,8 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         }, ensure_ascii=False), encoding="utf-8")
         heat_json.write_text(json.dumps({
             "entries": {
-                f_id: {"degrade": True, "stored": False, "compression": True},
-                s_id: {"degrade": True, "stored": False, "compression": True},
+                f_id: {"degrade": True, "compression": True},
+                s_id: {"degrade": True, "compression": True},
             }
         }, ensure_ascii=False), encoding="utf-8")
 
@@ -415,6 +511,8 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         monkeypatch.setattr(ms, "INDEX_MD", str(index_md))
         monkeypatch.setattr(mi, "KEYWORDS_JSON", str(keywords_json))
         monkeypatch.setattr(mh, "HEAT_JSON", str(heat_json))
+        monkeypatch.setattr(paths, "KEYWORDS_JSON", str(keywords_json))
+        monkeypatch.setattr(paths, "HEAT_JSON", str(heat_json))
         monkeypatch.setattr(paths, "LTM_SUMMARY_DIR", str(summary_dir))
         monkeypatch.setattr(paths, "LTM_SUMMARY_SUMMARY_MD", str(summary_md))
         monkeypatch.setattr(paths, "LTM_SUMMARY_INDEX_MD", str(summary_index))
@@ -428,29 +526,52 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         rt.heat = mh.MemoryHeat()
         rt.memory_store = ms.MemoryStore()
         rt.memory_index = mi.MemoryIndex()
-        rt._process_forgetting_result({
-            "response": (
-                f"<!-- FORGET:{f_id} -->\nF 压缩为 Summary。\n<!-- /FORGET -->\n"
-                f"<!-- FORGET:{s_id} -->\nS 压缩为 Abstract。\n<!-- /FORGET -->"
-            )
-        }, 9)
+        stm_meta = json.loads(meta_json.read_text(encoding="utf-8"))
+        rt.memory_store.store_ltm_entry(
+            "Full", f_id, f"## {f_id}\n**内容**：F 原文", stm_meta[f_id])
+        rt.memory_store.store_ltm_entry(
+            "Summary", s_id, f"## {s_id}\n**摘要**：S 原文", stm_meta[s_id])
+        from data.memory_compression_store import MemoryCompressionManager
+        manager = MemoryCompressionManager(memory_store=rt.memory_store)
+        manager.settle_stm_forgetting(f_id, round_num=8)
+        manager.settle_stm_forgetting(s_id, round_num=8)
+
+        assert f_id not in memory_md.read_text(encoding="utf-8")
+        assert s_id not in memory_md.read_text(encoding="utf-8")
+        assert f_id not in json.loads(meta_json.read_text(encoding="utf-8"))
+        assert s_id not in json.loads(meta_json.read_text(encoding="utf-8"))
+        assert f_id not in json.loads(heat_json.read_text(encoding="utf-8"))["entries"]
+        assert s_id not in json.loads(heat_json.read_text(encoding="utf-8"))["entries"]
+        assert s_id in summary_md.read_text(encoding="utf-8")
+        assert f_id not in summary_md.read_text(encoding="utf-8")
+        assert not abstract_md.exists()
+
+        manager.prepare_daily_cycle(local_date="2026-08-17", round_num=9)
+        manager.apply_batch([
+            {"mem_id": f_id, "semantic_content": "F 压缩为 Summary。",
+             "retained_keywords": ["测试"]},
+            {"mem_id": s_id, "semantic_content": "S 压缩为 Abstract。",
+             "retained_keywords": ["测试"]},
+        ], round_num=9)
 
         assert f_id in summary_md.read_text(encoding="utf-8")
+        assert "F 压缩为 Summary。" in summary_md.read_text(encoding="utf-8")
         assert f_id in summary_index.read_text(encoding="utf-8")
         assert f_id not in abstract_md.read_text(encoding="utf-8")
         assert s_id in abstract_md.read_text(encoding="utf-8")
+        assert "S 压缩为 Abstract。" in abstract_md.read_text(encoding="utf-8")
         assert s_id in abstract_index.read_text(encoding="utf-8")
         summary_entry = json.loads(summary_meta.read_text(encoding="utf-8"))[f_id]
         abstract_entry = json.loads(abstract_meta.read_text(encoding="utf-8"))[s_id]
         assert summary_entry["type"] == "S"
-        assert summary_entry["weight"] == 5
+        assert summary_entry["weight"] == 4
         assert abstract_entry["type"] == "A"
-        assert abstract_entry["weight"] == 3
+        assert abstract_entry["weight"] == 2
         assert f_id not in memory_md.read_text(encoding="utf-8")
         assert s_id not in memory_md.read_text(encoding="utf-8")
 
-    def test_process_forgetting_deletes_stm_when_same_id_already_in_ltm(self, tmp_path, monkeypatch):
-        """LTM 任意层同编号已归档时，STM 遗忘只删 STM 副本，不再写新层。"""
+    def test_process_forgetting_uses_ltm_truth_when_stm_semantic_differs(self, tmp_path, monkeypatch):
+        """Spec746 后 LTM 是语义真源，待压缩项不得采信不同的 STM 副本。"""
         import json
         from data import memory_heat as mh
         from data import memory_store as ms
@@ -486,7 +607,10 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         summary_md.write_text(f"## {mem_id}  [S]  权重3\n已归档 Summary\n", encoding="utf-8")
         summary_index.write_text(f"| 编号 | 类型 | 权重 | 标题 | 交互对象 | 最后调用轮 | 锁定 |\n|------|------|------|------|---------|-----------|------|\n| {mem_id} | [S] | 3 | 已归档 | — | 00001 | 否 |\n", encoding="utf-8")
         summary_meta.write_text(json.dumps({
-            mem_id: {"id": mem_id, "title": "已归档", "weight": 3, "type": "S"},
+            mem_id: {
+                "id": mem_id, "title": "已归档", "weight": 3,
+                "type": "S", "tags": ["归档"],
+            },
         }, ensure_ascii=False), encoding="utf-8")
         abstract_md.write_text("", encoding="utf-8")
         abstract_index.write_text("", encoding="utf-8")
@@ -497,16 +621,24 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         monkeypatch.setattr(ms, "INDEX_MD", str(index_md))
         monkeypatch.setattr(mi, "KEYWORDS_JSON", str(keywords_json))
         monkeypatch.setattr(mh, "HEAT_JSON", str(heat_json))
+        monkeypatch.setattr(paths, "KEYWORDS_JSON", str(keywords_json))
+        monkeypatch.setattr(paths, "HEAT_JSON", str(heat_json))
+        monkeypatch.setattr(paths, "LTM_SUMMARY_DIR", str(summary_dir))
+        monkeypatch.setattr(paths, "LTM_SUMMARY_SUMMARY_MD", str(summary_md))
+        monkeypatch.setattr(paths, "LTM_SUMMARY_INDEX_MD", str(summary_index))
         monkeypatch.setattr(paths, "LTM_SUMMARY_META_JSON", str(summary_meta))
+        monkeypatch.setattr(paths, "LTM_ABSTRACT_DIR", str(abstract_dir))
+        monkeypatch.setattr(paths, "LTM_ABSTRACT_ABSTRACT_MD", str(abstract_md))
+        monkeypatch.setattr(paths, "LTM_ABSTRACT_INDEX_MD", str(abstract_index))
         monkeypatch.setattr(paths, "LTM_ABSTRACT_META_JSON", str(abstract_meta))
 
         rt = self._make_runtime(tmp_path)
         rt.heat = mh.MemoryHeat()
         rt.memory_store = ms.MemoryStore()
         rt.memory_index = mi.MemoryIndex()
-        rt._process_forgetting_result({
-            "response": f"<!-- FORGET:{mem_id} -->\n压缩不应写入\n<!-- /FORGET -->"
-        }, 9)
+        from data.memory_compression_store import MemoryCompressionManager
+        MemoryCompressionManager(memory_store=rt.memory_store).settle_stm_forgetting(
+            mem_id, round_num=9)
 
         assert mem_id not in memory_md.read_text(encoding="utf-8")
         assert mem_id not in json.loads(meta_json.read_text(encoding="utf-8"))
@@ -516,7 +648,6 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
     def test_ltm_degradation_removes_source_body_index_and_meta(self, tmp_path, monkeypatch):
         import json
         import paths
-        import data.memory_index as memory_index_mod
 
         rt = self._make_runtime(tmp_path)
         summary_dir = tmp_path / "LTM" / "Memory" / "Summary"
@@ -546,8 +677,10 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                 "id": "MEM-ABCDEF12",
                 "title": "待降格",
                 "weight": 5,
+                "tags": ["测试"],
                 "decay_period_days": 30,
                 "decay_countdown_days": 0,
+                "stored_at": "2026-08-01T00:00:00+08:00",
             },
             "MEM-00000001": {
                 "id": "MEM-00000001",
@@ -555,6 +688,7 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                 "weight": 3,
                 "decay_period_days": 30,
                 "decay_countdown_days": 3,
+                "stored_at": "2026-08-01T00:00:00+08:00",
             },
         }, ensure_ascii=False), encoding="utf-8")
         abstract_md.write_text("", encoding="utf-8")
@@ -573,9 +707,15 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         monkeypatch.setattr(paths, "LTM_ABSTRACT_ABSTRACT_MD", str(abstract_md))
         monkeypatch.setattr(paths, "LTM_ABSTRACT_META_JSON", str(abstract_meta))
         monkeypatch.setattr(paths, "LTM_ABSTRACT_INDEX_MD", str(abstract_index))
-        monkeypatch.setattr(memory_index_mod, "LTM_KEYWORDS_JSON", str(tmp_path / "ltm_keywords.json"))
 
-        rt._apply_ltm_degradation([("MEM-ABCDEF12", "降格后梗概")], round_num=10)
+        from data.memory_compression_store import MemoryCompressionManager
+        manager = MemoryCompressionManager(memory_store=rt.memory_store)
+        manager.prepare_daily_cycle(local_date="2026-08-17", round_num=10)
+        manager.apply_batch([{
+            "mem_id": "MEM-ABCDEF12",
+            "semantic_content": "降格后梗概",
+            "retained_keywords": ["测试"],
+        }], round_num=10)
 
         assert "MEM-ABCDEF12" not in summary_md.read_text(encoding="utf-8")
         assert "MEM-ABCDEF12" not in summary_index.read_text(encoding="utf-8")
@@ -583,13 +723,13 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         assert "MEM-ABCDEF12" in abstract_md.read_text(encoding="utf-8")
         assert "MEM-ABCDEF12" in abstract_index.read_text(encoding="utf-8")
         abstract_entry = json.loads(abstract_meta.read_text(encoding="utf-8"))["MEM-ABCDEF12"]
+        assert abstract_entry["weight"] == 5
         assert abstract_entry["decay_period_days"] == 30
         assert abstract_entry["decay_countdown_days"] == 30
 
     def test_spec216_ltm_degradation_moves_public_abstract_to_backup(self, tmp_path, monkeypatch):
         import json
         import paths
-        import data.memory_index as memory_index_mod
 
         rt = self._make_runtime(tmp_path)
         abstract_dir = tmp_path / "LTM" / "Memory" / "Abstract"
@@ -626,6 +766,7 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                 "access": "public",
                 "decay_period_days": 30,
                 "decay_countdown_days": 0,
+                "stored_at": "2026-08-01T00:00:00+08:00",
             },
         }, ensure_ascii=False), encoding="utf-8")
         backup_md.write_text("", encoding="utf-8")
@@ -644,9 +785,11 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         monkeypatch.setattr(paths, "LTM_BACKUP_BACKUP_MD", str(backup_md))
         monkeypatch.setattr(paths, "LTM_BACKUP_INDEX_MD", str(backup_index), raising=False)
         monkeypatch.setattr(paths, "LTM_BACKUP_META_JSON", str(backup_meta))
-        monkeypatch.setattr(memory_index_mod, "LTM_KEYWORDS_JSON", str(ltm_keywords))
+        monkeypatch.setattr(paths, "LTM_KEYWORDS_JSON", str(ltm_keywords))
 
-        rt._prepare_ltm_degradation_for_day(round_num=12)
+        from data.memory_compression_store import MemoryCompressionManager
+        MemoryCompressionManager(memory_store=rt.memory_store).prepare_daily_cycle(
+            local_date="2026-08-17", round_num=12)
 
         assert mem_id not in abstract_md.read_text(encoding="utf-8")
         assert mem_id not in abstract_index.read_text(encoding="utf-8")
@@ -659,4 +802,5 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         assert backup_entry["title"] == "日常快递"
         assert backup_entry["decay_period_days"] == 0
         assert backup_entry["decay_countdown_days"] == 0
-        assert f"{mem_id}[B]" in json.loads(ltm_keywords.read_text(encoding="utf-8"))["index"]["日常"]
+        assert "日常" not in json.loads(
+            ltm_keywords.read_text(encoding="utf-8"))["index"]

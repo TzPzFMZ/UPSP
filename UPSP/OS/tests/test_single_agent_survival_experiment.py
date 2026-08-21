@@ -10,13 +10,13 @@ def _load_module():
     return _load_module_from_path('single_agent_survival_experiment', TOOL_PATH)
 
 
-def test_spec603_manifest_freezes_ten_offline_scenarios():
+def test_spec765_manifest_contains_only_reachable_offline_scenarios():
     experiment = _load_module()
 
     scenarios = experiment.scenario_manifest()
 
-    assert len(scenarios) == 10
-    assert len({item["id"] for item in scenarios}) == 10
+    assert len(scenarios) == 9
+    assert len({item["id"] for item in scenarios}) == 9
     assert {item["id"] for item in scenarios} == {
         "simple_conversation",
         "chunked_read",
@@ -25,7 +25,6 @@ def test_spec603_manifest_freezes_ten_offline_scenarios():
         "protocol_write_block",
         "rhythm_user_task",
         "cross_round_continue",
-        "cache_compaction_user_task",
         "evidence_mismatch",
         "unfinished_final_reply",
     }

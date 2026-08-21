@@ -191,19 +191,11 @@ def _api_config_for_summary() -> tuple[dict[str, Any], bool, str]:
 def _read_round_events(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
-    events: list[dict[str, Any]] = []
     try:
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                item = json.loads(line)
-                if isinstance(item, dict):
-                    events.append(item)
+        from data.round_audit_codec import read_round_audit_file
+        return read_round_audit_file(path)
     except Exception:
         return []
-    return events
 
 
 def _latest_round_events(round_dir: Path | None = None) -> list[dict[str, Any]]:
@@ -628,10 +620,19 @@ def command_send(args) -> tuple[dict[str, Any], list[str]]:
             "send 需要非空 --message 或 --message-file。",
             "传入要发送给 UPSP Runtime 的用户消息。",
         )
+    final_response_max_chars = getattr(args, "final_response_max_chars", None)
+    if final_response_max_chars is not None and final_response_max_chars <= 0:
+        raise CliError(
+            "invalid_final_response_max_chars",
+            "--final-response-max-chars 必须是正整数。",
+        )
+    kwargs = {"message": message}
+    if final_response_max_chars is not None:
+        kwargs["final_response_max_chars"] = final_response_max_chars
     result = _run_resident_command(
         "send",
         str(getattr(args, "permission_level", "limited") or "limited"),
-        message=message,
+        **kwargs,
     )
     return result, []
 
@@ -678,7 +679,8 @@ def command_tick(args) -> tuple[dict[str, Any], list[str]]:
     return result, []
 
 
-def _run_resident_command(kind, permission_level, *, message=None):
+def _run_resident_command(kind, permission_level, *, message=None,
+                          final_response_max_chars=None):
     from engines.resident_runtime import (
         ResidentRuntimeService,
         RuntimeAlreadyRunning,
@@ -691,11 +693,17 @@ def _run_resident_command(kind, permission_level, *, message=None):
             with contextlib.redirect_stdout(sys.stderr):
                 service.start()
         except RuntimeAlreadyRunning as exc:
+            kwargs = {"message": message}
+            if kind == "send" and final_response_max_chars is not None:
+                kwargs["final_response_max_chars"] = final_response_max_chars
             return _call_resident_host(
-                exc.host, kind, permission_level, message=message)
+                exc.host, kind, permission_level, **kwargs)
         with contextlib.redirect_stdout(sys.stderr):
             if kind == "send":
-                return service.submit_message(message, permission_level)
+                kwargs = {}
+                if final_response_max_chars is not None:
+                    kwargs["final_response_max_chars"] = final_response_max_chars
+                return service.submit_message(message, permission_level, **kwargs)
             return service.submit_pending(kind, permission_level)
     except RuntimeServiceError as exc:
         raise CliError(str(exc), str(exc)) from exc
@@ -703,7 +711,8 @@ def _run_resident_command(kind, permission_level, *, message=None):
         service.close()
 
 
-def _call_resident_host(host, kind, permission_level, *, message=None):
+def _call_resident_host(host, kind, permission_level, *, message=None,
+                        final_response_max_chars=None):
     address = str((host or {}).get("address") or "")
     port = (host or {}).get("port")
     if address != "127.0.0.1" or not isinstance(port, int) or port <= 0:
@@ -722,6 +731,8 @@ def _call_resident_host(host, kind, permission_level, *, message=None):
     }
     if kind == "send":
         payload["message"] = str(message or "")
+    if kind == "send" and final_response_max_chars is not None:
+        payload["final_response_max_chars"] = final_response_max_chars
     origin = f"http://{address}:{port}"
     request = urllib.request.Request(
         origin + path,
@@ -1029,6 +1040,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Required acknowledgement for real Runtime/provider calls.",
     )
     send.add_argument("--permission-level", choices=("limited", "guarded", "unlimited"))
+    send.add_argument("--final-response-max-chars", type=int)
 
     relay = subparsers.add_parser("relay", help="Run one live pending relay round.")
     relay.add_argument(
@@ -1037,7 +1049,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Required acknowledgement for real Runtime/provider calls.",
     )
     relay.add_argument("--permission-level", choices=("limited", "guarded", "unlimited"))
-
     tick = subparsers.add_parser("tick", help="Run one live pending natural round.")
     tick.add_argument(
         "--live",

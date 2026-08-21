@@ -281,8 +281,9 @@ def test_common_local_credential_paths_are_hard_denied(relative_path):
     )
     assert read["allowed"] is False
     assert read["details"]["denial"] == "secret_like_path"
-    assert shell["allowed"] is False
-    assert shell["details"]["danger_reason"] == "credential_access"
+    # Spec756: Shell does not claim to sandbox subprocess paths by scanning
+    # command strings. The dedicated file tool still enforces the hard deny.
+    assert shell["allowed"] is True
 
 
 def test_requested_audit_failure_cancels_approval_without_waiting():

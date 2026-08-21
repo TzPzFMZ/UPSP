@@ -37,16 +37,28 @@ def load_os_template_config(relative_path):
 SYSTEM_CONFIG_FIELDS = {
     "heartbeat.interval":         ("int",  "心跳 tick 间隔秒数，默认5"),
     "standby.idle_threshold_min": ("int",  "待命轮触发空闲分钟数，默认30"),
+    "round.reminder_seconds":     ("int",  "Reaction 在场提醒时间，默认600秒"),
+    "round.warning_seconds":      ("int",  "Reaction 收束警告时间，默认1200秒"),
+    "round.auto_relay_seconds":   ("int",  "Reaction 自动中继时间，默认1800秒"),
     "rhythm.period":              ("int",  "节律周期轮数，默认32"),
-    "token_usage.warning_ratio":  ("float","token 预警比例，默认0.7"),
-    "autonomous_trigger.tacit_pending_threshold": ("int", "默契集 pending 行数触发阈值，默认512"),
-    "autonomous_trigger.connection_pending_threshold": ("int", "联系集 pending 行数触发阈值，默认512"),
+    "token_usage.watermark_policy_version": ("int", "lately watermark policy migration marker"),
+    "response_anchor.prompt":     ("str",  "每个 Reaction Frame 的 STATUSBAR 回答锚点；仅提示，不执行回复判罚"),
     "audit.round_snapshot_retention": ("int", "round_{N}.jsonl FIFO retained audit streams"),
+    "audit.round_snapshot_max_mib": ("int", "round audit total-size soft limit in MiB"),
+    "audit.round_snapshot_policy_version": ("int", "round audit retention policy migration marker"),
     "audit.state_backup_retention": ("int", "STM/buffer/state_backups.jsonl FIFO retained rows"),
     "general_tools.file_read_window_chars": ("int", "通用 file_read 自适应 bounded 字符窗口上限，默认16384"),
     "general_tools.web_fetch_window_chars": ("int", "通用 web_fetch bounded 字符窗口，默认4096"),
     "general_tools.web_search_window_results": ("int", "通用 web_search 结果窗口，默认5"),
     "connectivity.max_latency_records": ("int", "连通性记录 FIFO 上限"),
+}
+
+LATELY_CONFIG_FIELDS = {
+    "pressure_ratio": ("float", "压缩触发比例，默认0.9"),
+    "protected_interaction_count": ("int", "保护最近用户交互原文数量，默认16"),
+    "semantic_summary_ratio": ("float", "单分片语义摘要上限比例，默认0.125"),
+    "cycle_target_ratio": ("float", "单周期 lately 目标比例，默认0.25"),
+    "batch_source_chars": ("int", "单 Reaction Frame 源材料字符上限，默认65536"),
 }
 
 

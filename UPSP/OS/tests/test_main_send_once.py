@@ -16,8 +16,9 @@ def test_spec612_build_runtime_is_full_only_and_rejects_retired_profile(monkeypa
             seen["config_store"] = config_store
 
     class FakeAssembler:
-        def __init__(self, *, state_store, context_profile):
+        def __init__(self, *, state_store, config_store, context_profile):
             seen["state_store"] = state_store
+            seen["assembler_config_store"] = config_store
             seen["context_profile"] = context_profile
 
     class FakeHeartbeat:
@@ -40,6 +41,7 @@ def test_spec612_build_runtime_is_full_only_and_rejects_retired_profile(monkeypa
     assert seen["context_profile"] == "full"
     assert seen["state_store"] is sm
     assert seen["config_store"] is cfg
+    assert seen["assembler_config_store"] is cfg
 
     try:
         os_main.build_runtime(sm, cfg, context_profile="popup_exception_only")
@@ -110,6 +112,9 @@ def test_spec607_runtime_round_start_audits_actual_context_profile():
         sm=FakeStateStore(),
         hb=FakeHeartbeat(),
         assembler=SimpleNamespace(context_profile="full"),
+        executor=SimpleNamespace(round_context_window_tokens=None),
+        cfg=SimpleNamespace(
+            get_round_context_window_tokens=lambda: 1_000_000),
     ))
     object.__setattr__(runtime, "audit", FakeAudit())
     object.__setattr__(runtime, "control", RuntimeControl())

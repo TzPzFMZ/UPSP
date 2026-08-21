@@ -14,7 +14,12 @@ def _clean_text(value):
 
 def _receipt(status, request, reason="", body="", meta=None, memory_layer="",
              read_mode="", range_requested=None, range_applied=None,
-             total_lines=0, total_chars=0):
+             total_lines=0, total_chars=0, source_memory_layer="",
+             stm_present=False, heat_boost_applied=False,
+             heat_boost_deduplicated=False,
+             ltm_decay_reset_applied=False,
+             ltm_decay_countdown_before=None,
+             ltm_decay_countdown_after=None):
     return {
         "tool_id": "memory_content_read",
         "tool_family": "protocol_tool",
@@ -26,6 +31,13 @@ def _receipt(status, request, reason="", body="", meta=None, memory_layer="",
         "body": body,
         "meta": meta or {},
         "memory_layer": memory_layer,
+        "source_memory_layer": source_memory_layer or memory_layer,
+        "stm_present": bool(stm_present),
+        "heat_boost_applied": bool(heat_boost_applied),
+        "heat_boost_deduplicated": bool(heat_boost_deduplicated),
+        "ltm_decay_reset_applied": bool(ltm_decay_reset_applied),
+        "ltm_decay_countdown_before": ltm_decay_countdown_before,
+        "ltm_decay_countdown_after": ltm_decay_countdown_after,
         "read_mode": read_mode,
         "range_requested": range_requested,
         "range_applied": range_applied,
@@ -35,7 +47,10 @@ def _receipt(status, request, reason="", body="", meta=None, memory_layer="",
     }
 
 
-def apply_memory_content_read_requests(requests, state, data_modules):
+def apply_memory_content_read_requests(
+        requests, state, data_modules, *, round_num=None,
+        memory_heat_boosted_ids=None,
+        memory_reconsolidation_tracker=None):
     """Return body receipts plus round-local CONTENT mount changes."""
     receipts = []
     mounts = []
@@ -43,6 +58,7 @@ def apply_memory_content_read_requests(requests, state, data_modules):
     if not requests:
         return receipts, mounts, unmounts
     memory_store = data_modules["memory_store"]
+    memory_recall = data_modules.get("memory_recall")
     relation_store = data_modules.get("relation_store")
     confirmed = confirmed_subjects_from_state(
         state, relation_store=relation_store)
@@ -81,15 +97,52 @@ def apply_memory_content_read_requests(requests, state, data_modules):
                 memory_layer=layer,
             ))
             continue
+        if memory_recall is None:
+            receipts.append(_receipt(
+                "error",
+                request,
+                reason="memory_recall_processor_unavailable",
+                memory_layer=layer,
+                source_memory_layer=layer,
+            ))
+            continue
         try:
-            result = memory_store.read_body_by_id(mem_id, **range_kwargs_from_request(request))
+            # Resolve and range the canonical body before recall mutates any
+            # lifecycle state. Invalid ranges and read failures stay side-effect
+            # free; a successful partial read still rehydrates the full body.
+            result = memory_store.read_body_by_id(
+                mem_id, **range_kwargs_from_request(request))
         except ValueError as exc:
             receipts.append(_receipt("rejected", request, reason=str(exc)))
             continue
         except Exception:
-            receipts.append(_receipt("memory_not_found", request, reason="memory_not_found"))
+            receipts.append(_receipt(
+                "memory_not_found", request, reason="memory_not_found"))
             continue
-        receipt_meta = dict(result.get("meta") or {})
+        lifecycle = {
+            "source_memory_layer": layer,
+            "stm_present": layer == "STM",
+            "heat_boost_applied": False,
+            "heat_boost_deduplicated": False,
+        }
+        try:
+            lifecycle = memory_recall.recall(
+                mem_id,
+                round_num=round_num,
+                boosted_ids=memory_heat_boosted_ids,
+                reconsolidation_tracker=memory_reconsolidation_tracker,
+            )
+        except Exception as exc:
+            receipts.append(_receipt(
+                "error",
+                request,
+                reason=str(exc) or type(exc).__name__,
+                memory_layer=layer,
+                source_memory_layer=layer,
+            ))
+            continue
+        receipt_meta = dict(
+            lifecycle.get("resolved_meta") or result.get("meta") or {})
         result_layer = _clean_text(result.get("memory_layer")) or _clean_text(
             receipt_meta.pop("_memory_layer", "")
         ) or layer
@@ -104,6 +157,17 @@ def apply_memory_content_read_requests(requests, state, data_modules):
             range_applied=result.get("range_applied"),
             total_lines=result.get("total_lines", 0),
             total_chars=result.get("total_chars", 0),
+            source_memory_layer=lifecycle.get("source_memory_layer") or result_layer,
+            stm_present=lifecycle.get("stm_present", False),
+            heat_boost_applied=lifecycle.get("heat_boost_applied", False),
+            heat_boost_deduplicated=lifecycle.get(
+                "heat_boost_deduplicated", False),
+            ltm_decay_reset_applied=lifecycle.get(
+                "ltm_decay_reset_applied", False),
+            ltm_decay_countdown_before=lifecycle.get(
+                "ltm_decay_countdown_before"),
+            ltm_decay_countdown_after=lifecycle.get(
+                "ltm_decay_countdown_after"),
         ))
         mount = {
             "type": "memory",

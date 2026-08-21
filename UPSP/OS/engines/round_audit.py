@@ -3,9 +3,15 @@ from data.round_snapshot_store import (
     RoundSnapshotStore,
     reaction_popup_snapshot_status,
 )
+from data.round_retention import (
+    active_round_retention_receipt_path,
+    enforce_round_retention,
+)
 
 
 import inspect
+import os
+from paths import STM_CONTEXT_DIR
 
 
 class RoundAuditRecorder:
@@ -24,20 +30,36 @@ class RoundAuditRecorder:
 
     def _new_store(self):
         context_root = getattr(getattr(self.services, "assembler", None), "_context_dir", None)
+        context_root = context_root or STM_CONTEXT_DIR
+        params = self.services.audit_params()
+
+        def enforce_current_policy():
+            current = self.services.audit_params()
+            receipt_path = None
+            if os.path.normcase(os.path.abspath(context_root)) == os.path.normcase(
+                os.path.abspath(STM_CONTEXT_DIR)
+            ):
+                receipt_path = active_round_retention_receipt_path()
+            return enforce_round_retention(
+                os.path.join(context_root, "round"),
+                retention_count=current.get("round_snapshot_retention", 8),
+                max_mib=current.get("round_snapshot_max_mib", 256),
+                receipt_path=receipt_path,
+            )
+
         return RoundSnapshotStore(
             context_root=context_root,
-            retention_count=self.services.audit_params().get("round_snapshot_retention", 8),
+            retention_count=params.get("round_snapshot_retention", 8),
+            retention_max_mib=params.get("round_snapshot_max_mib", 256),
+            retention_enforcer=enforce_current_policy,
         )
 
     def start(self, round_num, round_type, input_snapshot=None):
-        try:
-            self.get_store().start_round(
-                round_num,
-                round_type=round_type,
-                input_snapshot=input_snapshot,
-            )
-        except Exception:
-            pass
+        return self.get_store().start_round(
+            round_num,
+            round_type=round_type,
+            input_snapshot=input_snapshot,
+        )
 
     def record_parsed(self, round_num, phase, iteration, parsed):
         try:
@@ -68,7 +90,8 @@ class RoundAuditRecorder:
             messages,
             round_num,
             iteration=1,
-            active_protocol_tool_guides=None):
+            active_protocol_tool_guides=None,
+            cache_compaction_call=False):
         store = self.get_store()
         if self._executor_uses_prepared_requests():
             result = self._call_prepared_with_audit(
@@ -79,6 +102,7 @@ class RoundAuditRecorder:
                 round_num,
                 iteration,
                 active_protocol_tool_guides=active_protocol_tool_guides,
+                cache_compaction_call=cache_compaction_call,
             )
         else:
             # Deterministic Runtime fakes and legacy adapters do not perform
@@ -90,8 +114,6 @@ class RoundAuditRecorder:
                     round_num,
                     phase,
                     iteration=iteration,
-                    messages=messages,
-                    system=system,
                 )
             except Exception:
                 pass
@@ -136,7 +158,8 @@ class RoundAuditRecorder:
             messages,
             round_num,
             iteration,
-            active_protocol_tool_guides=None):
+            active_protocol_tool_guides=None,
+            cache_compaction_call=False):
         executor = self.services.executor
         endpoint = None
         attempt = 1
@@ -151,6 +174,7 @@ class RoundAuditRecorder:
                     endpoint=endpoint,
                     active_protocol_tool_guides=active_protocol_tool_guides,
                     attempt=attempt,
+                    cache_compaction_call=cache_compaction_call,
                 )
                 prepared["logical_call_id"] = logical_call_id
                 prepared["route_slot"] = attempt
@@ -168,8 +192,6 @@ class RoundAuditRecorder:
             self._record_step_input_or_fail_closed(
                 store,
                 phase,
-                system,
-                messages,
                 round_num,
                 iteration,
             )
@@ -233,8 +255,6 @@ class RoundAuditRecorder:
     def _record_step_input_or_fail_closed(
             store,
             phase,
-            system,
-            messages,
             round_num,
             iteration):
         """Persist the request snapshot before any provider call.
@@ -250,8 +270,6 @@ class RoundAuditRecorder:
                 round_num,
                 phase,
                 iteration=iteration,
-                messages=messages,
-                system=system,
             )
         except Exception as exc:
             if phase == "reaction":
@@ -274,9 +292,14 @@ class RoundAuditRecorder:
             prepared,
             error,
             tried_endpoint_fingerprints=None):
-        is_transient = getattr(executor, "_is_transient_provider_error", None)
-        if not callable(is_transient) or not is_transient(error):
-            return None
+        allows_failover = getattr(executor, "_allows_provider_failover", None)
+        if callable(allows_failover):
+            if not allows_failover(error):
+                return None
+        else:
+            is_transient = getattr(executor, "_is_transient_provider_error", None)
+            if not callable(is_transient) or not is_transient(error):
+                return None
         fallback = getattr(executor, "_fallback_tier", None)
         if not callable(fallback):
             return None

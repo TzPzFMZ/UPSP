@@ -72,6 +72,7 @@ class IsolatedConfigStore:
                 "models": [{
                     "id": "model_test", "alias": "测试模型", "connection_id": "conn_test",
                     "model": "test-model", "context_window": 100000,
+                    "output_token_limit": 0,
                     "reasoning": {"supported": ["medium"], "default": "medium"},
                     "streaming": {"enabled": True, "protocol": "openai_sse", "include_usage": True},
                     "prompt_cache": {"profile": "off"}, "request_overrides": {},
@@ -127,6 +128,12 @@ class IsolatedConfigStore:
     def init_all(self):
         return []
 
+    def init_global(self):
+        return []
+
+    def init_persona(self):
+        return []
+
     def __getattr__(self, name):
         descriptor = self.canonical_cls.__dict__.get(name)
         if isinstance(descriptor, staticmethod):
@@ -156,6 +163,7 @@ class FakeCli:
         self.calls = []
         self.message_bytes = b""
         self.message_path = None
+        self.final_response_max_chars = None
         self.send_returncode = send_returncode
         self.relay_returncode = relay_returncode
         self.relay_error_code = relay_error_code
@@ -179,7 +187,7 @@ class FakeCli:
         return {
             "session_id": "fake-session",
             "process_id": os.getpid(),
-            "supervisor_schema": "upsp_runtime_supervisor.v1",
+            "supervisor_schema": "upsp_runtime_supervisor.v2",
             "supervisor_state": "running",
             "supervisor_path": "isolated/supervisor.json",
             "host": dict(self.host),
@@ -200,9 +208,11 @@ class FakeCli:
             "last_outcome": {},
         }
 
-    def submit_message(self, message, permission_level):
+    def submit_message(self, message, permission_level, *,
+                       final_response_max_chars=None):
         self.calls.append((["resident", "send", permission_level], {}))
         self.message_bytes = str(message).encode("utf-8")
+        self.final_response_max_chars = final_response_max_chars
         if self.fail_with:
             raise self.runtime_error("runtime_host_failed")
         if self.send_returncode:
@@ -244,6 +254,35 @@ class FakeCli:
             "permission_level": permission_level,
             "effective_after": "next_frame_boundary",
         }
+
+    def mutate_periodic_memory(self, action, mem_id):
+        self.calls.append((["resident", "periodic-memory", action, mem_id], {}))
+        return {
+            "schema_version": "seed_gui_periodic_memory_result.v1",
+            "submission_source": "seed_gui",
+            "receipt": {
+                "schema_version": "periodic_memory_mount_receipt.v2",
+                "tool_id": "periodic_memory_mount",
+                "status": "applied",
+                "action": action,
+                "mem_id": mem_id,
+                "instance_id": "meta",
+                "before": {"ltm_layer": "LTM/Full"},
+                "after": {"ltm_layer": "LTM/Pinned"},
+                "periodic_chars_before": 0,
+                "periodic_chars_after": 64,
+                "periodic_chars_limit": 65536,
+                "cache_invalidated": True,
+                "provider_called": False,
+                "recall_applied": False,
+            },
+        }
+
+    def prepare_instance_switch(self):
+        self.calls.append((["resident", "prepare-instance-switch"], {}))
+
+    def cancel_instance_switch(self):
+        self.calls.append((["resident", "cancel-instance-switch"], {}))
 
 
 def _gui_root(tmp_path):
@@ -295,6 +334,48 @@ def test_spec707_product_manifest_rejects_invalid_release_identity(
         module._load_product_manifest()
 
 
+@pytest.mark.parametrize(
+    ("version", "channel"),
+    (
+        ("0.1.1", "alpha"),
+        ("0.1.1-alpha.9", "stable"),
+        ("0.1.1-beta.1", "alpha"),
+    ),
+)
+def test_spec769_product_manifest_rejects_version_channel_mismatch(
+    tmp_path, monkeypatch, version, channel
+):
+    module = _load_module_from_path(
+        f"serve_seed_gui_bad_channel_{channel}_{version}", SERVER_PATH
+    )
+    product = json.loads(
+        (REPO_ROOT / "UPSP" / "product.json").read_text(encoding="utf-8")
+    )
+    product.update(version=version, channel=channel)
+    manifest = tmp_path / "product.json"
+    manifest.write_text(json.dumps(product), encoding="utf-8")
+    monkeypatch.setattr(module, "PRODUCT_MANIFEST_PATH", manifest)
+    with pytest.raises(RuntimeError, match="product_manifest_invalid"):
+        module._load_product_manifest()
+
+
+def test_spec769_product_manifest_accepts_legacy_alpha_channel(tmp_path, monkeypatch):
+    module = _load_module_from_path("serve_seed_gui_legacy_alpha", SERVER_PATH)
+    product = json.loads(
+        (REPO_ROOT / "UPSP" / "product.json").read_text(encoding="utf-8")
+    )
+    product.update(
+        version="0.1.0-alpha.8",
+        windows_file_version="0.1.0.8",
+        channel="alpha",
+        build_number=8,
+    )
+    manifest = tmp_path / "product.json"
+    manifest.write_text(json.dumps(product), encoding="utf-8")
+    monkeypatch.setattr(module, "PRODUCT_MANIFEST_PATH", manifest)
+    assert module._load_product_manifest() == product
+
+
 def _server(
     tmp_path,
     fake_cli,
@@ -303,6 +384,7 @@ def _server(
     persona_reader=None,
     bootstrap_service=None,
     bootstrap_factory=None,
+    instance_service=None,
     desktop_control_token=None,
     desktop_session_id=None,
 ):
@@ -334,6 +416,7 @@ def _server(
         persona_reader=persona_reader,
         settings_service=settings_service,
         bootstrap_service=bootstrap_service,
+        instance_service=instance_service,
         desktop_control_token=desktop_control_token,
         desktop_session_id=desktop_session_id,
     )
@@ -414,7 +497,7 @@ def test_spec683_static_whitelist_polling_and_runtime_status(tmp_path):
         status, about = _request(server, "GET", "/api/about")
         assert status == 200
         assert about["schema_version"] == "seed_gui_about.v1"
-        assert about["product"]["version"] == "0.1.0-alpha.8"
+        assert about["product"]["version"] == "0.1.1"
         assert about["product"]["author"]["zh-CN"] == (
             "由 TzPzFMZ 发起、设计并与 AI 协作开发"
         )
@@ -602,6 +685,187 @@ def test_spec702_bootstrap_can_skip_model_setup_without_calling_provider(tmp_pat
         assert blocked_status == 409
         assert blocked["error"] == "model_setup_required"
         assert fake_cli.calls == []
+    finally:
+        _close(server, thread)
+
+
+def test_spec765_bootstrap_holds_mutation_lock_through_runtime_start(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+    server_holder = {}
+    lock_during_start = []
+    lock_at_response = []
+
+    class BlockingRuntime(FakeCli):
+        def start_if_ready(self):
+            lock = server_holder["server"].RequestHandlerClass.mutation_lock
+            lock_during_start.append(lock.locked())
+            started.set()
+            assert release.wait(timeout=5)
+            return True
+
+    def factory(module, settings_service):
+        return module.BootstrapService(
+            settings_service,
+            initializer=PersonaInitializer(
+                tmp_path / "persona",
+                REPO_ROOT / "UPSP" / "initialization" / "persona_template",
+                REPO_ROOT / "UPSP" / "initialization" / "persona_presets",
+            ),
+            probe_runner=lambda _profile_id: None,
+        )
+
+    server, server_thread = _server(
+        tmp_path, BlockingRuntime(), bootstrap_factory=factory)
+    server_holder["server"] = server
+    handler = server.RequestHandlerClass
+    original_send_json = handler._send_json
+
+    def record_response_lock(request_handler, status, payload):
+        if isinstance(payload, dict) and payload.get(
+                "schema_version") == "seed_gui_persona_init_receipt.v1":
+            lock_at_response.append(handler.mutation_lock.locked())
+        original_send_json(request_handler, status, payload)
+
+    handler._send_json = record_response_lock
+    request_body = json.dumps({
+        "mode": "preset",
+        "preset_id": "alyosha",
+        "profile": None,
+        "test_token": None,
+        "skip_model_setup": True,
+    })
+    result = []
+    request_thread = threading.Thread(
+        target=lambda: result.append(_request(
+            server,
+            "POST",
+            "/api/bootstrap/persona",
+            body=request_body,
+            headers=_json_headers(server),
+        )),
+        daemon=True,
+    )
+    try:
+        request_thread.start()
+        assert started.wait(timeout=5)
+        assert handler.mutation_lock.locked() is True
+        conflict_status, conflict = _request(
+            server,
+            "POST",
+            "/api/bootstrap/persona",
+            body=request_body,
+            headers=_json_headers(server),
+        )
+        assert conflict_status == 409
+        assert conflict["error"] == "mutation_in_flight"
+        release.set()
+        request_thread.join(timeout=5)
+        assert result and result[0][0] == 200
+        assert lock_during_start == [True]
+        assert lock_at_response == [False]
+    finally:
+        release.set()
+        request_thread.join(timeout=5)
+        _close(server, server_thread)
+
+
+def test_spec765_runtime_start_failure_preserves_created_persona_and_unlocks(tmp_path):
+    persona_dir = tmp_path / "persona"
+
+    class FailingRuntime(FakeCli):
+        def start_if_ready(self):
+            raise RuntimeError("startup sentinel")
+
+    def factory(module, settings_service):
+        return module.BootstrapService(
+            settings_service,
+            initializer=PersonaInitializer(
+                persona_dir,
+                REPO_ROOT / "UPSP" / "initialization" / "persona_template",
+                REPO_ROOT / "UPSP" / "initialization" / "persona_presets",
+            ),
+            probe_runner=lambda _profile_id: None,
+        )
+
+    server, thread = _server(
+        tmp_path, FailingRuntime(), bootstrap_factory=factory)
+    try:
+        status, failure = _request(
+            server,
+            "POST",
+            "/api/bootstrap/persona",
+            body=json.dumps({
+                "mode": "preset",
+                "preset_id": "alyosha",
+                "profile": None,
+                "test_token": None,
+                "skip_model_setup": True,
+            }),
+            headers=_json_headers(server),
+        )
+
+        assert status == 503
+        assert failure["error"] == "runtime_start_failed"
+        assert "startup sentinel" in failure["detail"]
+        assert persona_dir.is_dir()
+        bootstrap = _request(server, "GET", "/api/bootstrap/status")[1]
+        assert bootstrap["persona"]["ready"] is True
+        lock = server.RequestHandlerClass.mutation_lock
+        assert lock.locked() is False
+        assert lock.acquire(blocking=False)
+        lock.release()
+    finally:
+        _close(server, thread)
+
+
+def test_spec765_runtime_not_ready_result_preserves_created_persona_and_unlocks(
+        tmp_path):
+    persona_dir = tmp_path / "persona"
+
+    class NotReadyRuntime(FakeCli):
+        def start_if_ready(self):
+            return False
+
+    def factory(module, settings_service):
+        return module.BootstrapService(
+            settings_service,
+            initializer=PersonaInitializer(
+                persona_dir,
+                REPO_ROOT / "UPSP" / "initialization" / "persona_template",
+                REPO_ROOT / "UPSP" / "initialization" / "persona_presets",
+            ),
+            probe_runner=lambda _profile_id: None,
+        )
+
+    server, thread = _server(
+        tmp_path, NotReadyRuntime(), bootstrap_factory=factory)
+    try:
+        status, failure = _request(
+            server,
+            "POST",
+            "/api/bootstrap/persona",
+            body=json.dumps({
+                "mode": "preset",
+                "preset_id": "alyosha",
+                "profile": None,
+                "test_token": None,
+                "skip_model_setup": True,
+            }),
+            headers=_json_headers(server),
+        )
+
+        assert status == 503
+        assert failure["error"] == "runtime_start_failed"
+        assert failure["detail"] == "runtime_persona_not_ready_after_create"
+        assert persona_dir.is_dir()
+        assert _request(server, "GET", "/api/bootstrap/status")[1][
+            "persona"
+        ]["ready"] is True
+        lock = server.RequestHandlerClass.mutation_lock
+        assert lock.locked() is False
+        assert lock.acquire(blocking=False)
+        lock.release()
     finally:
         _close(server, thread)
 
@@ -935,6 +1199,7 @@ def test_spec700_model_catalog_crud_auto_binding_and_reference_guards(tmp_path):
                 "values": {
                     "alias": "Terra 测试", "connection_id": connection_id,
                     "model": "gpt-5.6-terra", "context_window": 1000000,
+                    "output_token_limit": 0,
                     "reasoning_supported": ["medium"], "reasoning_default": "medium",
                     "streaming_enabled": True, "streaming_include_usage": True,
                     "request_overrides": {},
@@ -944,6 +1209,7 @@ def test_spec700_model_catalog_crud_auto_binding_and_reference_guards(tmp_path):
         )
         assert status == 200
         model_id = with_model["model_catalog"]["models"][0]["id"]
+        assert with_model["model_catalog"]["models"][0]["output_token_limit"] == 0
         assert with_model["persona"]["model_routing"]["values"]["routes"]["setup"]["primary"]["model_id"] == model_id
         assert with_model["persona"]["model_routing"]["values"]["routes"]["reaction"]["primary"] is None
         assert _request(
@@ -971,6 +1237,7 @@ def test_spec700_settings_validation_revision_and_lock_fail_closed(tmp_path):
     server, thread = _server(tmp_path, fake_cli)
     try:
         _, initial = _request(server, "GET", "/api/settings")
+        assert initial["files"]["now"]["values"] == {}
         status, invalid = _request(
             server,
             "POST",
@@ -1002,6 +1269,20 @@ def test_spec700_settings_validation_revision_and_lock_fail_closed(tmp_path):
         assert status == 400
         assert secret["error"] == "settings_fields_invalid"
 
+        hidden_status, hidden = _request(
+            server,
+            "POST",
+            "/api/settings",
+            body=json.dumps({
+                "revision": initial["files"]["system"]["revision"],
+                "file": "system",
+                "changes": {"token_usage.critical_ratio": 0.95},
+            }),
+            headers=_json_headers(server),
+        )
+        assert hidden_status == 400
+        assert hidden["error"] == "settings_fields_invalid"
+
         first_status, first = _request(
             server,
             "POST",
@@ -1009,11 +1290,30 @@ def test_spec700_settings_validation_revision_and_lock_fail_closed(tmp_path):
             body=json.dumps({
                 "revision": initial["files"]["system"]["revision"],
                 "file": "system",
-                "changes": {"heartbeat.interval": 6},
+                "changes": {
+                    "heartbeat.interval": 6,
+                    "response_anchor.prompt": "Use English for this persona.",
+                },
             }),
             headers=_json_headers(server),
         )
         assert first_status == 200
+        assert first["files"]["system"]["values"][
+            "response_anchor.prompt"] == "Use English for this persona."
+        assert "token_usage.warning_ratio" not in first["files"]["system"]["values"]
+        assert "token_usage.critical_ratio" not in first[
+            "files"]["system"]["values"]
+        assert "budget_chars" not in first["files"]["lately"]["values"]
+        assert "compact_shard_chars" not in first[
+            "files"]["lately"]["values"]
+        assert "compact_ratio" not in first["files"]["lately"]["values"]
+        assert first["files"]["lately"]["values"] == {
+            "pressure_ratio": 0.9,
+            "protected_interaction_count": 16,
+            "semantic_summary_ratio": 0.125,
+            "cycle_target_ratio": 0.25,
+            "batch_source_chars": 65536,
+        }
         stale_status, stale = _request(
             server,
             "POST",
@@ -1361,6 +1661,236 @@ def test_spec704_send_uses_resident_runtime_without_temp_file(tmp_path, monkeypa
         assert command == ["resident", "send", "limited"]
         assert fake_cli.message_bytes == "你好，GUI-1".encode("utf-8")
         assert fake_cli.message_path is None
+        assert fake_cli.final_response_max_chars is None
+    finally:
+        _close(server, thread)
+
+
+def test_spec762_persona_config_failure_keeps_gui_control_plane_recoverable(tmp_path):
+    class FakeInstances:
+        def __init__(self):
+            self.created = False
+            self.activated = False
+
+        def list_all(self):
+            return {
+                "schema_version": "seed_gui_persona_catalog.v1",
+                "active": {"pid": "PID-BROKEN", "instance_id": "meta"},
+                "personas": [],
+            }
+
+        def create_persona(self, **_kwargs):
+            self.created = True
+            return {
+                "status": "created",
+                "pid": "PID-NEW",
+                "instance_id": "meta",
+                "restart_required": True,
+            }
+
+        def activate(self, pid, instance_id):
+            self.activated = (pid, instance_id)
+            return {
+                "status": "activated",
+                "pid": pid,
+                "instance_id": instance_id,
+                "restart_required": False,
+            }
+
+    def bootstrap_factory(module, settings_service):
+        settings_service._persona_config_failure = {
+            "code": "persona_config_migration_failed",
+            "config": "system",
+            "path": "config/system.json",
+            "reason": "unknown_system_config_version",
+        }
+        initializer = SimpleNamespace(status=lambda: {
+            "state": "ready", "ready": True, "missing": [],
+        }, persona_dir=tmp_path / "broken-persona", preset_dir=(
+            REPO_ROOT / "UPSP" / "initialization" / "persona_presets"
+        ))
+        return module.BootstrapService(settings_service, initializer=initializer)
+
+    fake_cli = FakeCli()
+    instances = FakeInstances()
+    server, thread = _server(
+        tmp_path,
+        fake_cli,
+        bootstrap_factory=bootstrap_factory,
+        instance_service=instances,
+        desktop_control_token="spec762-token",
+    )
+    try:
+        assert _request(server, "GET", "/")[0] == 200
+        status, bootstrap = _request(server, "GET", "/api/bootstrap/status")
+        assert status == 200
+        assert bootstrap["persona"] == {
+            "state": "config_error",
+            "ready": False,
+            "missing": [],
+            "config_error": {
+                "code": "persona_config_migration_failed",
+                "config": "system",
+                "path": "config/system.json",
+                "reason": "unknown_system_config_version",
+            },
+        }
+        assert "Lenovo" not in json.dumps(bootstrap)
+        assert _request(server, "GET", "/api/runtime/status")[0] == 200
+        assert _request(server, "GET", "/api/deposition") == (
+            409, {"error": "persona_config_migration_failed"},
+        )
+        assert _request(server, "GET", "/api/personas")[0] == 200
+        blocked = _request(
+            server,
+            "POST",
+            "/api/settings",
+            body=json.dumps({"file": "interface", "changes": {}, "revision": "x"}),
+            headers=_json_headers(server),
+        )
+        assert blocked == (409, {"error": "persona_config_migration_failed"})
+
+        status, switched = _request(
+            server,
+            "POST",
+            "/api/instances/activate",
+            body=json.dumps({"pid": "PID-READY", "instance_id": "meta"}),
+            headers=_json_headers(server),
+        )
+        assert status == 200
+        assert switched["status"] == "activated"
+        assert instances.activated == ("PID-READY", "meta")
+
+        status, receipt = _request(
+            server,
+            "POST",
+            "/api/personas",
+            body=json.dumps({"mode": "blank", "preset_id": None, "profile": {}}),
+            headers=_json_headers(server),
+        )
+        assert status == 200
+        assert receipt["restart_required"] is True
+        assert instances.created is True
+    finally:
+        _close(server, thread)
+
+
+def test_spec762_settings_service_sanitizes_persona_init_failure(tmp_path):
+    module = _load_module_from_path("serve_seed_gui_spec762_settings", SERVER_PATH)
+
+    class BrokenPersonaStore(IsolatedConfigStore):
+        def init_persona(self):
+            error = module.ReadError(
+                r"C:\\Users\\Someone\\personas\\PID\\meta\\config\\system.json",
+                cause=ValueError("unknown autonomous_trigger shape"),
+            )
+            error.config_name = "system"
+            raise error
+
+    settings = module.SettingsService(
+        BrokenPersonaStore(tmp_path / "settings", module.ConfigStore)
+    )
+
+    assert settings.persona_config_ready is False
+    assert settings.persona_config_status()["error"] == {
+        "code": "persona_config_migration_failed",
+        "config": "system",
+        "path": "config/system.json",
+        "reason": "unknown_autonomous_trigger_shape",
+    }
+
+
+def test_spec762_bootstrap_source_exposes_recoverable_config_error():
+    source = _gui_ts_source("contracts.ts", "bootstrap.ts", "i18n.ts")
+
+    assert '"config_error"' in source
+    assert "persona_config_migration_failed" in source
+    assert "data-bootstrap-recover-persona" in source
+    assert "data-bootstrap-recover-activate" in source
+    assert "当前位格配置无法安全迁移，Runtime 已保持锁定。" in source
+
+
+def test_spec762_incomplete_persona_keeps_recovery_controls():
+    source = (GUI_ROOT / "src" / "bootstrap.ts").read_text(encoding="utf-8")
+
+    assert '["incomplete", "config_error"].includes(payload.persona.state)' in source
+    incomplete = source.split('if (data.persona.state === "incomplete")', 1)[1]
+    incomplete = incomplete.split('if (data.persona.state === "config_error")', 1)[0]
+    assert "${recoveryActions}" in incomplete
+
+
+def test_spec762_gui_startup_migrates_known_state_before_readiness(tmp_path):
+    module = _load_module_from_path("serve_seed_gui_spec762_state", SERVER_PATH)
+    from schemas.state import default_state
+
+    path = tmp_path / "state.json"
+    state = default_state()
+    state["base"]["heartbeat_flags"].pop("memory_compression_due")
+    path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+    receipt = module._prepare_startup_persona_state(module.StateStore(str(path)))
+
+    assert receipt == {"status": "migrated", "changed": True}
+    assert json.loads(path.read_text(encoding="utf-8"))["base"][
+        "heartbeat_flags"
+    ]["memory_compression_due"] is False
+
+
+def test_spec762_gui_startup_preserves_unknown_state(tmp_path):
+    module = _load_module_from_path("serve_seed_gui_spec762_bad_state", SERVER_PATH)
+    path = tmp_path / "state.json"
+    path.write_text('{"base":{"heartbeat_flags":[]}}', encoding="utf-8")
+    before = path.read_bytes()
+
+    receipt = module._prepare_startup_persona_state(module.StateStore(str(path)))
+
+    assert receipt == {"status": "unavailable", "changed": False}
+    assert path.read_bytes() == before
+
+
+def test_spec762_cli_migrates_known_state_before_persona_gate():
+    source = (REPO_ROOT / "UPSP" / "OS" / "main.py").read_text(encoding="utf-8")
+    migration = source.index("sm.migrate_memory_compression_flags()")
+    readiness = source.index("status = PersonaInitializer(", migration)
+
+    assert migration < readiness
+
+
+def test_spec735_send_accepts_optional_final_response_budget(tmp_path, monkeypatch):
+    monkeypatch.setenv("UPSP_TEST_KEY", "test-only-key")
+    fake_cli = FakeCli()
+    server, thread = _server(tmp_path, fake_cli)
+    try:
+        payload = json.dumps({
+            "message": "LoCoMo query",
+            "permission_level": "limited",
+            "unlimited_confirmed": False,
+            "final_response_max_chars": 128,
+        })
+        status, response = _request(
+            server,
+            "POST",
+            "/api/runtime/send",
+            body=payload,
+            headers=_json_headers(server),
+        )
+        assert status == 200
+        assert response["ok"] is True
+        assert fake_cli.final_response_max_chars == 128
+
+        invalid = json.dumps({
+            "message": "bad",
+            "permission_level": "limited",
+            "unlimited_confirmed": False,
+            "final_response_max_chars": 0,
+        })
+        assert _request(
+            server,
+            "POST",
+            "/api/runtime/send",
+            body=invalid,
+            headers=_json_headers(server),
+        ) == (400, {"error": "invalid_final_response_max_chars"})
     finally:
         _close(server, thread)
 
@@ -1444,6 +1974,9 @@ class FakeMemoryStore:
                 "title": "公开条目",
                 "access": "public",
                 "memory_layer": "STM",
+                "memory_layers": ["STM", "LTM/Full"],
+                "stm_present": True,
+                "ltm_layer": "LTM/Full",
                 "linked_containers": ["PRJ-001"],
                 "path": "must-not-leak",
             },
@@ -1587,11 +2120,21 @@ class FakeWorkbenchStore:
 
 def _deposition_reader(workbench_store=None, container_store=None):
     module = _load_module_from_path("serve_seed_gui_deposition", SERVER_PATH)
+    mount_store = SimpleNamespace(load=lambda: {
+        "schema_version": "periodic_mounts.v2",
+        "periodic_memory_items": [],
+    })
+    owner_store = SimpleNamespace(load=lambda: {
+        "schema_version": "periodic_pin_owners.v1",
+        "entries": {},
+    })
     return module.DepositionReader(
         memory_store=FakeMemoryStore(),
         container_store=container_store or FakeContainerStore(),
         relation_store=FakeRelationStore(),
         workbench_store=workbench_store or FakeWorkbenchStore(),
+        periodic_mount_store=mount_store,
+        periodic_owner_store=owner_store,
     )
 
 
@@ -1602,6 +2145,9 @@ def test_spec685_deposition_projection_filters_private_and_paths():
     assert index["schema_version"] == "seed_gui_deposition_index.v1"
     assert index["focus"] == {"current": "", "previous": ""}
     assert [item["id"] for item in index["memory"]] == ["MEM-PUBLIC01"]
+    assert index["memory"][0]["memory_layers"] == ["STM", "LTM/Full"]
+    assert index["memory"][0]["stm_present"] is True
+    assert index["memory"][0]["ltm_layer"] == "LTM/Full"
     assert "PRIVATE" not in json.dumps(index)
     assert "path" not in json.dumps(index)
     memory_body = reader.detail("memory", "MEM-PUBLIC01")["item"]["body"]
@@ -1647,19 +2193,22 @@ def test_spec709_top_identity_hierarchy_contract():
     assert 'class="global-row"' in index_source
     assert 'class="persona-row"' in index_source
     assert 'class="command-row"' in index_source
-    assert 'id="personaNameSelector"' in index_source
-    assert 'data-i18n="主实例">主实例</strong>' in index_source
+    assert 'id="personaTabs"' in index_source
+    assert 'id="personaMoreMenu"' in index_source
+    assert 'id="instanceTabs"' in index_source
+    assert 'id="instanceMoreMenu"' in index_source
+    assert 'data-create-persona' in index_source
+    assert 'data-create-instance' in index_source
     assert 'id="statusReadouts"' in index_source
     assert "prototype-badge" not in index_source
     assert "persona-metrics" not in index_source
-    assert "personaTabs" not in index_source
     assert "alertStrip" not in index_source
     assert "--top-global-height: 34px;" in css_source
     assert "--top-persona-height: 32px;" in css_source
     assert "--top-command-height: 70px;" in css_source
     assert "--top-height: 136px;" in css_source
     assert 'const personaNameStoragePrefix = "upsp.seed_gui.persona_name_variant.v1:"' in app_source
-    assert "`${personaNameStoragePrefix}${identity.pid}`" in app_source
+    assert "`${personaNameStoragePrefix}${pid}`" in app_source
     assert '["name_zh", "name_en", "abbreviation"]' in app_source
     identity_renderer = app_source.split("export function renderIdentity()", 1)[1].split(
         "export function renderNavigation()", 1
@@ -1936,6 +2485,458 @@ def test_spec686_container_focus_validation_conflict_and_shared_lock(tmp_path):
         _close(server, thread)
 
 
+def test_spec743_periodic_memory_post_uses_runtime_and_shared_mutation_gate(tmp_path):
+    fake_cli = FakeCli()
+    server, thread = _server(tmp_path, fake_cli, _deposition_reader())
+    request = lambda payload, headers=None: _request(
+        server,
+        "POST",
+        "/api/deposition/memory/periodic",
+        body=json.dumps(payload),
+        headers=headers or _json_headers(server),
+    )
+    try:
+        status, result = request({"action": "mount", "mem_id": "MEM-74300001"})
+        assert status == 200
+        assert result["schema_version"] == "seed_gui_periodic_memory_result.v1"
+        assert result["receipt"]["schema_version"] == "periodic_memory_mount_receipt.v2"
+        assert result["receipt"]["tool_id"] == "periodic_memory_mount"
+        assert result["receipt"]["provider_called"] is False
+        assert server.RequestHandlerClass.mutation_lock.locked() is False
+        assert fake_cli.calls[-1][0] == [
+            "resident", "periodic-memory", "mount", "MEM-74300001"]
+
+        assert request(
+            {"action": "mount", "mem_id": "MEM-74300001"},
+            {"Content-Type": "application/json"},
+        )[0] == 403
+        assert request({"action": "write", "mem_id": "MEM-74300001"})[0] == 400
+        assert request({"action": "mount", "mem_id": "bad"})[0] == 400
+        assert server.RequestHandlerClass.mutation_lock.locked() is False
+
+        lock = server.RequestHandlerClass.mutation_lock
+        lock.acquire()
+        try:
+            assert request({"action": "mount", "mem_id": "MEM-74300001"})[0] == 409
+        finally:
+            lock.release()
+    finally:
+        _close(server, thread)
+
+
+def test_spec743_periodic_memory_rollback_failure_returns_stable_503(tmp_path):
+    class RollbackFailingCli(FakeCli):
+        def mutate_periodic_memory(self, _action, _mem_id):
+            raise RuntimeError("periodic_memory_rollback_failed:WriteError")
+
+    server, thread = _server(
+        tmp_path, RollbackFailingCli(), _deposition_reader())
+    try:
+        status, failure = _request(
+            server,
+            "POST",
+            "/api/deposition/memory/periodic",
+            body=json.dumps({
+                "action": "mount",
+                "mem_id": "MEM-74300001",
+            }),
+            headers=_json_headers(server),
+        )
+
+        assert status == 503
+        assert failure["error"] == "periodic_memory_mutation_failed"
+        assert server.RequestHandlerClass.mutation_lock.locked() is False
+    finally:
+        _close(server, thread)
+
+
+def test_spec743_gui_source_has_manual_button_dual_filters_and_truth_reread():
+    source = _gui_ts_source(
+        "contracts.ts", "state.ts", "runtime.ts", "view.ts", "events.ts", "i18n.ts")
+
+    assert './api/deposition/memory/periodic' in source
+    assert 'data-periodic-memory-action' in source
+    assert 'item.stm_present === true' in source
+    assert 'Boolean(item.ltm_layer)' in source
+    assert 'await pollDeposition({ force: true, ignoreVisibility: true })' in source
+    assert 'loadDepositionDetail("memory", memId, { force: true, render: false })' in source
+    assert 'openMemoryDetail(memId, { retry: true })' in source
+    assert 'failure.code === "periodic_memory_budget_exceeded"' in source
+    assert "请先取消其他挂载或调整上限后再试" in source
+    assert "window.alert(mutation.feedback)" in source
+    assert "Promise<boolean>" in source
+    assert "periodic_memory_truth_reload_failed" in source
+    assert "delete depositionProjection.details.memory[memId]" in source
+    assert "为避免显示旧状态，请重新读取详情" in source
+    assert 'mounted ? " is-mounted" : mountPending ? " is-pending" : ""' in source
+    assert "从定期层卸载" in source
+    assert "操作经本地 Runtime processor 提交；界面只在重读真源后更新。" not in source
+    assert "双层状态" not in source
+    assert "钉选所有权" not in source
+
+
+def test_spec732_persona_catalog_and_instance_switch_request_restart(tmp_path):
+    class FakeInstances:
+        def __init__(self):
+            self.calls = []
+
+        def list_all(self):
+            return {
+                "schema_version": "seed_gui_persona_catalog.v1",
+                "active": {"pid": "PID-A", "instance_id": "meta"},
+                "personas": [],
+            }
+
+        def activate(self, pid, instance_id):
+            self.calls.append((pid, instance_id))
+            return {
+                "status": "activated",
+                "pid": pid,
+                "instance_id": instance_id,
+                "restart_required": True,
+            }
+
+    fake_cli = FakeCli()
+    instances = FakeInstances()
+    server, thread = _server(
+        tmp_path, fake_cli, instance_service=instances,
+        desktop_control_token="spec732-token",
+        desktop_session_id="spec732-session",
+    )
+    try:
+        status, catalog = _request(server, "GET", "/api/personas")
+        assert status == 200
+        assert catalog["active"] == {"pid": "PID-A", "instance_id": "meta"}
+
+        body = json.dumps({"pid": "PID-B", "instance_id": "meta"}).encode("utf-8")
+        status, receipt = _request(
+            server,
+            "POST",
+            "/api/instances/activate",
+            body=body,
+            headers=_json_headers(server),
+        )
+        assert status == 200
+        assert receipt["restart_required"] is True
+        assert instances.calls == [("PID-B", "meta")]
+        assert (["resident", "prepare-instance-switch"], {}) in fake_cli.calls
+        runtime = _request(server, "GET", "/api/runtime/status")[1]
+        assert runtime["restart_requested"] is True
+
+        blocked = _request(
+            server,
+            "POST",
+            "/api/instances/restore",
+            body=json.dumps({"instance_id": "I20260810-120000-AAAA"}).encode("utf-8"),
+            headers=_json_headers(server),
+        )
+        assert blocked[0] == 409
+        assert blocked[1]["error"] == "backend_restart_pending"
+    finally:
+        _close(server, thread)
+
+
+def test_spec732_standalone_server_rejects_restart_mutation_before_write(tmp_path):
+    class FakeInstances:
+        def __init__(self):
+            self.called = False
+
+        def activate(self, _pid, _instance_id):
+            self.called = True
+            raise AssertionError("standalone mutation must not run")
+
+    fake_cli = FakeCli()
+    instances = FakeInstances()
+    server, thread = _server(tmp_path, fake_cli, instance_service=instances)
+    try:
+        status, payload = _request(
+            server,
+            "POST",
+            "/api/instances/activate",
+            body=json.dumps({"pid": "PID-B", "instance_id": "meta"}).encode("utf-8"),
+            headers=_json_headers(server),
+        )
+        assert status == 409
+        assert payload["error"] == "instance_restart_host_required"
+        assert instances.called is False
+        assert (['resident', 'prepare-instance-switch'], {}) not in fake_cli.calls
+    finally:
+        _close(server, thread)
+
+
+@pytest.mark.parametrize(
+    ("path", "request_payload"),
+    (
+        (
+            "/api/personas",
+            {"mode": "blank", "preset_id": None, "profile": {}},
+        ),
+        (
+            "/api/instances",
+            {"mode": "blank", "label": "branch", "source_instance_id": "meta"},
+        ),
+    ),
+)
+def test_spec743_instance_switch_prepare_failure_is_stable_and_writes_nothing(
+        tmp_path, path, request_payload):
+    class BrokenRuntime(FakeCli):
+        def prepare_instance_switch(self):
+            raise AttributeError("heartbeat switch API missing")
+
+    class FakeInstances:
+        def __init__(self):
+            self.called = False
+
+        def create_branch(self, **_kwargs):
+            self.called = True
+            raise AssertionError("instance write must not run")
+
+        def create_persona(self, **_kwargs):
+            self.called = True
+            raise AssertionError("persona write must not run")
+
+    runtime = BrokenRuntime()
+    instances = FakeInstances()
+    server, thread = _server(
+        tmp_path,
+        runtime,
+        instance_service=instances,
+        desktop_control_token="spec743-token",
+    )
+    try:
+        status, payload = _request(
+            server,
+            "POST",
+            path,
+            body=json.dumps(request_payload).encode("utf-8"),
+            headers=_json_headers(server),
+        )
+
+        assert status == 503
+        assert payload["error"] == "instance_mutation_failed"
+        assert "AttributeError" in payload["detail"]
+        assert instances.called is False
+        assert server.RequestHandlerClass.mutation_lock.locked() is False
+    finally:
+        _close(server, thread)
+
+
+def test_spec743_instance_write_failure_cancels_switch_and_releases_lock(tmp_path):
+    class BrokenInstances:
+        def create_branch(self, **_kwargs):
+            raise RuntimeError("branch write failed")
+
+    runtime = FakeCli()
+    server, thread = _server(
+        tmp_path,
+        runtime,
+        instance_service=BrokenInstances(),
+        desktop_control_token="spec743-token",
+    )
+    try:
+        status, payload = _request(
+            server,
+            "POST",
+            "/api/instances",
+            body=json.dumps({
+                "mode": "blank",
+                "label": "branch",
+                "source_instance_id": "meta",
+            }).encode("utf-8"),
+            headers=_json_headers(server),
+        )
+
+        assert status == 503
+        assert payload["error"] == "instance_mutation_failed"
+        assert runtime.calls == [
+            (["resident", "prepare-instance-switch"], {}),
+            (["resident", "cancel-instance-switch"], {}),
+        ]
+        assert server.RequestHandlerClass.mutation_lock.locked() is False
+    finally:
+        _close(server, thread)
+
+
+def test_spec743_gui_maps_instance_mutation_failure():
+    source = _gui_ts_source("runtime.ts", "i18n.ts")
+
+    assert 'failure.code === "instance_mutation_failed"' in source
+    assert "位格或分身变更失败，请重试。" in source
+
+
+@pytest.mark.parametrize(
+    ("path", "request_payload", "service_call", "restart_required"),
+    (
+        (
+            "/api/instances",
+            {"mode": "new", "label": "new branch", "source_instance_id": "meta"},
+            ("create_branch", "new"),
+            True,
+        ),
+        (
+            "/api/instances",
+            {"mode": "fork", "label": "fork", "source_instance_id": "meta"},
+            ("create_branch", "fork"),
+            True,
+        ),
+        (
+            "/api/instances/activate",
+            {"pid": "PID-A", "instance_id": "I20260813-120000-AAAA"},
+            ("activate", "I20260813-120000-AAAA"),
+            True,
+        ),
+        (
+            "/api/instances/archive",
+            {"instance_id": "I20260813-120000-AAAA"},
+            ("archive", "I20260813-120000-AAAA"),
+            True,
+        ),
+        (
+            "/api/instances/restore",
+            {"instance_id": "I20260813-120000-AAAA"},
+            ("restore", "I20260813-120000-AAAA"),
+            False,
+        ),
+        (
+            "/api/instances/activate",
+            {"pid": "PID-A", "instance_id": "meta"},
+            ("activate", "meta"),
+            False,
+        ),
+    ),
+)
+def test_spec743_branch_http_lifecycle_uses_switch_gate_and_stable_receipts(
+        tmp_path, path, request_payload, service_call, restart_required):
+    class FakeInstances:
+        def __init__(self):
+            self.calls = []
+
+        def create_branch(self, *, mode, label, source_instance_id):
+            self.calls.append(("create_branch", mode))
+            return self._receipt("branch_created", "I20260813-120000-AAAA", True)
+
+        def activate(self, _pid, instance_id):
+            self.calls.append(("activate", instance_id))
+            return self._receipt(
+                "already_active" if instance_id == "meta" else "activated",
+                instance_id,
+                instance_id != "meta",
+            )
+
+        def archive(self, instance_id):
+            self.calls.append(("archive", instance_id))
+            return self._receipt("archived", instance_id, True)
+
+        def restore(self, instance_id):
+            self.calls.append(("restore", instance_id))
+            return self._receipt("restored", instance_id, False)
+
+        @staticmethod
+        def _receipt(status, instance_id, restart):
+            return {
+                "schema_version": "seed_gui_instance_mutation_receipt.v1",
+                "status": status,
+                "pid": "PID-A",
+                "instance_id": instance_id,
+                "restart_required": restart,
+            }
+
+    runtime = FakeCli()
+    instances = FakeInstances()
+    server, thread = _server(
+        tmp_path,
+        runtime,
+        instance_service=instances,
+        desktop_control_token="spec743-token",
+    )
+    try:
+        status, receipt = _request(
+            server,
+            "POST",
+            path,
+            body=json.dumps(request_payload).encode("utf-8"),
+            headers=_json_headers(server),
+        )
+
+        assert status == 200
+        assert receipt["schema_version"] == "seed_gui_instance_mutation_receipt.v1"
+        assert receipt["restart_required"] is restart_required
+        assert instances.calls == [service_call]
+        if path == "/api/instances/restore":
+            assert runtime.calls == []
+        elif restart_required:
+            assert runtime.calls == [(["resident", "prepare-instance-switch"], {})]
+        else:
+            assert runtime.calls == [
+                (["resident", "prepare-instance-switch"], {}),
+                (["resident", "cancel-instance-switch"], {}),
+            ]
+        assert server.restart_requested.is_set() is restart_required
+        assert server.RequestHandlerClass.mutation_lock.locked() is False
+    finally:
+        _close(server, thread)
+
+
+def test_spec743_gui_exposes_full_branch_lifecycle():
+    source = _gui_ts_source("view.ts", "events.ts")
+
+    assert "data-create-instance" in source
+    assert 'mode: "new"' in source
+    assert 'source_instance_id: "meta"' in source
+    assert "data-fork-instance" in source
+    assert 'mode: "fork"' in source
+    assert 'source_instance_id: branchButton.dataset.forkInstance || ""' in source
+    assert 'submitInstanceMutation("./api/instances/activate"' in source
+    assert 'submitInstanceMutation("./api/instances/archive"' in source
+    assert 'submitInstanceMutation("./api/instances/restore"' in source
+
+
+def test_spec766_identity_and_instance_tabs_preserve_truthful_mutation_semantics():
+    index_source = (GUI_ROOT / "index.html").read_text(encoding="utf-8")
+    view_source = _gui_ts_source("view.ts")
+    event_source = _gui_ts_source("events.ts")
+    css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
+
+    assert 'class="identity-tab-strip" id="personaTabs" role="tablist"' in index_source
+    assert 'class="identity-tab-strip" id="instanceTabs" role="tablist"' in index_source
+    assert 'class="identity-more" id="personaMoreMenu"' in index_source
+    assert 'class="identity-more" id="instanceMoreMenu"' in index_source
+    assert "personaNameSelector" not in index_source + view_source + event_source
+    assert "instanceSelector" not in index_source + view_source + event_source
+
+    assert '(catalog?.personas || []).map((item)' in view_source
+    assert '(activePersona?.instances || []).filter((item) => !item.archived)' in view_source
+    assert 'data-fork-instance="${escapeHtml(item.instance_id)}"' in view_source
+    assert 'data-activate-instance="${escapeHtml(item.instance_id)}"' in view_source
+    assert 'aria-current="${active ? "page" : "false"}"' in view_source
+    assert 'role="tab" aria-selected="${active ? "true" : "false"}"' in view_source
+    assert 'tabindex="${active ? "0" : "-1"}"' in view_source
+    assert "function personaFullNameTooltip" in view_source
+    assert 'activeInstance?.kind === "branch"' in view_source
+    assert 'archivedInstances.map((item)' in view_source
+
+    assert "function identityMutationBusy(): boolean" in view_source
+    assert "status.current_round != null" in view_source
+    assert "status.mutation_in_flight === true" in view_source
+    assert 'stage !== "" && stage !== "idle"' in view_source
+    assert 'class="identity-tab-spinner"' in view_source
+    assert "if (!status) return false" in view_source
+
+    assert 'window.prompt(t("新分身名称"), "")' in event_source
+    assert 'window.prompt(t("分支名称"), "")' in event_source
+    assert 'source_instance_id: branchButton.dataset.forkInstance || ""' in event_source
+    assert 'source_instance_id: "meta"' in event_source
+    assert '["ArrowLeft", "ArrowRight", "Home", "End"]' in event_source
+    assert "els.personaMoreMenu.open = false" in event_source
+    assert "els.instanceMoreMenu.open = false" in event_source
+
+    assert ".identity-tab-strip" in css_source
+    assert "overflow-x: auto" in css_source
+    assert ".identity-row-actions" in css_source
+    assert ".instance-tab:focus-within .instance-fork" in css_source
+    assert "@keyframes identity-spin" in css_source
+
+
 def test_spec729_runtime_status_never_scans_latest_round(tmp_path, monkeypatch):
     import builtins
 
@@ -2008,6 +3009,7 @@ def test_spec726_model_effort_update_repairs_referencing_routes_atomically(tmp_p
                     "connection_id": model["connection_id"],
                     "model": "deepseek-v4-flash",
                     "context_window": 1000000,
+                    "output_token_limit": 32768,
                     "detected_context_window": 1000000,
                     "context_window_source": "registry",
                     "reasoning_supported": ["high", "max"],
@@ -2023,6 +3025,7 @@ def test_spec726_model_effort_update_repairs_referencing_routes_atomically(tmp_p
         assert status == 200
         updated = saved["model_catalog"]["models"][0]
         assert updated["model"] == "deepseek-v4-flash"
+        assert updated["output_token_limit"] == 32768
         assert updated["reasoning"] == {
             "supported": ["high", "max"],
             "default": "high",
@@ -2069,6 +3072,7 @@ def test_spec726_model_effort_update_rolls_back_catalog_and_routes(tmp_path, mon
                     "connection_id": model["connection_id"],
                     "model": "deepseek-v4-flash",
                     "context_window": 1000000,
+                    "output_token_limit": 0,
                     "detected_context_window": 1000000,
                     "context_window_source": "registry",
                     "reasoning_supported": ["high", "max"],
@@ -2657,7 +3661,7 @@ def test_spec705_desktop_environment_and_ready_record(tmp_path, monkeypatch):
             "process_id": os.getpid(),
             "session_id": "b" * 32,
             "origin": f"http://127.0.0.1:{server.server_address[1]}",
-            "product_version": "0.1.0-alpha.8",
+            "product_version": "0.1.1",
         }
     finally:
         _close(server, thread)
@@ -2761,6 +3765,17 @@ def test_spec687_relay_validation_lock_and_status_are_fail_closed(tmp_path):
             }),
             headers=_json_headers(server),
         )[0] == 403
+        assert _request(
+            server,
+            "POST",
+            "/api/runtime/relay",
+            body=json.dumps({
+                "permission_level": "limited",
+                "unlimited_confirmed": False,
+                "final_response_max_chars": 999,
+            }),
+            headers=_json_headers(server),
+        )[0] == 400
         assert fake_cli.calls == []
 
         lock = server.RequestHandlerClass.relay_lock
@@ -3412,6 +4427,17 @@ def test_spec708_tool_header_uses_chinese_summary_instruments():
     assert "grid-template-columns: repeat(4, minmax(0, 1fr))" in css_source
 
 
+def test_spec745_gui_removes_retired_now_watermark_controls():
+    view_source = _gui_ts_source("view.ts")
+    i18n_source = _gui_ts_source("i18n.ts")
+
+    assert '"now", "当前缓存"' not in view_source
+    assert "当前缓存预算" not in view_source
+    assert "当前缓存裁剪量" not in view_source
+    assert "当前缓存预算" not in i18n_source
+    assert "当前缓存裁剪量" not in i18n_source
+
+
 def test_spec701_memory_index_opens_shared_detail_dialog():
     view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
     events_source = (GUI_ROOT / "src" / "events.ts").read_text(encoding="utf-8")
@@ -3562,6 +4588,11 @@ def test_spec700_global_settings_and_persona_routing_frontend_contract():
     assert 'data-settings-feedback role="status"' in view_source
     assert 'fetchRuntimeJson<SettingsPayload>("./api/settings/provider-key"' in runtime_source
     assert 'data-settings-form' in view_source
+    assert 'key: "response_anchor.prompt"' in view_source
+    assert 'maxlength="${field.max}"' in view_source
+    assert '"回答锚点": "Response anchor"' in i18n_source
+    assert "示例：使用用户当前语言；先给结论，再给必要证据。" in view_source
+    assert "仅作为提示，不校验、重试或改写模型回复" not in view_source
     assert 'data-routing-settings-form' in view_source
     assert 'data-cross-phase-failover' in view_source
     assert '<div class="settings-switch cross-phase-switch"><span>' in view_source
@@ -3611,7 +4642,8 @@ def test_spec702_onboarding_frontend_gates_runtime_until_persona_is_ready():
     assert "startRuntimeUi();" in app_source
     assert 'window.setInterval(() => void pollBootstrapStatus(), 1500)' in app_source
     assert "const wasReady = bootstrapProjection.data?.persona.ready;" in bootstrap_source
-    assert "if (wasReady === false && payload.persona.ready)" in bootstrap_source
+    assert "&& !bootstrapProjection.pending" in bootstrap_source
+    assert "&& wasReady === false" in bootstrap_source
     assert "window.location.reload();" in bootstrap_source
     assert "function profileStarted(draft: BootstrapDraft): boolean" in bootstrap_source
     assert "profileProblem && profileStarted(bootstrapProjection.draft)" in bootstrap_source
@@ -3625,6 +4657,9 @@ def test_spec702_onboarding_frontend_gates_runtime_until_persona_is_ready():
     assert '"./api/bootstrap/status"' in bootstrap_source
     assert '"./api/bootstrap/provider-test"' in bootstrap_source
     assert '"./api/bootstrap/persona"' in bootstrap_source
+    assert "await pollBootstrapStatus(false);" in bootstrap_source
+    assert 't("位格已创建但 Runtime 未启动")' in bootstrap_source
+    assert "window.alert(notice);" in bootstrap_source
     assert 't("测试起手主模型（将产生一次付费请求）")' in bootstrap_source
     assert "data-bootstrap-skip-model" in bootstrap_source
     assert "skip_model_setup: skipped" in bootstrap_source

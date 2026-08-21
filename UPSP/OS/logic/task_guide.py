@@ -58,8 +58,9 @@ PENDING_INPUT_ALIAS_FIELD_RE = re.compile(
 PATH_EVIDENCE_ALIAS_PREFIXES = {
     "file",
     "file_edit",
+    "file_glob",
+    "file_grep",
     "file_read",
-    "file_search",
     "file_write",
     "shell_command",
 }
@@ -1650,12 +1651,18 @@ def _feedback_result_summary(result):
     if tool_id == "file_read":
         path = _first_present(result, "path", "file_path")
         return f"file_read 读取: {path}" if path else "file_read 成功"
-    if tool_id == "file_search":
+    if tool_id == "file_glob":
         root = _first_present(result, "root", "cwd")
         pattern = _first_present(result, "pattern", "query")
         if root and pattern:
-            return f"file_search 搜索: {root} :: {pattern}"
-        return f"file_search 搜索: {root or pattern}" if (root or pattern) else "file_search 成功"
+            return f"file_glob 搜索: {root} :: {pattern}"
+        return f"file_glob 搜索: {root or pattern}" if (root or pattern) else "file_glob 成功"
+    if tool_id == "file_grep":
+        root = _first_present(result, "root", "path")
+        query = _first_present(result, "query")
+        if root and query:
+            return f"file_grep 正文搜索: {root} :: {query}"
+        return f"file_grep 正文搜索: {root or query}" if (root or query) else "file_grep 成功"
     if tool_id == "shell_command":
         command = _first_present(result, "command")
         return f"shell_command 运行: {command}" if command else "shell_command 成功"

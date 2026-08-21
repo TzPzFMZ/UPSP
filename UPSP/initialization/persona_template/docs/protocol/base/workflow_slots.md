@@ -37,11 +37,11 @@ L3 若被反复采用，可整理为 `procedures/subtype=workflow`；未整理�
 | setup | mode_suggestion | L1 | 装配反应步前 | 模式建议程序 | 模式建议、POPUP reminder |
 | setup | mount_selection | L1 | 装配反应步前 | 记忆/关系/容器/技能挂载选择 | 挂载声明 |
 | setup | setup_finalize | L1 | 装配反应步前 | 起手安全裁决、挂载请求、轮型确认、身份入口 | provider-native `setup_finalize` |
-| setup | setup_fact_projection | L1 | 有效 setup_finalize 后 | Runtime 自然语言事实投影 | `kind=setup_fact`，可随 now 水位进入 lately/Corpus |
+| setup | setup_fact_projection | L1 | 有效 setup_finalize 后 | Runtime 自然语言事实投影 | `kind=setup_fact`，与起手包留在 now，首个成功 Reaction 后进入 lately/Corpus |
 | setup | stance_consistency_check | L2 | 对象已知、话题切换或前提冲突疑似出现时 | 程序能力、认知范式调制 | mode suggestion、POPUP reminder、候选工具请求 |
 | reaction | provider_native_tool_call | L1 | 每次反应步迭代内 | LLM-facing 工具入口；直接调用当前已导出的 provider-native tool schema | Runtime 按注册表分流到 protocol/general/substrate 内部链路 |
 | reaction | protocol_tool_request | internal | provider-native 协议工具投影后 | 内部路由字段；LLM 直接写旧文本字段会被 Runtime 记为 retired / invalid，不执行并回灌纠错 | processor / receipt |
-| reaction | general_tool_request | internal | provider-native 通用工具投影后 | 内部路由字段；LLM 直接写旧文本字段会被 Runtime 记为 retired / invalid，不执行并回灌纠错；已开通 `file_read` / `file_search` / `file_edit` / `web_fetch` / `web_search` / `shell_command` / `subagent_dispatch` | `general_tool_call` |
+| reaction | general_tool_request | internal | provider-native 通用工具投影后 | 内部路由字段；LLM 直接写旧文本字段会被 Runtime 记为 retired / invalid，不执行并回灌纠错；已开通 `file_read` / `file_glob` / `file_grep` / `file_edit` / `file_write` / `web_fetch` / `web_search` / `shell_command` / `subagent_dispatch` | `general_tool_call` |
 | reaction | focus_tool_execution | L1 | provider-native focus tool 调用时 | 焦点工具正文编辑或 WB focus 切换 | 单焦点提交 |
 | reaction | sync_tool_submission | L1 | provider-native sync tool 调用时 | 同步工具结构化提交 | 多工具串行落盘 |
 | reaction | read_tool_mount | L1 | 需要只读资料或内环境只读内容时 | provider-native read tool | 资料语料、只读装配、回执 |
@@ -49,7 +49,7 @@ L3 若被反复采用，可整理为 `procedures/subtype=workflow`；未整理�
 | reaction | style_or_pattern_modulation | L2 | 生成回复或填写 guide 前 | 认知范式、程序能力、reminder | 提醒风格、指南风格，不改硬 schema |
 | reaction | contradiction_handling | L2 | 检测到前提冲突后 | 程序能力 | 澄清策略、批判/质疑模式提醒 |
 | cleanup | training_material_settlement | L1 | 善后训练材料线 | 联系先行默契落账规则、联想五表计数规则 | `connection_material_settle` → `tacit_material_settle` → `association_count_update` |
-| cleanup | lately_compaction | L1 | lately 字符删除后挂载删后幸存段 | 最近缓存语义融合规则 | 压缩摘要表；执行器为 `cache_compact` 基座工具 |
+| reaction | lately_compaction | L1 | 善后已按共同窗口压力冻结 v3 债务，且当前为下一自然轮 Reaction | 最近缓存即时压缩指南 | 分片结果暂存；达标后一次原子替换 |
 | cleanup | minimum_commitment | L0 | 善后脚本固定边界标记 | 最小承诺规则 | kind=minimum_commitment |
 | cleanup | settlement_review | L1/L2 | 善后收束时 | 默契/联系处理规则 | 善后两线清单 |
 | heartbeat | trigger_classification | L0/L1 | heartbeat tick | 心跳事实源分类 | 轮类型触发事实 |
@@ -70,7 +70,7 @@ L3 若被反复采用，可整理为 `procedures/subtype=workflow`；未整理�
 - LLM-facing 工具入口只能是当前已导出的 provider-native tool call；`protocol_tool_request` / `general_tool_request` 只作为 Runtime 内部路由字段保留，旧文本字段出现时按 retired / invalid 审计。
 - `native_tool_result` 是 provider-native 工具失败 POPUP 警告层 feedback，不是 workflow slot、不是工具入口、不是 `protocol_tool_submission`、不是 processor receipt、不是 `tool_id` 或请求字段，也不进入 now/lately/Corpus；它的结构字段留给 Runtime、step.json 和 audit 判读，可见 POPUP 只说明失败事实、失败原因和纠偏动作。
 - `native_tool_result` 中的 `actual/expected`、`arguments_json`、命令、参数、正文、密钥、关系轴数值、`state.json` 数值和 live `persona/` 状态只可脱敏/截断，不得完整回显。
-- 通用工具不能伪装成协议提交；`file_read`、`file_search`、`file_edit`、`web_fetch`、`web_search`、`shell_command`、`subagent_dispatch` 经 provider-native 调用投影到内部 `general_tool_request`，并通过 `general_tool_result` 独立闭环。
+- 通用工具不能伪装成协议提交；`file_read`、`file_glob`、`file_grep`、`file_edit`、`file_write`、`web_fetch`、`web_search`、`shell_command`、`subagent_dispatch` 经 provider-native 调用投影到内部 `general_tool_request`，并通过 `general_tool_result` 独立闭环。
 - `backend_type` / `active_backend` 只描述通用工具的执行后端，不改变 workflow slot 或 `tool_family`。
 - 固定输出表、脚本事件、基座工具动作和 C 轨单次调用临时语料走各自边界，不能伪装成协议工具提交。
 - 插槽不能新增第二套心跳事实源。

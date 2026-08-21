@@ -76,6 +76,8 @@ PRIVATE_TESTS = {
     "test_dogfood_single_round_admission.py",
     "test_dogfood_visible_report.py",
     "test_encoding_guard.py",
+    "test_locomo_benchmark.py",
+    "test_locomo_failure_audit.py",
     "test_native_tooling_scripts.py",
     "test_prepare_dogfood_state.py",
     "test_prompt_cache_planner.py",

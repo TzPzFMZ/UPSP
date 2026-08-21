@@ -1697,7 +1697,12 @@
     "\u521B\u5EFA\u4F4D\u683C": "Create persona",
     "\u6B63\u5728\u521B\u5EFA\u4F4D\u683C": "Creating persona",
     "\u4F4D\u683C\u521B\u5EFA\u5931\u8D25": "Persona creation failed",
+    "\u4F4D\u683C\u5DF2\u521B\u5EFA\u4F46 Runtime \u672A\u542F\u52A8": "The persona was created, but Runtime did not start",
     "\u4F4D\u683C\u76EE\u5F55\u5DF2\u5B58\u5728\u4F46\u4E0D\u5B8C\u6574\u3002\u4E3A\u4FDD\u62A4\u73B0\u573A\uFF0C\u521D\u59CB\u5316\u4E0D\u4F1A\u8986\u76D6\u5B83\u3002": "The persona directory exists but is incomplete. Initialization will not overwrite it.",
+    "Runtime \u4E0D\u4F1A\u4F7F\u7528\u65E0\u6CD5\u6838\u9A8C\u7684\u4F4D\u683C\u771F\u6E90\u3002\u4F60\u4ECD\u53EF\u65B0\u5EFA\u4F4D\u683C\uFF0C\u6216\u5207\u6362\u5230\u5176\u4ED6\u4F4D\u683C\u540E\u91CD\u542F\u3002": "Runtime will not use an unverified persona source. You can still create a persona or switch to another persona and restart.",
+    "\u5F53\u524D\u4F4D\u683C\u914D\u7F6E\u65E0\u6CD5\u5B89\u5168\u8FC1\u79FB\uFF0CRuntime \u5DF2\u4FDD\u6301\u9501\u5B9A\u3002": "The active persona configuration cannot be migrated safely. Runtime remains locked.",
+    "\u539F\u6587\u4EF6\u6CA1\u6709\u88AB\u8986\u76D6\u3002\u4F60\u53EF\u4EE5\u65B0\u5EFA\u4F4D\u683C\uFF0C\u6216\u5207\u6362\u5230\u5176\u4ED6\u4F4D\u683C\u540E\u91CD\u542F\u3002": "The source file was not overwritten. You can create a persona, or switch to another persona and restart.",
+    "\u65B0\u5EFA\u4F4D\u683C\u4EE5\u6062\u590D": "Create a persona to recover",
     "\u4E2D\u6587\u540D": "Chinese name",
     "\u82F1\u6587\u540D": "English name",
     "\u7A33\u5B9A\u7F29\u5199": "Stable abbreviation",
@@ -1731,6 +1736,10 @@
     "\u8C03\u7528\u7F16\u8BD1\u65F6\u95F4": "Call compiled at",
     "\u8BED\u6599\u65F6\u95F4": "Corpus time",
     "\u5165\u5E93\u65F6\u95F4": "Stored at",
+    "\u521B\u5EFA\u65F6\u95F4": "Created at",
+    "\u672A\u5165\u5E93": "Not stored",
+    "\u7B49\u5F85\u56DE\u5FC6\u91CD\u6574\u6216\u6302\u8F7D\u91CD\u8BD5": "Awaiting memory reconsolidation or mount retry",
+    "\u53D6\u6D88\u7B49\u5F85\u6302\u8F7D": "Cancel pending mount",
     "\u6700\u8FD1\u8C03\u7528\u65F6\u95F4": "Last recalled at",
     "\u6302\u63A5\u5907\u6CE8\u66F4\u65B0\u65F6\u95F4": "Mount note updated at",
     "\u8FDE\u63A5": "Connection",
@@ -1743,6 +1752,26 @@
     "UPSP \u7A0B\u5E8F\u951A\u70B9": "UPSP application anchor",
     "\u7248\u672C\u4FE1\u606F\u4E0D\u53EF\u7528": "Version unavailable",
     "\u5F53\u524D\u4F4D\u683C": "Current persona",
+    "\u4F4D\u683C\u6807\u7B7E": "Persona tabs",
+    "\u4F4D\u683C\u9009\u9879": "Persona options",
+    "\u4F4D\u683C": "Persona",
+    "\u65B0\u5EFA\u4F4D\u683C": "New persona",
+    "\u5F53\u524D\u6D3B\u52A8\u5206\u8EAB": "Active branch",
+    "\u5206\u8EAB\u9009\u9879": "Instance options",
+    "\u65B0\u5EFA\u5206\u8EAB": "New branch",
+    "\u65B0\u5206\u8EAB\u540D\u79F0": "New branch name",
+    "\u5206\u652F\u540D\u79F0": "Fork name",
+    "\u4ECE\u6B64\u5206\u8EAB\u521B\u5EFA\u5206\u652F": "Fork from this instance",
+    "\u5206\u53C9\u5F53\u524D\u5206\u8EAB": "Fork current branch",
+    "\u5F52\u6863\u5206\u8EAB": "Archive branch",
+    "\u6062\u590D\u5206\u8EAB": "Restore branch",
+    "\u6CA1\u6709\u53EF\u7528\u64CD\u4F5C": "No available actions",
+    "\u5DF2\u5F52\u6863": "Archived",
+    "\u6B63\u5728\u5207\u6362\u4F4D\u683C\u6216\u5206\u8EAB": "Switching persona or branch",
+    "\u6B64\u64CD\u4F5C\u9700\u8981\u684C\u9762\u5BA2\u6237\u7AEF\u5B89\u5168\u91CD\u542F\u540E\u7AEF\u3002": "This action requires the desktop client to restart the backend safely.",
+    "\u4F4D\u683C\u6216\u5206\u8EAB\u53D8\u66F4\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5\u3002": "The persona or branch update failed. Please try again.",
+    "\u7EE7\u627F\u5F53\u524D\u6A21\u578B\u914D\u7F6E\uFF0C\u4E0D\u53D1\u8D77\u6A21\u578B\u8C03\u7528\u3002": "Inherit current model configuration without a model call.",
+    "\u65B0\u4F4D\u683C\u7EE7\u627F\u5F53\u524D\u6A21\u578B\u914D\u7F6E\uFF1B\u521B\u5EFA\u8FC7\u7A0B\u4E0D\u53D1\u8D77\u6A21\u578B\u8C03\u7528\u3002": "The new persona inherits the current model configuration; creation makes no model call.",
     "\u9009\u62E9\u4F4D\u683C\u663E\u793A\u540D\u79F0": "Choose persona display name",
     "\u591A\u4F4D\u683C\u7CFB\u7EDF\u6B63\u5728\u5F00\u53D1\u4E2D": "Multi-persona system is in development",
     "\u5F53\u524D\u5206\u8EAB\u4E0E\u8FD0\u884C\u72B6\u6001": "Current instance and runtime status",
@@ -1852,6 +1881,9 @@
     "\u6A21\u578B ID": "Model ID",
     "\u8BC6\u522B\u5BB9\u91CF": "Detected capacity",
     "\u8FD0\u884C\u4E0A\u9650": "Runtime limit",
+    "\u8F93\u51FA Token \u4E0A\u9650": "Output token limit",
+    "0 \u8868\u793A\u81EA\u52A8\uFF1AOpenAI \u4F7F\u7528\u670D\u52A1\u9ED8\u8BA4\u503C\uFF0C\u539F\u751F Anthropic \u4F7F\u7528 32000\u3002": "0 means automatic: OpenAI uses the provider default; native Anthropic uses 32000.",
+    "\u81EA\u52A8": "Automatic",
     "\u91CD\u65B0\u8BC6\u522B": "Detect again",
     "\u6A21\u578B\u670D\u52A1\u5143\u6570\u636E": "Provider metadata",
     "\u5185\u7F6E\u5B98\u65B9\u6A21\u578B\u8868": "Built-in official model registry",
@@ -1872,6 +1904,7 @@
     "\u8FDE\u63A5\u7F3A\u5931": "Connection missing",
     "\u4E0A\u4E0B\u6587\u7A97\u53E3\uFF1A{size}\uFF1B\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6\uFF1A{effort}": "Context window: {size}; default reasoning: {effort}",
     "\u8BC6\u522B\u5BB9\u91CF\uFF1A{detected}\uFF1B\u8FD0\u884C\u4E0A\u9650\uFF1A{limit}\uFF1B\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6\uFF1A{effort}": "Detected capacity: {detected}; runtime limit: {limit}; default reasoning: {effort}",
+    "\u8BC6\u522B\u5BB9\u91CF\uFF1A{detected}\uFF1B\u8FD0\u884C\u4E0A\u9650\uFF1A{limit}\uFF1B\u8F93\u51FA\u4E0A\u9650\uFF1A{output}\uFF1B\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6\uFF1A{effort}": "Detected capacity: {detected}; runtime limit: {limit}; output limit: {output}; default reasoning: {effort}",
     "\u4F20\u8F93\u4E0E\u5BB9\u707E": "Transport and failover",
     "\u5F53\u524D\u5BBF\u4E3B\u4F7F\u7528\u8FDB\u7A0B\u73AF\u5883\u8986\u76D6\uFF1B\u6A21\u578B\u5E93\u4ECD\u53EF\u7BA1\u7406\uFF0C\u4F46\u5F53\u524D\u8FDB\u7A0B\u4EE5\u8986\u76D6\u94FE\u4E3A\u51C6\u3002": "This host uses a process override. The model catalog remains editable, while the current process follows the override chain.",
     "\u670D\u52A1\u8FDE\u63A5\u4FDD\u5B58\u5730\u5740\u4E0E\u5171\u4EAB\u5BC6\u94A5\uFF1B\u6A21\u578B\u914D\u7F6E\u4FDD\u5B58\u6A21\u578B\u80FD\u529B\u3002\u540C\u4E00\u8FDE\u63A5\u53EF\u4F9B\u591A\u4E2A\u6A21\u578B\u590D\u7528\u3002": "Service connections store endpoints and shared keys; model profiles store model capabilities. Multiple models can reuse one connection.",
@@ -1909,16 +1942,23 @@
     "\u4E3B\u7AEF\u70B9": "Primary endpoint",
     "\u5907\u7528\u7AEF\u70B9": "Fallback endpoint",
     "\u5E94\u6025\u7AEF\u70B9": "Emergency endpoint",
+    "\u56DE\u7B54\u951A\u70B9": "Response anchor",
+    "\u793A\u4F8B\uFF1A\u4F7F\u7528\u7528\u6237\u5F53\u524D\u8BED\u8A00\uFF1B\u5148\u7ED9\u7ED3\u8BBA\uFF0C\u518D\u7ED9\u5FC5\u8981\u8BC1\u636E\u3002": "Example: Use the user's current language; lead with the conclusion, then provide only necessary evidence.",
     "\u5FC3\u8DF3\u95F4\u9694": "Heartbeat interval",
-    "\u8F6E\u6B21\u65F6\u9650": "Round time limit",
+    "\u53CD\u5E94\u63D0\u9192\u65F6\u95F4\uFF08\u79D2\uFF09": "Reaction reminder (seconds)",
+    "\u53CD\u5E94\u8B66\u544A\u65F6\u95F4\uFF08\u79D2\uFF09": "Reaction warning (seconds)",
+    "\u81EA\u52A8\u4E2D\u7EE7\u65F6\u95F4\uFF08\u79D2\uFF09": "Automatic relay (seconds)",
     "\u8282\u5F8B\u5468\u671F": "Rhythm period",
     "\u5F85\u673A\u9608\u503C": "Standby threshold",
-    "\u4EE4\u724C\u8B66\u544A\u9608\u503C": "Token warning threshold",
-    "\u4EE4\u724C\u5371\u9669\u9608\u503C": "Token critical threshold",
+    "\u6700\u8FD1\u7F13\u5B58\u6574\u7406\u9608\u503C": "Recent-cache maintenance threshold",
+    "\u538B\u7F29\u89E6\u53D1\u6BD4\u4F8B": "Compaction trigger ratio",
+    "\u4FDD\u62A4\u6700\u8FD1\u4EA4\u4E92\u6570": "Protected recent interactions",
+    "\u5206\u7247\u6458\u8981\u4E0A\u9650\u6BD4\u4F8B": "Shard summary limit ratio",
+    "\u5355\u5468\u671F\u76EE\u6807\u6BD4\u4F8B": "Per-cycle target ratio",
+    "\u5355\u5E27\u5904\u7406\u5B57\u7B26\u4E0A\u9650": "Per-frame source character limit",
     "\u8F6E\u6B21\u5FEB\u7167\u4FDD\u7559\u91CF": "Round snapshot retention",
+    "\u8F6E\u6B21\u5FEB\u7167\u603B\u4E0A\u9650\uFF08MiB\uFF09": "Round snapshot total limit (MiB)",
     "\u72B6\u6001\u5907\u4EFD\u4FDD\u7559\u91CF": "State backup retention",
-    "\u9690\u6027\u8FED\u4EE3\u89E6\u53D1\u9608\u503C": "Tacit iteration trigger",
-    "\u5173\u7CFB\u8FED\u4EE3\u89E6\u53D1\u9608\u503C": "Relation iteration trigger",
     "\u6587\u4EF6\u8BFB\u53D6\u7A97\u53E3": "File read window",
     "\u7F51\u9875\u8BFB\u53D6\u7A97\u53E3": "Web fetch window",
     "\u641C\u7D22\u7ED3\u679C\u7A97\u53E3": "Search result window",
@@ -1951,13 +1991,7 @@
     "\u4EC5\u7F13\u5B58\u952E": "Cache key only",
     "\u6C38\u4E45\u5C42\u663E\u5F0F\u7F13\u5B58": "Explicit permanent-layer cache",
     "\u5206\u5C42\u663E\u5F0F\u7F13\u5B58": "Explicit tiered cache",
-    "\u5F53\u524D\u7F13\u5B58\u9884\u7B97": "Current-cache budget",
-    "\u5F53\u524D\u7F13\u5B58\u88C1\u526A\u91CF": "Current-cache trim size",
-    "\u6700\u8FD1\u7F13\u5B58\u9884\u7B97": "Recent-cache budget",
     "\u6700\u8FD1\u7F13\u5B58\u88C1\u526A\u91CF": "Recent-cache trim size",
-    "\u6700\u8FD1\u7F13\u5B58\u538B\u7F29\u6BD4\u4F8B": "Recent-cache compaction ratio",
-    "\u538B\u7F29\u5206\u7247\u5927\u5C0F": "Compaction shard size",
-    "\u538B\u7F29\u5206\u7247\u6BD4\u4F8B": "Compaction shard ratio",
     "\u5B9A\u671F\u8BB0\u5FC6\u6761\u76EE\u4E0A\u9650": "Periodic memory item limit",
     "\u9AD8\u9891\u5F15\u7528\u7A97\u53E3": "High-frequency reference window",
     "\u5173\u7CFB\u7126\u70B9\u69FD\u4F4D": "Relation focus slots",
@@ -2124,7 +2158,7 @@
     "\u75B2\u52B3\u8FC7\u671F": "Fatigue expired",
     "\u611F\u53D7\u5F85\u7ED3\u7B97": "Feeling settlement due",
     "API \u964D\u7EA7": "API degraded",
-    "\u77ED\u671F\u8BB0\u5FC6\u5F85\u964D\u7EA7": "STM degradation pending",
+    "\u8BB0\u5FC6\u5F85\u538B\u7F29": "Memory compression due",
     "\u8FDB\u7A0B\u79BB\u7EBF": "Process down",
     "\u7528\u6237\u6D88\u606F\u7B49\u5F85": "User message waiting",
     "\u8282\u5F8B\u5230\u671F": "Rhythm due",
@@ -2140,7 +2174,6 @@
     "\u6708\u8282\u5F8B\u5230\u671F": "Monthly rhythm due",
     "\u5B63\u8282\u5F8B\u5230\u671F": "Quarterly rhythm due",
     "\u5E74\u8282\u5F8B\u5230\u671F": "Yearly rhythm due",
-    "\u6F14\u5316\u5F85\u5904\u7406": "Evolution pending",
     "\u6C38\u56FA\u5C42\u8FC7\u671F": "Permanent layer expired",
     "\u5B9A\u671F\u5C42\u8FC7\u671F": "Periodic layer expired",
     "\u5F39\u7A97\u6D3B\u52A8": "Popup active",
@@ -2469,6 +2502,18 @@
     "\u6CA1\u6709\u8BB0\u5FC6\u6761\u76EE": "No memory entries",
     "\u5F53\u524D\u67E5\u8BE2\u6CA1\u6709\u5339\u914D\u6761\u76EE\u3002": "No entries match the current query.",
     "\u8BE5\u5C42\u5F53\u524D\u6CA1\u6709\u53EF\u6295\u5F71\u7684\u8BB0\u5FC6\u6761\u76EE\uFF1B\u9690\u79C1\u6761\u76EE\u4E0D\u4F1A\u663E\u793A\u3002": "No memory entries are projected in this layer; private entries are never shown.",
+    "STM \u8870\u51CF\u4E2D": "STM decaying",
+    "\u5B9A\u671F\u5C42\u5DF2\u6302\u8F7D": "Mounted to periodic layer",
+    "\u672A\u6302\u8F7D": "Not mounted",
+    "\u6302\u8F7D\u5230\u5B9A\u671F\u5C42": "Mount to periodic layer",
+    "\u4ECE\u5B9A\u671F\u5C42\u5378\u8F7D": "Unmount from periodic layer",
+    "\u5B9A\u671F\u5C42\u6302\u8F7D\u53C2\u6570\u65E0\u6548": "Invalid periodic mount parameters",
+    "\u8BB0\u5FC6\u6761\u76EE\u4E0D\u5B58\u5728": "Memory entry not found",
+    "Runtime \u6B63\u5FD9\u6216\u6302\u8F7D\u72B6\u6001\u51B2\u7A81": "Runtime is busy or mount state conflicts",
+    "\u672C\u5730\u5B9A\u671F\u5C42\u5904\u7406\u5668\u4E0D\u53EF\u7528": "Local periodic-layer processor unavailable",
+    "\u5B9A\u671F\u5C42\u6302\u8F7D\u53D8\u66F4\u5931\u8D25": "Periodic mount update failed",
+    "\u5B9A\u671F\u5C42\u5DF2\u8FBE\u5230\u5F53\u524D\u914D\u7F6E\u4E0A\u9650\uFF0C\u8BF7\u5148\u53D6\u6D88\u5176\u4ED6\u6302\u8F7D\u6216\u8C03\u6574\u4E0A\u9650\u540E\u518D\u8BD5\u3002": "The periodic layer has reached its configured limit. Unmount another memory or raise the limit before trying again.",
+    "\u64CD\u4F5C\u5DF2\u63D0\u4EA4\uFF0C\u4F46\u8BB0\u5FC6\u771F\u6E90\u91CD\u8BFB\u5931\u8D25\uFF1B\u4E3A\u907F\u514D\u663E\u793A\u65E7\u72B6\u6001\uFF0C\u8BF7\u91CD\u65B0\u8BFB\u53D6\u8BE6\u60C5\u3002": "The action was submitted, but the memory source could not be reloaded. Reload the details to avoid showing stale state.",
     "\u6D3B\u52A8\u5173\u7CFB\u5361\u5217\u8868": "Active relation cards",
     "\u6CA1\u6709\u6D3B\u52A8\u5173\u7CFB\u5361": "No active relation cards",
     "\u5F53\u524D\u5173\u7CFB\u767B\u8BB0\u8868\u6CA1\u6709\u6D3B\u52A8\u5361\u7247\u3002": "The relation registry has no active cards.",
@@ -2879,6 +2924,12 @@
       feedback: "",
       receipt: null
     },
+    periodicMutation: {
+      pending: false,
+      memId: "",
+      feedback: "",
+      receipt: null
+    },
     loading: true,
     error: "",
     renderKey: ""
@@ -2932,6 +2983,7 @@
     preview: false,
     testToken: "",
     skipModelSetup: false,
+    manageNewPersona: false,
     draft: {
       name_zh: "",
       name_en: "",
@@ -2943,9 +2995,16 @@
       instance_notes: ""
     }
   };
+  var personaCatalogProjection = {
+    data: null,
+    loading: true,
+    pending: false,
+    error: ""
+  };
   var polling = {
     about: null,
     bootstrap: null,
+    personas: null,
     runtime: null,
     runtimeForceQueued: false,
     task: null,
@@ -2991,10 +3050,17 @@
     bootstrapRoot: requiredElement("#bootstrapRoot"),
     app: requiredElement("#appShell"),
     leftRail: requiredElement(".left-rail"),
-    personaNameSelector: requiredElement("#personaNameSelector"),
-    personaNameSummary: requiredElement("#personaNameSummary"),
-    personaNameValue: requiredElement("#personaNameValue"),
+    personaTabs: requiredElement("#personaTabs"),
+    personaMoreMenu: requiredElement("#personaMoreMenu"),
+    personaMoreToggle: requiredElement("#personaMoreToggle"),
     personaNameOptions: requiredElement("#personaNameOptions"),
+    createPersonaButton: requiredElement("#createPersonaButton"),
+    instanceTabs: requiredElement("#instanceTabs"),
+    instanceMoreMenu: requiredElement("#instanceMoreMenu"),
+    instanceMoreToggle: requiredElement("#instanceMoreToggle"),
+    instanceOptions: requiredElement("#instanceOptions"),
+    createInstanceButton: requiredElement("#createInstanceButton"),
+    identityFeedback: requiredElement("#identityFeedback"),
     statusReadouts: requiredElement("#statusReadouts"),
     productVersionName: requiredElement("#productVersionName"),
     productVersionNumber: requiredElement("#productVersionNumber"),
@@ -19153,7 +19219,7 @@
     return template.content;
   }
 
-  // node_modules/rehype-katex/node_modules/katex/dist/katex.mjs
+  // node_modules/katex/dist/katex.mjs
   var ParseError = class _ParseError extends Error {
     // The underlying error message without any context added.
     constructor(message, token) {
@@ -22538,10 +22604,8 @@
       var metrics = fontMetricsBySizeIndex[sizeIndex] = {
         cssEmPerMu: sigmasAndXis.quad[sizeIndex] / 18
       };
-      for (var key2 in sigmasAndXis) {
-        if (sigmasAndXis.hasOwnProperty(key2)) {
-          metrics[key2] = sigmasAndXis[key2][sizeIndex];
-        }
+      for (var key2 of Object.keys(sigmasAndXis)) {
+        metrics[key2] = sigmasAndXis[key2][sizeIndex];
       }
     }
     return fontMetricsBySizeIndex[sizeIndex];
@@ -23480,16 +23544,12 @@
       };
     }
   };
-  var makeOrd = function makeOrd2(group, options, type) {
+  var makeOrd = function makeOrd2(group, options) {
+    var type = group.type === "mathord" ? "mathord" : "textord";
     var mode = group.mode;
     var text10 = group.text;
     var classes = ["mord"];
-    var {
-      font,
-      fontFamily,
-      fontWeight,
-      fontShape
-    } = options;
+    var font = options.font, fontFamily = options.fontFamily, fontWeight = options.fontWeight, fontShape = options.fontShape;
     var useFont = mode === "math" || mode === "text" && !!font;
     var fontOrFamily = useFont ? font : fontFamily;
     var wideFontName = "";
@@ -23517,7 +23577,7 @@
       }
       if (lookupSymbol(text10, fontName, mode).metrics) {
         return makeSymbol(text10, fontName, mode, options, classes.concat(fontClasses));
-      } else if (ligatures.hasOwnProperty(text10) && fontName.slice(0, 10) === "Typewriter") {
+      } else if (Object.prototype.hasOwnProperty.call(ligatures, text10) && fontName.slice(0, 10) === "Typewriter") {
         var parts = [];
         for (var i2 = 0; i2 < text10.length; i2++) {
           parts.push(makeSymbol(text10[i2], fontName, mode, options, classes.concat(fontClasses)));
@@ -23679,10 +23739,7 @@
     };
   };
   var makeVList = function makeVList2(params, options) {
-    var {
-      children: children2,
-      depth
-    } = getVListChildrenAndDepth(params);
+    var _getVListChildrenAndD = getVListChildrenAndDepth(params), children2 = _getVListChildrenAndD.children, depth = _getVListChildrenAndD.depth;
     var pstrutSize = 0;
     for (var i2 = 0; i2 < children2.length; i2++) {
       var child = children2[i2];
@@ -23842,7 +23899,7 @@
     oiiintSize2: ["oiiintSize2", 1.98, 0.659]
   };
   var staticSvg = function staticSvg2(value, options) {
-    var [pathName, width, height] = svgData[value];
+    var _svgData$value = svgData[value], pathName = _svgData$value[0], width = _svgData$value[1], height = _svgData$value[2];
     var path3 = new PathNode(pathName);
     var svgNode = new SvgNode([path3], {
       "width": makeEm(width),
@@ -23852,7 +23909,7 @@
       "viewBox": "0 0 " + 1e3 * width + " " + 1e3 * height,
       "preserveAspectRatio": "xMinYMin"
     });
-    var span = makeSvgSpan(["overlay"], [svgNode], options);
+    var span = makeSvgSpan(["katex-overlay"], [svgNode], options);
     span.height = height;
     span.style.height = makeEm(height);
     span.style.width = makeEm(width);
@@ -23943,27 +24000,8 @@
   var _functions = {};
   var _htmlGroupBuilders = {};
   var _mathmlGroupBuilders = {};
-  function defineFunction(_ref) {
-    var {
-      type,
-      names,
-      props,
-      handler,
-      htmlBuilder: htmlBuilder3,
-      mathmlBuilder: mathmlBuilder3
-    } = _ref;
-    var data = {
-      type,
-      numArgs: props.numArgs,
-      argTypes: props.argTypes,
-      allowedInArgument: !!props.allowedInArgument,
-      allowedInText: !!props.allowedInText,
-      allowedInMath: props.allowedInMath === void 0 ? true : props.allowedInMath,
-      numOptionalArgs: props.numOptionalArgs || 0,
-      infix: !!props.infix,
-      primitive: !!props.primitive,
-      handler
-    };
+  function defineFunction(data) {
+    var type = data.type, names = data.names, htmlBuilder3 = data.htmlBuilder, mathmlBuilder3 = data.mathmlBuilder;
     for (var i2 = 0; i2 < names.length; ++i2) {
       _functions[names[i2]] = data;
     }
@@ -23976,24 +24014,14 @@
       }
     }
   }
-  function defineFunctionBuilders(_ref2) {
-    var {
-      type,
-      htmlBuilder: htmlBuilder3,
-      mathmlBuilder: mathmlBuilder3
-    } = _ref2;
-    defineFunction({
-      type,
-      names: [],
-      props: {
-        numArgs: 0
-      },
-      handler() {
-        throw new Error("Should never be called.");
-      },
-      htmlBuilder: htmlBuilder3,
-      mathmlBuilder: mathmlBuilder3
-    });
+  function defineFunctionBuilders(_ref) {
+    var type = _ref.type, htmlBuilder3 = _ref.htmlBuilder, mathmlBuilder3 = _ref.mathmlBuilder;
+    if (htmlBuilder3) {
+      _htmlGroupBuilders[type] = htmlBuilder3;
+    }
+    if (mathmlBuilder3) {
+      _mathmlGroupBuilders[type] = mathmlBuilder3;
+    }
   }
   var normalizeArgument = function normalizeArgument2(arg) {
     return arg.type === "ordgroup" && arg.body.length === 1 ? arg.body[0] : arg;
@@ -24099,7 +24127,7 @@
       }
       if (nonspace) {
         prev.node = node2;
-      } else if (isRoot && node2.hasClass("newline")) {
+      } else if (isRoot && node2.hasClass("katex-newline")) {
         prev.node = makeSpan(["leftmost"]);
       }
       prev.insertAfter = /* @__PURE__ */ ((index2) => (n) => {
@@ -24163,8 +24191,8 @@
     }
   };
   function buildHTMLUnbreakable(children2, options) {
-    var body3 = makeSpan(["base"], children2, options);
-    var strut = makeSpan(["strut"]);
+    var body3 = makeSpan(["katex-base"], children2, options);
+    var strut = makeSpan(["katex-strut"]);
     strut.style.height = makeEm(body3.height + body3.depth);
     if (body3.depth) {
       strut.style.verticalAlign = makeEm(-body3.depth);
@@ -24180,7 +24208,7 @@
     }
     var expression = buildExpression$1(tree, options, "root");
     var eqnNum;
-    if (expression.length === 2 && expression[1].hasClass("tag")) {
+    if (expression.length === 2 && expression[1].hasClass("katex-tag")) {
       eqnNum = expression.pop();
     }
     var children2 = [];
@@ -24189,7 +24217,7 @@
       parts.push(expression[i2]);
       if (expression[i2].hasClass("mbin") || expression[i2].hasClass("mrel") || expression[i2].hasClass("allowbreak")) {
         var nobreak = false;
-        while (i2 < expression.length - 1 && expression[i2 + 1].hasClass("mspace") && !expression[i2 + 1].hasClass("newline")) {
+        while (i2 < expression.length - 1 && expression[i2 + 1].hasClass("mspace") && !expression[i2 + 1].hasClass("katex-newline")) {
           i2++;
           parts.push(expression[i2]);
           if (expression[i2].hasClass("nobreak")) {
@@ -24200,7 +24228,7 @@
           children2.push(buildHTMLUnbreakable(parts, options));
           parts = [];
         }
-      } else if (expression[i2].hasClass("newline")) {
+      } else if (expression[i2].hasClass("katex-newline")) {
         parts.pop();
         if (parts.length > 0) {
           children2.push(buildHTMLUnbreakable(parts, options));
@@ -24215,7 +24243,7 @@
     var tagChild;
     if (tag) {
       tagChild = buildHTMLUnbreakable(buildExpression$1(tag, options, true), options);
-      tagChild.classes = ["tag"];
+      tagChild.classes = ["katex-tag"];
       children2.push(tagChild);
     } else if (eqnNum) {
       children2.push(eqnNum);
@@ -24263,10 +24291,10 @@
      */
     toNode() {
       var node2 = document.createElementNS("http://www.w3.org/1998/Math/MathML", this.type);
-      for (var attr in this.attributes) {
-        if (Object.prototype.hasOwnProperty.call(this.attributes, attr)) {
-          node2.setAttribute(attr, this.attributes[attr]);
-        }
+      for (var _ref2 of Object.entries(this.attributes)) {
+        var attr = _ref2[0];
+        var value = _ref2[1];
+        node2.setAttribute(attr, value);
       }
       if (this.classes.length > 0) {
         node2.className = createClass(this.classes);
@@ -24289,12 +24317,12 @@
      */
     toMarkup() {
       var markup = "<" + this.type;
-      for (var attr in this.attributes) {
-        if (Object.prototype.hasOwnProperty.call(this.attributes, attr)) {
-          markup += " " + attr + '="';
-          markup += escape(this.attributes[attr]);
-          markup += '"';
-        }
+      for (var _ref4 of Object.entries(this.attributes)) {
+        var attr = _ref4[0];
+        var value = _ref4[1];
+        markup += " " + attr + '="';
+        markup += escape(value);
+        markup += '"';
       }
       if (this.classes.length > 0) {
         markup += ' class ="' + escape(createClass(this.classes)) + '"';
@@ -24403,7 +24431,8 @@
   var noVariantSymbols = /* @__PURE__ */ new Set(["\\imath", "\\jmath"]);
   var rowLikeTypes = /* @__PURE__ */ new Set(["mrow", "mtable"]);
   var makeText = function makeText2(text10, mode, options) {
-    if (symbols[mode][text10] && symbols[mode][text10].replace && text10.charCodeAt(0) !== 55349 && !(ligatures.hasOwnProperty(text10) && options && (options.fontFamily && options.fontFamily.slice(4, 6) === "tt" || options.font && options.font.slice(4, 6) === "tt"))) {
+    var _options$fontFamily, _options$font;
+    if (symbols[mode][text10] && symbols[mode][text10].replace && text10.charCodeAt(0) !== 55349 && !(Object.prototype.hasOwnProperty.call(ligatures, text10) && ((options == null || (_options$fontFamily = options.fontFamily) == null ? void 0 : _options$fontFamily.slice(4, 6)) === "tt" || (options == null || (_options$font = options.font) == null ? void 0 : _options$font.slice(4, 6)) === "tt"))) {
       text10 = symbols[mode][text10].replace;
     }
     return new TextNode(text10);
@@ -24796,7 +24825,7 @@
      */
     sizingClasses(oldOptions) {
       if (oldOptions.size !== this.size) {
-        return ["sizing", "reset-size" + oldOptions.size, "size" + this.size];
+        return ["katex-sizing", "reset-size" + oldOptions.size, "size" + this.size];
       } else {
         return [];
       }
@@ -24807,7 +24836,7 @@
      */
     baseSizingClasses() {
       if (this.size !== _Options.BASESIZE) {
-        return ["sizing", "reset-size" + this.size, "size" + _Options.BASESIZE];
+        return ["katex-sizing", "reset-size" + this.size, "size" + _Options.BASESIZE];
       } else {
         return [];
       }
@@ -25031,7 +25060,7 @@
         if (!data) {
           throw new Error('No SVG data for "' + label + '".');
         }
-        var [paths, _minWidth, _viewBoxHeight] = data;
+        var paths = data[0], _minWidth = data[1], _viewBoxHeight = data[2];
         var _height2 = _viewBoxHeight / 1e3;
         var numSvgChildren = paths.length;
         var widthClasses;
@@ -25072,17 +25101,13 @@
           }
         }
         return {
-          span: makeSpan(["stretchy"], spans, options),
+          span: makeSpan(["katex-stretchy"], spans, options),
           minWidth: _minWidth,
           height: _height2
         };
       }
     }
-    var {
-      span,
-      minWidth,
-      height
-    } = buildSvgSpan_();
+    var _buildSvgSpan_ = buildSvgSpan_(), span = _buildSvgSpan_.span, minWidth = _buildSvgSpan_.minWidth, height = _buildSvgSpan_.height;
     span.height = height;
     span.style.height = makeEm(height);
     if (minWidth > 0) {
@@ -25094,7 +25119,7 @@
     var img;
     var totalHeight = inner2.height + inner2.depth + topPad + bottomPad;
     if (/fbox|color|angl/.test(label)) {
-      img = makeSpan(["stretchy", label], [], options);
+      img = makeSpan(["katex-stretchy", label], [], options);
       if (label === "fbox") {
         var color2 = options.color && options.getColor();
         if (color2) {
@@ -25131,23 +25156,12 @@
     img.style.height = makeEm(totalHeight);
     return img;
   };
-  var ATOMS = {
-    "bin": 1,
-    "close": 1,
-    "inner": 1,
-    "open": 1,
-    "punct": 1,
-    "rel": 1
-  };
-  var NON_ATOMS = {
-    "accent-token": 1,
-    "mathord": 1,
-    "op-token": 1,
-    "spacing": 1,
-    "textord": 1
-  };
+  var atomList = ["bin", "close", "inner", "open", "punct", "rel"];
+  var nonAtomList = ["accent-token", "mathord", "op-token", "spacing", "textord"];
+  var Atoms = new Set(atomList);
+  var NonAtoms = new Set(nonAtomList);
   function isAtom(value) {
-    return value in ATOMS;
+    return Atoms.has(value);
   }
   function assertNodeType(node2, type) {
     if (!node2 || node2.type !== type) {
@@ -25163,7 +25177,7 @@
     return typedNode;
   }
   function checkSymbolNodeType(node2) {
-    if (node2 && (node2.type === "atom" || NON_ATOMS.hasOwnProperty(node2.type))) {
+    if (node2.type === "atom" || NonAtoms.has(node2.type)) {
       return node2;
     }
     return null;
@@ -25211,7 +25225,7 @@
           type: "textord",
           mode: group.mode,
           text: group.label
-        }, options, "textord");
+        }, options);
         accent2 = assertSymbolDomNode(accent2);
         accent2.italic = 0;
         width = accent2.width;
@@ -25264,7 +25278,7 @@
         }]
       });
     }
-    var accentWrap = makeSpan(["mord", "accent"], [accentBody], options);
+    var accentWrap = makeSpan(["mord", "katex-accent"], [accentBody], options);
     if (supSubGroup) {
       supSubGroup.children[0] = accentWrap;
       supSubGroup.height = Math.max(accentWrap.height, supSubGroup.height);
@@ -25284,9 +25298,7 @@
   defineFunction({
     type: "accent",
     names: ["\\acute", "\\grave", "\\ddot", "\\tilde", "\\bar", "\\breve", "\\check", "\\hat", "\\vec", "\\dot", "\\mathring", "\\widecheck", "\\widehat", "\\widetilde", "\\overrightarrow", "\\overleftarrow", "\\Overrightarrow", "\\overleftrightarrow", "\\overgroup", "\\overlinesegment", "\\overleftharpoon", "\\overrightharpoon"],
-    props: {
-      numArgs: 1
-    },
+    numArgs: 1,
     handler: (context, args) => {
       var base = normalizeArgument(args[0]);
       var isStretchy = !NON_STRETCHY_ACCENT_REGEX.test(context.funcName);
@@ -25306,13 +25318,11 @@
   defineFunction({
     type: "accent",
     names: ["\\'", "\\`", "\\^", "\\~", "\\=", "\\u", "\\.", '\\"', "\\c", "\\r", "\\H", "\\v", "\\textcircled"],
-    props: {
-      numArgs: 1,
-      allowedInText: true,
-      allowedInMath: true,
-      // unless in strict mode
-      argTypes: ["primitive"]
-    },
+    numArgs: 1,
+    allowedInText: true,
+    allowedInMath: true,
+    // unless in strict mode
+    argTypes: ["primitive"],
     handler: (context, args) => {
       var base = args[0];
       var mode = context.parser.mode;
@@ -25328,21 +25338,14 @@
         isShifty: true,
         base
       };
-    },
-    htmlBuilder: htmlBuilder$a,
-    mathmlBuilder: mathmlBuilder$9
+    }
   });
   defineFunction({
     type: "accentUnder",
     names: ["\\underleftarrow", "\\underrightarrow", "\\underleftrightarrow", "\\undergroup", "\\underlinesegment", "\\utilde"],
-    props: {
-      numArgs: 1
-    },
+    numArgs: 1,
     handler: (_ref, args) => {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var base = args[0];
       return {
         type: "accentUnder",
@@ -25417,15 +25420,10 @@
       "\\\\cdleftarrow",
       "\\\\cdlongequal"
     ],
-    props: {
-      numArgs: 1,
-      numOptionalArgs: 1
-    },
+    numArgs: 1,
+    numOptionalArgs: 1,
     handler(_ref, args, optArgs) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       return {
         type: "xArrow",
         mode: parser2.mode,
@@ -25543,9 +25541,6 @@
       } else if (group.mclass === "mopen" || group.mclass === "mclose") {
         node2.attributes.lspace = "0em";
         node2.attributes.rspace = "0em";
-      } else if (group.mclass === "minner") {
-        node2.attributes.lspace = "0.0556em";
-        node2.attributes.width = "+0.1111em";
       }
     }
     return node2;
@@ -25553,21 +25548,15 @@
   defineFunction({
     type: "mclass",
     names: ["\\mathord", "\\mathbin", "\\mathrel", "\\mathopen", "\\mathclose", "\\mathpunct", "\\mathinner"],
-    props: {
-      numArgs: 1,
-      primitive: true
-    },
+    numArgs: 1,
+    primitive: true,
     handler(_ref, args) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var body3 = args[0];
       return {
         type: "mclass",
         mode: parser2.mode,
         mclass: "m" + funcName.slice(5),
-        // TODO(kevinb): don't prefix with 'm'
         body: ordargument(body3),
         isCharacterBox: isCharacterBox(body3)
       };
@@ -25586,13 +25575,9 @@
   defineFunction({
     type: "mclass",
     names: ["\\@binrel"],
-    props: {
-      numArgs: 2
-    },
+    numArgs: 2,
     handler(_ref2, args) {
-      var {
-        parser: parser2
-      } = _ref2;
+      var parser2 = _ref2.parser;
       return {
         type: "mclass",
         mode: parser2.mode,
@@ -25605,14 +25590,9 @@
   defineFunction({
     type: "mclass",
     names: ["\\stackrel", "\\overset", "\\underset"],
-    props: {
-      numArgs: 2
-    },
+    numArgs: 2,
     handler(_ref3, args) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref3;
+      var parser2 = _ref3.parser, funcName = _ref3.funcName;
       var baseArg = args[1];
       var shiftedArg = args[0];
       var mclass;
@@ -25631,12 +25611,16 @@
         suppressBaseShift: funcName !== "\\stackrel",
         body: ordargument(baseArg)
       };
-      var supsub = {
+      var supsub = funcName === "\\underset" ? {
         type: "supsub",
         mode: shiftedArg.mode,
         base: baseOp,
-        sup: funcName === "\\underset" ? null : shiftedArg,
-        sub: funcName === "\\underset" ? shiftedArg : null
+        sub: shiftedArg
+      } : {
+        type: "supsub",
+        mode: shiftedArg.mode,
+        base: baseOp,
+        sup: shiftedArg
       };
       return {
         type: "mclass",
@@ -25645,21 +25629,15 @@
         body: [supsub],
         isCharacterBox: isCharacterBox(supsub)
       };
-    },
-    htmlBuilder: htmlBuilder$9,
-    mathmlBuilder: mathmlBuilder$8
+    }
   });
   defineFunction({
     type: "pmb",
     names: ["\\pmb"],
-    props: {
-      numArgs: 1,
-      allowedInText: true
-    },
+    numArgs: 1,
+    allowedInText: true,
     handler(_ref, args) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       return {
         type: "pmb",
         mode: parser2.mode,
@@ -25858,14 +25836,9 @@
   defineFunction({
     type: "cdlabel",
     names: ["\\\\cdleft", "\\\\cdright"],
-    props: {
-      numArgs: 1
-    },
+    numArgs: 1,
     handler(_ref, args) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       return {
         type: "cdlabel",
         mode: parser2.mode,
@@ -25899,13 +25872,9 @@
   defineFunction({
     type: "cdlabelparent",
     names: ["\\\\cdparent"],
-    props: {
-      numArgs: 1
-    },
+    numArgs: 1,
     handler(_ref2, args) {
-      var {
-        parser: parser2
-      } = _ref2;
+      var parser2 = _ref2.parser;
       return {
         type: "cdlabelparent",
         mode: parser2.mode,
@@ -25924,14 +25893,10 @@
   defineFunction({
     type: "textord",
     names: ["\\@char"],
-    props: {
-      numArgs: 1,
-      allowedInText: true
-    },
+    numArgs: 1,
+    allowedInText: true,
     handler(_ref, args) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var arg = assertNodeType(args[0], "ordgroup");
       var group = arg.body;
       var number2 = "";
@@ -25971,15 +25936,11 @@
   defineFunction({
     type: "color",
     names: ["\\textcolor"],
-    props: {
-      numArgs: 2,
-      allowedInText: true,
-      argTypes: ["color", "original"]
-    },
+    numArgs: 2,
+    allowedInText: true,
+    argTypes: ["color", "original"],
     handler(_ref, args) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var color2 = assertNodeType(args[0], "color-token").color;
       var body3 = args[1];
       return {
@@ -25995,16 +25956,11 @@
   defineFunction({
     type: "color",
     names: ["\\color"],
-    props: {
-      numArgs: 1,
-      allowedInText: true,
-      argTypes: ["color"]
-    },
+    numArgs: 1,
+    allowedInText: true,
+    argTypes: ["color"],
     handler(_ref2, args) {
-      var {
-        parser: parser2,
-        breakOnTokenText
-      } = _ref2;
+      var parser2 = _ref2.parser, breakOnTokenText = _ref2.breakOnTokenText;
       var color2 = assertNodeType(args[0], "color-token").color;
       parser2.gullet.macros.set("\\current@color", color2);
       var body3 = parser2.parseExpression(true, breakOnTokenText);
@@ -26014,22 +25970,16 @@
         color: color2,
         body: body3
       };
-    },
-    htmlBuilder: htmlBuilder$8,
-    mathmlBuilder: mathmlBuilder$7
+    }
   });
   defineFunction({
     type: "cr",
     names: ["\\\\"],
-    props: {
-      numArgs: 0,
-      numOptionalArgs: 0,
-      allowedInText: true
-    },
+    numArgs: 0,
+    numOptionalArgs: 0,
+    allowedInText: true,
     handler(_ref, args, optArgs) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var size = parser2.gullet.future().text === "[" ? parser2.parseSizeGroup(true) : null;
       var newLine = !parser2.settings.displayMode || !parser2.settings.useStrictBehavior("newLineInDisplayMode", "In LaTeX, \\\\ or \\newline does nothing in display mode");
       return {
@@ -26044,7 +25994,7 @@
     htmlBuilder(group, options) {
       var span = makeSpan(["mspace"], [], options);
       if (group.newLine) {
-        span.classes.push("newline");
+        span.classes.push("katex-newline");
         if (group.size) {
           span.style.marginTop = makeEm(calculateSize(group.size, options));
         }
@@ -26111,15 +26061,10 @@
       "\\\\globallong"
       // can’t be entered directly
     ],
-    props: {
-      numArgs: 0,
-      allowedInText: true
-    },
+    numArgs: 0,
+    allowedInText: true,
     handler(_ref) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       parser2.consumeSpaces();
       var token = parser2.fetch();
       if (globalMap[token.text]) {
@@ -26134,16 +26079,11 @@
   defineFunction({
     type: "internal",
     names: ["\\def", "\\gdef", "\\edef", "\\xdef"],
-    props: {
-      numArgs: 0,
-      allowedInText: true,
-      primitive: true
-    },
+    numArgs: 0,
+    allowedInText: true,
+    primitive: true,
     handler(_ref2) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref2;
+      var parser2 = _ref2.parser, funcName = _ref2.funcName;
       var tok = parser2.gullet.popToken();
       var name = tok.text;
       if (/^(?:[\\{}$&#^_]|EOF)$/.test(name)) {
@@ -26175,9 +26115,7 @@
           delimiters2[numArgs].push(tok.text);
         }
       }
-      var {
-        tokens
-      } = parser2.gullet.consumeArg();
+      var _parser$gullet$consum = parser2.gullet.consumeArg(), tokens = _parser$gullet$consum.tokens;
       if (insert) {
         tokens.unshift(insert);
       }
@@ -26203,16 +26141,11 @@
       "\\\\globallet"
       // can’t be entered directly
     ],
-    props: {
-      numArgs: 0,
-      allowedInText: true,
-      primitive: true
-    },
+    numArgs: 0,
+    allowedInText: true,
+    primitive: true,
     handler(_ref3) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref3;
+      var parser2 = _ref3.parser, funcName = _ref3.funcName;
       var name = checkControlSequence(parser2.gullet.popToken());
       parser2.gullet.consumeSpaces();
       var tok = getRHS(parser2);
@@ -26230,16 +26163,11 @@
       "\\\\globalfuture"
       // can’t be entered directly
     ],
-    props: {
-      numArgs: 0,
-      allowedInText: true,
-      primitive: true
-    },
+    numArgs: 0,
+    allowedInText: true,
+    primitive: true,
     handler(_ref4) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref4;
+      var parser2 = _ref4.parser, funcName = _ref4.funcName;
       var name = checkControlSequence(parser2.gullet.popToken());
       var middle = parser2.gullet.popToken();
       var tok = parser2.gullet.popToken();
@@ -26818,10 +26746,8 @@
   defineFunction({
     type: "delimsizing",
     names: ["\\bigl", "\\Bigl", "\\biggl", "\\Biggl", "\\bigr", "\\Bigr", "\\biggr", "\\Biggr", "\\bigm", "\\Bigm", "\\biggm", "\\Biggm", "\\big", "\\Big", "\\bigg", "\\Bigg"],
-    props: {
-      numArgs: 1,
-      argTypes: ["primitive"]
-    },
+    numArgs: 1,
+    argTypes: ["primitive"],
     handler: (context, args) => {
       var delim = checkDelimiter(args[0], context);
       return {
@@ -26864,10 +26790,8 @@
   defineFunction({
     type: "leftright-right",
     names: ["\\right"],
-    props: {
-      numArgs: 1,
-      primitive: true
-    },
+    numArgs: 1,
+    primitive: true,
     handler: (context, args) => {
       var color2 = context.parser.gullet.macros.get("\\current@color");
       if (color2 && typeof color2 !== "string") {
@@ -26885,10 +26809,8 @@
   defineFunction({
     type: "leftright",
     names: ["\\left"],
-    props: {
-      numArgs: 1,
-      primitive: true
-    },
+    numArgs: 1,
+    primitive: true,
     handler: (context, args) => {
       var delim = checkDelimiter(args[0], context);
       var parser2 = context.parser;
@@ -26971,10 +26893,8 @@
   defineFunction({
     type: "middle",
     names: ["\\middle"],
-    props: {
-      numArgs: 1,
-      primitive: true
-    },
+    numArgs: 1,
+    primitive: true,
     handler: (context, args) => {
       var delim = checkDelimiter(args[0], context);
       if (!context.parser.leftrightDepth) {
@@ -27016,7 +26936,7 @@
     var imgShift;
     var isSingleChar = isCharacterBox(group.body);
     if (label === "sout") {
-      img = makeSpan(["stretchy", "sout"]);
+      img = makeSpan(["katex-stretchy", "katex-sout"]);
       img.height = options.fontMetrics().defaultRuleThickness / scale;
       imgShift = -0.5 * options.fontMetrics().xHeight;
     } else if (label === "phase") {
@@ -27186,16 +27106,11 @@
   defineFunction({
     type: "enclose",
     names: ["\\colorbox"],
-    props: {
-      numArgs: 2,
-      allowedInText: true,
-      argTypes: ["color", "hbox"]
-    },
+    numArgs: 2,
+    allowedInText: true,
+    argTypes: ["color", "hbox"],
     handler(_ref, args, optArgs) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var color2 = assertNodeType(args[0], "color-token").color;
       var body3 = args[1];
       return {
@@ -27212,16 +27127,11 @@
   defineFunction({
     type: "enclose",
     names: ["\\fcolorbox"],
-    props: {
-      numArgs: 3,
-      allowedInText: true,
-      argTypes: ["color", "color", "hbox"]
-    },
+    numArgs: 3,
+    allowedInText: true,
+    argTypes: ["color", "color", "hbox"],
     handler(_ref2, args, optArgs) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref2;
+      var parser2 = _ref2.parser, funcName = _ref2.funcName;
       var borderColor = assertNodeType(args[0], "color-token").color;
       var backgroundColor = assertNodeType(args[1], "color-token").color;
       var body3 = args[2];
@@ -27233,22 +27143,16 @@
         borderColor,
         body: body3
       };
-    },
-    htmlBuilder: htmlBuilder$7,
-    mathmlBuilder: mathmlBuilder$6
+    }
   });
   defineFunction({
     type: "enclose",
     names: ["\\fbox"],
-    props: {
-      numArgs: 1,
-      argTypes: ["hbox"],
-      allowedInText: true
-    },
+    numArgs: 1,
+    argTypes: ["hbox"],
+    allowedInText: true,
     handler(_ref3, args) {
-      var {
-        parser: parser2
-      } = _ref3;
+      var parser2 = _ref3.parser;
       return {
         type: "enclose",
         mode: parser2.mode,
@@ -27260,14 +27164,9 @@
   defineFunction({
     type: "enclose",
     names: ["\\cancel", "\\bcancel", "\\xcancel", "\\phase"],
-    props: {
-      numArgs: 1
-    },
+    numArgs: 1,
     handler(_ref4, args) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref4;
+      var parser2 = _ref4.parser, funcName = _ref4.funcName;
       var body3 = args[0];
       return {
         type: "enclose",
@@ -27275,22 +27174,15 @@
         label: funcName,
         body: body3
       };
-    },
-    htmlBuilder: htmlBuilder$7,
-    mathmlBuilder: mathmlBuilder$6
+    }
   });
   defineFunction({
     type: "enclose",
     names: ["\\sout"],
-    props: {
-      numArgs: 1,
-      allowedInText: true
-    },
+    numArgs: 1,
+    allowedInText: true,
     handler(_ref5, args) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref5;
+      var parser2 = _ref5.parser, funcName = _ref5.funcName;
       if (parser2.mode === "math") {
         parser2.settings.reportNonstrict("mathVsSout", "LaTeX's \\sout works only in text mode");
       }
@@ -27301,22 +27193,16 @@
         label: funcName,
         body: body3
       };
-    },
-    htmlBuilder: htmlBuilder$7,
-    mathmlBuilder: mathmlBuilder$6
+    }
   });
   defineFunction({
     type: "enclose",
     names: ["\\angl"],
-    props: {
-      numArgs: 1,
-      argTypes: ["hbox"],
-      allowedInText: false
-    },
+    numArgs: 1,
+    argTypes: ["hbox"],
+    allowedInText: false,
     handler(_ref6, args) {
-      var {
-        parser: parser2
-      } = _ref6;
+      var parser2 = _ref6.parser;
       return {
         type: "enclose",
         mode: parser2.mode,
@@ -27327,14 +27213,7 @@
   });
   var _environments = {};
   function defineEnvironment(_ref) {
-    var {
-      type,
-      names,
-      props,
-      handler,
-      htmlBuilder: htmlBuilder3,
-      mathmlBuilder: mathmlBuilder3
-    } = _ref;
+    var type = _ref.type, names = _ref.names, props = _ref.props, handler = _ref.handler, htmlBuilder3 = _ref.htmlBuilder, mathmlBuilder3 = _ref.mathmlBuilder;
     var data = {
       type,
       numArgs: props.numArgs || 0,
@@ -27432,18 +27311,7 @@
     }
   }
   function parseArray(parser2, _ref, style2) {
-    var {
-      hskipBeforeAndAfter,
-      addJot,
-      cols,
-      arraystretch,
-      colSeparationType,
-      autoTag,
-      singleRow,
-      emptySingleRow,
-      maxNumCols,
-      leqno
-    } = _ref;
+    var hskipBeforeAndAfter = _ref.hskipBeforeAndAfter, addJot = _ref.addJot, cols = _ref.cols, arraystretch = _ref.arraystretch, colSeparationType = _ref.colSeparationType, autoTag = _ref.autoTag, singleRow = _ref.singleRow, emptySingleRow = _ref.emptySingleRow, maxNumCols = _ref.maxNumCols, leqno = _ref.leqno;
     parser2.gullet.beginGroup();
     if (!singleRow) {
       parser2.gullet.macros.set("\\cr", "\\\\\\relax");
@@ -27757,8 +27625,8 @@
     }
     var tableBody = makeSpan(["mtable"], cols);
     if (hlines.length > 0) {
-      var line = makeLineSpan("hline", options, ruleThickness);
-      var dashes = makeLineSpan("hdashline", options, ruleThickness);
+      var line = makeLineSpan("katex-hline", options, ruleThickness);
+      var dashes = makeLineSpan("katex-hdashline", options, ruleThickness);
       var vListElems = [{
         type: "elem",
         elem: tableBody,
@@ -27793,7 +27661,7 @@
         positionType: "individualShift",
         children: tagSpans
       });
-      var tagCol = makeSpan(["tag"], [eqnNumCol], options);
+      var tagCol = makeSpan(["katex-tag"], [eqnNumCol], options);
       return makeFragment([tableBody, tagCol]);
     }
   };
@@ -27903,14 +27771,13 @@
       validateAmsEnvironmentContext(context);
     }
     var cols = [];
-    var separationType = context.envName.includes("at") ? "alignat" : "align";
     var isSplit = context.envName === "split";
     var res = parseArray(context.parser, {
       cols,
       addJot: true,
       autoTag: isSplit ? void 0 : getAutoTag(context.envName),
       emptySingleRow: true,
-      colSeparationType: separationType,
+      colSeparationType: context.envName.includes("at") ? "alignat" : "align",
       maxNumCols: isSplit ? 2 : void 0,
       leqno: context.parser.settings.leqno
     }, "display");
@@ -28245,11 +28112,9 @@
     type: "text",
     // Doesn't matter what this is.
     names: ["\\hline", "\\hdashline"],
-    props: {
-      numArgs: 0,
-      allowedInText: true,
-      allowedInMath: true
-    },
+    numArgs: 0,
+    allowedInText: true,
+    allowedInMath: true,
     handler(context, args) {
       throw new ParseError(context.funcName + " valid only within array environment");
     }
@@ -28258,15 +28123,10 @@
   defineFunction({
     type: "environment",
     names: ["\\begin", "\\end"],
-    props: {
-      numArgs: 1,
-      argTypes: ["text"]
-    },
+    numArgs: 1,
+    argTypes: ["text"],
     handler(_ref, args) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var nameGroup = args[0];
       if (nameGroup.type !== "ordgroup") {
         throw new ParseError("Invalid environment name", nameGroup);
@@ -28276,14 +28136,11 @@
         envName += assertNodeType(nameGroup.body[i2], "textord").text;
       }
       if (funcName === "\\begin") {
-        if (!environments.hasOwnProperty(envName)) {
+        if (!Object.prototype.hasOwnProperty.call(environments, envName)) {
           throw new ParseError("No such environment: " + envName, nameGroup);
         }
         var env2 = environments[envName];
-        var {
-          args: _args,
-          optArgs
-        } = parser2.parseArguments("\\begin{" + envName + "}", env2);
+        var _parser$parseArgument = parser2.parseArguments("\\begin{" + envName + "}", env2), _args = _parser$parseArgument.args, optArgs = _parser$parseArgument.optArgs;
         var context = {
           mode: parser2.mode,
           envName,
@@ -28342,20 +28199,12 @@
       "\\bold",
       "\\frak"
     ],
-    props: {
-      numArgs: 1,
-      allowedInArgument: true
-    },
+    numArgs: 1,
+    allowedInArgument: true,
     handler: (_ref, args) => {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var body3 = normalizeArgument(args[0]);
-      var func = funcName;
-      if (func in fontAliases) {
-        func = fontAliases[func];
-      }
+      var func = funcName in fontAliases ? fontAliases[funcName] : funcName;
       return {
         type: "font",
         mode: parser2.mode,
@@ -28369,13 +28218,9 @@
   defineFunction({
     type: "mclass",
     names: ["\\boldsymbol", "\\bm"],
-    props: {
-      numArgs: 1
-    },
+    numArgs: 1,
     handler: (_ref2, args) => {
-      var {
-        parser: parser2
-      } = _ref2;
+      var parser2 = _ref2.parser;
       var body3 = args[0];
       return {
         type: "mclass",
@@ -28394,19 +28239,11 @@
   defineFunction({
     type: "font",
     names: ["\\rm", "\\sf", "\\tt", "\\bf", "\\it", "\\cal"],
-    props: {
-      numArgs: 0,
-      allowedInText: true
-    },
+    numArgs: 0,
+    allowedInText: true,
     handler: (_ref3, args) => {
-      var {
-        parser: parser2,
-        funcName,
-        breakOnTokenText
-      } = _ref3;
-      var {
-        mode
-      } = parser2;
+      var parser2 = _ref3.parser, funcName = _ref3.funcName, breakOnTokenText = _ref3.breakOnTokenText;
+      var mode = parser2.mode;
       var body3 = parser2.parseExpression(true, breakOnTokenText);
       return {
         type: "font",
@@ -28418,9 +28255,7 @@
           body: body3
         }
       };
-    },
-    htmlBuilder: htmlBuilder$5,
-    mathmlBuilder: mathmlBuilder$4
+    }
   });
   var htmlBuilder$4 = (group, options) => {
     var style2 = options.style;
@@ -28600,15 +28435,10 @@
       "\\\\brackfrac"
       // ditto
     ],
-    props: {
-      numArgs: 2,
-      allowedInArgument: true
-    },
+    numArgs: 2,
+    allowedInArgument: true,
     handler: (_ref, args) => {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var numer = args[0];
       var denom = args[1];
       var hasBarLine;
@@ -28669,16 +28499,10 @@
   defineFunction({
     type: "infix",
     names: ["\\over", "\\choose", "\\atop", "\\brace", "\\brack"],
-    props: {
-      numArgs: 0,
-      infix: true
-    },
+    numArgs: 0,
+    infix: true,
     handler(_ref2) {
-      var {
-        parser: parser2,
-        funcName,
-        token
-      } = _ref2;
+      var parser2 = _ref2.parser, funcName = _ref2.funcName, token = _ref2.token;
       var replaceWith;
       switch (funcName) {
         case "\\over":
@@ -28719,15 +28543,11 @@
   defineFunction({
     type: "genfrac",
     names: ["\\genfrac"],
-    props: {
-      numArgs: 6,
-      allowedInArgument: true,
-      argTypes: ["math", "math", "size", "text", "math", "math"]
-    },
+    numArgs: 6,
+    allowedInArgument: true,
+    argTypes: ["math", "math", "size", "text", "math", "math"],
     handler(_ref3, args) {
-      var {
-        parser: parser2
-      } = _ref3;
+      var parser2 = _ref3.parser;
       var numer = args[4];
       var denom = args[5];
       var leftNode = normalizeArgument(args[0]);
@@ -28770,17 +28590,13 @@
   defineFunction({
     type: "infix",
     names: ["\\above"],
-    props: {
-      numArgs: 1,
-      argTypes: ["size"],
-      infix: true
-    },
+    numArgs: 1,
+    argTypes: ["size"],
+    infix: true,
     handler(_ref4, args) {
-      var {
-        parser: parser2,
-        funcName,
-        token
-      } = _ref4;
+      var parser2 = _ref4.parser;
+      _ref4.funcName;
+      var token = _ref4.token;
       return {
         type: "infix",
         mode: parser2.mode,
@@ -28793,15 +28609,11 @@
   defineFunction({
     type: "genfrac",
     names: ["\\\\abovefrac"],
-    props: {
-      numArgs: 3,
-      argTypes: ["math", "size", "math"]
-    },
+    numArgs: 3,
+    argTypes: ["math", "size", "math"],
     handler: (_ref5, args) => {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref5;
+      var parser2 = _ref5.parser;
+      _ref5.funcName;
       var numer = args[0];
       var barSize = assertNodeType(args[1], "infix").size;
       if (!barSize) {
@@ -28909,14 +28721,9 @@
   defineFunction({
     type: "horizBrace",
     names: ["\\overbrace", "\\underbrace", "\\overbracket", "\\underbracket"],
-    props: {
-      numArgs: 1
-    },
+    numArgs: 1,
     handler(_ref, args) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       return {
         type: "horizBrace",
         mode: parser2.mode,
@@ -28931,15 +28738,11 @@
   defineFunction({
     type: "href",
     names: ["\\href"],
-    props: {
-      numArgs: 2,
-      argTypes: ["url", "original"],
-      allowedInText: true
-    },
+    numArgs: 2,
+    argTypes: ["url", "original"],
+    allowedInText: true,
     handler: (_ref, args) => {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var body3 = args[1];
       var href = assertNodeType(args[0], "url").url;
       if (!parser2.settings.isTrusted({
@@ -28971,15 +28774,11 @@
   defineFunction({
     type: "href",
     names: ["\\url"],
-    props: {
-      numArgs: 1,
-      argTypes: ["url"],
-      allowedInText: true
-    },
+    numArgs: 1,
+    argTypes: ["url"],
+    allowedInText: true,
     handler: (_ref2, args) => {
-      var {
-        parser: parser2
-      } = _ref2;
+      var parser2 = _ref2.parser;
       var href = assertNodeType(args[0], "url").url;
       if (!parser2.settings.isTrusted({
         command: "\\url",
@@ -29016,16 +28815,12 @@
   defineFunction({
     type: "hbox",
     names: ["\\hbox"],
-    props: {
-      numArgs: 1,
-      argTypes: ["text"],
-      allowedInText: true,
-      primitive: true
-    },
+    numArgs: 1,
+    argTypes: ["text"],
+    allowedInText: true,
+    primitive: true,
     handler(_ref, args) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       return {
         type: "hbox",
         mode: parser2.mode,
@@ -29043,17 +28838,12 @@
   defineFunction({
     type: "html",
     names: ["\\htmlClass", "\\htmlId", "\\htmlStyle", "\\htmlData"],
-    props: {
-      numArgs: 2,
-      argTypes: ["raw", "original"],
-      allowedInText: true
-    },
+    numArgs: 2,
+    argTypes: ["raw", "original"],
+    allowedInText: true,
     handler: (_ref, args) => {
-      var {
-        parser: parser2,
-        funcName,
-        token
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
+      _ref.token;
       var value = assertNodeType(args[0], "raw").string;
       var body3 = args[1];
       if (parser2.settings.strict) {
@@ -29084,9 +28874,23 @@
           };
           break;
         case "\\htmlData": {
-          var data = value.split(",");
-          for (var i2 = 0; i2 < data.length; i2++) {
-            var item = data[i2];
+          var ESCAPED_COMMA = "{,}";
+          var data = [];
+          var current = "";
+          for (var i2 = 0; i2 < value.length; i2++) {
+            if (value.startsWith(ESCAPED_COMMA, i2)) {
+              current += ",";
+              i2 += ESCAPED_COMMA.length - 1;
+            } else if (value[i2] === ",") {
+              data.push(current);
+              current = "";
+            } else {
+              current += value[i2];
+            }
+          }
+          data.push(current);
+          for (var _i6 = 0; _i6 < data.length; _i6++) {
+            var item = data[_i6];
             var firstEquals = item.indexOf("=");
             if (firstEquals < 0) {
               throw new ParseError("\\htmlData key/value '" + item + "' missing equals sign");
@@ -29121,9 +28925,11 @@
         classes.push(...group.attributes.class.trim().split(/\s+/));
       }
       var span = makeSpan(classes, elements, options);
-      for (var attr in group.attributes) {
-        if (attr !== "class" && group.attributes.hasOwnProperty(attr)) {
-          span.setAttribute(attr, group.attributes[attr]);
+      for (var _ref3 of Object.entries(group.attributes)) {
+        var attr = _ref3[0];
+        var value = _ref3[1];
+        if (attr !== "class") {
+          span.setAttribute(attr, value);
         }
       }
       return span;
@@ -29135,15 +28941,11 @@
   defineFunction({
     type: "htmlmathml",
     names: ["\\html@mathml"],
-    props: {
-      numArgs: 2,
-      allowedInArgument: true,
-      allowedInText: true
-    },
+    numArgs: 2,
+    allowedInArgument: true,
+    allowedInText: true,
     handler: (_ref, args) => {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       return {
         type: "htmlmathml",
         mode: parser2.mode,
@@ -29184,16 +28986,12 @@
   defineFunction({
     type: "includegraphics",
     names: ["\\includegraphics"],
-    props: {
-      numArgs: 1,
-      numOptionalArgs: 1,
-      argTypes: ["raw", "url"],
-      allowedInText: false
-    },
+    numArgs: 1,
+    numOptionalArgs: 1,
+    argTypes: ["raw", "url"],
+    allowedInText: false,
     handler: (_ref, args, optArgs) => {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var width = {
         number: 0,
         unit: "em"
@@ -29300,17 +29098,12 @@
   defineFunction({
     type: "kern",
     names: ["\\kern", "\\mkern", "\\hskip", "\\mskip"],
-    props: {
-      numArgs: 1,
-      argTypes: ["size"],
-      primitive: true,
-      allowedInText: true
-    },
+    numArgs: 1,
+    argTypes: ["size"],
+    primitive: true,
+    allowedInText: true,
     handler(_ref, args) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var size = assertNodeType(args[0], "size");
       if (parser2.settings.strict) {
         var mathFunction = funcName[1] === "m";
@@ -29345,15 +29138,10 @@
   defineFunction({
     type: "lap",
     names: ["\\mathllap", "\\mathrlap", "\\mathclap"],
-    props: {
-      numArgs: 1,
-      allowedInText: true
-    },
+    numArgs: 1,
+    allowedInText: true,
     handler: (_ref, args) => {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var body3 = args[0];
       return {
         type: "lap",
@@ -29366,20 +29154,20 @@
       var inner2;
       if (group.alignment === "clap") {
         inner2 = makeSpan([], [buildGroup$1(group.body, options)]);
-        inner2 = makeSpan(["inner"], [inner2], options);
+        inner2 = makeSpan(["katex-inner"], [inner2], options);
       } else {
-        inner2 = makeSpan(["inner"], [buildGroup$1(group.body, options)]);
+        inner2 = makeSpan(["katex-inner"], [buildGroup$1(group.body, options)]);
       }
-      var fix = makeSpan(["fix"], []);
+      var fix = makeSpan(["katex-fix"], []);
       var node2 = makeSpan([group.alignment], [inner2, fix], options);
-      var strut = makeSpan(["strut"]);
+      var strut = makeSpan(["katex-strut"]);
       strut.style.height = makeEm(node2.height + node2.depth);
       if (node2.depth) {
         strut.style.verticalAlign = makeEm(-node2.depth);
       }
       node2.children.unshift(strut);
-      node2 = makeSpan(["thinbox"], [node2], options);
-      return makeSpan(["mord", "vbox"], [node2], options);
+      node2 = makeSpan(["katex-thinbox"], [node2], options);
+      return makeSpan(["mord", "katex-vbox"], [node2], options);
     },
     mathmlBuilder: (group, options) => {
       var node2 = new MathNode("mpadded", [buildGroup2(group.body, options)]);
@@ -29394,16 +29182,11 @@
   defineFunction({
     type: "styling",
     names: ["\\(", "$"],
-    props: {
-      numArgs: 0,
-      allowedInText: true,
-      allowedInMath: false
-    },
+    numArgs: 0,
+    allowedInText: true,
+    allowedInMath: false,
     handler(_ref, args) {
-      var {
-        funcName,
-        parser: parser2
-      } = _ref;
+      var funcName = _ref.funcName, parser2 = _ref.parser;
       var outerMode = parser2.mode;
       parser2.switchMode("math");
       var close2 = funcName === "\\(" ? "\\)" : "$";
@@ -29423,11 +29206,9 @@
     type: "text",
     // Doesn't matter what this is.
     names: ["\\)", "\\]"],
-    props: {
-      numArgs: 0,
-      allowedInText: true,
-      allowedInMath: false
-    },
+    numArgs: 0,
+    allowedInText: true,
+    allowedInMath: false,
     handler(context, args) {
       throw new ParseError("Mismatched " + context.funcName);
     }
@@ -29449,14 +29230,10 @@
   defineFunction({
     type: "mathchoice",
     names: ["\\mathchoice"],
-    props: {
-      numArgs: 4,
-      primitive: true
-    },
+    numArgs: 4,
+    primitive: true,
     handler: (_ref, args) => {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       return {
         type: "mathchoice",
         mode: parser2.mode,
@@ -29694,14 +29471,9 @@
   defineFunction({
     type: "op",
     names: ["\\coprod", "\\bigvee", "\\bigwedge", "\\biguplus", "\\bigcap", "\\bigcup", "\\intop", "\\prod", "\\sum", "\\bigotimes", "\\bigoplus", "\\bigodot", "\\bigsqcup", "\\smallint", "\u220F", "\u2210", "\u2211", "\u22C0", "\u22C1", "\u22C2", "\u22C3", "\u2A00", "\u2A01", "\u2A02", "\u2A04", "\u2A06"],
-    props: {
-      numArgs: 0
-    },
+    numArgs: 0,
     handler: (_ref, args) => {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var fName = funcName;
       if (fName.length === 1) {
         fName = singleCharBigOps[fName];
@@ -29721,14 +29493,10 @@
   defineFunction({
     type: "op",
     names: ["\\mathop"],
-    props: {
-      numArgs: 1,
-      primitive: true
-    },
+    numArgs: 1,
+    primitive: true,
     handler: (_ref2, args) => {
-      var {
-        parser: parser2
-      } = _ref2;
+      var parser2 = _ref2.parser;
       var body3 = args[0];
       return {
         type: "op",
@@ -29738,9 +29506,7 @@
         symbol: false,
         body: ordargument(body3)
       };
-    },
-    htmlBuilder: htmlBuilder$2,
-    mathmlBuilder: mathmlBuilder$1
+    }
   });
   var singleCharIntegrals = {
     "\u222B": "\\int",
@@ -29753,14 +29519,9 @@
   defineFunction({
     type: "op",
     names: ["\\arcsin", "\\arccos", "\\arctan", "\\arctg", "\\arcctg", "\\arg", "\\ch", "\\cos", "\\cosec", "\\cosh", "\\cot", "\\cotg", "\\coth", "\\csc", "\\ctg", "\\cth", "\\deg", "\\dim", "\\exp", "\\hom", "\\ker", "\\lg", "\\ln", "\\log", "\\sec", "\\sin", "\\sinh", "\\sh", "\\tan", "\\tanh", "\\tg", "\\th"],
-    props: {
-      numArgs: 0
-    },
+    numArgs: 0,
     handler(_ref3) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref3;
+      var parser2 = _ref3.parser, funcName = _ref3.funcName;
       return {
         type: "op",
         mode: parser2.mode,
@@ -29769,21 +29530,14 @@
         symbol: false,
         name: funcName
       };
-    },
-    htmlBuilder: htmlBuilder$2,
-    mathmlBuilder: mathmlBuilder$1
+    }
   });
   defineFunction({
     type: "op",
     names: ["\\det", "\\gcd", "\\inf", "\\lim", "\\max", "\\min", "\\Pr", "\\sup"],
-    props: {
-      numArgs: 0
-    },
+    numArgs: 0,
     handler(_ref4) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref4;
+      var parser2 = _ref4.parser, funcName = _ref4.funcName;
       return {
         type: "op",
         mode: parser2.mode,
@@ -29792,22 +29546,15 @@
         symbol: false,
         name: funcName
       };
-    },
-    htmlBuilder: htmlBuilder$2,
-    mathmlBuilder: mathmlBuilder$1
+    }
   });
   defineFunction({
     type: "op",
     names: ["\\int", "\\iint", "\\iiint", "\\oint", "\\oiint", "\\oiiint", "\u222B", "\u222C", "\u222D", "\u222E", "\u222F", "\u2230"],
-    props: {
-      numArgs: 0,
-      allowedInArgument: true
-    },
+    numArgs: 0,
+    allowedInArgument: true,
     handler(_ref5) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref5;
+      var parser2 = _ref5.parser, funcName = _ref5.funcName;
       var fName = funcName;
       if (fName.length === 1) {
         fName = singleCharIntegrals[fName];
@@ -29820,9 +29567,7 @@
         symbol: true,
         name: fName
       };
-    },
-    htmlBuilder: htmlBuilder$2,
-    mathmlBuilder: mathmlBuilder$1
+    }
   });
   var htmlBuilder$1 = (grp, options) => {
     var supGroup;
@@ -29914,14 +29659,9 @@
   defineFunction({
     type: "operatorname",
     names: ["\\operatorname@", "\\operatornamewithlimits"],
-    props: {
-      numArgs: 1
-    },
+    numArgs: 1,
     handler: (_ref, args) => {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var body3 = args[0];
       return {
         type: "operatorname",
@@ -29951,13 +29691,9 @@
   defineFunction({
     type: "overline",
     names: ["\\overline"],
-    props: {
-      numArgs: 1
-    },
+    numArgs: 1,
     handler(_ref, args) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var body3 = args[0];
       return {
         type: "overline",
@@ -29985,7 +29721,7 @@
           size: defaultRuleThickness
         }]
       });
-      return makeSpan(["mord", "overline"], [vlist], options);
+      return makeSpan(["mord", "katex-overline"], [vlist], options);
     },
     mathmlBuilder(group, options) {
       var operator2 = new MathNode("mo", [new TextNode("\u203E")]);
@@ -29998,14 +29734,10 @@
   defineFunction({
     type: "phantom",
     names: ["\\phantom"],
-    props: {
-      numArgs: 1,
-      allowedInText: true
-    },
+    numArgs: 1,
+    allowedInText: true,
     handler: (_ref, args) => {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var body3 = args[0];
       return {
         type: "phantom",
@@ -30026,14 +29758,10 @@
   defineFunction({
     type: "vphantom",
     names: ["\\vphantom"],
-    props: {
-      numArgs: 1,
-      allowedInText: true
-    },
+    numArgs: 1,
+    allowedInText: true,
     handler: (_ref2, args) => {
-      var {
-        parser: parser2
-      } = _ref2;
+      var parser2 = _ref2.parser;
       var body3 = args[0];
       return {
         type: "vphantom",
@@ -30042,8 +29770,8 @@
       };
     },
     htmlBuilder: (group, options) => {
-      var inner2 = makeSpan(["inner"], [buildGroup$1(group.body, options.withPhantom())]);
-      var fix = makeSpan(["fix"], []);
+      var inner2 = makeSpan(["katex-inner"], [buildGroup$1(group.body, options.withPhantom())]);
+      var fix = makeSpan(["katex-fix"], []);
       return makeSpan(["mord", "rlap"], [inner2, fix], options);
     },
     mathmlBuilder: (group, options) => {
@@ -30057,15 +29785,11 @@
   defineFunction({
     type: "raisebox",
     names: ["\\raisebox"],
-    props: {
-      numArgs: 2,
-      argTypes: ["size", "hbox"],
-      allowedInText: true
-    },
+    numArgs: 2,
+    argTypes: ["size", "hbox"],
+    allowedInText: true,
     handler(_ref, args) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var amount = assertNodeType(args[0], "size").value;
       var body3 = args[1];
       return {
@@ -30097,15 +29821,11 @@
   defineFunction({
     type: "internal",
     names: ["\\relax"],
-    props: {
-      numArgs: 0,
-      allowedInText: true,
-      allowedInArgument: true
-    },
+    numArgs: 0,
+    allowedInText: true,
+    allowedInArgument: true,
     handler(_ref) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       return {
         type: "internal",
         mode: parser2.mode
@@ -30115,17 +29835,13 @@
   defineFunction({
     type: "rule",
     names: ["\\rule"],
-    props: {
-      numArgs: 2,
-      numOptionalArgs: 1,
-      allowedInText: true,
-      allowedInMath: true,
-      argTypes: ["size", "size", "size"]
-    },
+    numArgs: 2,
+    numOptionalArgs: 1,
+    allowedInText: true,
+    allowedInMath: true,
+    argTypes: ["size", "size", "size"],
     handler(_ref, args, optArgs) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var shift = optArgs[0];
       var width = assertNodeType(args[0], "size");
       var height = assertNodeType(args[1], "size");
@@ -30138,7 +29854,7 @@
       };
     },
     htmlBuilder(group, options) {
-      var rule = makeSpan(["mord", "rule"], [], options);
+      var rule = makeSpan(["mord", "katex-rule"], [], options);
       var width = calculateSize(group.width, options);
       var height = calculateSize(group.height, options);
       var shift = group.shift ? calculateSize(group.shift, options) : 0;
@@ -30175,7 +29891,7 @@
     var inner2 = buildExpression$1(value, options, false);
     var multiplier = options.sizeMultiplier / baseOptions.sizeMultiplier;
     for (var i2 = 0; i2 < inner2.length; i2++) {
-      var pos = inner2[i2].classes.indexOf("sizing");
+      var pos = inner2[i2].classes.indexOf("katex-sizing");
       if (pos < 0) {
         Array.prototype.push.apply(inner2[i2].classes, options.sizingClasses(baseOptions));
       } else if (inner2[i2].classes[pos + 1] === "reset-size" + options.size) {
@@ -30194,16 +29910,10 @@
   defineFunction({
     type: "sizing",
     names: sizeFuncs,
-    props: {
-      numArgs: 0,
-      allowedInText: true
-    },
+    numArgs: 0,
+    allowedInText: true,
     handler: (_ref, args) => {
-      var {
-        breakOnTokenText,
-        funcName,
-        parser: parser2
-      } = _ref;
+      var breakOnTokenText = _ref.breakOnTokenText, funcName = _ref.funcName, parser2 = _ref.parser;
       var body3 = parser2.parseExpression(false, breakOnTokenText);
       return {
         type: "sizing",
@@ -30225,15 +29935,11 @@
   defineFunction({
     type: "smash",
     names: ["\\smash"],
-    props: {
-      numArgs: 1,
-      numOptionalArgs: 1,
-      allowedInText: true
-    },
+    numArgs: 1,
+    numOptionalArgs: 1,
+    allowedInText: true,
     handler: (_ref, args, optArgs) => {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var smashHeight = false;
       var smashDepth = false;
       var tbArg = optArgs[0] && assertNodeType(optArgs[0], "ordgroup");
@@ -30277,7 +29983,7 @@
         node2.depth = 0;
       }
       if (group.smashHeight && group.smashDepth) {
-        return makeSpan(["mord", "smash"], [node2], options);
+        return makeSpan(["mord", "katex-smash"], [node2], options);
       }
       if (node2.children) {
         for (var i2 = 0; i2 < node2.children.length; i2++) {
@@ -30312,14 +30018,10 @@
   defineFunction({
     type: "sqrt",
     names: ["\\sqrt"],
-    props: {
-      numArgs: 1,
-      numOptionalArgs: 1
-    },
+    numArgs: 1,
+    numOptionalArgs: 1,
     handler(_ref, args, optArgs) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       var index2 = optArgs[0];
       var body3 = args[0];
       return {
@@ -30343,11 +30045,7 @@
       }
       var lineClearance = theta + phi / 4;
       var minDelimiterHeight = inner2.height + inner2.depth + lineClearance + theta;
-      var {
-        span: img,
-        ruleWidth,
-        advanceWidth
-      } = makeSqrtImage(minDelimiterHeight, options);
+      var _makeSqrtImage = makeSqrtImage(minDelimiterHeight, options), img = _makeSqrtImage.span, ruleWidth = _makeSqrtImage.ruleWidth, advanceWidth = _makeSqrtImage.advanceWidth;
       var delimDepth = img.height - ruleWidth;
       if (delimDepth > inner2.height + inner2.depth + lineClearance) {
         lineClearance = (lineClearance + delimDepth - inner2.height - inner2.depth) / 2;
@@ -30385,15 +30083,12 @@
             elem: rootm
           }]
         });
-        var rootVListWrap = makeSpan(["root"], [rootVList]);
+        var rootVListWrap = makeSpan(["katex-root"], [rootVList]);
         return makeSpan(["mord", "sqrt"], [rootVListWrap, body3], options);
       }
     },
     mathmlBuilder(group, options) {
-      var {
-        body: body3,
-        index: index2
-      } = group;
+      var body3 = group.body, index2 = group.index;
       return index2 ? new MathNode("mroot", [buildGroup2(body3, options), buildGroup2(index2, options)]) : new MathNode("msqrt", [buildGroup2(body3, options)]);
     }
   });
@@ -30409,17 +30104,11 @@
   defineFunction({
     type: "styling",
     names: ["\\displaystyle", "\\textstyle", "\\scriptstyle", "\\scriptscriptstyle"],
-    props: {
-      numArgs: 0,
-      allowedInText: true,
-      primitive: true
-    },
+    numArgs: 0,
+    allowedInText: true,
+    primitive: true,
     handler(_ref, args) {
-      var {
-        breakOnTokenText,
-        funcName,
-        parser: parser2
-      } = _ref;
+      var breakOnTokenText = _ref.breakOnTokenText, funcName = _ref.funcName, parser2 = _ref.parser;
       var body3 = parser2.parseExpression(true, breakOnTokenText);
       var style2 = funcName.slice(1, funcName.length - 5);
       if (!isStyleStr(style2)) {
@@ -30488,11 +30177,7 @@
       if (builderDelegate) {
         return builderDelegate(group, options);
       }
-      var {
-        base: valueBase,
-        sup: valueSup,
-        sub: valueSub
-      } = group;
+      var valueBase = group.base, valueSup = group.sup, valueSub = group.sub;
       var base = buildGroup$1(valueBase, options);
       var supm;
       var subm;
@@ -30675,7 +30360,7 @@
   defineFunctionBuilders({
     type: "mathord",
     htmlBuilder(group, options) {
-      return makeOrd(group, options, "mathord");
+      return makeOrd(group, options);
     },
     mathmlBuilder(group, options) {
       var node2 = new MathNode("mi", [makeText(group.text, group.mode, options)]);
@@ -30689,7 +30374,7 @@
   defineFunctionBuilders({
     type: "textord",
     htmlBuilder(group, options) {
-      return makeOrd(group, options, "textord");
+      return makeOrd(group, options);
     },
     mathmlBuilder(group, options) {
       var text10 = makeText(group.text, group.mode, options);
@@ -30710,44 +30395,37 @@
       return node2;
     }
   });
-  var cssSpace = {
-    "\\nobreak": "nobreak",
-    "\\allowbreak": "allowbreak"
-  };
-  var regularSpace = {
-    " ": {},
-    "\\ ": {},
-    "~": {
-      className: "nobreak"
-    },
-    "\\space": {},
-    "\\nobreakspace": {
-      className: "nobreak"
-    }
-  };
+  var cssSpace = /* @__PURE__ */ new Map([["\\nobreak", "nobreak"], ["\\allowbreak", "allowbreak"]]);
+  var regularSpace = /* @__PURE__ */ new Map([[" ", {}], ["\\ ", {}], ["~", {
+    className: "nobreak"
+  }], ["\\space", {}], ["\\nobreakspace", {
+    className: "nobreak"
+  }]]);
   defineFunctionBuilders({
     type: "spacing",
     htmlBuilder(group, options) {
-      if (regularSpace.hasOwnProperty(group.text)) {
-        var className = regularSpace[group.text].className || "";
+      var regularSpaceItem = regularSpace.get(group.text);
+      var cssSpaceClass = cssSpace.get(group.text);
+      if (regularSpaceItem) {
+        var className = regularSpaceItem.className || "";
         if (group.mode === "text") {
-          var ord = makeOrd(group, options, "textord");
+          var ord = makeOrd(group, options);
           ord.classes.push(className);
           return ord;
         } else {
           return makeSpan(["mspace", className], [mathsym(group.text, group.mode, options)], options);
         }
-      } else if (cssSpace.hasOwnProperty(group.text)) {
-        return makeSpan(["mspace", cssSpace[group.text]], [], options);
+      } else if (cssSpaceClass) {
+        return makeSpan(["mspace", cssSpaceClass], [], options);
       } else {
         throw new ParseError('Unknown type of space "' + group.text + '"');
       }
     },
     mathmlBuilder(group, options) {
       var node2;
-      if (regularSpace.hasOwnProperty(group.text)) {
+      if (regularSpace.has(group.text)) {
         node2 = new MathNode("mtext", [new TextNode("\xA0")]);
-      } else if (cssSpace.hasOwnProperty(group.text)) {
+      } else if (cssSpace.has(group.text)) {
         return new MathNode("mspace");
       } else {
         throw new ParseError('Unknown type of space "' + group.text + '"');
@@ -30813,17 +30491,12 @@
       "\\textup",
       "\\emph"
     ],
-    props: {
-      numArgs: 1,
-      argTypes: ["text"],
-      allowedInArgument: true,
-      allowedInText: true
-    },
+    numArgs: 1,
+    argTypes: ["text"],
+    allowedInArgument: true,
+    allowedInText: true,
     handler(_ref, args) {
-      var {
-        parser: parser2,
-        funcName
-      } = _ref;
+      var parser2 = _ref.parser, funcName = _ref.funcName;
       var body3 = args[0];
       return {
         type: "text",
@@ -30845,14 +30518,10 @@
   defineFunction({
     type: "underline",
     names: ["\\underline"],
-    props: {
-      numArgs: 1,
-      allowedInText: true
-    },
+    numArgs: 1,
+    allowedInText: true,
     handler(_ref, args) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       return {
         type: "underline",
         mode: parser2.mode,
@@ -30880,7 +30549,7 @@
           elem: innerGroup
         }]
       });
-      return makeSpan(["mord", "underline"], [vlist], options);
+      return makeSpan(["mord", "katex-underline"], [vlist], options);
     },
     mathmlBuilder(group, options) {
       var operator2 = new MathNode("mo", [new TextNode("\u203E")]);
@@ -30893,16 +30562,12 @@
   defineFunction({
     type: "vcenter",
     names: ["\\vcenter"],
-    props: {
-      numArgs: 1,
-      argTypes: ["original"],
-      // In LaTeX, \vcenter can act only on a box.
-      allowedInText: false
-    },
+    numArgs: 1,
+    argTypes: ["original"],
+    // In LaTeX, \vcenter can act only on a box.
+    allowedInText: false,
     handler(_ref, args) {
-      var {
-        parser: parser2
-      } = _ref;
+      var parser2 = _ref.parser;
       return {
         type: "vcenter",
         mode: parser2.mode,
@@ -30930,10 +30595,8 @@
   defineFunction({
     type: "verb",
     names: ["\\verb"],
-    props: {
-      numArgs: 0,
-      allowedInText: true
-    },
+    numArgs: 0,
+    allowedInText: true,
     handler(context, args, optArgs) {
       throw new ParseError("\\verb ended by end of line instead of matching delimiter");
     },
@@ -31056,13 +30719,11 @@
         throw new ParseError("Unbalanced namespace destruction: attempt to pop global namespace; please report this as a bug");
       }
       var undefs = this.undefStack.pop();
-      for (var undef in undefs) {
-        if (undefs.hasOwnProperty(undef)) {
-          if (undefs[undef] == null) {
-            delete this.current[undef];
-          } else {
-            this.current[undef] = undefs[undef];
-          }
+      for (var key2 of Object.keys(undefs)) {
+        if (undefs[key2] === void 0) {
+          delete this.current[key2];
+        } else {
+          this.current[key2] = undefs[key2];
         }
       }
     }
@@ -31080,7 +30741,7 @@
      * `get(name) != null`.
      */
     has(name) {
-      return this.current.hasOwnProperty(name) || this.builtins.hasOwnProperty(name);
+      return Object.prototype.hasOwnProperty.call(this.current, name) || Object.prototype.hasOwnProperty.call(this.builtins, name);
     }
     /**
      * Get the current value of a name, or `undefined` if there is no value.
@@ -31091,7 +30752,7 @@
      * `if (namespace.has(...))`.
      */
     get(name) {
-      if (this.current.hasOwnProperty(name)) {
+      if (Object.prototype.hasOwnProperty.call(this.current, name)) {
         return this.current[name];
       } else {
         return this.builtins[name];
@@ -31117,7 +30778,7 @@
         }
       } else {
         var top = this.undefStack[this.undefStack.length - 1];
-        if (top && !top.hasOwnProperty(name)) {
+        if (top && !Object.prototype.hasOwnProperty.call(top, name)) {
           top[name] = this.current[name];
         }
       }
@@ -31893,16 +31554,14 @@
           return null;
         }
         start2 = this.popToken();
-        ({
-          tokens,
-          end
-        } = this.consumeArg(["]"]));
+        var _this$consumeArg = this.consumeArg(["]"]);
+        tokens = _this$consumeArg.tokens;
+        end = _this$consumeArg.end;
       } else {
-        ({
-          tokens,
-          start: start2,
-          end
-        } = this.consumeArg());
+        var _this$consumeArg2 = this.consumeArg();
+        tokens = _this$consumeArg2.tokens;
+        start2 = _this$consumeArg2.start;
+        end = _this$consumeArg2.end;
       }
       this.pushToken(new Token("EOF", end.loc));
       this.pushTokens(tokens);
@@ -32171,14 +31830,17 @@
      * `implicitCommands`.
      */
     isDefined(name) {
-      return this.macros.has(name) || functions.hasOwnProperty(name) || symbols.math.hasOwnProperty(name) || symbols.text.hasOwnProperty(name) || implicitCommands.hasOwnProperty(name);
+      return this.macros.has(name) || Object.prototype.hasOwnProperty.call(functions, name) || Object.prototype.hasOwnProperty.call(symbols.math, name) || Object.prototype.hasOwnProperty.call(symbols.text, name) || Object.prototype.hasOwnProperty.call(implicitCommands, name);
     }
     /**
      * Determine whether a command is expandable.
      */
     isExpandable(name) {
       var macro = this.macros.get(name);
-      return macro != null ? typeof macro === "string" || typeof macro === "function" || !macro.unexpandable : functions.hasOwnProperty(name) && !functions[name].primitive;
+      if (macro != null) {
+        return typeof macro === "string" || typeof macro === "function" || !macro.unexpandable;
+      }
+      return Object.prototype.hasOwnProperty.call(functions, name) && !functions[name].primitive;
     }
   };
   var unicodeSubRegEx = /^[₊₋₌₍₎₀₁₂₃₄₅₆₇₈₉ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓᵦᵧᵨᵩᵪ]/;
@@ -32923,8 +32585,7 @@
         var lex = this.fetch();
         if (lex.text === "\\limits" || lex.text === "\\nolimits") {
           if (base && base.type === "op") {
-            var limits = lex.text === "\\limits";
-            base.limits = limits;
+            base.limits = lex.text === "\\limits";
             base.alwaysHandleSupSub = true;
           } else if (base && base.type === "operatorname") {
             if (base.alwaysHandleSupSub) {
@@ -33001,12 +32662,26 @@
           break;
         }
       }
-      if (superscript || subscript) {
+      if (superscript && subscript) {
         return {
           type: "supsub",
           mode: this.mode,
           base,
           sup: superscript,
+          sub: subscript
+        };
+      } else if (superscript) {
+        return {
+          type: "supsub",
+          mode: this.mode,
+          base,
+          sup: superscript
+        };
+      } else if (subscript) {
+        return {
+          type: "supsub",
+          mode: this.mode,
+          base,
           sub: subscript
         };
       } else {
@@ -33031,10 +32706,7 @@
       } else if (this.mode === "math" && funcData.allowedInMath === false) {
         throw new ParseError("Can't use function '" + func + "' in math mode", token);
       }
-      var {
-        args,
-        optArgs
-      } = this.parseArguments(func, funcData);
+      var _this$parseArguments = this.parseArguments(func, funcData), args = _this$parseArguments.args, optArgs = _this$parseArguments.optArgs;
       return this.callFunction(func, args, optArgs, token, breakOnTokenText);
     }
     /**
@@ -33058,7 +32730,9 @@
      * Parses the arguments of a function or environment
      */
     parseArguments(func, funcData) {
-      var totalArgs = funcData.numArgs + funcData.numOptionalArgs;
+      var _funcData$numOptional;
+      var numOptionalArgs = (_funcData$numOptional = funcData.numOptionalArgs) != null ? _funcData$numOptional : 0;
+      var totalArgs = funcData.numArgs + numOptionalArgs;
       if (totalArgs === 0) {
         return {
           args: [],
@@ -33068,8 +32742,9 @@
       var args = [];
       var optArgs = [];
       for (var i2 = 0; i2 < totalArgs; i2++) {
-        var argType = funcData.argTypes && funcData.argTypes[i2];
-        var isOptional = i2 < funcData.numOptionalArgs;
+        var _funcData$argTypes;
+        var argType = (_funcData$argTypes = funcData.argTypes) == null ? void 0 : _funcData$argTypes[i2];
+        var isOptional = i2 < numOptionalArgs;
         if ("primitive" in funcData && funcData.primitive && argType == null || // \sqrt expands into primitive if optional argument doesn't exist
         funcData.type === "sqrt" && i2 === 1 && optArgs[0] == null) {
           argType = "primitive";
@@ -33114,7 +32789,7 @@
           } : null;
         }
         case "raw": {
-          var token = this.parseStringGroup("raw", optional);
+          var token = this.parseStringGroup(optional);
           return token != null ? {
             type: "raw",
             mode: "text",
@@ -33132,7 +32807,6 @@
           return _group2;
         }
         case "original":
-        case null:
         case void 0:
           return this.parseArgumentGroup(optional);
         default:
@@ -33151,7 +32825,7 @@
      * Parses a group, essentially returning the string formed by the
      * brace-enclosed tokens plus some position information.
      */
-    parseStringGroup(modeName, optional) {
+    parseStringGroup(optional) {
       var argToken = this.gullet.scanArgument(optional);
       if (argToken == null) {
         return null;
@@ -33190,7 +32864,7 @@
      * Parses a color description.
      */
     parseColorGroup(optional) {
-      var res = this.parseStringGroup("color", optional);
+      var res = this.parseStringGroup(optional);
       if (res == null) {
         return null;
       }
@@ -33218,7 +32892,7 @@
       if (!optional && this.gullet.future().text !== "{") {
         res = this.parseRegexGroup(/^[-+]? *(?:$|\d+|\d+\.\d*|\.\d*) *[a-z]{0,2} *$/, "size");
       } else {
-        res = this.parseStringGroup("size", optional);
+        res = this.parseStringGroup(optional);
       }
       if (!res) {
         return null;
@@ -33253,7 +32927,7 @@
     parseUrlGroup(optional) {
       this.gullet.lexer.setCatcode("%", 13);
       this.gullet.lexer.setCatcode("~", 12);
-      var res = this.parseStringGroup("url", optional);
+      var res = this.parseStringGroup(optional);
       this.gullet.lexer.setCatcode("%", 14);
       this.gullet.lexer.setCatcode("~", 13);
       if (res == null) {
@@ -33324,7 +32998,7 @@
         };
       } else {
         result = this.parseFunction(breakOnTokenText, name) || this.parseSymbol();
-        if (result == null && text10[0] === "\\" && !implicitCommands.hasOwnProperty(text10)) {
+        if (result == null && text10[0] === "\\" && !Object.prototype.hasOwnProperty.call(implicitCommands, text10)) {
           if (this.settings.throwOnError) {
             throw new ParseError("Undefined control sequence: " + text10, firstToken);
           }
@@ -33410,7 +33084,7 @@
           star
         };
       }
-      if (unicodeSymbols.hasOwnProperty(text10[0]) && !symbols[this.mode][text10[0]]) {
+      if (Object.prototype.hasOwnProperty.call(unicodeSymbols, text10[0]) && !symbols[this.mode][text10[0]]) {
         if (this.settings.strict && this.mode === "math") {
           this.settings.reportNonstrict("unicodeTextInMathMode", 'Accented Unicode text character "' + text10[0] + '" used in math mode', nucleus);
         }
@@ -33563,7 +33237,7 @@
       return renderError(error, expression, settings);
     }
   };
-  var version = "0.16.47";
+  var version = "0.18.1";
   var __domTree = {
     Span,
     Anchor,
@@ -46680,19 +46354,42 @@
   }
   var personaNameVariants = ["name_zh", "name_en", "abbreviation"];
   var personaNameStoragePrefix = "upsp.seed_gui.persona_name_variant.v1:";
-  function selectedPersonaNameVariant() {
-    const identity = bootstrapProjection.data?.identity;
-    if (!identity?.pid) return "abbreviation";
-    const stored = localStorage.getItem("".concat(personaNameStoragePrefix).concat(identity.pid));
-    if (personaNameVariants.includes(stored) && identity[stored]) return stored;
-    if (stored) localStorage.removeItem("".concat(personaNameStoragePrefix).concat(identity.pid));
+  function selectedPersonaNameVariant(pid, identity) {
+    if (!pid) return "abbreviation";
+    const stored = localStorage.getItem("".concat(personaNameStoragePrefix).concat(pid));
+    if (personaNameVariants.includes(stored) && identity?.[stored]) return stored;
+    if (stored) localStorage.removeItem("".concat(personaNameStoragePrefix).concat(pid));
     return "abbreviation";
   }
+  function personaDisplayName(pid, identity) {
+    const variant = selectedPersonaNameVariant(pid, identity);
+    return identity[variant] || identity.display_name || identity.name_zh || identity.name_en || identity.abbreviation || pid;
+  }
+  function personaFullNameTooltip(pid, identity) {
+    const names = [identity.name_zh, identity.name_en, identity.abbreviation].filter((value, index2, values) => Boolean(value) && values.indexOf(value) === index2);
+    return "".concat(names.join(" / ") || pid, " \xB7 ").concat(pid);
+  }
   function selectPersonaNameVariant(variant) {
-    const identity = bootstrapProjection.data?.identity;
-    if (!identity?.pid || !personaNameVariants.includes(variant) || !identity[variant]) return false;
-    localStorage.setItem("".concat(personaNameStoragePrefix).concat(identity.pid), variant);
+    const catalog = personaCatalogProjection.data;
+    const active = catalog?.personas.find((item) => item.pid === catalog.active.pid);
+    const identity = active?.identity || bootstrapProjection.data?.identity;
+    if (!catalog?.active.pid || !personaNameVariants.includes(variant) || !identity?.[variant]) return false;
+    localStorage.setItem("".concat(personaNameStoragePrefix).concat(catalog.active.pid), variant);
     renderIdentity();
+    return true;
+  }
+  function identityMutationBusy() {
+    if (personaCatalogProjection.pending) return true;
+    const status = runtimeProjection.status;
+    if (!status) return false;
+    const stage = String(status.stage || "");
+    return status.current_round != null || status.send_in_flight === true || status.relay_in_flight === true || status.mutation_in_flight === true || status.pending_tool_approval != null || status.restart_requested === true || stage !== "" && stage !== "idle";
+  }
+  var identityHtmlCache = /* @__PURE__ */ new WeakMap();
+  function renderIdentityHtml(element6, html7) {
+    if (identityHtmlCache.get(element6) === html7) return false;
+    identityHtmlCache.set(element6, html7);
+    element6.innerHTML = html7;
     return true;
   }
   var personaGroupLabels = {
@@ -46771,7 +46468,7 @@
     work_intent_debt: "\u5DE5\u4F5C\u610F\u56FE\u503A\u52A1",
     feeling_settle_due: "\u611F\u53D7\u5F85\u7ED3\u7B97",
     api_degraded: "API \u964D\u7EA7",
-    stm_degrade_pending: "\u77ED\u671F\u8BB0\u5FC6\u5F85\u964D\u7EA7",
+    memory_compression_due: "\u8BB0\u5FC6\u5F85\u538B\u7F29",
     user_message_waiting: "\u7528\u6237\u6D88\u606F\u7B49\u5F85",
     rhythm_due: "\u8282\u5F8B\u5230\u671F",
     standby_due: "\u5F85\u547D\u5230\u671F",
@@ -46785,7 +46482,6 @@
     calendar_month_due: "\u6708\u8282\u5F8B\u5230\u671F",
     calendar_quarter_due: "\u5B63\u8282\u5F8B\u5230\u671F",
     calendar_year_due: "\u5E74\u8282\u5F8B\u5230\u671F",
-    evolution_pending: "\u6F14\u5316\u5F85\u5904\u7406",
     permanent_expired: "\u6C38\u56FA\u5C42\u8FC7\u671F",
     periodic_expired: "\u5B9A\u671F\u5C42\u8FC7\u671F",
     popup_active: "\u5F39\u7A97\u6D3B\u52A8"
@@ -46898,14 +46594,51 @@
     const product = aboutProjection.data?.product;
     els.productVersionName.textContent = product ? product.channel === "alpha" ? "Alpha" : product.channel : t("\u7248\u672C\u4FE1\u606F\u4E0D\u53EF\u7528");
     els.productVersionNumber.textContent = product?.version || "\u2014";
-    const identity = bootstrapProjection.data?.identity;
-    const selectedVariant = selectedPersonaNameVariant();
-    els.personaNameValue.textContent = identity?.[selectedVariant] || personaAbbreviation();
-    els.personaNameOptions.innerHTML = personaNameVariants.map((variant) => {
+    const catalog = personaCatalogProjection.data;
+    const busy = identityMutationBusy();
+    const activePid = catalog?.active.pid || "";
+    const activePersona = catalog?.personas.find((item) => item.pid === activePid);
+    const identity = activePersona?.identity || bootstrapProjection.data?.identity || {};
+    const selectedVariant = selectedPersonaNameVariant(catalog?.active.pid || "", identity);
+    const personaTabsChanged = renderIdentityHtml(els.personaTabs, (catalog?.personas || []).map((item) => {
+      const active = item.pid === activePid;
+      const name = personaDisplayName(item.pid, item.identity);
+      const title = personaFullNameTooltip(item.pid, item.identity);
+      return '<button class="identity-tab persona-tab '.concat(active ? "active" : "", '" type="button"\n      data-identity-tab data-tab-group="persona" data-activate-persona="').concat(escapeHtml2(item.pid), '"\n      role="tab" aria-selected="').concat(active ? "true" : "false", '" tabindex="').concat(active ? "0" : "-1", '"\n      aria-current="').concat(active ? "page" : "false", '" title="').concat(escapeHtml2(title), '" ').concat(busy && !active ? "disabled" : "", ">\n      <span>").concat(escapeHtml2(name), "</span>\n    </button>");
+    }).join(""));
+    if (personaTabsChanged) window.requestAnimationFrame(() => {
+      els.personaTabs.querySelector(".identity-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    renderIdentityHtml(els.personaNameOptions, personaNameVariants.map((variant) => {
       const value = identity?.[variant] || "";
       const label = variant === "name_zh" ? t("\u4E2D\u6587\u540D") : variant === "name_en" ? t("\u82F1\u6587\u540D") : t("\u7F29\u5199");
-      return '\n      <button class="persona-name-option '.concat(variant === selectedVariant ? "active" : "", '" type="button"\n              data-persona-name-variant="').concat(variant, '" ').concat(value ? "" : "disabled", ">\n        <b>").concat(escapeHtml2(label), "</b>\n        <span>").concat(escapeHtml2(value || t("\u672A\u586B\u5199")), "</span>\n      </button>\n    ");
-    }).join("");
+      return '\n      <button class="identity-menu-option '.concat(variant === selectedVariant ? "active" : "", '" type="button"\n              data-persona-name-variant="').concat(variant, '" aria-pressed="').concat(variant === selectedVariant ? "true" : "false", '" ').concat(value ? "" : "disabled", ">\n        <b>").concat(escapeHtml2(label), "</b>\n        <span>").concat(escapeHtml2(value || t("\u672A\u586B\u5199")), "</span>\n      </button>\n    ");
+    }).join(""));
+    els.createPersonaButton.disabled = busy;
+    const activeInstance = activePersona?.instances.find(
+      (item) => item.instance_id === catalog?.active.instance_id && !item.archived
+    );
+    els.identityFeedback.textContent = personaCatalogProjection.pending ? t("\u6B63\u5728\u5904\u7406") : personaCatalogProjection.error;
+    els.identityFeedback.hidden = !els.identityFeedback.textContent;
+    const liveInstances = (activePersona?.instances || []).filter((item) => !item.archived);
+    const archivedInstances = (activePersona?.instances || []).filter((item) => item.archived);
+    const instanceTabsChanged = renderIdentityHtml(els.instanceTabs, liveInstances.map((item) => {
+      const active = item.instance_id === catalog?.active.instance_id;
+      const label = item.label || item.instance_id;
+      const source2 = item.kind === "meta" ? "meta" : "".concat(item.source_instance_id || "meta", "/R").concat(item.source_round);
+      const title = "".concat(label, " \xB7 ").concat(item.instance_id, " \xB7 ").concat(t("\u6765\u6E90"), " ").concat(source2);
+      const slot = busy ? active ? '<span class="identity-tab-spinner" role="status" aria-label="'.concat(t("\u6B63\u5728\u5904\u7406"), '"></span>') : '<span class="identity-tab-slot" aria-hidden="true"></span>' : '<button class="instance-fork" type="button" data-fork-instance="'.concat(escapeHtml2(item.instance_id), '"\n          aria-label="').concat(escapeHtml2(t("\u4ECE\u6B64\u5206\u8EAB\u521B\u5EFA\u5206\u652F")), '" title="').concat(escapeHtml2(t("\u4ECE\u6B64\u5206\u8EAB\u521B\u5EFA\u5206\u652F")), '">\n          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="4" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="5" cy="16" r="1.5"/><path d="M5 5.5v9M6.5 12c5 0 7-1.8 7-4.5"/></svg>\n        </button>');
+      return '<span class="identity-tab-shell instance-tab '.concat(active ? "active" : "", '">\n      <button class="identity-tab instance-tab-select" type="button" data-identity-tab data-tab-group="instance"\n        data-activate-instance="').concat(escapeHtml2(item.instance_id), '" data-persona-id="').concat(escapeHtml2(activePersona?.pid || ""), '"\n        role="tab" aria-selected="').concat(active ? "true" : "false", '" tabindex="').concat(active ? "0" : "-1", '"\n        aria-current="').concat(active ? "page" : "false", '" title="').concat(escapeHtml2(title), '" ').concat(busy && !active ? "disabled" : "", ">\n        <span>").concat(escapeHtml2(label), "</span>\n      </button>").concat(slot, "\n    </span>");
+    }).join(""));
+    if (instanceTabsChanged) window.requestAnimationFrame(() => {
+      els.instanceTabs.querySelector(".identity-tab-shell.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    const instanceActions = [
+      activeInstance?.kind === "branch" ? '<button class="identity-menu-option" type="button" data-archive-instance="'.concat(escapeHtml2(activeInstance.instance_id), '" ').concat(busy ? "disabled" : "", "><span>").concat(t("\u5F52\u6863\u5206\u8EAB"), "</span></button>") : "",
+      ...archivedInstances.map((item) => '<button class="identity-menu-option" type="button" data-restore-instance="'.concat(escapeHtml2(item.instance_id), '" ').concat(busy ? "disabled" : "", "><b>").concat(t("\u6062\u590D\u5206\u8EAB"), "</b><span>").concat(escapeHtml2(item.label || item.instance_id), "</span></button>"))
+    ].filter(Boolean);
+    renderIdentityHtml(els.instanceOptions, instanceActions.length ? instanceActions.join("") : '<button class="identity-menu-option" type="button" disabled><span>'.concat(t("\u6CA1\u6709\u53EF\u7528\u64CD\u4F5C"), "</span></button>"));
+    els.createInstanceButton.disabled = busy;
     const live = runtimeProjection.live;
     const statusbar = live?.statusbar_projection || {};
     const lifecycle = live?.round_lifecycle || {};
@@ -47285,7 +47018,8 @@
     return error ? '<p class="runtime-empty-copy warn">'.concat(escapeHtml2(error), "</p>") : '<p class="runtime-empty-copy">'.concat(escapeHtml2(loadingText), "</p>");
   }
   function depositionRow(kind, item, selected, description, status) {
-    return '\n    <button class="deposition-row '.concat(selected ? "active" : "", '" data-deposition-kind="').concat(kind, '" data-deposition-id="').concat(escapeHtml2(item.id), '" aria-current="').concat(selected ? "true" : "false", '" ').concat(kind === "memory" ? 'aria-haspopup="dialog"' : "", ">\n      <span>").concat(escapeHtml2(kind === "memory" ? item.memory_layer || "MEM" : kind === "container" ? item.prefix || "WB" : item.category || "REL"), "</span>\n      <div><b>").concat(escapeHtml2(item.title || item.name || item.id), "</b><small>").concat(escapeHtml2(description || item.id), "</small></div>\n      <em>").concat(escapeHtml2(status || item.status || "READ"), "</em>\n    </button>\n  ");
+    const layerLabel = kind === "memory" ? (item.memory_layers || []).join(" + ") || item.memory_layer || "MEM" : kind === "container" ? item.prefix || "WB" : item.category || "REL";
+    return '\n    <button class="deposition-row '.concat(selected ? "active" : "", '" data-deposition-kind="').concat(kind, '" data-deposition-id="').concat(escapeHtml2(item.id), '" aria-current="').concat(selected ? "true" : "false", '" ').concat(kind === "memory" ? 'aria-haspopup="dialog"' : "", ">\n      <span>").concat(escapeHtml2(layerLabel), "</span>\n      <div><b>").concat(escapeHtml2(item.title || item.name || item.id), "</b><small>").concat(escapeHtml2(description || item.id), "</small></div>\n      <em>").concat(escapeHtml2(status || item.status || "READ"), "</em>\n    </button>\n  ");
   }
   function depositionJump(kind, itemId, label = "") {
     return '<button class="deposition-link" data-deposition-jump-kind="'.concat(kind, '" data-deposition-id="').concat(escapeHtml2(itemId), '">').concat(escapeHtml2(label || itemId), "</button>");
@@ -47962,8 +47696,8 @@
     if (unavailable) return unavailable;
     const tab2 = getActivePageTab("mem");
     let items = depositionItems("memory");
-    if (tab2 === "stm") items = items.filter((item) => item.memory_layer === "STM");
-    if (tab2 === "ltm") items = items.filter((item) => (item.memory_layer || "").startsWith("LTM/"));
+    if (tab2 === "stm") items = items.filter((item) => item.stm_present === true || item.memory_layer === "STM");
+    if (tab2 === "ltm") items = items.filter((item) => Boolean(item.ltm_layer) || (item.memory_layer || "").startsWith("LTM/"));
     if (tab2 === "mounts") items = items.filter((item) => (item.linked_containers || []).length);
     if (tab2 === "search") {
       const query = state.memoryQuery.trim().toLocaleLowerCase("zh-CN");
@@ -48023,16 +47757,23 @@
     return renderRuntimeAuditPage();
   }
   var runtimeSettingFields = [
+    {
+      key: "response_anchor.prompt",
+      label: "\u56DE\u7B54\u951A\u70B9",
+      kind: "string",
+      max: 512,
+      wide: true,
+      description: "\u793A\u4F8B\uFF1A\u4F7F\u7528\u7528\u6237\u5F53\u524D\u8BED\u8A00\uFF1B\u5148\u7ED9\u7ED3\u8BBA\uFF0C\u518D\u7ED9\u5FC5\u8981\u8BC1\u636E\u3002"
+    },
     { key: "heartbeat.interval", label: "\u5FC3\u8DF3\u95F4\u9694", kind: "int", min: 1, max: 3600 },
-    { key: "round.time_limit", label: "\u8F6E\u6B21\u65F6\u9650", kind: "int", min: 60, max: 86400 },
+    { key: "round.reminder_seconds", label: "\u53CD\u5E94\u63D0\u9192\u65F6\u95F4\uFF08\u79D2\uFF09", kind: "int", min: 60, max: 86400 },
+    { key: "round.warning_seconds", label: "\u53CD\u5E94\u8B66\u544A\u65F6\u95F4\uFF08\u79D2\uFF09", kind: "int", min: 60, max: 172800 },
+    { key: "round.auto_relay_seconds", label: "\u81EA\u52A8\u4E2D\u7EE7\u65F6\u95F4\uFF08\u79D2\uFF09", kind: "int", min: 60, max: 259200 },
     { key: "rhythm.period", label: "\u8282\u5F8B\u5468\u671F", kind: "int", min: 1, max: 1e5 },
     { key: "standby.idle_threshold_min", label: "\u5F85\u673A\u9608\u503C", kind: "int", min: 1, max: 10080 },
-    { key: "token_usage.warning_ratio", label: "\u4EE4\u724C\u8B66\u544A\u9608\u503C", kind: "float", min: 0.01, max: 1, step: 0.01 },
-    { key: "token_usage.critical_ratio", label: "\u4EE4\u724C\u5371\u9669\u9608\u503C", kind: "float", min: 0.01, max: 1, step: 0.01 },
-    { key: "audit.round_snapshot_retention", label: "\u8F6E\u6B21\u5FEB\u7167\u4FDD\u7559\u91CF", kind: "int", min: 1, max: 4096 },
+    { key: "audit.round_snapshot_retention", label: "\u8F6E\u6B21\u5FEB\u7167\u4FDD\u7559\u91CF", kind: "int", min: 1, max: 64 },
+    { key: "audit.round_snapshot_max_mib", label: "\u8F6E\u6B21\u5FEB\u7167\u603B\u4E0A\u9650\uFF08MiB\uFF09", kind: "int", min: 1, max: 4096 },
     { key: "audit.state_backup_retention", label: "\u72B6\u6001\u5907\u4EFD\u4FDD\u7559\u91CF", kind: "int", min: 1, max: 4096 },
-    { key: "autonomous_trigger.tacit_pending_threshold", label: "\u9690\u6027\u8FED\u4EE3\u89E6\u53D1\u9608\u503C", kind: "int", min: 1, max: 1e6 },
-    { key: "autonomous_trigger.connection_pending_threshold", label: "\u5173\u7CFB\u8FED\u4EE3\u89E6\u53D1\u9608\u503C", kind: "int", min: 1, max: 1e6 },
     { key: "general_tools.file_read_window_chars", label: "\u6587\u4EF6\u8BFB\u53D6\u7A97\u53E3", kind: "int", min: 1, max: 16777216 },
     { key: "general_tools.web_fetch_window_chars", label: "\u7F51\u9875\u8BFB\u53D6\u7A97\u53E3", kind: "int", min: 1, max: 16777216 },
     { key: "general_tools.web_search_window_results", label: "\u641C\u7D22\u7ED3\u679C\u7A97\u53E3", kind: "int", min: 1, max: 1e3 }
@@ -48053,16 +47794,12 @@
       { key: "heat.upgrade_high_rounds", label: "\u9AD8\u70ED\u5347\u683C\u8F6E\u6570", kind: "int", min: 1, max: 1e5 },
       { key: "heat.locked_value", label: "\u70ED\u5EA6\u9501\u5B9A\u503C", kind: "int", min: 0, max: 100 }
     ],
-    now: [
-      { key: "budget_chars", label: "\u5F53\u524D\u7F13\u5B58\u9884\u7B97", kind: "int", min: 1, max: 16777216 },
-      { key: "trim_chars", label: "\u5F53\u524D\u7F13\u5B58\u88C1\u526A\u91CF", kind: "int", min: 1, max: 16777216 }
-    ],
     lately: [
-      { key: "budget_chars", label: "\u6700\u8FD1\u7F13\u5B58\u9884\u7B97", kind: "int", min: 1, max: 16777216 },
-      { key: "trim_chars", label: "\u6700\u8FD1\u7F13\u5B58\u88C1\u526A\u91CF", kind: "int", min: 1, max: 16777216 },
-      { key: "compact_ratio", label: "\u6700\u8FD1\u7F13\u5B58\u538B\u7F29\u6BD4\u4F8B", kind: "float", min: 0, max: 1, step: 1e-3 },
-      { key: "compact_shard_chars", label: "\u538B\u7F29\u5206\u7247\u5927\u5C0F", kind: "int", min: 1, max: 16777216 },
-      { key: "compact_shard_ratio", label: "\u538B\u7F29\u5206\u7247\u6BD4\u4F8B", kind: "float", min: 0, max: 1, step: 1e-3 }
+      { key: "pressure_ratio", label: "\u538B\u7F29\u89E6\u53D1\u6BD4\u4F8B", kind: "float", min: 0.5, max: 0.99, step: 0.01 },
+      { key: "protected_interaction_count", label: "\u4FDD\u62A4\u6700\u8FD1\u4EA4\u4E92\u6570", kind: "int", min: 0, max: 128 },
+      { key: "semantic_summary_ratio", label: "\u5206\u7247\u6458\u8981\u4E0A\u9650\u6BD4\u4F8B", kind: "float", min: 0.01, max: 0.5, step: 5e-3 },
+      { key: "cycle_target_ratio", label: "\u5355\u5468\u671F\u76EE\u6807\u6BD4\u4F8B", kind: "float", min: 0.05, max: 0.8, step: 0.01 },
+      { key: "batch_source_chars", label: "\u5355\u5E27\u5904\u7406\u5B57\u7B26\u4E0A\u9650", kind: "int", min: 1024, max: 262144 }
     ],
     periodic: [
       { key: "limits.periodic_memory_items_chars", label: "\u5B9A\u671F\u8BB0\u5FC6\u6761\u76EE\u4E0A\u9650", kind: "int", min: 1, max: 16777216 }
@@ -48092,10 +47829,10 @@
       control = "<select ".concat(common, ">").concat((field.options || []).map(([option2, label]) => '<option value="'.concat(escapeHtml2(option2), '" ').concat(String(value) === option2 ? "selected" : "", ">").concat(escapeHtml2(label ? t(label) : option2 || t("\u7CFB\u7EDF\u9ED8\u8BA4")), "</option>")).join(""), "</select>");
     } else {
       const numeric = field.kind === "int" || field.kind === "float";
-      const attributes = numeric ? 'type="number" '.concat(field.min == null ? "" : 'min="'.concat(field.min, '"'), " ").concat(field.max == null ? "" : 'max="'.concat(field.max, '"'), ' step="').concat(field.step ?? (field.kind === "int" ? 1 : "any"), '"') : 'type="text"';
+      const attributes = numeric ? 'type="number" '.concat(field.min == null ? "" : 'min="'.concat(field.min, '"'), " ").concat(field.max == null ? "" : 'max="'.concat(field.max, '"'), ' step="').concat(field.step ?? (field.kind === "int" ? 1 : "any"), '"') : 'type="text" '.concat(field.max == null ? "" : 'maxlength="'.concat(field.max, '"'));
       control = "<input ".concat(attributes, " ").concat(common, ' value="').concat(escapeHtml2(value), '">');
     }
-    return '<label class="settings-field"><span><b>'.concat(t(field.label), "</b></span>").concat(control, "</label>");
+    return '<label class="settings-field'.concat(field.wide ? " settings-source" : "", '"><span><b>').concat(t(field.label), "</b></span>").concat(control).concat(field.description ? "<small>".concat(t(field.description), "</small>") : "", "</label>");
   }
   function settingsFeedback() {
     const message = settingsProjection.error || settingsProjection.feedback;
@@ -48109,9 +47846,10 @@
     return '<section class="ledger-panel settings-panel">\n    <header class="ledger-title"><h2>'.concat(t(title), "</h2><p>").concat(t(description), '</p></header>\n    <form data-settings-form="').concat(fileId, '">').concat(body3).concat(settingsActions(), "</form>\n  </section>");
   }
   function renderRuntimeSettings(values) {
-    const primary = runtimeSettingFields.slice(0, 6);
-    const advanced = runtimeSettingFields.slice(6);
-    return "".concat(settingsForm("system", "\u8FD0\u884C\u8BBE\u7F6E", "\u63A7\u5236 Seed \u4E32\u884C\u8FD0\u884C\u3001\u8282\u5F8B\u3001\u9608\u503C\u4E0E\u5BBF\u4E3B\u4FDD\u7559\u91CF\u3002\u4FEE\u6539\u5728\u4E0B\u4E00\u6B21\u76F8\u5173\u8BFB\u53D6\u65F6\u751F\u6548\u3002", '\n    <div class="settings-grid">'.concat(primary.map((field) => renderSettingField(field, values[field.key])).join(""), '</div>\n    <details class="settings-advanced"><summary>').concat(t("\u9AD8\u7EA7\u8FD0\u884C\u8BBE\u7F6E"), '</summary><div class="settings-grid">').concat(advanced.map((field) => renderSettingField(field, values[field.key])).join(""), "</div></details>\n  "))).concat(settingsFeedback());
+    const responseAnchor = runtimeSettingFields[0];
+    const primary = runtimeSettingFields.slice(1, 7);
+    const advanced = runtimeSettingFields.slice(7);
+    return "".concat(settingsForm("system", "\u8FD0\u884C\u8BBE\u7F6E", "\u63A7\u5236 Seed \u4E32\u884C\u8FD0\u884C\u3001\u8282\u5F8B\u3001\u9608\u503C\u4E0E\u5BBF\u4E3B\u4FDD\u7559\u91CF\u3002\u4FEE\u6539\u5728\u4E0B\u4E00\u6B21\u76F8\u5173\u8BFB\u53D6\u65F6\u751F\u6548\u3002", '\n    <div class="settings-grid">'.concat(renderSettingField(responseAnchor, values[responseAnchor.key]), '</div>\n    <div class="settings-grid">').concat(primary.map((field) => renderSettingField(field, values[field.key])).join(""), '</div>\n    <details class="settings-advanced"><summary>').concat(t("\u9AD8\u7EA7\u8FD0\u884C\u8BBE\u7F6E"), '</summary><div class="settings-grid">').concat(advanced.map((field) => renderSettingField(field, values[field.key])).join(""), "</div></details>\n  "))).concat(settingsFeedback());
   }
   function keySourceLabel(source2) {
     if (source2 === "env") return t("\u8FDB\u7A0B\u73AF\u5883\u5BC6\u94A5\u5DF2\u5C31\u7EEA");
@@ -48120,7 +47858,6 @@
   }
   function renderContextSettings(files) {
     const groups = [
-      ["now", "\u5F53\u524D\u7F13\u5B58", "\u5F53\u524D\u8F6E\u7684\u9AD8\u6CE8\u610F\u529B\u5185\u5BB9\u5BB9\u91CF\u3002"],
       ["lately", "\u6700\u8FD1\u7F13\u5B58", "\u8FD1\u671F\u8BED\u6599\u7684\u5BB9\u91CF\u3001\u88C1\u526A\u4E0E\u538B\u7F29\u8FB9\u754C\u3002"],
       ["periodic", "\u5B9A\u671F\u5C42", "\u5B9A\u671F\u8BB0\u5FC6\u6295\u5F71\u7684\u5185\u5BB9\u4E0A\u9650\u3002"],
       ["high_freq", "\u9AD8\u9891\u5C42", "\u9AD8\u9891\u7D22\u5F15\u4E0E\u5F15\u7528\u7A97\u53E3\u7684\u663E\u793A\u8FB9\u754C\u3002"],
@@ -48229,7 +47966,7 @@
     const supported = (model?.reasoning.supported || []).join(", ");
     const detected = Number(model?.detected_context_window || 0);
     const source2 = model?.context_window_source || (model?.context_window ? "legacy_manual" : "unknown");
-    return '<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="'.concat(escapeHtml2(model?.id || ""), '" autocomplete="off">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(model?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u670D\u52A1\u8FDE\u63A5"), '</span><select name="connection_id" data-model-context-input required><option value="">').concat(t("\u8BF7\u9009\u62E9"), "</option>").concat(data.model_catalog.connections.map((item) => '<option value="'.concat(escapeHtml2(item.id), '" ').concat(model?.connection_id === item.id ? "selected" : "", ">").concat(escapeHtml2(item.alias), "</option>")).join(""), "</select></label>\n    <label><span>").concat(t("\u6A21\u578B ID"), '</span><input name="model" data-model-context-input value="').concat(escapeHtml2(model?.model || ""), '" required></label>\n    <label><span>').concat(t("\u8BC6\u522B\u5BB9\u91CF"), '</span><div class="model-context-detection"><output data-model-context-detected>').concat(escapeHtml2(detected > 0 ? formattedInteger(detected) : modelContextSourceLabel(model)), '</output><button type="button" data-resolve-model-context>').concat(t("\u91CD\u65B0\u8BC6\u522B"), "</button></div></label>\n    <label><span>").concat(t("\u8FD0\u884C\u4E0A\u9650"), '</span><input name="context_window" type="number" min="1" max="').concat(escapeHtml2(detected > 0 ? detected : 1e8), '" value="').concat(escapeHtml2(model?.context_window || ""), '" required></label>\n    <input name="detected_context_window" type="hidden" value="').concat(escapeHtml2(detected), '">\n    <input name="context_window_source" type="hidden" value="').concat(escapeHtml2(source2), '">\n    <p class="model-context-feedback wide" data-model-context-feedback>').concat(escapeHtml2(modelContextSourceLabel(model)), "</p>\n    <label><span>").concat(t("\u652F\u6301\u7684\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_supported" value="').concat(escapeHtml2(supported), '" placeholder="low, medium, high"></label>\n    <label><span>').concat(t("\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_default" value="').concat(escapeHtml2(model?.reasoning.default || ""), '"></label>\n    <div class="settings-switch"><span>').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '</span><input name="streaming_enabled" type="checkbox" aria-label="').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '" ').concat(model?.streaming.enabled !== false ? "checked" : "", '></div>\n    <div class="settings-switch"><span>').concat(t("\u8FD4\u56DE\u7528\u91CF"), '</span><input name="streaming_include_usage" type="checkbox" aria-label="').concat(t("\u8FD4\u56DE\u7528\u91CF"), '" ').concat(model?.streaming.include_usage !== false ? "checked" : "", '></div>\n    <details class="wide"><summary>').concat(t("\u517C\u5BB9\u8BF7\u6C42\u53C2\u6570"), '</summary><label><span>JSON</span><textarea name="request_overrides" rows="6">').concat(escapeHtml2(JSON.stringify(model?.request_overrides || {}, null, 2)), '</textarea></label></details>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
+    return '<form class="catalog-editor" data-model-catalog-form="model" data-model-catalog-id="'.concat(escapeHtml2(model?.id || ""), '" autocomplete="off">\n    <label><span>').concat(t("\u5907\u6CE8\u540D"), '</span><input name="alias" value="').concat(escapeHtml2(model?.alias || ""), '" required maxlength="80"></label>\n    <label><span>').concat(t("\u670D\u52A1\u8FDE\u63A5"), '</span><select name="connection_id" data-model-context-input required><option value="">').concat(t("\u8BF7\u9009\u62E9"), "</option>").concat(data.model_catalog.connections.map((item) => '<option value="'.concat(escapeHtml2(item.id), '" ').concat(model?.connection_id === item.id ? "selected" : "", ">").concat(escapeHtml2(item.alias), "</option>")).join(""), "</select></label>\n    <label><span>").concat(t("\u6A21\u578B ID"), '</span><input name="model" data-model-context-input value="').concat(escapeHtml2(model?.model || ""), '" required></label>\n    <label><span>').concat(t("\u8BC6\u522B\u5BB9\u91CF"), '</span><div class="model-context-detection"><output data-model-context-detected>').concat(escapeHtml2(detected > 0 ? formattedInteger(detected) : modelContextSourceLabel(model)), '</output><button type="button" data-resolve-model-context>').concat(t("\u91CD\u65B0\u8BC6\u522B"), "</button></div></label>\n    <label><span>").concat(t("\u8FD0\u884C\u4E0A\u9650"), '</span><input name="context_window" type="number" min="1" max="').concat(escapeHtml2(detected > 0 ? detected : 1e8), '" value="').concat(escapeHtml2(model?.context_window || ""), '" required></label>\n    <label><span>').concat(t("\u8F93\u51FA Token \u4E0A\u9650"), '</span><input name="output_token_limit" type="number" min="0" max="1000000" value="').concat(escapeHtml2(model?.output_token_limit || 0), '" required><small>').concat(t("0 \u8868\u793A\u81EA\u52A8\uFF1AOpenAI \u4F7F\u7528\u670D\u52A1\u9ED8\u8BA4\u503C\uFF0C\u539F\u751F Anthropic \u4F7F\u7528 32000\u3002"), '</small></label>\n    <input name="detected_context_window" type="hidden" value="').concat(escapeHtml2(detected), '">\n    <input name="context_window_source" type="hidden" value="').concat(escapeHtml2(source2), '">\n    <p class="model-context-feedback wide" data-model-context-feedback>').concat(escapeHtml2(modelContextSourceLabel(model)), "</p>\n    <label><span>").concat(t("\u652F\u6301\u7684\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_supported" value="').concat(escapeHtml2(supported), '" placeholder="low, medium, high"></label>\n    <label><span>').concat(t("\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6"), '</span><input name="reasoning_default" value="').concat(escapeHtml2(model?.reasoning.default || ""), '"></label>\n    <div class="settings-switch"><span>').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '</span><input name="streaming_enabled" type="checkbox" aria-label="').concat(t("\u6D41\u5F0F\u8F93\u51FA"), '" ').concat(model?.streaming.enabled !== false ? "checked" : "", '></div>\n    <div class="settings-switch"><span>').concat(t("\u8FD4\u56DE\u7528\u91CF"), '</span><input name="streaming_include_usage" type="checkbox" aria-label="').concat(t("\u8FD4\u56DE\u7528\u91CF"), '" ').concat(model?.streaming.include_usage !== false ? "checked" : "", '></div>\n    <details class="wide"><summary>').concat(t("\u517C\u5BB9\u8BF7\u6C42\u53C2\u6570"), '</summary><label><span>JSON</span><textarea name="request_overrides" rows="6">').concat(escapeHtml2(JSON.stringify(model?.request_overrides || {}, null, 2)), '</textarea></label></details>\n    <footer><button type="button" class="ghost-action" data-cancel-catalog-edit>').concat(t("\u53D6\u6D88"), '</button><button type="submit" class="primary-action">').concat(t("\u4FDD\u5B58"), "</button></footer>\n  </form>");
   }
   function renderConnectionCard(connection) {
     const disabled = settingsProjection.pending ? "disabled" : "";
@@ -48240,7 +47977,7 @@
   }
   function renderModelCard(model) {
     const connection = settingsProjection.data?.model_catalog.connections.find((item) => item.id === model.connection_id);
-    return '<article class="catalog-item">\n    <header><div><strong>'.concat(escapeHtml2(model.alias), "</strong><span>").concat(escapeHtml2(model.model), " \xB7 ").concat(escapeHtml2(connection?.alias || t("\u8FDE\u63A5\u7F3A\u5931")), '</span></div><div><button type="button" data-edit-catalog="model" data-catalog-id="').concat(escapeHtml2(model.id), '">').concat(t("\u7F16\u8F91"), '</button><button type="button" data-delete-catalog="model" data-catalog-id="').concat(escapeHtml2(model.id), '">').concat(t("\u5220\u9664"), "</button></div></header>\n    <p>").concat(t("\u8BC6\u522B\u5BB9\u91CF\uFF1A{detected}\uFF1B\u8FD0\u884C\u4E0A\u9650\uFF1A{limit}\uFF1B\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6\uFF1A{effort}", { detected: formattedInteger(model.detected_context_window), limit: formattedInteger(model.context_window), effort: model.reasoning.default || t("\u7CFB\u7EDF\u9ED8\u8BA4") }), "</p>\n    ").concat(state.editingModelId === model.id ? modelEditor(model) : "", "\n  </article>");
+    return '<article class="catalog-item">\n    <header><div><strong>'.concat(escapeHtml2(model.alias), "</strong><span>").concat(escapeHtml2(model.model), " \xB7 ").concat(escapeHtml2(connection?.alias || t("\u8FDE\u63A5\u7F3A\u5931")), '</span></div><div><button type="button" data-edit-catalog="model" data-catalog-id="').concat(escapeHtml2(model.id), '">').concat(t("\u7F16\u8F91"), '</button><button type="button" data-delete-catalog="model" data-catalog-id="').concat(escapeHtml2(model.id), '">').concat(t("\u5220\u9664"), "</button></div></header>\n    <p>").concat(t("\u8BC6\u522B\u5BB9\u91CF\uFF1A{detected}\uFF1B\u8FD0\u884C\u4E0A\u9650\uFF1A{limit}\uFF1B\u8F93\u51FA\u4E0A\u9650\uFF1A{output}\uFF1B\u9ED8\u8BA4\u63A8\u7406\u5F3A\u5EA6\uFF1A{effort}", { detected: formattedInteger(model.detected_context_window), limit: formattedInteger(model.context_window), output: model.output_token_limit > 0 ? formattedInteger(model.output_token_limit) : t("\u81EA\u52A8"), effort: model.reasoning.default || t("\u7CFB\u7EDF\u9ED8\u8BA4") }), "</p>\n    ").concat(state.editingModelId === model.id ? modelEditor(model) : "", "\n  </article>");
   }
   function objectValue(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -48337,13 +48074,14 @@
     sourceRef,
     documentId,
     contentMd,
+    actionsHtml = "",
     ledgerJson = false
   }) {
     els.manualTitle.textContent = title;
     els.manualSummary.textContent = summary;
     els.manualPageLabel.textContent = detailSourceLabel(sourceType);
     els.manualSources.textContent = sourceRef;
-    els.manualBody.innerHTML = renderMarkdownDocument(documentId, contentMd);
+    els.manualBody.innerHTML = "".concat(actionsHtml).concat(renderMarkdownDocument(documentId, contentMd));
     els.manualOverlay.hidden = false;
     hydrateMarkdownDocuments(els.manualBody, els.manualBody);
     if (ledgerJson) hydrateLedgerJsonTables(els.manualBody);
@@ -48386,17 +48124,37 @@
     if (!retry) rememberDetailFocus();
     const detail = depositionDetail("memory", itemId);
     const sourceRound = detail?.created_round ?? item.created_round;
+    const sourceInstance = detail?.created_instance_id || item.created_instance_id || "meta";
+    const recallRound = detail?.last_recalled_round ?? item.last_recalled_round;
+    const recallInstance = detail?.last_recalled_instance_id || item.last_recalled_instance_id || "meta";
     const created = fullLocalTime(detail?.created_at ?? item.created_at)?.label || t("\u672A\u8BB0\u5F55");
+    const stored = fullLocalTime(detail?.stored_at ?? item.stored_at)?.label || t("\u672A\u5165\u5E93");
     const recalled = fullLocalTime(detail?.last_recalled_at ?? item.last_recalled_at)?.label || t("\u672A\u8BB0\u5F55");
-    const sourceRef = "".concat(itemId, " \xB7 ").concat(sourceRound == null ? t("\u8F6E\u6B21\u672A\u8BB0\u5F55") : "".concat(t("\u5F53\u524D\u8F6E"), " R").concat(sourceRound), " \xB7 ").concat(t("\u5165\u5E93\u65F6\u95F4"), " ").concat(created, " \xB7 ").concat(t("\u6700\u8FD1\u8C03\u7528\u65F6\u95F4"), " ").concat(recalled, " \xB7 ").concat((detail?.linked_containers || item.linked_containers || []).length, " ").concat(t("\u4E2A\u6302\u63A5"));
+    const sourceRef = "".concat(itemId, " \xB7 ").concat(sourceRound == null ? t("\u8F6E\u6B21\u672A\u8BB0\u5F55") : "".concat(sourceInstance, "/R").concat(sourceRound), " \xB7 ").concat(recallRound == null ? t("\u8F6E\u6B21\u672A\u8BB0\u5F55") : "".concat(recallInstance, "/R").concat(recallRound), " \xB7 ").concat(t("\u521B\u5EFA\u65F6\u95F4"), " ").concat(created, " \xB7 ").concat(t("\u5165\u5E93\u65F6\u95F4"), " ").concat(stored, " \xB7 ").concat(t("\u6700\u8FD1\u8C03\u7528\u65F6\u95F4"), " ").concat(recalled, " \xB7 ").concat((detail?.linked_containers || item.linked_containers || []).length, " ").concat(t("\u4E2A\u6302\u63A5"));
     if (detail) {
+      const stmPresent = detail.stm_present === true || detail.memory_layer === "STM";
+      const ltmLayer = detail.ltm_layer || ((detail.memory_layer || "").startsWith("LTM/") ? detail.memory_layer : "");
+      const mounted = Boolean(detail.periodic_mounted);
+      const mountStatus = detail.periodic_mount_status || (mounted ? "mounted" : "unmounted");
+      const mountPending = mountStatus === "awaiting_completion" || mountStatus === "mount_blocked";
+      const mutation = depositionProjection.periodicMutation;
+      const pending = mutation.pending && mutation.memId === itemId;
+      const layerStates = [
+        ...stmPresent ? [t("STM \u8870\u51CF\u4E2D")] : [],
+        ...ltmLayer ? [ltmLayer] : []
+      ];
+      const mountState = mounted ? t("\u5B9A\u671F\u5C42\u5DF2\u6302\u8F7D") : mountPending ? t("\u7B49\u5F85\u56DE\u5FC6\u91CD\u6574\u6216\u6302\u8F7D\u91CD\u8BD5") : t("\u672A\u6302\u8F7D");
+      const action = mounted || mountPending ? "unmount" : "mount";
+      const actionLabel = mounted ? t("\u4ECE\u5B9A\u671F\u5C42\u5378\u8F7D") : mountPending ? t("\u53D6\u6D88\u7B49\u5F85\u6302\u8F7D") : t("\u6302\u8F7D\u5230\u5B9A\u671F\u5C42");
+      const actionsHtml = '\n      <div class="periodic-memory-control" aria-live="polite">\n        <span class="periodic-memory-status'.concat(mounted ? " is-mounted" : mountPending ? " is-pending" : "", '" role="img" aria-label="').concat(escapeHtml2(mountState), '" title="').concat(escapeHtml2(mountState), '"></span>\n        <button type="button" aria-pressed="').concat(mounted, '" data-periodic-memory-action="').concat(action, '" data-memory-id="').concat(escapeHtml2(itemId), '" ').concat(pending ? "disabled" : "", ">").concat(pending ? t("\u6B63\u5728\u5904\u7406") : actionLabel, "</button>\n      </div>");
       showDetail({
         sourceType: "MEMORY",
         title: detail.title || item.title || itemId,
-        summary: "".concat(detail.memory_layer || item.memory_layer || "MEM", " \xB7 ").concat(t("\u516C\u5F00"), " \xB7 W").concat(detail.weight ?? item.weight ?? "?", " \xB7 ").concat(t("\u4E3B\u9898"), " ").concat(detail.subject || item.subject || t("\u672A\u8BB0\u5F55")),
+        summary: "".concat(layerStates.join(" \xB7 ") || detail.memory_layer || item.memory_layer || "MEM", " \xB7 ").concat(t("\u516C\u5F00"), " \xB7 W").concat(detail.weight ?? item.weight ?? "?", " \xB7 ").concat(t("\u4E3B\u9898"), " ").concat(detail.subject || item.subject || t("\u672A\u8BB0\u5F55")),
         sourceRef,
         documentId: "memory:".concat(itemId),
-        contentMd: memoryBodyMarkdown(detail.body)
+        contentMd: memoryBodyMarkdown(detail.body),
+        actionsHtml
       });
     } else {
       const error = depositionProjection.detailErrors["memory:".concat(itemId)];
@@ -48643,6 +48401,8 @@
     ["R", "\u6279\u5224", "\u534F\u4F5C"],
     ["B", "\u62BD\u8C61", "\u5177\u4F53"]
   ];
+  var recoveryCatalog = null;
+  var recoveryCatalogLoading = false;
   function escapeHtml3(value) {
     return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
   }
@@ -48662,6 +48422,42 @@
       throw new Error(typeof body3.error === "string" ? body3.error : "HTTP ".concat(response.status));
     }
     return payload;
+  }
+  async function loadRecoveryCatalog() {
+    if (recoveryCatalogLoading || recoveryCatalog) return;
+    recoveryCatalogLoading = true;
+    try {
+      const payload = await requestJson("./api/personas");
+      if (payload.schema_version !== "seed_gui_persona_catalog.v1") {
+        throw new Error("persona_catalog_schema_mismatch");
+      }
+      recoveryCatalog = payload;
+    } catch (error) {
+      bootstrapProjection.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      recoveryCatalogLoading = false;
+      renderBootstrap();
+    }
+  }
+  async function activateRecoveryPersona(pid, instanceId) {
+    bootstrapProjection.pending = true;
+    bootstrapProjection.error = "";
+    renderBootstrap();
+    try {
+      const receipt = await requestJson("./api/instances/activate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pid, instance_id: instanceId })
+      });
+      if (receipt.schema_version !== "seed_gui_instance_mutation_receipt.v1" || receipt.restart_required !== true) {
+        throw new Error("instance_mutation_receipt_mismatch");
+      }
+      bootstrapProjection.feedback = t("\u6B63\u5728\u5207\u6362\u4F4D\u683C\u6216\u5206\u8EAB");
+    } catch (error) {
+      bootstrapProjection.error = error instanceof Error ? error.message : String(error);
+      bootstrapProjection.pending = false;
+      renderBootstrap();
+    }
   }
   function axisBudget(values) {
     return axes.reduce((sum, [key2]) => sum + Math.abs(Number(values[key2]) - 50), 0);
@@ -48731,7 +48527,7 @@
     return "\n    <dl>\n      <div><dt>".concat(t("\u4E2D\u6587\u540D"), "</dt><dd>").concat(escapeHtml3(profile.name_zh || "\u2014"), "</dd></div>\n      <div><dt>").concat(t("\u82F1\u6587\u540D"), "</dt><dd>").concat(escapeHtml3(profile.name_en || "\u2014"), "</dd></div>\n      <div><dt>").concat(t("\u7A33\u5B9A\u7F29\u5199"), "</dt><dd>").concat(escapeHtml3(profile.abbreviation), "</dd></div>\n      <div><dt>").concat(t("\u793E\u4F1A\u5B9A\u4F4D"), "</dt><dd>").concat(roles.map(escapeHtml3).join(" / "), "</dd></div>\n      <div><dt>").concat(t("\u6838\u5FC3\u516D\u8F74"), "</dt><dd>").concat(axes.map(([key2]) => "".concat(key2).concat(profile.axes[key2])).join(" / "), " \xB7 ").concat(code4, "</dd></div>\n      <div><dt>").concat(t("\u4E09\u9879\u7279\u70B9"), "</dt><dd>").concat(traits.map(escapeHtml3).join(" / "), "</dd></div>\n      <div><dt>").concat(t("\u4F4D\u683C\u81EA\u8FF0"), "</dt><dd>").concat(escapeHtml3(profile.self_description || "\u2014"), "</dd></div>\n    </dl>\n  ");
   }
   function renderChoice() {
-    return '\n    <div class="bootstrap-shell">\n      <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>\n      <header class="bootstrap-hero">\n        <span class="hud-label">'.concat(t("\u9996\u6B21\u4F7F\u7528 UPSP"), "</span>\n        <h1>").concat(t("\u5148\u5EFA\u7ACB\u4E00\u4F4D\u53EF\u4EE5\u7EE7\u7EED\u6210\u957F\u7684\u4F4D\u683C\u4E3B\u4F53"), '</h1>\n      </header>\n      <div class="bootstrap-choice-grid">\n        <button class="bootstrap-choice recommended" type="button" data-bootstrap-choice="preset">\n          <span class="choice-badge">').concat(t("\u63A8\u8350"), "</span>\n          <strong>").concat(t("\u4F7F\u7528\u963F\u5ED6\u6C99\u5FEB\u901F\u5F00\u59CB"), "</strong>\n          <p>").concat(t("\u4E00\u4E2A\u6E29\u548C\u3001\u53EF\u9760\u3001\u91CD\u89C6\u8BB0\u5FC6\u4E0E\u5F52\u8FD4\u7684\u793A\u4F8B\u4F4D\u683C\u3002"), '</p>\n        </button>\n        <button class="bootstrap-choice" type="button" data-bootstrap-choice="custom">\n          <span class="choice-badge">').concat(t("\u81EA\u5B9A\u4E49"), "</span>\n          <strong>").concat(t("\u521B\u5EFA\u81EA\u5DF1\u7684\u4F4D\u683C"), "</strong>\n          <p>").concat(t("\u4ECE\u540D\u79F0\u3001\u793E\u4F1A\u5B9A\u4F4D\u4E0E\u516D\u8F74\u5F00\u59CB\u3002"), "</p>\n        </button>\n      </div>\n    </div>\n  ");
+    return '\n    <div class="bootstrap-shell">\n      <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>\n      <header class="bootstrap-hero">\n        '.concat(bootstrapProjection.manageNewPersona ? '<button class="bootstrap-action quiet" type="button" data-bootstrap-close>'.concat(t("\u5173\u95ED"), "</button>") : "", '\n        <span class="hud-label">').concat(t("\u9996\u6B21\u4F7F\u7528 UPSP"), "</span>\n        <h1>").concat(t("\u5148\u5EFA\u7ACB\u4E00\u4F4D\u53EF\u4EE5\u7EE7\u7EED\u6210\u957F\u7684\u4F4D\u683C\u4E3B\u4F53"), '</h1>\n      </header>\n      <div class="bootstrap-choice-grid">\n        <button class="bootstrap-choice recommended" type="button" data-bootstrap-choice="preset">\n          <span class="choice-badge">').concat(t("\u63A8\u8350"), "</span>\n          <strong>").concat(t("\u4F7F\u7528\u963F\u5ED6\u6C99\u5FEB\u901F\u5F00\u59CB"), "</strong>\n          <p>").concat(t("\u4E00\u4E2A\u6E29\u548C\u3001\u53EF\u9760\u3001\u91CD\u89C6\u8BB0\u5FC6\u4E0E\u5F52\u8FD4\u7684\u793A\u4F8B\u4F4D\u683C\u3002"), '</p>\n        </button>\n        <button class="bootstrap-choice" type="button" data-bootstrap-choice="custom">\n          <span class="choice-badge">').concat(t("\u81EA\u5B9A\u4E49"), "</span>\n          <strong>").concat(t("\u521B\u5EFA\u81EA\u5DF1\u7684\u4F4D\u683C"), "</strong>\n          <p>").concat(t("\u4ECE\u540D\u79F0\u3001\u793E\u4F1A\u5B9A\u4F4D\u4E0E\u516D\u8F74\u5F00\u59CB\u3002"), "</p>\n        </button>\n      </div>\n    </div>\n  ");
   }
   function renderWorkspace() {
     const data = bootstrapProjection.data;
@@ -48739,20 +48535,20 @@
     const profileProblem = bootstrapProjection.selection === "custom" ? profileError(bootstrapProjection.draft) : "";
     const customError = profileProblem && profileStarted(bootstrapProjection.draft) ? profileProblem : "";
     const tested = data.provider_test.valid && Boolean(bootstrapProjection.testToken);
-    const modelStepComplete = tested || bootstrapProjection.skipModelSetup;
+    const modelStepComplete = bootstrapProjection.manageNewPersona || tested || bootstrapProjection.skipModelSetup;
     const canPreview = Boolean(profile) && !profileProblem && modelStepComplete;
     const testState = bootstrapProjection.pending ? '<div class="bootstrap-test-state">'.concat(escapeHtml3(bootstrapProjection.feedback), "</div>") : bootstrapProjection.error ? '<div class="bootstrap-test-state error">'.concat(escapeHtml3(bootstrapProjection.error), "</div>") : tested ? '<div class="bootstrap-test-state passed">'.concat(t("\u6D4B\u8BD5\u901A\u8FC7"), "</div>") : bootstrapProjection.skipModelSetup ? '<div class="bootstrap-test-state">'.concat(t("\u5DF2\u9009\u62E9\u6682\u4E0D\u914D\u7F6E\u6A21\u578B\u3002\u521B\u5EFA\u540E\u53EF\u8FDB\u5165 GUI\uFF0C\u4F46\u53D1\u9001\u6D88\u606F\u524D\u4ECD\u987B\u5B8C\u6210\u6A21\u578B\u914D\u7F6E\u3002"), "</div>") : bootstrapProjection.testToken ? '<div class="bootstrap-test-state error">'.concat(t("\u6D4B\u8BD5\u7ED3\u679C\u5DF2\u56E0\u914D\u7F6E\u53D8\u5316\u6216\u8D85\u65F6\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u6D4B\u8BD5\u3002"), "</div>") : '<div class="bootstrap-test-state">'.concat(t("\u6A21\u578B\u5C1A\u672A\u901A\u8FC7\u672C\u6B21\u521D\u59CB\u5316\u6D4B\u8BD5\u3002"), "</div>");
     const profileBody = bootstrapProjection.selection === "preset" && data.preset ? presetProfile(data.preset) : customProfile(bootstrapProjection.draft);
-    return '\n    <div class="bootstrap-shell">\n      <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>\n      <header class="bootstrap-hero">\n        <button class="bootstrap-action quiet" type="button" data-bootstrap-back>\u2190 '.concat(t("\u8FD4\u56DE\u9009\u62E9"), "</button>\n        <h1>").concat(bootstrapProjection.selection === "preset" ? t("\u4F7F\u7528\u963F\u5ED6\u6C99\u5FEB\u901F\u5F00\u59CB") : t("\u521B\u5EFA\u81EA\u5DF1\u7684\u4F4D\u683C"), '</h1>\n      </header>\n      <div class="bootstrap-workspace">\n        <div class="bootstrap-main">\n          <section class="bootstrap-section">\n            <header class="bootstrap-section-head"><h2>').concat(t("\u4F4D\u683C\u6863\u6848"), "</h2></header>\n            ").concat(profileBody, '\n          </section>\n          <section class="bootstrap-section">\n            <header class="bootstrap-section-head"><h2>').concat(t("\u6A21\u578B\u51C6\u5907"), "</h2></header>\n            ").concat(setupSummary(), '\n            <div class="bootstrap-actions">\n              <button class="bootstrap-action" type="button" data-bootstrap-models>').concat(t("\u914D\u7F6E\u6A21\u578B\u670D\u52A1"), '</button>\n              <button class="bootstrap-action" type="button" data-bootstrap-test ').concat(data.setup_primary && !bootstrapProjection.pending ? "" : "disabled", ">").concat(t("\u6D4B\u8BD5\u8D77\u624B\u4E3B\u6A21\u578B\uFF08\u5C06\u4EA7\u751F\u4E00\u6B21\u4ED8\u8D39\u8BF7\u6C42\uFF09"), '</button>\n              <button class="bootstrap-action quiet" type="button" data-bootstrap-skip-model ').concat(bootstrapProjection.pending ? "disabled" : "", ">").concat(t("\u6682\u4E0D\u914D\u7F6E\uFF0C\u5148\u521B\u5EFA\u4F4D\u683C"), '</button>\n            </div>\n            <p class="bootstrap-paid-warning">').concat(t("\u6D4B\u8BD5\u53EA\u8C03\u7528\u5F53\u524D\u8D77\u624B\u4E3B\u6A21\u578B\uFF1B\u70B9\u51FB\u6D4B\u8BD5\u4F1A\u4EA7\u751F\u4E00\u6B21\u771F\u5B9E\u4ED8\u8D39\u8BF7\u6C42\uFF0C\u4F46\u4E0D\u4F1A\u521B\u5EFA\u8F6E\u6B21\u3001\u88C5\u914D\u4F4D\u683C\u4E0A\u4E0B\u6587\u6216\u5C1D\u8BD5\u5907\u7528\u6A21\u578B\u3002"), "</p>\n            ").concat(testState, '\n          </section>\n          <section class="bootstrap-section">\n            <header class="bootstrap-section-head"><h2>').concat(t("\u6700\u7EC8\u786E\u8BA4"), "</h2></header>\n            ").concat(bootstrapProjection.preview && profile ? '<div class="bootstrap-profile-summary">'.concat(previewProfile(profile), "</div>\n                 <p>").concat(bootstrapProjection.skipModelSetup ? t("\u4F4D\u683C\u5C06\u4EE5\u201C\u6A21\u578B\u672A\u7ED1\u5B9A\u201D\u72B6\u6001\u521B\u5EFA\uFF1B\u8FDB\u5165 GUI \u540E\u53EF\u968F\u65F6\u914D\u7F6E\u3002") : t("\u786E\u8BA4\u6863\u6848\u4E0E\u6A21\u578B\u540E\uFF0C\u5BBF\u4E3B\u4F1A\u4E00\u6B21\u6027\u539F\u5B50\u521B\u5EFA\u4F4D\u683C\u3002"), '</p>\n                 <div class="bootstrap-actions">\n                   <button class="bootstrap-action quiet" type="button" data-bootstrap-edit>').concat(t("\u8FD4\u56DE\u7F16\u8F91"), '</button>\n                   <button class="bootstrap-action primary" type="button" data-bootstrap-create ').concat(bootstrapProjection.pending ? "disabled" : "", ">").concat(t("\u521B\u5EFA\u4F4D\u683C"), "</button>\n                 </div>") : '<div class="bootstrap-actions">\n                   <button class="bootstrap-action primary" type="button" data-bootstrap-preview '.concat(canPreview ? "" : "disabled", ">").concat(t("\u9884\u89C8\u5E76\u521B\u5EFA"), "</button>\n                 </div>"), "\n            ").concat(customError ? '<div class="bootstrap-test-state error" data-bootstrap-profile-error>'.concat(t(customError), "</div>") : "", '\n          </section>\n        </div>\n        <aside class="bootstrap-aside">\n          <h2>').concat(t("\u9996\u6B21\u4F7F\u7528 UPSP"), '</h2>\n          <ol class="bootstrap-step-list">\n            <li class="done"><span>1</span><span>').concat(t("\u4F4D\u683C\u6863\u6848"), '</span></li>\n            <li class="').concat(modelStepComplete ? "done" : "active", '"><span>2</span><span>').concat(t("\u6A21\u578B\u51C6\u5907"), '</span></li>\n            <li class="').concat(bootstrapProjection.preview ? "active" : "", '"><span>3</span><span>').concat(t("\u6700\u7EC8\u786E\u8BA4"), "</span></li>\n          </ol>\n        </aside>\n      </div>\n    </div>\n  ");
+    return '\n    <div class="bootstrap-shell">\n      <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>\n      <header class="bootstrap-hero">\n        <button class="bootstrap-action quiet" type="button" data-bootstrap-back>\u2190 '.concat(t("\u8FD4\u56DE\u9009\u62E9"), "</button>\n        ").concat(bootstrapProjection.manageNewPersona ? '<button class="bootstrap-action quiet" type="button" data-bootstrap-close>'.concat(t("\u5173\u95ED"), "</button>") : "", "\n        <h1>").concat(bootstrapProjection.selection === "preset" ? t("\u4F7F\u7528\u963F\u5ED6\u6C99\u5FEB\u901F\u5F00\u59CB") : t("\u521B\u5EFA\u81EA\u5DF1\u7684\u4F4D\u683C"), '</h1>\n      </header>\n      <div class="bootstrap-workspace">\n        <div class="bootstrap-main">\n          <section class="bootstrap-section">\n            <header class="bootstrap-section-head"><h2>').concat(t("\u4F4D\u683C\u6863\u6848"), "</h2></header>\n            ").concat(profileBody, '\n          </section>\n          <section class="bootstrap-section">\n            <header class="bootstrap-section-head"><h2>').concat(t("\u6A21\u578B\u51C6\u5907"), "</h2></header>\n            ").concat(setupSummary(), "\n            ").concat(bootstrapProjection.manageNewPersona ? '<div class="bootstrap-test-state">'.concat(t("\u7EE7\u627F\u5F53\u524D\u6A21\u578B\u914D\u7F6E\uFF0C\u4E0D\u53D1\u8D77\u6A21\u578B\u8C03\u7528\u3002"), "</div>") : '<div class="bootstrap-actions">\n              <button class="bootstrap-action" type="button" data-bootstrap-models>'.concat(t("\u914D\u7F6E\u6A21\u578B\u670D\u52A1"), '</button>\n              <button class="bootstrap-action" type="button" data-bootstrap-test ').concat(data.setup_primary && !bootstrapProjection.pending ? "" : "disabled", ">").concat(t("\u6D4B\u8BD5\u8D77\u624B\u4E3B\u6A21\u578B\uFF08\u5C06\u4EA7\u751F\u4E00\u6B21\u4ED8\u8D39\u8BF7\u6C42\uFF09"), '</button>\n              <button class="bootstrap-action quiet" type="button" data-bootstrap-skip-model ').concat(bootstrapProjection.pending ? "disabled" : "", ">").concat(t("\u6682\u4E0D\u914D\u7F6E\uFF0C\u5148\u521B\u5EFA\u4F4D\u683C"), '</button>\n            </div>\n            <p class="bootstrap-paid-warning">').concat(t("\u6D4B\u8BD5\u53EA\u8C03\u7528\u5F53\u524D\u8D77\u624B\u4E3B\u6A21\u578B\uFF1B\u70B9\u51FB\u6D4B\u8BD5\u4F1A\u4EA7\u751F\u4E00\u6B21\u771F\u5B9E\u4ED8\u8D39\u8BF7\u6C42\uFF0C\u4F46\u4E0D\u4F1A\u521B\u5EFA\u8F6E\u6B21\u3001\u88C5\u914D\u4F4D\u683C\u4E0A\u4E0B\u6587\u6216\u5C1D\u8BD5\u5907\u7528\u6A21\u578B\u3002"), "</p>\n            ").concat(testState), '\n          </section>\n          <section class="bootstrap-section">\n            <header class="bootstrap-section-head"><h2>').concat(t("\u6700\u7EC8\u786E\u8BA4"), "</h2></header>\n            ").concat(bootstrapProjection.preview && profile ? '<div class="bootstrap-profile-summary">'.concat(previewProfile(profile), "</div>\n                  <p>").concat(bootstrapProjection.manageNewPersona ? t("\u65B0\u4F4D\u683C\u7EE7\u627F\u5F53\u524D\u6A21\u578B\u914D\u7F6E\uFF1B\u521B\u5EFA\u8FC7\u7A0B\u4E0D\u53D1\u8D77\u6A21\u578B\u8C03\u7528\u3002") : bootstrapProjection.skipModelSetup ? t("\u4F4D\u683C\u5C06\u4EE5\u201C\u6A21\u578B\u672A\u7ED1\u5B9A\u201D\u72B6\u6001\u521B\u5EFA\uFF1B\u8FDB\u5165 GUI \u540E\u53EF\u968F\u65F6\u914D\u7F6E\u3002") : t("\u786E\u8BA4\u6863\u6848\u4E0E\u6A21\u578B\u540E\uFF0C\u5BBF\u4E3B\u4F1A\u4E00\u6B21\u6027\u539F\u5B50\u521B\u5EFA\u4F4D\u683C\u3002"), '</p>\n                 <div class="bootstrap-actions">\n                   <button class="bootstrap-action quiet" type="button" data-bootstrap-edit>').concat(t("\u8FD4\u56DE\u7F16\u8F91"), '</button>\n                   <button class="bootstrap-action primary" type="button" data-bootstrap-create ').concat(bootstrapProjection.pending ? "disabled" : "", ">").concat(t("\u521B\u5EFA\u4F4D\u683C"), "</button>\n                 </div>") : '<div class="bootstrap-actions">\n                   <button class="bootstrap-action primary" type="button" data-bootstrap-preview '.concat(canPreview ? "" : "disabled", ">").concat(t("\u9884\u89C8\u5E76\u521B\u5EFA"), "</button>\n                 </div>"), "\n            ").concat(customError ? '<div class="bootstrap-test-state error" data-bootstrap-profile-error>'.concat(t(customError), "</div>") : "", '\n          </section>\n        </div>\n        <aside class="bootstrap-aside">\n          <h2>').concat(t("\u9996\u6B21\u4F7F\u7528 UPSP"), '</h2>\n          <ol class="bootstrap-step-list">\n            <li class="done"><span>1</span><span>').concat(t("\u4F4D\u683C\u6863\u6848"), '</span></li>\n            <li class="').concat(modelStepComplete ? "done" : "active", '"><span>2</span><span>').concat(t("\u6A21\u578B\u51C6\u5907"), '</span></li>\n            <li class="').concat(bootstrapProjection.preview ? "active" : "", '"><span>3</span><span>').concat(t("\u6700\u7EC8\u786E\u8BA4"), "</span></li>\n          </ol>\n        </aside>\n      </div>\n    </div>\n  ");
   }
   function bootstrapReady() {
     return bootstrapProjection.data?.persona.ready === true;
   }
   function applyBootstrapGate() {
-    const ready = bootstrapReady();
-    els.bootstrapRoot.hidden = ready;
-    els.app.hidden = !ready;
-    els.app.toggleAttribute("inert", !ready);
+    const blocked = !bootstrapReady() || bootstrapProjection.manageNewPersona;
+    els.bootstrapRoot.hidden = !blocked;
+    els.app.hidden = blocked;
+    els.app.toggleAttribute("inert", blocked);
     const abbreviation = bootstrapProjection.data?.identity?.abbreviation || "UPSP";
     document.querySelectorAll("[data-persona-abbreviation]").forEach((element6) => {
       element6.textContent = abbreviation;
@@ -48760,7 +48556,7 @@
   }
   function renderBootstrap() {
     applyBootstrapGate();
-    if (bootstrapReady()) return;
+    if (bootstrapReady() && !bootstrapProjection.manageNewPersona) return;
     const data = bootstrapProjection.data;
     if (bootstrapProjection.loading && !data) {
       els.bootstrapRoot.innerHTML = '\n      <div class="bootstrap-loading"><span class="upsp-mark" aria-hidden="true"></span><p>'.concat(t("\u6B63\u5728\u68C0\u67E5\u521D\u59CB\u5316\u72B6\u6001"), "</p></div>\n    ");
@@ -48770,13 +48566,22 @@
       els.bootstrapRoot.innerHTML = '\n      <div class="bootstrap-shell"><div class="bootstrap-error">'.concat(escapeHtml3(bootstrapProjection.error || t("\u4F4D\u683C\u521B\u5EFA\u5931\u8D25")), "</div></div>\n    ");
       return;
     }
+    const alternatives = (recoveryCatalog?.personas || []).filter(
+      (item) => item.pid !== recoveryCatalog?.active.pid
+    );
+    const recoveryActions = '\n    <div class="bootstrap-actions">\n      <button class="bootstrap-action primary" type="button" data-bootstrap-recover-persona '.concat(bootstrapProjection.pending ? "disabled" : "", ">").concat(t("\u65B0\u5EFA\u4F4D\u683C\u4EE5\u6062\u590D"), "</button>\n      ").concat(alternatives.map((item) => '<button class="bootstrap-action" type="button"\n        data-bootstrap-recover-activate="'.concat(escapeHtml3(item.pid), '" data-bootstrap-recover-instance="meta" ').concat(bootstrapProjection.pending ? "disabled" : "", ">\n        ").concat(escapeHtml3(item.identity.name_zh || item.identity.name_en || item.identity.abbreviation || item.pid), "\n      </button>")).join(""), "\n    </div>\n  ");
     if (data.persona.state === "incomplete") {
-      els.bootstrapRoot.innerHTML = '\n      <div class="bootstrap-shell">\n        <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>\n        <header class="bootstrap-hero"><h1>'.concat(t("\u4F4D\u683C\u76EE\u5F55\u5DF2\u5B58\u5728\u4F46\u4E0D\u5B8C\u6574\u3002\u4E3A\u4FDD\u62A4\u73B0\u573A\uFF0C\u521D\u59CB\u5316\u4E0D\u4F1A\u8986\u76D6\u5B83\u3002"), '</h1></header>\n        <div class="bootstrap-error">').concat(escapeHtml3(data.persona.missing.join(", ") || data.setup_error), "</div>\n      </div>\n    ");
+      els.bootstrapRoot.innerHTML = '\n      <div class="bootstrap-shell">\n        <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>\n        <header class="bootstrap-hero"><h1>'.concat(t("\u4F4D\u683C\u76EE\u5F55\u5DF2\u5B58\u5728\u4F46\u4E0D\u5B8C\u6574\u3002\u4E3A\u4FDD\u62A4\u73B0\u573A\uFF0C\u521D\u59CB\u5316\u4E0D\u4F1A\u8986\u76D6\u5B83\u3002"), '</h1></header>\n        <div class="bootstrap-error">').concat(escapeHtml3(data.persona.missing.join(", ") || data.setup_error), "</div>\n        <p>").concat(t("Runtime \u4E0D\u4F1A\u4F7F\u7528\u65E0\u6CD5\u6838\u9A8C\u7684\u4F4D\u683C\u771F\u6E90\u3002\u4F60\u4ECD\u53EF\u65B0\u5EFA\u4F4D\u683C\uFF0C\u6216\u5207\u6362\u5230\u5176\u4ED6\u4F4D\u683C\u540E\u91CD\u542F\u3002"), "</p>\n        ").concat(recoveryActions, "\n      </div>\n    ");
+      return;
+    }
+    if (data.persona.state === "config_error") {
+      const failure = data.persona.config_error;
+      els.bootstrapRoot.innerHTML = '\n      <div class="bootstrap-shell">\n        <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>\n        <header class="bootstrap-hero"><h1>'.concat(t("\u5F53\u524D\u4F4D\u683C\u914D\u7F6E\u65E0\u6CD5\u5B89\u5168\u8FC1\u79FB\uFF0CRuntime \u5DF2\u4FDD\u6301\u9501\u5B9A\u3002"), '</h1></header>\n        <div class="bootstrap-error">').concat(escapeHtml3("".concat(failure?.path || "config", " \xB7 ").concat(failure?.reason || "config_invalid")), "</div>\n        ").concat(bootstrapProjection.error ? '<div class="bootstrap-error">'.concat(escapeHtml3(bootstrapProjection.error), "</div>") : "", "\n        <p>").concat(t("\u539F\u6587\u4EF6\u6CA1\u6709\u88AB\u8986\u76D6\u3002\u4F60\u53EF\u4EE5\u65B0\u5EFA\u4F4D\u683C\uFF0C\u6216\u5207\u6362\u5230\u5176\u4ED6\u4F4D\u683C\u540E\u91CD\u542F\u3002"), "</p>\n        ").concat(recoveryActions, "\n      </div>\n    ");
       return;
     }
     els.bootstrapRoot.innerHTML = bootstrapProjection.selection === "choice" ? renderChoice() : renderWorkspace();
   }
-  function pollBootstrapStatus() {
+  function pollBootstrapStatus(reloadOnReady = true) {
     if (polling.bootstrap) return polling.bootstrap;
     const request = (async () => {
       try {
@@ -48791,7 +48596,8 @@
         bootstrapProjection.renderKey = nextKey;
         bootstrapProjection.error = "";
         if (!payload.provider_test.valid) bootstrapProjection.testToken = "";
-        if (wasReady === false && payload.persona.ready) {
+        if (["incomplete", "config_error"].includes(payload.persona.state)) void loadRecoveryCatalog();
+        if (reloadOnReady && !bootstrapProjection.pending && wasReady === false && payload.persona.ready) {
           window.location.reload();
           return true;
         }
@@ -48839,31 +48645,55 @@
   async function createPersona() {
     const token = bootstrapProjection.testToken;
     const skipped = bootstrapProjection.skipModelSetup;
-    if (!skipped && (!token || !bootstrapProjection.data?.provider_test.valid)) return;
+    if (!bootstrapProjection.manageNewPersona && !skipped && (!token || !bootstrapProjection.data?.provider_test.valid)) return;
     bootstrapProjection.pending = true;
     bootstrapProjection.error = "";
     bootstrapProjection.feedback = t("\u6B63\u5728\u521B\u5EFA\u4F4D\u683C");
     renderBootstrap();
     try {
       const preset = bootstrapProjection.selection === "preset";
-      const receipt = await requestJson("./api/bootstrap/persona", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: preset ? "preset" : "custom",
-          preset_id: preset ? "alyosha" : null,
-          profile: preset ? null : customPayload(),
-          test_token: skipped ? null : token,
-          skip_model_setup: skipped
-        })
-      });
-      if (receipt.schema_version !== "seed_gui_persona_init_receipt.v1" || receipt.status !== "created") {
+      const receipt = await requestJson(
+        bootstrapProjection.manageNewPersona ? "./api/personas" : "./api/bootstrap/persona",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(bootstrapProjection.manageNewPersona ? {
+            mode: preset ? "preset" : "custom",
+            preset_id: preset ? "alyosha" : null,
+            profile: preset ? null : customPayload()
+          } : {
+            mode: preset ? "preset" : "custom",
+            preset_id: preset ? "alyosha" : null,
+            profile: preset ? null : customPayload(),
+            test_token: skipped ? null : token,
+            skip_model_setup: skipped
+          })
+        }
+      );
+      if (![
+        "seed_gui_persona_init_receipt.v1",
+        "seed_gui_instance_mutation_receipt.v1"
+      ].includes(receipt.schema_version) || !["created", "persona_created"].includes(receipt.status)) {
         throw new Error("persona_init_receipt_mismatch");
       }
       bootstrapProjection.feedback = t("\u521B\u5EFA\u6210\u529F\uFF0C\u6B63\u5728\u8FDB\u5165 Seed GUI");
-      window.location.reload();
+      if (!bootstrapProjection.manageNewPersona) window.location.reload();
     } catch (error) {
-      bootstrapProjection.error = "".concat(t("\u4F4D\u683C\u521B\u5EFA\u5931\u8D25"), "\uFF1A").concat(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (!bootstrapProjection.manageNewPersona) {
+        await pollBootstrapStatus(false);
+        if (bootstrapProjection.data?.persona.ready) {
+          const notice = "".concat(t("\u4F4D\u683C\u5DF2\u521B\u5EFA\u4F46 Runtime \u672A\u542F\u52A8"), "\uFF1A").concat(message);
+          bootstrapProjection.feedback = t("\u4F4D\u683C\u5DF2\u521B\u5EFA\u4F46 Runtime \u672A\u542F\u52A8");
+          bootstrapProjection.error = notice;
+          bootstrapProjection.pending = false;
+          renderBootstrap();
+          window.alert(notice);
+          window.location.reload();
+          return;
+        }
+      }
+      bootstrapProjection.error = "".concat(t("\u4F4D\u683C\u521B\u5EFA\u5931\u8D25"), "\uFF1A").concat(message === "instance_restart_host_required" ? t("\u6B64\u64CD\u4F5C\u9700\u8981\u684C\u9762\u5BA2\u6237\u7AEF\u5B89\u5168\u91CD\u542F\u540E\u7AEF\u3002") : message);
       bootstrapProjection.pending = false;
       renderBootstrap();
     }
@@ -48903,18 +48733,43 @@
     }
     const preview = els.bootstrapRoot.querySelector("[data-bootstrap-preview]");
     if (preview) {
-      preview.disabled = Boolean(profileError(draft)) || !bootstrapProjection.skipModelSetup && (!bootstrapProjection.data?.provider_test.valid || !bootstrapProjection.testToken);
+      preview.disabled = Boolean(profileError(draft)) || !bootstrapProjection.manageNewPersona && !bootstrapProjection.skipModelSetup && (!bootstrapProjection.data?.provider_test.valid || !bootstrapProjection.testToken);
     }
   }
   function initBootstrapEvents() {
     document.addEventListener("click", (event) => {
       const target = event.target instanceof Element ? event.target : null;
       if (!target || !target.closest("#bootstrapRoot")) return;
+      const recoveryPersona = target.closest("[data-bootstrap-recover-activate]");
+      if (recoveryPersona) {
+        void activateRecoveryPersona(
+          recoveryPersona.dataset.bootstrapRecoverActivate || "",
+          recoveryPersona.dataset.bootstrapRecoverInstance || "meta"
+        );
+        return;
+      }
+      if (target.closest("[data-bootstrap-recover-persona]")) {
+        bootstrapProjection.manageNewPersona = true;
+        bootstrapProjection.selection = "choice";
+        bootstrapProjection.preview = false;
+        bootstrapProjection.skipModelSetup = true;
+        bootstrapProjection.error = "";
+        renderBootstrap();
+        return;
+      }
+      if (target.closest("[data-bootstrap-close]")) {
+        bootstrapProjection.manageNewPersona = false;
+        bootstrapProjection.selection = "choice";
+        bootstrapProjection.preview = false;
+        bootstrapProjection.error = "";
+        renderBootstrap();
+        return;
+      }
       const choice = target.closest("[data-bootstrap-choice]");
       if (choice) {
         bootstrapProjection.selection = choice.dataset.bootstrapChoice === "custom" ? "custom" : "preset";
         bootstrapProjection.preview = false;
-        bootstrapProjection.skipModelSetup = false;
+        bootstrapProjection.skipModelSetup = bootstrapProjection.manageNewPersona;
         bootstrapProjection.error = "";
         renderBootstrap();
         return;
@@ -48968,9 +48823,19 @@
     });
     document.addEventListener("upsp:locale-changed", renderBootstrap);
   }
+  function openPersonaCreation() {
+    if (!bootstrapReady()) return;
+    bootstrapProjection.manageNewPersona = true;
+    bootstrapProjection.selection = "choice";
+    bootstrapProjection.preview = false;
+    bootstrapProjection.skipModelSetup = true;
+    bootstrapProjection.error = "";
+    renderBootstrap();
+  }
 
   // src/runtime.ts
   var contextPrefixDiffController = null;
+  var depositionDetailRequests = /* @__PURE__ */ new Map();
   var RuntimeRequestError = class extends Error {
     status;
     code;
@@ -49562,34 +49427,50 @@
     const selection = pageId === "mem" ? ["memory", state.selectedMemoryId] : pageId === "containers" ? ["container", state.selectedContainerId] : pageId === "relations" ? ["relation", state.selectedRelationId] : null;
     if (selection?.[1]) void loadDepositionDetail(selection[0], selection[1]);
   }
-  async function loadDepositionDetail(kind, itemId, { force = false, render: render4 = true } = {}) {
-    if (!itemId || depositionProjection.pendingDetails.has("".concat(kind, ":").concat(itemId))) return;
-    if (!force && depositionProjection.details[kind]?.[itemId]) return;
+  function loadDepositionDetail(kind, itemId, { force = false, render: render4 = true } = {}) {
+    if (!itemId) return Promise.resolve(false);
     const key2 = "".concat(kind, ":").concat(itemId);
+    const pending = depositionDetailRequests.get(key2);
+    if (pending) {
+      return force ? pending.then(() => loadDepositionDetail(kind, itemId, { force: true, render: render4 })) : pending;
+    }
+    if (!force && depositionProjection.details[kind]?.[itemId]) return Promise.resolve(true);
     depositionProjection.pendingDetails.add(key2);
     delete depositionProjection.detailErrors[key2];
-    try {
-      const payload = await fetchRuntimeJson("./api/deposition/".concat(kind, "?id=").concat(encodeURIComponent(itemId)));
-      if (payload.schema_version !== "seed_gui_deposition_detail.v1" || payload.kind !== kind || payload.item?.id !== itemId) {
-        throw new Error("deposition_detail_schema_mismatch");
+    const request = (async () => {
+      try {
+        const payload = await fetchRuntimeJson("./api/deposition/".concat(kind, "?id=").concat(encodeURIComponent(itemId)));
+        if (payload.schema_version !== "seed_gui_deposition_detail.v1" || payload.kind !== kind || payload.item?.id !== itemId) {
+          throw new Error("deposition_detail_schema_mismatch");
+        }
+        depositionProjection.details[kind][itemId] = payload;
+        return true;
+      } catch (error) {
+        const failure = errorView(error);
+        depositionProjection.detailErrors[key2] = "".concat(t("\u8BE6\u60C5\u8BFB\u53D6\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
+        return false;
       }
-      depositionProjection.details[kind][itemId] = payload;
-    } catch (error) {
-      const failure = errorView(error);
-      depositionProjection.detailErrors[key2] = "".concat(t("\u8BE6\u60C5\u8BFB\u53D6\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
-    } finally {
+    })();
+    const tracked = request.finally(() => {
+      depositionDetailRequests.delete(key2);
       depositionProjection.pendingDetails.delete(key2);
-    }
-    if (render4 && state.activePage === depositionPage(kind)) renderStage(state.activePage);
+      if (render4 && state.activePage === depositionPage(kind)) renderStage(state.activePage);
+    });
+    depositionDetailRequests.set(key2, tracked);
+    return tracked;
   }
   function pollDeposition({ force = false, ignoreVisibility = false } = {}) {
     if (document.hidden && !ignoreVisibility) return Promise.resolve(false);
     if (polling.deposition) {
-      if (force) polling.depositionForceQueued = true;
+      if (force) {
+        polling.depositionForceQueued = true;
+        return polling.deposition.then(() => polling.deposition || pollDeposition({ force: true, ignoreVisibility }));
+      }
       return polling.deposition;
     }
     if (!depositionProjection.index) depositionProjection.loading = true;
     let changed = force;
+    let loaded = false;
     const request = (async () => {
       try {
         const payload = await fetchRuntimeJson("./api/deposition");
@@ -49601,6 +49482,7 @@
         depositionProjection.index = payload;
         depositionProjection.renderKey = nextKey;
         depositionProjection.error = "";
+        loaded = true;
         if (changed) {
           const selected = [
             ["memory", selectDepositionItem("memory", payload.memory)],
@@ -49624,7 +49506,7 @@
           loadActiveDepositionDetail(state.activePage);
         }
       }
-      return true;
+      return loaded;
     })();
     polling.deposition = request.finally(() => {
       polling.deposition = null;
@@ -49745,6 +49627,55 @@
       await pollRuntime({ forceFull: true, ignoreVisibility: true });
     }
   }
+  async function submitPeriodicMemory(action, memId) {
+    const mutation = depositionProjection.periodicMutation;
+    if (mutation.pending) return;
+    mutation.pending = true;
+    mutation.memId = memId;
+    mutation.feedback = "";
+    mutation.receipt = null;
+    let mutationAccepted = false;
+    let truthReloaded = false;
+    const detailKey = "memory:".concat(memId);
+    openMemoryDetail(memId, { retry: true });
+    try {
+      const payload = await fetchRuntimeJson("./api/deposition/memory/periodic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, mem_id: memId })
+      });
+      if (payload.schema_version !== "seed_gui_periodic_memory_result.v1" || payload.submission_source !== "seed_gui" || payload.receipt?.schema_version !== "periodic_memory_mount_receipt.v2" || payload.receipt.tool_id !== "periodic_memory_mount" || payload.receipt.mem_id !== memId || !["applied", "noop"].includes(payload.receipt.status)) {
+        throw new Error("periodic_memory_receipt_mismatch");
+      }
+      mutation.receipt = payload.receipt;
+      mutationAccepted = true;
+      const indexReloaded = await pollDeposition({ force: true, ignoreVisibility: true });
+      const detailReloaded = await loadDepositionDetail("memory", memId, { force: true, render: false });
+      const truth = depositionProjection.details.memory[memId]?.item;
+      const mounted = truth?.periodic_mounted;
+      const mountStatus = truth?.periodic_mount_status || (mounted ? "mounted" : "unmounted");
+      truthReloaded = indexReloaded && detailReloaded && typeof mounted === "boolean" && mountStatus === (payload.receipt.mount_status || (action === "mount" ? "mounted" : "unmounted"));
+      if (!truthReloaded) {
+        delete depositionProjection.details.memory[memId];
+        depositionProjection.detailErrors[detailKey] = t("\u64CD\u4F5C\u5DF2\u63D0\u4EA4\uFF0C\u4F46\u8BB0\u5FC6\u771F\u6E90\u91CD\u8BFB\u5931\u8D25\uFF1B\u4E3A\u907F\u514D\u663E\u793A\u65E7\u72B6\u6001\uFF0C\u8BF7\u91CD\u65B0\u8BFB\u53D6\u8BE6\u60C5\u3002");
+        throw new Error("periodic_memory_truth_reload_failed");
+      }
+    } catch (error) {
+      const failure = errorView(error);
+      const labels = {
+        400: t("\u5B9A\u671F\u5C42\u6302\u8F7D\u53C2\u6570\u65E0\u6548"),
+        403: t("\u8BF7\u6C42\u6765\u6E90\u88AB\u62D2\u7EDD"),
+        404: t("\u8BB0\u5FC6\u6761\u76EE\u4E0D\u5B58\u5728"),
+        409: t("Runtime \u6B63\u5FD9\u6216\u6302\u8F7D\u72B6\u6001\u51B2\u7A81"),
+        503: t("\u672C\u5730\u5B9A\u671F\u5C42\u5904\u7406\u5668\u4E0D\u53EF\u7528")
+      };
+      mutation.feedback = mutationAccepted && !truthReloaded ? t("\u64CD\u4F5C\u5DF2\u63D0\u4EA4\uFF0C\u4F46\u8BB0\u5FC6\u771F\u6E90\u91CD\u8BFB\u5931\u8D25\uFF1B\u4E3A\u907F\u514D\u663E\u793A\u65E7\u72B6\u6001\uFF0C\u8BF7\u91CD\u65B0\u8BFB\u53D6\u8BE6\u60C5\u3002") : failure.code === "periodic_memory_budget_exceeded" ? t("\u5B9A\u671F\u5C42\u5DF2\u8FBE\u5230\u5F53\u524D\u914D\u7F6E\u4E0A\u9650\uFF0C\u8BF7\u5148\u53D6\u6D88\u5176\u4ED6\u6302\u8F7D\u6216\u8C03\u6574\u4E0A\u9650\u540E\u518D\u8BD5\u3002") : "".concat(labels[failure.status] || t("\u5B9A\u671F\u5C42\u6302\u8F7D\u53D8\u66F4\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
+      window.alert(mutation.feedback);
+    } finally {
+      mutation.pending = false;
+      openMemoryDetail(memId, { retry: true });
+    }
+  }
   async function submitRuntimePermissionChange() {
     const status = runtimeProjection.status;
     if (!status?.current_round || !status.can_stop || runtimeProjection.permissionChanging) return;
@@ -49834,6 +49765,59 @@
       polling.about = null;
     });
     return polling.about;
+  }
+  function pollPersonaCatalog({ force = false } = {}) {
+    if (polling.personas) return polling.personas;
+    if (!force && personaCatalogProjection.data) return Promise.resolve(false);
+    personaCatalogProjection.loading = true;
+    const request = (async () => {
+      try {
+        const payload = await fetchRuntimeJson("./api/personas");
+        if (payload.schema_version !== "seed_gui_persona_catalog.v1") {
+          throw new Error("persona_catalog_schema_mismatch");
+        }
+        personaCatalogProjection.data = payload;
+        personaCatalogProjection.error = "";
+      } catch (error) {
+        const failure = errorView(error);
+        personaCatalogProjection.error = failure.code || failure.message;
+      } finally {
+        personaCatalogProjection.loading = false;
+      }
+      renderIdentity();
+      return true;
+    })();
+    polling.personas = request.finally(() => {
+      polling.personas = null;
+    });
+    return polling.personas;
+  }
+  async function submitInstanceMutation(path3, body3) {
+    if (personaCatalogProjection.pending) return;
+    personaCatalogProjection.pending = true;
+    personaCatalogProjection.error = "";
+    renderIdentity();
+    try {
+      const receipt = await fetchRuntimeJson(path3, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body3)
+      });
+      if (receipt.schema_version !== "seed_gui_instance_mutation_receipt.v1") {
+        throw new Error("instance_mutation_receipt_mismatch");
+      }
+      if (receipt.restart_required === true) {
+        runtimeProjection.sendFeedback = t("\u6B63\u5728\u5207\u6362\u4F4D\u683C\u6216\u5206\u8EAB");
+      } else {
+        await pollPersonaCatalog({ force: true });
+      }
+    } catch (error) {
+      const failure = errorView(error);
+      personaCatalogProjection.error = failure.code === "instance_restart_host_required" ? t("\u6B64\u64CD\u4F5C\u9700\u8981\u684C\u9762\u5BA2\u6237\u7AEF\u5B89\u5168\u91CD\u542F\u540E\u7AEF\u3002") : failure.code === "instance_mutation_failed" ? t("\u4F4D\u683C\u6216\u5206\u8EAB\u53D8\u66F4\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5\u3002") : failure.code || failure.message;
+    } finally {
+      personaCatalogProjection.pending = false;
+      renderIdentity();
+    }
   }
   async function submitRuntimeStop() {
     if (runtimeProjection.stopping) return;
@@ -50120,13 +50104,78 @@
       const personaNameOption = target.closest("[data-persona-name-variant]");
       if (personaNameOption) {
         if (selectPersonaNameVariant(personaNameOption.dataset.personaNameVariant || "")) {
-          els.personaNameSelector.open = false;
-          window.requestAnimationFrame(() => els.personaNameSummary.focus());
+          els.personaMoreMenu.open = false;
+          window.requestAnimationFrame(() => els.personaMoreToggle.focus());
         }
         return;
       }
-      if (els.personaNameSelector.open && !target.closest("#personaNameSelector")) {
-        els.personaNameSelector.open = false;
+      if (target.closest("#personaMoreToggle")) els.instanceMoreMenu.open = false;
+      if (target.closest("#instanceMoreToggle")) els.personaMoreMenu.open = false;
+      if (els.personaMoreMenu.open && !target.closest("#personaMoreMenu")) els.personaMoreMenu.open = false;
+      if (els.instanceMoreMenu.open && !target.closest("#instanceMoreMenu")) els.instanceMoreMenu.open = false;
+      if (target.closest("[data-create-persona]")) {
+        openPersonaCreation();
+        return;
+      }
+      const personaButton = target.closest("[data-activate-persona]");
+      if (personaButton) {
+        if (personaButton.dataset.activatePersona === personaCatalogProjection.data?.active.pid) return;
+        void submitInstanceMutation("./api/instances/activate", {
+          pid: personaButton.dataset.activatePersona || "",
+          instance_id: "meta"
+        });
+        return;
+      }
+      const instanceButton = target.closest("[data-activate-instance]");
+      if (instanceButton) {
+        if (instanceButton.dataset.activateInstance === personaCatalogProjection.data?.active.instance_id) return;
+        void submitInstanceMutation("./api/instances/activate", {
+          pid: instanceButton.dataset.personaId || "",
+          instance_id: instanceButton.dataset.activateInstance || ""
+        });
+        return;
+      }
+      if (target.closest("[data-create-instance]")) {
+        const label = window.prompt(t("\u65B0\u5206\u8EAB\u540D\u79F0"), "");
+        if (label?.trim()) {
+          void submitInstanceMutation("./api/instances", {
+            mode: "new",
+            label: label.trim(),
+            source_instance_id: "meta"
+          });
+        }
+        return;
+      }
+      const branchButton = target.closest("[data-fork-instance]");
+      if (branchButton) {
+        const label = window.prompt(t("\u5206\u652F\u540D\u79F0"), "");
+        if (label?.trim()) {
+          void submitInstanceMutation("./api/instances", {
+            mode: "fork",
+            label: label.trim(),
+            source_instance_id: branchButton.dataset.forkInstance || ""
+          });
+        }
+        return;
+      }
+      const archiveButton = target.closest("[data-archive-instance]");
+      if (archiveButton) {
+        els.instanceMoreMenu.open = false;
+        const accepted = window.confirm(
+          state.locale === "zh-CN" ? "\u5F52\u6863\u540E\u8BE5\u5206\u8EAB\u51BB\u7ED3\uFF0C\u53EF\u7A0D\u540E\u6062\u590D\u3002\u7EE7\u7EED\uFF1F" : "Archive and freeze this branch? You can restore it later."
+        );
+        if (accepted) void submitInstanceMutation("./api/instances/archive", {
+          instance_id: archiveButton.dataset.archiveInstance || ""
+        });
+        return;
+      }
+      const restoreButton = target.closest("[data-restore-instance]");
+      if (restoreButton) {
+        els.instanceMoreMenu.open = false;
+        void submitInstanceMutation("./api/instances/restore", {
+          instance_id: restoreButton.dataset.restoreInstance || ""
+        });
+        return;
       }
       const retryButton = target.closest("[data-retry-projection]");
       if (retryButton) {
@@ -50356,6 +50405,15 @@
         submitContainerFocus(focusButton.dataset.containerFocusAction || "", focusButton.dataset.containerId || "");
         return;
       }
+      const periodicMemoryButton = target.closest("[data-periodic-memory-action]");
+      if (periodicMemoryButton) {
+        const action = periodicMemoryButton.dataset.periodicMemoryAction;
+        const memId = periodicMemoryButton.dataset.memoryId || "";
+        if (action === "mount" || action === "unmount") {
+          void submitPeriodicMemory(action, memId);
+        }
+        return;
+      }
       const depositionButton = target.closest("[data-deposition-kind][data-deposition-id]");
       if (depositionButton) {
         const kind = depositionButton.dataset.depositionKind;
@@ -50492,6 +50550,7 @@
             connection_id: text10("connection_id"),
             model: text10("model"),
             context_window: Number.parseInt(text10("context_window"), 10),
+            output_token_limit: Number.parseInt(text10("output_token_limit") || "0", 10),
             detected_context_window: Number.parseInt(text10("detected_context_window") || "0", 10),
             context_window_source: text10("context_window_source") || "unknown",
             reasoning_supported: text10("reasoning_supported").split(",").map((item) => item.trim()).filter(Boolean),
@@ -50644,10 +50703,16 @@
     window.addEventListener("resize", () => window.requestAnimationFrame(syncNavPointer));
   }
   function handleKeyboard(event) {
-    if (event.key === "Escape" && els.personaNameSelector.open) {
+    if (event.key === "Escape" && els.personaMoreMenu.open) {
       event.preventDefault();
-      els.personaNameSelector.open = false;
-      els.personaNameSummary.focus();
+      els.personaMoreMenu.open = false;
+      els.personaMoreToggle.focus();
+      return;
+    }
+    if (event.key === "Escape" && els.instanceMoreMenu.open) {
+      event.preventDefault();
+      els.instanceMoreMenu.open = false;
+      els.instanceMoreToggle.focus();
       return;
     }
     if (state.globalSettingsOpen) {
@@ -50699,6 +50764,20 @@
       protocolEntry.click();
       return;
     }
+    const identityTab = eventElement(event)?.closest("[data-identity-tab]");
+    if (identityTab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      const strip = identityTab.closest(".identity-tab-strip");
+      if (!strip) return;
+      const tabs = [...strip.querySelectorAll("[data-identity-tab]:not([disabled])")];
+      if (!tabs.length) return;
+      let index2 = tabs.indexOf(identityTab);
+      if (event.key === "Home") index2 = 0;
+      else if (event.key === "End") index2 = tabs.length - 1;
+      else index2 = (index2 + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      event.preventDefault();
+      tabs[index2]?.focus();
+      return;
+    }
     const tab2 = eventElement(event)?.closest(".page-tab");
     if (tab2 && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
       const strip = tab2.closest(".window-tab-strip");
@@ -50720,6 +50799,7 @@
 
   // src/app.ts
   function startRuntimeUi() {
+    void pollPersonaCatalog({ force: true });
     void pollRuntime();
     void pollDeposition();
     void pollTaskProjection();

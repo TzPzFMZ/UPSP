@@ -9,6 +9,8 @@ class RuntimeControl:
         self.shutdown = threading.Event()
         self.stop_requested = threading.Event()
         self.lock = threading.Lock()
+        self._condition = threading.Condition(self.lock)
+        self._idle_mutation_reserved = False
         self.round_in_flight = False
         self.round_num = None
         self.round_type = None
@@ -21,8 +23,14 @@ class RuntimeControl:
             self.on_change()
 
     def establish_round(self, round_type, establish):
-        with self.lock:
-            if self.stop_requested.is_set():
+        with self._condition:
+            while self._idle_mutation_reserved and not self.shutdown.is_set():
+                self._condition.wait()
+            if (
+                self.shutdown.is_set()
+                or self.stop_requested.is_set()
+                or self.round_in_flight
+            ):
                 return None
             round_num = int(establish())
             self.round_in_flight = True
@@ -32,19 +40,52 @@ class RuntimeControl:
         self._notify()
         return round_num
 
-    def begin_pre_setup_probe(self):
-        with self.lock:
-            if self.round_in_flight or self.stop_requested.is_set():
+    def reserve_idle_mutation(self):
+        """Atomically reserve idle Runtime state for one local mutation."""
+        with self._condition:
+            if (
+                self._idle_mutation_reserved
+                or self.round_in_flight
+                or self.stage != "idle"
+                or self.stop_requested.is_set()
+                or self.shutdown.is_set()
+            ):
+                return False
+            self._idle_mutation_reserved = True
+            return True
+
+    def release_idle_mutation(self):
+        with self._condition:
+            if not self._idle_mutation_reserved:
+                return False
+            self._idle_mutation_reserved = False
+            self._condition.notify_all()
+            return True
+
+    def begin_round_preparation(self):
+        """Enter pre-setup only after any reserved idle mutation completes."""
+        with self._condition:
+            while self._idle_mutation_reserved and not self.shutdown.is_set():
+                self._condition.wait()
+            if (
+                self.shutdown.is_set()
+                or self.stop_requested.is_set()
+                or self.round_in_flight
+                or self.stage != "idle"
+            ):
                 return False
             self.stage = "pre_setup_probe"
         self._notify()
         return True
 
-    def end_pre_setup_probe(self):
-        with self.lock:
-            if self.stage == "pre_setup_probe":
+    def end_round_preparation(self):
+        changed = False
+        with self._condition:
+            if not self.round_in_flight and self.stage == "pre_setup_probe":
                 self.stage = "idle"
-        self._notify()
+                changed = True
+        if changed:
+            self._notify()
 
     def finish_round(self, latch_until_explicit):
         with self.lock:
@@ -61,7 +102,9 @@ class RuntimeControl:
         self._notify()
 
     def request_shutdown(self, runtime):
-        self.shutdown.set()
+        with self._condition:
+            self.shutdown.set()
+            self._condition.notify_all()
         self.request_stop(runtime)
         wake = getattr(runtime.hb, "wake", None)
         if callable(wake):

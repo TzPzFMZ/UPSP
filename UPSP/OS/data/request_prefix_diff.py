@@ -9,6 +9,11 @@ from data.provider_request_wire import (
     request_string_char_offset,
     verified_provider_request_wire,
 )
+from data.round_audit_codec import (
+    RoundAuditDecoder,
+    common_prefix_bytes,
+    request_compatibility_key,
+)
 
 
 DIFF_SCHEMA = "seed_gui_request_prefix_diff.v1"
@@ -38,15 +43,16 @@ def _round_paths(round_dir, maximum_round):
 
 def _snapshots_from_path(round_num, path):
     snapshots = []
+    decoder = RoundAuditDecoder()
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return snapshots
     for line in lines:
         try:
-            event = json.loads(line)
-        except (TypeError, json.JSONDecodeError):
-            continue
+            event = decoder.feed(json.loads(line))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
         if not isinstance(event, dict) or event.get("event_type") != "step_input_snapshot":
             continue
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
@@ -62,57 +68,10 @@ def _snapshots_from_path(round_num, path):
     return snapshots
 
 
-def _api_shape(envelope):
-    body = envelope.get("request_body")
-    if not isinstance(body, dict):
-        return ""
-    shape = []
-    for key in ("messages", "input", "instructions", "system", "tools"):
-        if key not in body:
-            continue
-        value = body[key]
-        shape.append((key, "list" if isinstance(value, list) else type(value).__name__))
-    return json.dumps(shape, separators=(",", ":"))
-
-
-def _compatibility_key(record):
-    envelope = record["envelope"]
-    provider = envelope.get("provider") if isinstance(envelope.get("provider"), dict) else {}
-    audit = (
-        envelope.get("request_contract_audit")
-        if isinstance(envelope.get("request_contract_audit"), dict)
-        else {}
-    )
-    prompt_cache_key = str(audit.get("prompt_cache_key") or "").strip()
-    lane = str(audit.get("prompt_cache_lane") or "").strip()
-    protocol = str(provider.get("provider") or "").strip()
-    model = str(provider.get("model") or "").strip()
-    connection_id = str(provider.get("connection_id") or "").strip()
-    shape = _api_shape(envelope)
-    if not all((prompt_cache_key, connection_id, lane, protocol, model, shape)):
-        return None
-    return (
-        prompt_cache_key,
-        connection_id,
-        protocol,
-        model,
-        lane,
-        shape,
-    )
-
-
 def _verified(record):
     envelope = record["envelope"]
     wire = verified_provider_request_wire(envelope)
     return wire, envelope["request_body_source_map"]["entries"]
-
-
-def _common_prefix(left, right):
-    limit = min(len(left), len(right))
-    index = 0
-    while index < limit and left[index] == right[index]:
-        index += 1
-    return index
 
 
 def _entry_at_or_after(entries, offset):
@@ -325,7 +284,7 @@ def build_request_prefix_diff(round_dir, round_num, frame_id):
     if current_index is None:
         return _unavailable("frame_not_found")
     current = snapshots[current_index]
-    compatibility = _compatibility_key(current)
+    compatibility = request_compatibility_key(current["envelope"])
     if compatibility is None:
         return _unavailable("current_frame_incompatible")
     try:
@@ -358,7 +317,7 @@ def build_request_prefix_diff(round_dir, round_num, frame_id):
                     candidate["round"] == current["round"]
                     and candidate["frame_id"] == current["frame_id"]):
                 continue
-            if _compatibility_key(candidate) != compatibility:
+            if request_compatibility_key(candidate["envelope"]) != compatibility:
                 continue
             try:
                 candidate_wire, _candidate_entries = _verified(candidate)
@@ -372,7 +331,7 @@ def build_request_prefix_diff(round_dir, round_num, frame_id):
     if previous is None or previous_wire is None:
         return _unavailable("compatible_previous_frame_not_found")
 
-    prefix = _common_prefix(current_wire, previous_wire)
+    prefix = common_prefix_bytes(current_wire, previous_wire)
     base = {
         "schema_version": DIFF_SCHEMA,
         "current": _frame_summary(current),

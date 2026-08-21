@@ -588,6 +588,15 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
             def append_to_cache(self, round_num, role, text, *, kind, **kwargs):
                 self.entries.append((round_num, role, text, kind, kwargs))
 
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                }
+
+            def load_cache_compaction_debt(self):
+                return {}
+
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
@@ -731,7 +740,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
         assembler = rt.assembler
         monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
         self._patch_memory_immediate_stores(monkeypatch, runtime=rt)
         helper = self
@@ -1008,6 +1016,15 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
             def append_to_cache(self, round_num, role, text, *, kind, **kwargs):
                 self.entries.append((round_num, role, text, kind, kwargs))
 
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                }
+
+            def load_cache_compaction_debt(self):
+                return {}
+
         rt.executor = TextPayloadExecutor()
         rt.ctx_store = RecordingContext()
 
@@ -1080,6 +1097,15 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
 
             def append_to_cache(self, round_num, role, text, *, kind, **kwargs):
                 self.entries.append((round_num, role, text, kind, kwargs))
+
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                }
+
+            def load_cache_compaction_debt(self):
+                return {}
 
         def fake_execute(request):
             return {
@@ -1173,6 +1199,15 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
 
             def append_to_cache(self, round_num, role, text, *, kind, **kwargs):
                 self.entries.append((round_num, role, text, kind, kwargs))
+
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                }
+
+            def load_cache_compaction_debt(self):
+                return {}
 
         def fake_execute(request):
             if request["tool_id"] == "web_fetch":

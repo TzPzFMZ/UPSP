@@ -3,6 +3,7 @@ import type {
   BootstrapPersonaPreset,
   BootstrapStatusPayload,
   JsonObject,
+  PersonaCatalogPayload,
 } from "./contracts";
 import { t } from "./i18n";
 import type { MessageKey } from "./i18n";
@@ -23,9 +24,10 @@ interface ProviderTestReceipt {
 }
 
 interface PersonaInitReceipt {
-  schema_version: "seed_gui_persona_init_receipt.v1";
-  status: "created";
-  model_setup: "tested" | "skipped";
+  schema_version: "seed_gui_persona_init_receipt.v1" | "seed_gui_instance_mutation_receipt.v1";
+  status: "created" | "persona_created";
+  model_setup?: "tested" | "skipped";
+  restart_required?: boolean;
 }
 
 const axes: Array<[AxisKey, string, string]> = [
@@ -36,6 +38,8 @@ const axes: Array<[AxisKey, string, string]> = [
   ["R", "批判", "协作"],
   ["B", "抽象", "具体"],
 ];
+let recoveryCatalog: PersonaCatalogPayload | null = null;
+let recoveryCatalogLoading = false;
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
@@ -65,6 +69,45 @@ async function requestJson<T>(path: string, options: RequestInit = {}): Promise<
     throw new Error(typeof body.error === "string" ? body.error : `HTTP ${response.status}`);
   }
   return payload as T;
+}
+
+async function loadRecoveryCatalog(): Promise<void> {
+  if (recoveryCatalogLoading || recoveryCatalog) return;
+  recoveryCatalogLoading = true;
+  try {
+    const payload = await requestJson<PersonaCatalogPayload>("./api/personas");
+    if (payload.schema_version !== "seed_gui_persona_catalog.v1") {
+      throw new Error("persona_catalog_schema_mismatch");
+    }
+    recoveryCatalog = payload;
+  } catch (error: unknown) {
+    bootstrapProjection.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    recoveryCatalogLoading = false;
+    renderBootstrap();
+  }
+}
+
+async function activateRecoveryPersona(pid: string, instanceId: string): Promise<void> {
+  bootstrapProjection.pending = true;
+  bootstrapProjection.error = "";
+  renderBootstrap();
+  try {
+    const receipt = await requestJson<JsonObject>("./api/instances/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pid, instance_id: instanceId }),
+    });
+    if (receipt.schema_version !== "seed_gui_instance_mutation_receipt.v1"
+        || receipt.restart_required !== true) {
+      throw new Error("instance_mutation_receipt_mismatch");
+    }
+    bootstrapProjection.feedback = t("正在切换位格或分身");
+  } catch (error: unknown) {
+    bootstrapProjection.error = error instanceof Error ? error.message : String(error);
+    bootstrapProjection.pending = false;
+    renderBootstrap();
+  }
 }
 
 function axisBudget(values: Record<AxisKey, number>): number {
@@ -242,6 +285,7 @@ function renderChoice(): string {
     <div class="bootstrap-shell">
       <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>
       <header class="bootstrap-hero">
+        ${bootstrapProjection.manageNewPersona ? `<button class="bootstrap-action quiet" type="button" data-bootstrap-close>${t("关闭")}</button>` : ""}
         <span class="hud-label">${t("首次使用 UPSP")}</span>
         <h1>${t("先建立一位可以继续成长的位格主体")}</h1>
       </header>
@@ -271,7 +315,7 @@ function renderWorkspace(): string {
     ? profileProblem
     : "";
   const tested = data.provider_test.valid && Boolean(bootstrapProjection.testToken);
-  const modelStepComplete = tested || bootstrapProjection.skipModelSetup;
+  const modelStepComplete = bootstrapProjection.manageNewPersona || tested || bootstrapProjection.skipModelSetup;
   const canPreview = Boolean(profile) && !profileProblem && modelStepComplete;
   const testState = bootstrapProjection.pending
     ? `<div class="bootstrap-test-state">${escapeHtml(bootstrapProjection.feedback)}</div>`
@@ -293,6 +337,7 @@ function renderWorkspace(): string {
       <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>
       <header class="bootstrap-hero">
         <button class="bootstrap-action quiet" type="button" data-bootstrap-back>← ${t("返回选择")}</button>
+        ${bootstrapProjection.manageNewPersona ? `<button class="bootstrap-action quiet" type="button" data-bootstrap-close>${t("关闭")}</button>` : ""}
         <h1>${bootstrapProjection.selection === "preset" ? t("使用阿廖沙快速开始") : t("创建自己的位格")}</h1>
       </header>
       <div class="bootstrap-workspace">
@@ -304,19 +349,23 @@ function renderWorkspace(): string {
           <section class="bootstrap-section">
             <header class="bootstrap-section-head"><h2>${t("模型准备")}</h2></header>
             ${setupSummary()}
-            <div class="bootstrap-actions">
+            ${bootstrapProjection.manageNewPersona
+              ? `<div class="bootstrap-test-state">${t("继承当前模型配置，不发起模型调用。")}</div>`
+              : `<div class="bootstrap-actions">
               <button class="bootstrap-action" type="button" data-bootstrap-models>${t("配置模型服务")}</button>
               <button class="bootstrap-action" type="button" data-bootstrap-test ${data.setup_primary && !bootstrapProjection.pending ? "" : "disabled"}>${t("测试起手主模型（将产生一次付费请求）")}</button>
               <button class="bootstrap-action quiet" type="button" data-bootstrap-skip-model ${bootstrapProjection.pending ? "disabled" : ""}>${t("暂不配置，先创建位格")}</button>
             </div>
             <p class="bootstrap-paid-warning">${t("测试只调用当前起手主模型；点击测试会产生一次真实付费请求，但不会创建轮次、装配位格上下文或尝试备用模型。")}</p>
-            ${testState}
+            ${testState}`}
           </section>
           <section class="bootstrap-section">
             <header class="bootstrap-section-head"><h2>${t("最终确认")}</h2></header>
             ${bootstrapProjection.preview && profile
               ? `<div class="bootstrap-profile-summary">${previewProfile(profile)}</div>
-                 <p>${bootstrapProjection.skipModelSetup
+                  <p>${bootstrapProjection.manageNewPersona
+                   ? t("新位格继承当前模型配置；创建过程不发起模型调用。")
+                   : bootstrapProjection.skipModelSetup
                    ? t("位格将以“模型未绑定”状态创建；进入 GUI 后可随时配置。")
                    : t("确认档案与模型后，宿主会一次性原子创建位格。")}</p>
                  <div class="bootstrap-actions">
@@ -347,10 +396,10 @@ export function bootstrapReady(): boolean {
 }
 
 export function applyBootstrapGate(): void {
-  const ready = bootstrapReady();
-  els.bootstrapRoot.hidden = ready;
-  els.app.hidden = !ready;
-  els.app.toggleAttribute("inert", !ready);
+  const blocked = !bootstrapReady() || bootstrapProjection.manageNewPersona;
+  els.bootstrapRoot.hidden = !blocked;
+  els.app.hidden = blocked;
+  els.app.toggleAttribute("inert", blocked);
   const abbreviation = bootstrapProjection.data?.identity?.abbreviation || "UPSP";
   document.querySelectorAll<HTMLElement>("[data-persona-abbreviation]").forEach((element) => {
     element.textContent = abbreviation;
@@ -359,7 +408,7 @@ export function applyBootstrapGate(): void {
 
 export function renderBootstrap(): void {
   applyBootstrapGate();
-  if (bootstrapReady()) return;
+  if (bootstrapReady() && !bootstrapProjection.manageNewPersona) return;
   const data = bootstrapProjection.data;
   if (bootstrapProjection.loading && !data) {
     els.bootstrapRoot.innerHTML = `
@@ -373,12 +422,40 @@ export function renderBootstrap(): void {
     `;
     return;
   }
+  const alternatives = (recoveryCatalog?.personas || []).filter(
+    (item) => item.pid !== recoveryCatalog?.active.pid,
+  );
+  const recoveryActions = `
+    <div class="bootstrap-actions">
+      <button class="bootstrap-action primary" type="button" data-bootstrap-recover-persona ${bootstrapProjection.pending ? "disabled" : ""}>${t("新建位格以恢复")}</button>
+      ${alternatives.map((item) => `<button class="bootstrap-action" type="button"
+        data-bootstrap-recover-activate="${escapeHtml(item.pid)}" data-bootstrap-recover-instance="meta" ${bootstrapProjection.pending ? "disabled" : ""}>
+        ${escapeHtml(item.identity.name_zh || item.identity.name_en || item.identity.abbreviation || item.pid)}
+      </button>`).join("")}
+    </div>
+  `;
   if (data.persona.state === "incomplete") {
     els.bootstrapRoot.innerHTML = `
       <div class="bootstrap-shell">
         <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>
         <header class="bootstrap-hero"><h1>${t("位格目录已存在但不完整。为保护现场，初始化不会覆盖它。")}</h1></header>
         <div class="bootstrap-error">${escapeHtml(data.persona.missing.join(", ") || data.setup_error)}</div>
+        <p>${t("Runtime 不会使用无法核验的位格真源。你仍可新建位格，或切换到其他位格后重启。")}</p>
+        ${recoveryActions}
+      </div>
+    `;
+    return;
+  }
+  if (data.persona.state === "config_error") {
+    const failure = data.persona.config_error;
+    els.bootstrapRoot.innerHTML = `
+      <div class="bootstrap-shell">
+        <div class="bootstrap-brand"><span class="upsp-mark" aria-hidden="true"></span><strong>UPSP</strong></div>
+        <header class="bootstrap-hero"><h1>${t("当前位格配置无法安全迁移，Runtime 已保持锁定。")}</h1></header>
+        <div class="bootstrap-error">${escapeHtml(`${failure?.path || "config"} · ${failure?.reason || "config_invalid"}`)}</div>
+        ${bootstrapProjection.error ? `<div class="bootstrap-error">${escapeHtml(bootstrapProjection.error)}</div>` : ""}
+        <p>${t("原文件没有被覆盖。你可以新建位格，或切换到其他位格后重启。")}</p>
+        ${recoveryActions}
       </div>
     `;
     return;
@@ -388,7 +465,7 @@ export function renderBootstrap(): void {
     : renderWorkspace();
 }
 
-export function pollBootstrapStatus(): Promise<boolean> {
+export function pollBootstrapStatus(reloadOnReady = true): Promise<boolean> {
   if (polling.bootstrap) return polling.bootstrap;
   const request = (async () => {
     try {
@@ -403,7 +480,13 @@ export function pollBootstrapStatus(): Promise<boolean> {
       bootstrapProjection.renderKey = nextKey;
       bootstrapProjection.error = "";
       if (!payload.provider_test.valid) bootstrapProjection.testToken = "";
-      if (wasReady === false && payload.persona.ready) {
+      if (["incomplete", "config_error"].includes(payload.persona.state)) void loadRecoveryCatalog();
+      if (
+        reloadOnReady
+        && !bootstrapProjection.pending
+        && wasReady === false
+        && payload.persona.ready
+      ) {
         window.location.reload();
         return true;
       }
@@ -453,17 +536,23 @@ async function testProvider(): Promise<void> {
 async function createPersona(): Promise<void> {
   const token = bootstrapProjection.testToken;
   const skipped = bootstrapProjection.skipModelSetup;
-  if (!skipped && (!token || !bootstrapProjection.data?.provider_test.valid)) return;
+  if (!bootstrapProjection.manageNewPersona
+      && !skipped && (!token || !bootstrapProjection.data?.provider_test.valid)) return;
   bootstrapProjection.pending = true;
   bootstrapProjection.error = "";
   bootstrapProjection.feedback = t("正在创建位格");
   renderBootstrap();
   try {
     const preset = bootstrapProjection.selection === "preset";
-    const receipt = await requestJson<PersonaInitReceipt>("./api/bootstrap/persona", {
+    const receipt = await requestJson<PersonaInitReceipt>(
+      bootstrapProjection.manageNewPersona ? "./api/personas" : "./api/bootstrap/persona", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify(bootstrapProjection.manageNewPersona ? {
+        mode: preset ? "preset" : "custom",
+        preset_id: preset ? "alyosha" : null,
+        profile: preset ? null : customPayload(),
+      } : {
         mode: preset ? "preset" : "custom",
         preset_id: preset ? "alyosha" : null,
         profile: preset ? null : customPayload(),
@@ -471,13 +560,34 @@ async function createPersona(): Promise<void> {
         skip_model_setup: skipped,
       }),
     });
-    if (receipt.schema_version !== "seed_gui_persona_init_receipt.v1" || receipt.status !== "created") {
+    if (![
+      "seed_gui_persona_init_receipt.v1",
+      "seed_gui_instance_mutation_receipt.v1",
+    ].includes(receipt.schema_version) || !["created", "persona_created"].includes(receipt.status)) {
       throw new Error("persona_init_receipt_mismatch");
     }
     bootstrapProjection.feedback = t("创建成功，正在进入 Seed GUI");
-    window.location.reload();
+    if (!bootstrapProjection.manageNewPersona) window.location.reload();
   } catch (error: unknown) {
-    bootstrapProjection.error = `${t("位格创建失败")}：${error instanceof Error ? error.message : String(error)}`;
+    const message = error instanceof Error ? error.message : String(error);
+    if (!bootstrapProjection.manageNewPersona) {
+      await pollBootstrapStatus(false);
+      if (bootstrapProjection.data?.persona.ready) {
+        const notice = `${t("位格已创建但 Runtime 未启动")}：${message}`;
+        bootstrapProjection.feedback = t("位格已创建但 Runtime 未启动");
+        bootstrapProjection.error = notice;
+        bootstrapProjection.pending = false;
+        renderBootstrap();
+        window.alert(notice);
+        window.location.reload();
+        return;
+      }
+    }
+    bootstrapProjection.error = `${t("位格创建失败")}：${
+      message === "instance_restart_host_required"
+        ? t("此操作需要桌面客户端安全重启后端。")
+        : message
+    }`;
     bootstrapProjection.pending = false;
     renderBootstrap();
   }
@@ -519,7 +629,7 @@ function updateDraft(input: HTMLInputElement | HTMLTextAreaElement): void {
   const preview = els.bootstrapRoot.querySelector<HTMLButtonElement>("[data-bootstrap-preview]");
   if (preview) {
     preview.disabled = Boolean(profileError(draft))
-      || (!bootstrapProjection.skipModelSetup && (
+      || (!bootstrapProjection.manageNewPersona && !bootstrapProjection.skipModelSetup && (
         !bootstrapProjection.data?.provider_test.valid
         || !bootstrapProjection.testToken
       ));
@@ -530,11 +640,36 @@ export function initBootstrapEvents(): void {
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target || !target.closest("#bootstrapRoot")) return;
+    const recoveryPersona = target.closest<HTMLButtonElement>("[data-bootstrap-recover-activate]");
+    if (recoveryPersona) {
+      void activateRecoveryPersona(
+        recoveryPersona.dataset.bootstrapRecoverActivate || "",
+        recoveryPersona.dataset.bootstrapRecoverInstance || "meta",
+      );
+      return;
+    }
+    if (target.closest("[data-bootstrap-recover-persona]")) {
+      bootstrapProjection.manageNewPersona = true;
+      bootstrapProjection.selection = "choice";
+      bootstrapProjection.preview = false;
+      bootstrapProjection.skipModelSetup = true;
+      bootstrapProjection.error = "";
+      renderBootstrap();
+      return;
+    }
+    if (target.closest("[data-bootstrap-close]")) {
+      bootstrapProjection.manageNewPersona = false;
+      bootstrapProjection.selection = "choice";
+      bootstrapProjection.preview = false;
+      bootstrapProjection.error = "";
+      renderBootstrap();
+      return;
+    }
     const choice = target.closest<HTMLElement>("[data-bootstrap-choice]");
     if (choice) {
       bootstrapProjection.selection = choice.dataset.bootstrapChoice === "custom" ? "custom" : "preset";
       bootstrapProjection.preview = false;
-      bootstrapProjection.skipModelSetup = false;
+      bootstrapProjection.skipModelSetup = bootstrapProjection.manageNewPersona;
       bootstrapProjection.error = "";
       renderBootstrap();
       return;
@@ -589,4 +724,14 @@ export function initBootstrapEvents(): void {
     }
   });
   document.addEventListener("upsp:locale-changed", renderBootstrap);
+}
+
+export function openPersonaCreation(): void {
+  if (!bootstrapReady()) return;
+  bootstrapProjection.manageNewPersona = true;
+  bootstrapProjection.selection = "choice";
+  bootstrapProjection.preview = false;
+  bootstrapProjection.skipModelSetup = true;
+  bootstrapProjection.error = "";
+  renderBootstrap();
 }

@@ -140,10 +140,12 @@ RELATION_AXIS_RANGE = (-100, 100)
 ROUND_TYPES = ("interactive", "rhythm", "relay", "autonomous", "standby")
 
 # ============================================================
-# 反应步时限（DDS §23.2 时间上限替代最大迭代次数）
+# Reaction 三阶段时间点（DDS §23.2 时间阶梯替代最大迭代次数）
 # ============================================================
 
-REACTION_TIME_LIMIT = 600  # 默认600秒；1x提醒、2x警告、3x自动continue中继
+REACTION_REMINDER_SECONDS = 600
+REACTION_WARNING_SECONDS = 1200
+REACTION_AUTO_RELAY_SECONDS = 1800
 STANDBY_COUNTDOWN_INITIAL = 10  # 待命倒计时初始值，每待命轮-1，归零触发深睡
 
 # ============================================================

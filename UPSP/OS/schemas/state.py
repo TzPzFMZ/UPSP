@@ -112,7 +112,6 @@ FIELDS = {
     "base.heartbeat_flags.fatigue_expired":       ("bool", "§23.5", "暂停系统预留；Seed 固定 false"),
     "base.heartbeat_flags.feeling_settle_due":    ("bool", "§23.5", "heartbeat 置位，Runtime 本地结算或 Round cleanup 消费"),
     "base.heartbeat_flags.api_degraded":          ("bool", "§23.5", "engines/heartbeat.py tick"),
-    "base.heartbeat_flags.stm_degrade_pending":   ("bool", "§23.5", "engines/heartbeat.py tick"),
     "base.heartbeat_flags.process_down":          ("bool", "§23.5", "Arbor 外部器官健康预留；Seed 固定 false"),
     "base.heartbeat_flags.user_message_waiting":  ("bool", "§23.5", "engines/heartbeat.py tick"),
     "base.heartbeat_flags.rhythm_due":            ("bool", "§23.5", "engines/heartbeat.py tick"),
@@ -122,7 +121,7 @@ FIELDS = {
     # V2 新增（上次遗漏的两项）
     "base.heartbeat_flags.token_usage_warning":   ("bool", "§3",   "engines/heartbeat.py tick"),
     "base.heartbeat_flags.context_pressure":      ("bool", "§3",   "logic/Runtime 维护节律置位"),
-    "base.heartbeat_flags.cache_compaction_due":  ("bool", "§21",  "engines/runtime.py lately 水位删除后置位"),
+    "base.heartbeat_flags.memory_compression_due": ("bool", "§9", "共享压缩账本活动日周期投影"),
     "base.heartbeat_flags.identity_timeout":      ("bool", "§23",  "暂停系统预留；Seed 固定 false"),
     # V3 新增
     "base.heartbeat_flags.calendar_day_due":      ("bool", "§3",   "engines/heartbeat.py 日历日检测"),
@@ -130,8 +129,6 @@ FIELDS = {
     "base.heartbeat_flags.calendar_month_due":    ("bool", "§3",   "engines/heartbeat.py 日历月检测"),
     "base.heartbeat_flags.calendar_quarter_due":  ("bool", "§3",   "engines/heartbeat.py 日历季检测"),
     "base.heartbeat_flags.calendar_year_due":     ("bool", "§3",   "engines/heartbeat.py 日历年检测"),
-    # V6 新增
-    "base.heartbeat_flags.evolution_pending":     ("bool", "§23.5", "engines/heartbeat.py 训练材料阈值检测"),
     "base.alert_deferrals":                       ("dict", "§23.5", "logic/alert_mode_settle.py 紧急处理搁置账本"),
 
     # --- feeling_buffer（DDS §6）--- V2: 并入 state.json，不再独立文件

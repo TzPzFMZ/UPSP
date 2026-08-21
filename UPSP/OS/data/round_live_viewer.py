@@ -112,7 +112,8 @@ DSML_STREAM_MARKER_RE = re.compile(
 
 def build_live_state(events, live_context_root=None, use_live_layers=False):
     """Build a complete live viewer state from round JSONL events."""
-    ordered = _ordered_events(events)
+    ordered_all = _ordered_events(events)
+    ordered = _visible_events(ordered_all)
     latest_round = _latest_round(ordered)
     frames = _build_call_frames(
         ordered,
@@ -152,7 +153,7 @@ def build_live_state(events, live_context_root=None, use_live_layers=False):
     return {
         "schema_version": SCHEMA_VERSION,
         "round": latest_round,
-        "last_event_index": _last_event_index(ordered),
+        "last_event_index": _last_event_index(ordered_all),
         "latest_frame_id": latest_frame["frame_id"] if latest_frame else None,
         "call_frames": frames,
         "context_panes": panes,
@@ -551,17 +552,18 @@ def events_after(events, after=0, include_state=True, live_context_root=None,
                  use_live_layers=False):
     """Return incremental events and the state after applying all events."""
     after_index = int(after or 0)
-    ordered = _ordered_events(events)
+    ordered_all = _ordered_events(events)
+    ordered = _visible_events(ordered_all)
     return {
         "schema_version": "round_live_events.v1",
         "after": after_index,
-        "last_event_index": _last_event_index(ordered),
+        "last_event_index": _last_event_index(ordered_all),
         "events": [
             event for event in ordered
             if int(event.get("event_index") or 0) > after_index
         ],
         "state": build_live_state(
-            ordered,
+            ordered_all,
             live_context_root=live_context_root,
             use_live_layers=use_live_layers,
         ) if include_state else None,
@@ -613,6 +615,91 @@ def _new_frame(event):
         "_window_tokens": None,
         "_request_body_sha256": "",
     }
+
+
+def _visible_events(events):
+    """Hide rejected final candidates while leaving the full local audit intact."""
+    guarded_rounds = {
+        int(event.get("round") or 0)
+        for event in events
+        if event.get("event_type") == "round_started"
+        and isinstance((event.get("payload") or {}).get("input_snapshot"), dict)
+        and isinstance(
+            ((event.get("payload") or {}).get("input_snapshot") or {}).get("trigger"),
+            dict,
+        )
+        and isinstance(
+            (((event.get("payload") or {}).get("input_snapshot") or {}).get(
+                "trigger") or {}).get("final_response_max_chars"), int)
+    }
+    rejected_frames = {}
+    terminal_candidates = {}
+    closed_rounds = {
+        int(event.get("round") or 0)
+        for event in events
+        if event.get("event_type") == "round_closed"
+    }
+    for event in events:
+        frame_id = _call_key(event)
+        payload = event.get("payload") or {}
+        if event.get("event_type") == "final_response_candidate_rejected":
+            candidate = str(payload.get("candidate") or "").strip()
+            rejected_frames.setdefault(frame_id, set()).add(candidate)
+        elif event.get("event_type") == "llm_output_parsed":
+            candidate = str(
+                payload.get("natural_final_reply_candidate") or "").strip()
+            if candidate:
+                terminal_candidates[frame_id] = candidate
+    visible = []
+    for event in events:
+        event_type = event.get("event_type")
+        frame_id = _call_key(event)
+        guarded_reaction = (
+            int(event.get("round") or 0) in guarded_rounds
+            and str(event.get("phase") or "") == "reaction"
+        )
+        rejected = frame_id in rejected_frames
+        candidate = terminal_candidates.get(frame_id, "")
+        pending_candidate = bool(
+            guarded_reaction
+            and candidate
+            and int(event.get("round") or 0) not in closed_rounds
+        )
+        hide_candidate = rejected or pending_candidate
+        if event_type == "final_response_candidate_rejected":
+            continue
+        if event_type in STREAM_EVENT_TYPES and hide_candidate:
+            continue
+        if event_type == "llm_output_raw" and hide_candidate:
+            item = deepcopy(event)
+            item["payload"] = deepcopy(item.get("payload") or {})
+            item["payload"]["response"] = ""
+            visible.append(item)
+            continue
+        payload = event.get("payload") or {}
+        if event_type == "llm_output_parsed" and hide_candidate:
+            item = deepcopy(event)
+            payload = deepcopy(payload)
+            payload.pop("natural_final_reply_candidate", None)
+            for key in ("assistant_progress", "assistant_reply"):
+                if str(payload.get(key) or "").strip() == candidate:
+                    payload.pop(key, None)
+            payload["message_envelopes"] = [
+                envelope
+                for envelope in payload.get("message_envelopes") or []
+                if not (
+                    isinstance(envelope, dict)
+                    and (
+                        bool(envelope.get("terminal_text_candidate"))
+                        or str(envelope.get("channel") or "") == "final_reply.text"
+                    )
+                )
+            ]
+            item["payload"] = payload
+            visible.append(item)
+            continue
+        visible.append(event)
+    return visible
 
 
 def _apply_event_to_frame(frame, event):
@@ -1190,8 +1277,14 @@ def _looks_like_lately_text(text):
     head = str(text or "")[:160]
     return any(marker in head for marker in (
         "【历史工具事实摘要",
+        "【历史工具事实",
         "【历史交互",
         "【历史回复",
+        "【历史进展记录",
+        "【历史起手事实",
+        "【历史交接任务",
+        "【历史资料",
+        "【历史故障记录",
         "【第 ",
     ))
 
@@ -1203,6 +1296,8 @@ def _looks_like_now_text(text):
         "【本轮资料】",
         "【本轮交互】",
         "【轮中进展记录】",
+        "【上轮交接任务】",
+        "【本轮故障记录】",
         "【最终回复记录】",
         "【Runtime 调用占位】",
         "**user**:",
@@ -1244,8 +1339,10 @@ def _extract_unmarked_now_segment(content):
     start_match = re.search(
         r"(?m)(?:^---\s*\n\s*)?"
         r"(?=(?:【历史工具事实摘要|【第\s*\d+\s*轮已闭合】|"
-        r"\*\*user\*\*:|【本轮交互】|\*\*assistant\*\*:|"
-        r"【轮中进展记录】|【最终回复记录】|【Runtime 调用占位】))",
+        r"\*\*user\*\*:|【本轮交互】|【本轮起手事实】|"
+        r"【本轮工具事实】|【本轮资料】|\*\*assistant\*\*:|"
+        r"【轮中进展记录】|【上轮交接任务】|【本轮故障记录】|"
+        r"【最终回复记录】|【Runtime 调用占位】))",
         text,
     )
     if not start_match:

@@ -9,7 +9,6 @@ from logic.execution_permission import (
     tool_allowed_by_execution_permission,
 )
 from logic.runtime_channels import STEP_TERMINAL_TOOLS, STEP_TERMINAL_TOOL_IDS
-from logic.write_pending_settlement import CANCEL_REASON_CODES
 
 
 ENVELOPE_SCHEMA_VERSION = "tool_call_envelope.v1"
@@ -28,9 +27,7 @@ SUPPORTED_NATIVE_PROTOCOL_WRITE_TOOLS = {
     "memory_container_write",
     "memory_link_update",
     "mount_cancel",
-    "pending_cancel",
     "relay_intent_settle",
-    "memory_recall_complete",
     "memory_write",
     "relation_card_write",
 }
@@ -43,11 +40,9 @@ NATIVE_PROTOCOL_DECLARATION_FIELDS = {
     "memory_container_write": "memory_container_write_declarations",
     "memory_link_update": "memory_link_update_declarations",
     "mount_cancel": "mount_cancel_requests",
-    "pending_cancel": "pending_cancel_requests",
     "relay_intent_settle": "relay_intent_settle_requests",
     "memory_privacy_declassify": "memory_privacy_declassify_declarations",
     "memory_privacy_mark": "memory_privacy_declarations",
-    "memory_recall_complete": "memory_recall_completion_requests",
     "memory_write": "memory_write_declarations",
     "relation_card_write": "relation_card_declarations",
 }
@@ -59,45 +54,6 @@ NATIVE_DECLARATION_TRACE_KEYS = (
     "provider_item_id",
     "index",
 )
-
-COMMON_ARGUMENT_PROPERTIES = {
-    "path": {"type": "string"},
-    "root": {"type": "string"},
-    "pattern": {"type": "string"},
-    "reason": {"type": "string"},
-    "line_start": {"type": "integer"},
-    "line_end": {"type": "integer"},
-    "char_start": {"type": "integer"},
-    "char_end": {"type": "integer"},
-    "encoding": {"type": "string"},
-    "url": {"type": "string"},
-    "query": {"type": "string"},
-    "max_results": {"type": "integer"},
-    "recursive": {"type": "boolean"},
-    "command": {"type": "string"},
-    "cwd": {"type": "string"},
-    "timeout_ms": {"type": "integer"},
-    "purpose": {"type": "string"},
-    "risk_level": {"type": "string"},
-    "patch": {"type": "string"},
-    "task_goal": {"type": "string"},
-    "allowed_paths": {"type": "array", "items": {"type": "string"}},
-    "expected_artifacts": {"type": "string"},
-    "validation_commands": {"type": "string"},
-    "task_mode": {"type": "string"},
-    "write_scope": {"type": "array", "items": {"type": "string"}},
-    "mem_id": {"type": "string"},
-    "subject": {"type": "string"},
-    "summary": {"type": "string"},
-    "body": {"type": "string"},
-    "scope": {"type": "string"},
-    "zone": {"type": "string"},
-    "offset": {"type": "integer"},
-    "limit": {"type": "integer"},
-    "container_id": {"type": "string"},
-    "target_file": {"type": "string"},
-}
-
 
 def _with_description(schema, description=None):
     if description:
@@ -162,11 +118,7 @@ def _closed_parameters(properties, required=()):
 
 
 def _protocol_write_parameters(properties, required=()):
-    merged = dict(properties or {})
-    merged["resolves_pending_id"] = _string(
-        "仅补写失败写入时填 pending_id；成功才结清，失败不另建提醒；首次写入留空。"
-    )
-    return _closed_parameters(merged, required=required)
+    return _closed_parameters(dict(properties or {}), required=required)
 
 
 CONTAINER_TARGET_FILE_GUIDE = (
@@ -220,7 +172,10 @@ MEMORY_WRITE_WEIGHT_TABLE = (
 )
 
 MEMORY_WRITE_PARAMETER_DESCRIPTIONS = {
-    "title": "<=16字；写具体标题，不写“新建记忆条目”。",
+    "title": (
+        "<=16字；写稳定主体+可区分的事件、对象、变化或结论；"
+        "不写“新建记忆条目”“用户偏好”“任务结果”等泛化标题。"
+    ),
     "weight": (
         "整数1-5；权重0不应调用；按沉淀价值而非来源评级，正文长不自动升权。"
         + MEMORY_WRITE_WEIGHT_TABLE
@@ -230,12 +185,20 @@ MEMORY_WRITE_PARAMETER_DESCRIPTIONS = {
         "关系域无卡、歧义或 archived 会拒绝；unknown 仅回退到已有关系卡的当前对象。"
     ),
     "body": (
-        "第一人称只写结论与变化；按权重限长："
+        "写成脱离原对话仍可理解的事实与变化；第一人称只写结论与变化，但也要明确事实主体。"
+        "事件、计划与承诺保留证据中的时间、地点、顺序和因果锚点；"
+        "有可靠来源日期时，同时保留相对时间与可换算的绝对日期或范围，证据不足则明确不确定，禁止补造。"
+        "区分用户陈述、工具/原文核验与模型推断，保留否定、范围和不确定性，不把推断写成已核验事实。"
+        "按权重限长："
         "1/2=[A]≤128字，3/4=[S]≤512字，5=[F]≤2048字。"
-        "超长先压缩，不写对话/工具流水、数值字段或Δ动态。"
+        "上限不是目标篇幅，无需为了接近上限扩写、补齐或重复。"
+        "超限时 Runtime 冻结其他字段并在下一 Reaction Frame 提供即时重写指南；"
+        "不要直接重试或只因字数升权。不写对话/工具流水、数值字段或Δ动态。"
     ),
     "candidate_keywords": (
         "字符串数组且至少1项；每个关键词单列，禁止用分隔符拼成一个字符串。"
+        "优先写稳定实体及别名、独特对象/事件、地点、时间锚、结果和约束；"
+        "不用“记忆”“用户”“任务”等泛词占位。"
         "按初始形态裁剪：F≤8、S≤6、A≤4；脚本不从标题/正文补词。"
     ),
     "interaction_feelings": "交互感受词；只从 schema description 中列出的词条选，最多3个；无则传空数组。",
@@ -274,19 +237,33 @@ def _memory_write_parameter_schema():
 
 TOOL_ARGUMENT_SCHEMAS = {
     "setup_finalize": _closed_parameters({
-        "security_verdict": _enum(("pass", "reject")),
-        "reject_reason": _string(),
-        "mount_requests": _object_array({
-            "type": _enum(("memory", "container", "relation_summary", "relation", "skill")),
-            "ids": _string(),
-            "source": _string(),
-        }),
-        "rules_selection": _string(),
-        "round_type_confirm": _string(),
-        "standby_skip_reaction": _boolean(),
-        "suggested_mode": _string(),
+        "security_verdict": _enum(
+            ("pass", "reject"),
+            "pass=允许本轮进入后续流程；reject=安全粗筛驳回并跳过 Reaction。",
+        ),
+        "reject_reason": _string(
+            "security_verdict=reject 时必填的具体原因；pass 时留空。"
+        ),
+        "mount_requests": _with_description(_object_array({
+            "type": _enum(
+                ("memory", "container", "relation_summary", "relation", "skill"),
+                "挂载对象类型：memory=记忆正文，container=容器，"
+                "relation_summary=关系摘要，relation=关系正文，skill=技能。",
+            ),
+            "ids": _string(
+                "从当前索引中选择的稳定 ID；多个同类型 ID 用逗号分隔，不写标题。"
+            ),
+        }), "Setup 建议在首个 Reaction CONTENT 中展开的已有对象；无需挂载时传空数组。"),
+        "standby_skip_reaction": _boolean(
+            "仅待命轮使用；true=当前无需处理而跳过 Reaction，false=仍需进入 Reaction。"
+        ),
+        "suggested_mode": _string(
+            "可选的未来模式选择接口；填可见模式 ID/名称或简短建议。"
+            "当前只保存在 Setup intent/audit，不切换 Runtime 模式、不注入规则、"
+            "不投影给 Reaction、不积累默契；它不是执行回执。"
+        ),
         "task_guidance_required": _boolean(
-            "Set true for nontrivial user tasks that need model-authored decomposition and acceptance before execution: multi-step repo/file/research/debug/test/report/reading work, or any request with materials to read, deliverables, commands, source coverage, output files, validation, memory/report/internalization, or evidence paths. This judgment is still required during rhythm/heartbeat coalesced rounds; true records interaction debt and does not override rhythm priority. Set false only for trivial direct answers, casual chat, a single simple command/status check, or runtime-triggered rhythm/heartbeat work without a user task."
+            "Set true when the user request itself assigns task debt: multi-step or multi-source material/repo research, debugging, testing, a report or long-reading workflow, cross-round progress, commands to execute, an independent artifact or deliverable, validation/acceptance, or an evidence trail as a deliverable. PRJ work is cross-round and therefore true. Set false for direct answers, casual chat, status checks, runtime-only rhythm/heartbeat work, and a bounded single-round memory_write or DC/EC/FUT create/continue/link that needs no independent artifact or acceptance debt. A direct answer remains false when index_view, memory_content_read, or a bounded read-only lookup is merely how you find and verify the answer; internal tool use is not itself a user-assigned research task. A memory or container write that is merely one step inside a larger task does not exempt that larger task. This judgment is still required during rhythm/heartbeat coalesced rounds; true records interaction debt and does not override rhythm priority."
         ),
         "task_guidance_route": _enum(
             ("none", "new_work", "current_work"),
@@ -298,7 +275,7 @@ TOOL_ARGUMENT_SCHEMAS = {
         "interaction_object": _string("本轮已确认的交互对象；无法确认时留空或填 unknown，由反应步继续确认。"),
         "identity_status": _enum(
             ("known", "declared", "unknown", "timeout"),
-            "本轮身份入口状态；known/declared 表示可作为内部 interaction_meta 入口确认。"
+            "本轮身份入口状态：known=由既有连续性确认；declared=由本轮明确自报且经精确匹配；unknown=仍未确认；timeout=确认窗口已结束。"
         ),
         "interaction_source": _string("身份入口确认来源，例如 context_continuity / self_declaration。"),
         "interaction_basis": _string("身份入口确认依据；写短句，不写长推理。"),
@@ -321,65 +298,81 @@ TOOL_ARGUMENT_SCHEMAS = {
         ),
         "evidence_refs": _string_array("可选证据引用；具体要求看当前清单顶部说明。"),
         "reason": _string("可选简短原因。"),
-        "submissions": _object_array({
+        "submissions": _with_description(_object_array({
             "item_id": _string("当前清单显示的 item_id。"),
             "option_id": _string("当前清单显示的 option_id。"),
             "fields": _freeform_object("按当前清单说明填写。"),
             "evidence_refs": _string_array("可选证据引用。"),
             "reason": _string("可选简短原因。"),
-        }, required=("item_id", "option_id")),
+        }, required=("item_id", "option_id")), "批量提交同一 guide 的多条状态或证据；与顶层单条快捷字段二选一。"),
     }, required=("guide_id",)),
     "cleanup_finalize": _closed_parameters({
-        "connection_bridges": _object_array({
-            "word_a": _string(),
-            "entry_a": _string(),
-            "word_b": _string(),
-            "entry_b": _string(),
-            "note": _string(),
-        }),
-        "tacit_associations": _object_array({
-            "item_id": _string(),
-            "item_type": _string(),
-            "action": _enum(("kept", "dropped", "added")),
-            "note": _string(),
-            "evidence_refs": _string_array(),
-            "drop_reason": _string(),
-        }),
-        "lately_compression": _object({
-            "action": _enum(("keep", "replace", "drop")),
-            "replacement_text": _string(),
-            "reason": _string(),
-        }),
+        "connection_bridges": _with_description(_object_array({
+            "word_a": _string("当前候选中第一个连接词；只用候选真实给出的词。"),
+            "entry_a": _string("与 word_a 对应的稳定条目 ID。"),
+            "word_b": _string("当前候选中第二个连接词；不得与 word_a 伪造同义重复。"),
+            "entry_b": _string("与 word_b 对应的稳定条目 ID。"),
+            "note": _string("两个条目为什么形成可复用联系；不写无证据强联想。"),
+        }), "本轮候选中可验证的跨条目连接；无合法候选时传空数组。"),
+        "tacit_associations": _with_description(_object_array({
+            "item_id": _string("当前默契候选的稳定 ID。"),
+            "item_type": _string("候选中给出的条目类型；原样复制，不自造新类型。"),
+            "action": _enum(
+                ("kept", "dropped", "added"),
+                "kept=保留已有候选；dropped=丢弃不成立候选；added=根据本轮真实证据新增。",
+            ),
+            "note": _string("保留或新增时的简短默契内容；不写完成性幻觉。"),
+            "evidence_refs": _string_array("支撑 kept/added 的本轮真实证据引用；dropped 可留空。"),
+            "drop_reason": _string("仅 action=dropped 时填写丢弃原因；其他动作留空。"),
+        }), "对当前默契候选逐项保留、丢弃或新增；只处理当前可见候选与证据。"),
+        "lately_compression": _with_description(_object({
+            "action": _enum(
+                ("keep", "replace", "drop"),
+                "keep=保留冻结候选原文；replace=用 replacement_text 替换；drop=整段丢弃。",
+            ),
+            "replacement_text": _string("仅 action=replace 时填写候选的语义压缩正文；禁止截断或补造。"),
+            "reason": _string("为什么保留、替换或丢弃这个冻结候选。"),
+        }), "仅当 Runtime 提供最近缓存压缩候选时填写；无候选时留空对象。"),
     }),
     "file_read": _closed_parameters({
-        "path": _string(),
+        "path": _string("要读取的文件路径；有工程 grant 时必须位于 read_paths，未提供 grant 时受当前用户普通文件权限与 Runtime 保护路径门限制。"),
         **_file_read_range_properties(),
-        "encoding": _string(),
-        "reason": _string(),
+        "encoding": _string("可选文本编码；默认 utf-8，只在已知源文件编码不同时填写。"),
+        "reason": _string("可选的读取目的；说明要核对的事实。"),
     }, required=("path",)),
-    "file_search": _closed_parameters({
-        "root": _string("要搜索的目录；必须在 workspace read allowlist 内。"),
+    "file_glob": _closed_parameters({
+        "root": _string("要搜索的目录；有工程 grant 时必须位于 read_paths，未提供 grant 时受当前用户普通文件权限与 Runtime 保护路径门限制。"),
         "pattern": _string("文件名 glob 模式，例如 `共格主体论*` 或 `*.md`；不要传路径穿越。"),
         "recursive": _boolean("是否递归搜索子目录；默认 false，只有模型显式声明时才递归。"),
         "max_results": _integer("结果窗口上限；程序会 clamp 到安全范围。"),
-        "reason": _string(),
+        "reason": _string("可选的搜索目的；说明要定位哪类候选文件。"),
     }, required=("root", "pattern")),
+    "file_grep": _closed_parameters({
+        "root": _string("要搜索正文的文件或目录；公共位格数据可用 persona://、persona://active 或 persona://<PID>/...。"),
+        "query": _string("必填单行字面查询文本，1–1024字符；首版不支持正则表达式或跨行查询。"),
+        "file_pattern": _string("目录搜索时的文件名 glob；默认 *，不接受路径分隔符。"),
+        "recursive": _boolean("目录搜索时是否递归；默认 true。"),
+        "case_sensitive": _boolean("是否区分大小写；默认 false。"),
+        "context_lines": _integer("每个命中前后返回的上下文行数；默认0，范围0–3。"),
+        "max_results": _integer("命中行窗口上限；默认20，程序 clamp 到1–100。"),
+        "encoding": _string("文本编码；默认 utf-8。二进制或无法解码文件会跳过并标记覆盖不完整。"),
+        "reason": _string("可选的搜索目的；说明要核对的正文事实。"),
+    }, required=("root", "query")),
     "file_edit": _closed_parameters({
-        "path": _string(),
-        "patch": _string(),
-        "purpose": _string(),
-        "reason": _string(),
+        "path": _string("要修改的已存在文本文件；无工程 grant 时必须是 Git tracked 文件，有 grant 时必须位于 write_paths。"),
+        "patch": _string("完整 unified diff，必须含 ---/+++/@@；整文覆盖或新建文件改用 file_write。"),
+        "purpose": _string("必填的具体修改目的；用于审批与回执。"),
+        "reason": _string("可选补充依据；purpose 已说清时留空。"),
     }, required=("path", "patch", "purpose")),
     "file_write": _closed_parameters({
-        "path": _string(),
-        "content": _string(),
-        "purpose": _string(),
-        "encoding": _string(),
-        "risk_level": _string(),
-        "reason": _string(),
+        "path": _string("要新建或整体覆盖的普通文件；有工程 grant 时必须位于 write_paths，未提供 grant 时受当前用户普通文件权限与 Runtime 保护路径门限制。"),
+        "content": _string("要写入的完整文件内容；空字符串表示有意写入空文件。"),
+        "purpose": _string("必填的具体写入目的；用于审批与回执。"),
+        "encoding": _string("可选文本编码；默认 utf-8。"),
+        "reason": _string("可选补充依据；purpose 已说清时留空。"),
     }, required=("path", "content", "purpose")),
     "web_fetch": _closed_parameters({
-        "url": _string(),
+        "url": _string("要读取的公开 HTTP(S) 页面 URL；本机、私网、保留地址和危险重定向会被拒绝。"),
         "char_start": _integer(
             "bounded 网页正文续读游标；工具事实给出 next_char_start 时填写，"
             "并同时原样复制 source_content_sha256。"
@@ -394,11 +387,11 @@ TOOL_ARGUMENT_SCHEMAS = {
             "正文身份哈希；带 char_start 续读时必须原样复制上一结果中的值；"
             "source_changed 后可只带相同 URL 与新哈希、不带定位参数，重新读取首窗。"
         ),
-        "reason": _string(),
+        "reason": _string("可选读取目的；说明要从该页面核对什么。"),
     }, required=("url",)),
     "web_search": _closed_parameters({
-        "query": _string(),
-        "reason": _string(),
+        "query": _string("搜索查询；写要定位的事实与必要限定词，不要把候选结果当作网页正文。"),
+        "reason": _string("可选搜索目的；说明要定位哪类来源。"),
     }, required=("query",)),
     "shell_command": _closed_parameters({
         "command": _string(
@@ -406,19 +399,21 @@ TOOL_ARGUMENT_SCHEMAS = {
             "多行 Python 优先用 file_write 写临时 .py 后执行，或使用 PowerShell here-string 管道。"
         ),
         "purpose": _string("为什么需要执行该命令；必须说明具体验证、诊断或生成目的。"),
-        "cwd": _string("命令工作目录；必须在当前工作区或任务级 shell_cwd 授权根内。"),
-        "timeout_ms": _integer(),
-        "risk_level": _string(),
-        "reason": _string(),
+        "cwd": _string("命令初始工作目录；有工程 grant 时必须位于 task_root/shell_cwd 授权范围。grant 不限制命令中的其他路径，子进程仍拥有当前 Windows 用户权限。"),
+        "timeout_ms": _integer("可选超时毫秒数；Runtime 会限制到允许范围，不用于启动常驻后台服务。"),
+        "reason": _string("可选补充依据；purpose 已说清时留空。"),
     }, required=("command", "purpose")),
     "subagent_dispatch": _closed_parameters({
-        "task_goal": _string(),
-        "allowed_paths": _string_array(),
-        "expected_artifacts": _string(),
-        "validation_commands": _string(),
-        "task_mode": _enum(("read_only", "code_change", "verification")),
-        "write_scope": _string_array(),
-        "reason": _string(),
+        "task_goal": _string("边界清晰、可独立完成的子任务目标；不得把整项主任务原样转交。"),
+        "allowed_paths": _string_array("子 agent 可读取或核对的精确路径范围；不得用它扩大当前授权。"),
+        "expected_artifacts": _string("期望返回的文件、结论或证据；写清可验收结果。"),
+        "validation_commands": _string("可选验证命令；只列当前授权范围内可安全执行的命令。"),
+        "task_mode": _enum(
+            ("read_only", "code_change", "verification"),
+            "read_only=只读研究；code_change=允许在 write_scope 内修改；verification=只运行验证并报告。",
+        ),
+        "write_scope": _string_array("仅 task_mode=code_change 时填写；列出允许修改的精确路径且必须包含于 allowed_paths。"),
+        "reason": _string("为什么该子任务适合独立派发。"),
     }, required=("task_goal", "allowed_paths", "expected_artifacts")),
     "index_view": _closed_parameters({
         "scope": _enum((
@@ -430,28 +425,52 @@ TOOL_ARGUMENT_SCHEMAS = {
             "association",
             "relation_inverted",
             "relation_domain",
-        ), "只选择上方枚举中的索引窗口；不提供容器注册表视图。"),
-        "zone": _enum(("self", "ours", "them", "orgs")),
-        "offset": _integer(),
-        "limit": _integer(),
-        "reason": _string(),
+        ), "索引窗口：ltm_heat/stm_heat=长期/短期热度；skills_inverted=技能倒排；ltm_inverted/stm_inverted=长期/短期记忆倒排；association=记忆关联；relation_inverted=关系倒排；relation_domain=关系域。不提供容器注册表视图。"),
+        "zone": _enum(("self", "ours", "them", "orgs"), "仅关系索引使用：self=自身，ours=我方，them=他者，orgs=组织域。"),
+        "offset": _integer("窗口起始偏移；续读索引时使用上次回执给出的下一偏移。"),
+        "limit": _integer("返回条目上限；Runtime 会限制到安全窗口。"),
+        "reason": _string("可选索引目的；说明要定位的对象或事实。"),
     }, required=("scope",)),
+    "memory_search": _closed_parameters({
+        "query_terms": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {"type": "string", "minLength": 1, "maxLength": 64},
+            "description": (
+                "问题中的原词、语义改写词或翻译词；Runtime 对公共活跃 LTM 的标题、"
+                "标签、梗概/摘要和正文做确定性字面检索。"
+            ),
+        },
+        "offset": _integer("候选窗口起始偏移；继续读取同一查询时使用回执 next_offset。"),
+        "limit": _integer("候选条目上限；默认8，Runtime限制为1至32。"),
+        "reason": _string("可选检索目的；说明仍需满足的事实或精度维度。"),
+    }, required=("query_terms",)),
     "corpus_read": _closed_parameters({
         "corpus_id": _string("当前上下文里可见的轮中进展语料短ID，例如 C-00001。"),
     }, required=("corpus_id",)),
     "relation_read": _closed_parameters({
-        "card_id": _string(),
-        "subject": _string(),
-        "summary": _enum(("none", "temporary", "resident")),
-        "body": _enum(("none", "temporary", "resident")),
+        "card_id": _string("关系卡稳定 ID；与 subject 至少填写一个，优先使用索引返回的 card_id。"),
+        "subject": _string("关系对象的稳定 ID、名称或别名；与 card_id 至少填写一个。"),
+        "summary": _enum(
+            ("none", "temporary", "resident"),
+            "摘要挂载方式：temporary=本轮临时，resident=驻留，none=不返回并取消其既有驻留；省略时默认 temporary。",
+        ),
+        "body": _enum(
+            ("none", "temporary", "resident"),
+            "正文挂载方式：temporary=本轮临时，resident=驻留，none=不返回并取消其既有驻留；省略时默认 none。读取正文会把摘要至少提升到同等挂载方式。",
+        ),
         **_read_range_properties(),
-        "reason": _string(),
+        "reason": _string("可选读取目的；说明要核对的关系事实。"),
     }),
     "memory_content_read": _closed_parameters({
-        "mem_id": _string(),
-        "mount_mode": _enum(("temporary", "resident", "none")),
+        "mem_id": _string("索引或上下文中真实可见的 MEM-*；正文已在当前 CONTENT 时直接使用，不要重复读取。"),
+        "mount_mode": _enum(
+            ("temporary", "resident", "none"),
+            "省略或 temporary=读取完整 LTM 真源、重建当前分身 STM、执行本轮去重加热，并把返回正文临时挂入 CONTENT；resident=同样读取并驻留；none=取消该 MEM 的本轮/驻留挂载，不返回正文、不重建 STM、不加热、不续期。none 不是“读取但不挂载”。",
+        ),
         **_read_range_properties(),
-        "reason": _string(),
+        "reason": _string("可选读取或取消挂载的目的。"),
     }, required=("mem_id",)),
     "container_read": _closed_parameters({
         "container_id": _string(
@@ -466,33 +485,28 @@ TOOL_ARGUMENT_SCHEMAS = {
             "objectives.md",
             "plans.md",
             "predictions.md",
-        )),
+        ), CONTAINER_TARGET_FILE_GUIDE),
         **_read_range_properties(),
-        "reason": _string(),
+        "reason": _string("可选读取目的；说明要核对容器中的哪部分事实。"),
     }, required=("container_id",)),
     "mount_cancel": _closed_parameters({
         "mount_area": _enum((
             "focus",
             "resident_list",
             "instant_list",
-        ), "只取消内容窗口三路之一；不会删除源正文或通用工具结果。"),
+        ), "取消区域：focus=WB 当前焦点；resident_list=驻留列表；instant_list=本轮临时列表。不会删除源正文或通用工具结果。"),
         "item_type": _enum((
             "auto",
             "memory",
             "container",
             "relation",
             "relation_summary",
-        )),
+        ), "对象类型：auto=由 item_id 推断；memory=记忆；container=容器；relation=关系正文；relation_summary=关系摘要。focus 取消可省略。"),
         "item_id": _string(
             "要取消的稳定对象 ID；mount_area=focus 时可留空，表示当前 WB focus。"
         ),
         "reason": _string("为什么取消该挂载。"),
     }, required=("mount_area",)),
-    "pending_cancel": _closed_parameters({
-        "pending_id": _string("要取消的失败写入 pending 编号；它也是 POPUP 中的失败写入提醒 ID。"),
-        "reason_code": _enum(CANCEL_REASON_CODES, "为什么取消这次失败写入意图。"),
-        "note": _string("一句自然语言说明，给下一迭代的自己看；不要复述写入正文。取消不是补写。"),
-    }, required=("pending_id", "reason_code")),
     "relay_intent_settle": _closed_parameters({
         "relay_intent_id": _string("要结算的中继意图 ID。"),
         "status": _enum((
@@ -500,28 +514,37 @@ TOOL_ARGUMENT_SCHEMAS = {
             "merged",
             "question",
             "deferred",
-        ), "完成、合题、反问或搁置。"),
+        ), "completed=已完成；merged=已合并进其他工作；question=需向用户反问；deferred=明确搁置。"),
         "note": _string("一句中文说明，只写本次中继意图如何处理。"),
     }, required=("relay_intent_id", "status")),
     "memory_write": _memory_write_parameter_schema(),
     "memory_link_update": _protocol_write_parameters({
-        "mem_id": _string(),
-        "operation": _enum(("add", "remove", "set")),
-        "container_refs": _string_array(),
-        "current_overview": _string(),
+        "mem_id": _string("要移除错误旧挂接的真实 MEM-*。"),
+        "operation": _enum(("remove",), "仅支持 remove；新建或更新挂接改用 memory_container_create/write。"),
+        "container_refs": _string_array("要从该记忆元数据中移除的真实容器 ID；至少一项。"),
         "reason": _string(
             "历史修复工具；正常挂接路径不再使用 add/set，应改用 memory_container_create 或 memory_container_write。remove 保留用于移除错误旧挂接。"
         ),
     }, required=("mem_id", "operation", "container_refs")),
     "memory_container_create": _protocol_write_parameters({
-        "mem_id": _string("真实 MEM-*；不接受 PENDING。"),
+        "mem_id": _string(
+            "通常填写真实 MEM-*。仅当同一 Frame 的 guide_submit 正在成功结算记忆写入重写时，"
+            "可填 PENDING 引用该 Frame 最后一个成功写入的记忆；Runtime 会在容器处理前解析。"
+        ),
         "container_type": _enum((
             "DC",
             "EC",
             "PRJ",
             "SKL",
             "FUT",
-        ), "容器类型会决定 target_file 合法值；DC/EC=open.md，PRJ=plan.md/notes.md，SKL=card.md，FUT=objectives.md/plans.md/predictions.md。"),
+        ), (
+            "按持久关系选择：DC=可复用推演/判断修正，EC=同一事件状态演进，"
+            "PRJ=跨轮目标/阶段/交付，SKL=已习得源技能，FUT=待未来核验的预测/承诺/计划；"
+            "孤立事实、一次性草稿和临时步骤不建容器；同一主题或 MEM 可按不同职责分别进入不同类型，"
+            "同类型同职责只维护一条主链。"
+            "类型会决定 target_file：DC/EC=open.md，PRJ=plan.md/notes.md，"
+            "SKL=card.md，FUT=objectives.md/plans.md/predictions.md。"
+        )),
         "title": _string("新容器标题。"),
         "skill_category": _enum((
             "procedures",
@@ -532,7 +555,8 @@ TOOL_ARGUMENT_SCHEMAS = {
         ),
         "target_file": _container_target_file_enum("新容器正文落点"),
         "container_body": _string(
-            "新容器首段正文；不是复制 MEM，而是基于 MEM 引用源组织出的连续正文。"
+            "新容器首段正文；不是复制 MEM，而是基于 MEM 引用源组织出的连续关系。"
+            "DC 写前提/新证据/变化/当前结论，EC 写时间和前后状态，PRJ 写目标/阶段/下一行动，FUT 写待核验条件。"
         ),
         "current_overview": _string(
             "MEM 当前在容器中的位置概况，<=128字；可用 {container_id} 占位，Runtime 创建后替换。"
@@ -548,12 +572,16 @@ TOOL_ARGUMENT_SCHEMAS = {
         "reason",
     )),
     "memory_container_write": _protocol_write_parameters({
-        "mem_id": _string("真实 MEM-*；不接受 PENDING。"),
+        "mem_id": _string(
+            "通常填写真实 MEM-*。仅当同一 Frame 的 guide_submit 正在成功结算记忆写入重写时，"
+            "可填 PENDING 引用该 Frame 最后一个成功写入的记忆；Runtime 会在容器处理前解析。"
+        ),
         "container_id": _string("本迭代入口已可见的 WB focus 容器。"),
         "target_file": _container_target_file_enum("按当前 focus 容器类型选择"),
         "title": _string("本段容器正文标题。"),
         "container_body": _string(
-            "写入当前 focus 的连续正文；必须基于已可见 focus 投影和本轮 MEM 引用源组织。"
+            "写入当前 focus 的连续关系正文；必须基于已可见 focus 投影和本轮 MEM 引用源，"
+            "写清本节点相对既有链的真实变化，不因同批写入机械追加。"
         ),
         "current_overview": _string("MEM 当前在该容器中的位置概况，<=128字，需含 container_id。"),
         "reason": _string("为什么把该 MEM 挂接写入当前 focus 容器。"),
@@ -566,11 +594,6 @@ TOOL_ARGUMENT_SCHEMAS = {
         "current_overview",
         "reason",
     )),
-    "memory_recall_complete": _protocol_write_parameters({
-        "mem_id": _string(),
-        "completed_body": _string(),
-        "reason": _string(),
-    }, required=("mem_id", "completed_body")),
     "memory_privacy_mark": _protocol_write_parameters({
         "mem_id": _string(),
         "privacy_subject": _string(
@@ -591,64 +614,15 @@ TOOL_ARGUMENT_SCHEMAS = {
     }, required=("mem_id", "mode")),
     "relation_card_write": _protocol_write_parameters({
         "name": _string("关系对象名称；更新已有关系卡前，必须已经在上一轮工具回执后看见对应 relation_read(body) CONTENT。"),
-        "subject": _string("关系对象名称的兼容字段；与 name 同义。"),
         "card_id": _string("已有关系卡 ID；更新已有卡前，必须已经看见该卡正文 CONTENT。"),
-        "category": _enum(("self", "ours", "them", "orgs")),
-        "action": _enum(("create", "update", "append_note"), "create 仅用于目标关系卡不存在；目标已存在时必须先 relation_read(body)，下一次模型调用再 update/append_note。"),
+        "category": _enum(("self", "ours", "them", "orgs"), "关系对象类别：self=自身，ours=我方，them=他者，orgs=组织。创建时填写。"),
+        "action": _enum(("create", "update", "append_note"), "create=只在目标关系卡不存在时新建；update=替换已读卡的主体内容；append_note=在已读卡追加注记。目标已存在时必须先 relation_read(body)，下一次模型调用再写。"),
         "note": _string("自然语言关系内容；不得填写轴数值、状态数值或脚本派生字段。"),
         "summary": _string("可选短摘要；不得替代正文读取纪律。"),
         "reason": _string("为什么本次关系卡写入有必要。"),
     }),
-    "chronicle_write": _protocol_write_parameters({
-        "content": _string("只填写当前编年史焦点的正文；层级、轮次、范围和状态统计由 Runtime 预填。"),
-        "reason": _string("为什么本次正文可以收束当前编年史焦点。"),
-    }, required=("content", "reason")),
-    "alert_mode_settle": _protocol_write_parameters({
-        "alert_type": _enum((
-            "api_degraded",
-            "token_usage_warning",
-            "context_pressure",
-            "standby_due",
-        )),
-        "status": _enum(("recovered", "deferred", "needs_human")),
-        "summary": _string(),
-        "clear_flags": _string_array(),
-        "fault_refs": _string_array(),
-        "next_attention": _string(),
-        "reason": _string(),
-    }, required=(
-        "alert_type",
-        "status",
-        "summary",
-        "clear_flags",
-        "fault_refs",
-        "next_attention",
-        "reason",
-    )),
-    "fault_record": _protocol_write_parameters({
-        "fault_type": _enum((
-            "tool_failure",
-            "parse_failure",
-            "external_dependency",
-            "api_degraded",
-            "data_format",
-            "runtime_exception",
-        )),
-        "severity": _enum(("info", "warning", "error", "critical")),
-        "step": _enum(("setup", "reaction", "cleanup", "heartbeat", "runtime")),
-        "source": _string(),
-        "detail": _string(),
-        "action": _enum((
-            "ignored",
-            "retried",
-            "fallback",
-            "emergency_save",
-            "needs_review",
-        )),
-        "related_tool_id": _string(),
-    }, required=("fault_type", "severity", "step", "source", "detail")),
     "container_focus": _protocol_write_parameters({
-        "action": _enum(("open", "close", "restore")),
+        "action": _enum(("open", "close", "restore"), "open=打开指定容器；close=关闭指定或当前焦点；restore=恢复 Runtime 保存的最近焦点。"),
         "container_id": _string(
             "open 或 close 时必须填写容器索引中真实列出的具体容器编号；"
             "EC、DC、PRJ、SKL、FUT 只是容器类型，不能当成容器编号；restore 可留空。"
@@ -978,8 +952,6 @@ def _canonicalize_provider_terminal_arguments(envelope):
 def _project_setup_finalize(arguments):
     intent = {
         "mount_requests": [],
-        "rules_selection": None,
-        "round_type_confirm": None,
         "security_verdict": "pass",
         "reject_reason": None,
         "suggested_mode": None,
@@ -999,8 +971,7 @@ def _project_setup_finalize(arguments):
         ids = str(item.get("ids") or "").strip()
         if mount_type and ids:
             intent["mount_requests"].append({"type": mount_type, "ids": ids})
-    for field in ("rules_selection", "round_type_confirm", "reject_reason",
-                  "suggested_mode"):
+    for field in ("reject_reason", "suggested_mode"):
         value = _clean_optional_text(arguments.get(field))
         if value:
             intent[field] = value
@@ -1481,7 +1452,9 @@ def _invalid_request_from_envelope(envelope, reason=None, details=None):
         if value not in (None, ""):
             item[key] = value
     item["reason"] = reason or envelope.get("parse_status") or "invalid_tool_call"
-    for key in ("field", "expected", "actual", "actual_value_preview"):
+    for key in (
+            "field", "expected", "actual", "actual_value_preview",
+            "accepted_focus_tool"):
         value = (details or {}).get(key)
         if value not in (None, "", []):
             item[key] = value
@@ -1633,7 +1606,11 @@ def _memory_write_tool_description():
 
 
 REACTION_TOOL_DESCRIPTIONS = {
-    "container_focus": "焦点工具：打开、关闭或恢复 WB 当前容器；同一迭代只保持一个焦点。",
+    "container_focus": (
+        "焦点工具：打开、关闭或恢复 WB 当前容器。每个 provider Frame/反应迭代最多调用一个焦点工具；"
+        "不得与 memory_container_create 或 memory_container_write 同帧批量提交。"
+        "先提交本工具，读取回执后再在下一帧继续其他焦点操作。"
+    ),
     "container_read": "只读工具：按真实 container_id 读取容器正文，可选目标文件与行/字符范围；不改变 WB focus。",
     "corpus_read": "只读工具：按当前可见 corpus_id 读取轮中进展语料；不写入或挂载。",
     "file_edit": (
@@ -1643,17 +1620,41 @@ REACTION_TOOL_DESCRIPTIONS = {
         "越权、位格真源、Git/密钥、未跟踪目标或无效 patch 由 Runtime 拒绝；仅 status=ok 证明生效。"
     ),
     "guide_submit": "同步工具：按当前 guide_id/条目坐标提交清单状态或证据；只以处理器回执为准。",
-    "index_view": "只读工具：查看指定记忆、技能、关联或关系索引窗口；不提供容器注册表。",
+    "index_view": (
+        "只读工具：分页查看指定记忆、技能、关联或关系索引；不搜索记忆正文，"
+        "也不提供容器注册表。需要按问题检索 LTM 时使用 memory_search。"
+    ),
+    "memory_search": (
+        "只读工具：用原词、改写词或翻译词检索公共活跃 LTM。每个候选只给最多32字正文"
+        "定位片段；片段不是事实证据，必须继续用 memory_content_read 读取完整正文。"
+        "本工具不召回、不重建STM、不加热、不续期、不更新调用坐标或挂载。"
+    ),
     "memory_container_create": (
         "焦点工具：以真实 MEM-* 为引用源新建 DC/EC/PRJ/SKL/FUT 容器、写首段正文并替换 WB focus；"
+        "仅同一 Frame 的记忆写入重写指南成功结算时可用 PENDING 指向该 Frame 最后一个新记忆；"
+        "仅在永久合同的持久关系条件成立且没有可复用的同类型同职责容器时新建；"
+        "DC 与 EC 分别独立判断，PRJ/FUT 不替代同时成立的 DC/EC；"
+        "同一主题或 MEM 的不同持久职责可以由不同类型容器共同承接；"
         "SKL 只开放 procedures/patterns 源技能；"
+        "每个 provider Frame/反应迭代最多调用一个焦点工具，不得与 container_focus 或 memory_container_write 同帧批量提交；"
+        "读取回执后再在下一帧继续其他焦点操作；"
         "成功回执才证明创建。"
     ),
     "memory_container_write": (
         "焦点工具：把真实 MEM-* 挂接写入当前已可见 WB focus 容器并更新概况；"
+        "仅同一 Frame 的记忆写入重写指南成功结算时可用 PENDING 指向该 Frame 最后一个新记忆；"
+        "仅续写已有持久关系；DC 与 EC 分别独立判断，PRJ/FUT 不替代同时成立的 DC/EC；"
+        "不因同批记忆或标题相似机械追加；"
+        "每个 provider Frame/反应迭代最多调用一个焦点工具，不得与 container_focus 或 memory_container_create 同帧批量提交；"
+        "读取回执后再在下一帧继续其他焦点操作；"
         "无 focus 或失败回执不得声称写入。"
     ),
-    "memory_content_read": "只读工具：读取真实 MEM-* 正文；mount_mode 决定临时/常驻挂载或不挂载，不改正文和索引。",
+    "memory_content_read": (
+        "只读：按 LTM-first 读取 MEM-*。若 Setup 已把该记忆正文放入当前 CONTENT，直接使用，"
+        "不要重复读取。省略 mount_mode 或 temporary/resident 才会读取正文、重建 STM、同轮去重加热并"
+        "续满符合条件的已入库 F/S/A 当前层周期；范围只裁返回，不裁 STM。"
+        "mount_mode=none 是取消挂载操作：不返回正文、不重建 STM、不加热、不续期，绝不是“读取但不挂载”。"
+    ),
     "memory_link_update": (
         "同步历史修复工具：仅 remove 用于移除错误旧挂接；"
         "正常新挂接改用 memory_container_create/write。"
@@ -1666,12 +1667,10 @@ REACTION_TOOL_DESCRIPTIONS = {
         "同步工具：把真实 MEM-* 迁入当前确认对象的 {规范ID}.private.md；"
         "文件有首条条目时才创建，不改 memory subject，只以处理器回执为准。"
     ),
-    "memory_recall_complete": "同步工具：基于已读证据补全真实 MEM-* 正文；不是普通读取，成功回执才生效。",
     "mount_cancel": (
         "同步工具：仅取消 focus/resident_list/instant_list 挂载；"
         "不删除源记忆、容器、关系或通用工具结果。"
     ),
-    "pending_cancel": "同步工具：取消一次失败写入意图；不补写、不证明原写入成功。",
     "relation_card_write": (
         "同步工具：创建或更新关系卡；已有卡必须先 relation_read(body) 后再 update/append_note，"
         "禁止填写轴数值。"
@@ -1694,13 +1693,18 @@ def _tool_schema(tool_id, meta, active_protocol_tool_guides=None):
         description = _memory_write_tool_description()
     elif tool_id == "setup_finalize":
         description = (
-            "UPSP 起手步终端工具；起手步的放行、驳回、挂载请求、身份入口和轮型确认"
+            "UPSP 起手步终端工具；起手步的放行、驳回、挂载请求和身份入口"
             "只能通过 provider-native setup_finalize 生效。"
             "起手步不读取材料、不建任务账本、不执行用户任务；"
             "需要后续任务处理时，只在本工具中声明 task_guidance_required 和 task_guidance_route。"
-            "多步骤、工程、资料、检索、调试、测试、报告、读书/长文内化、带产物、验收或证据路径的请求，"
-            "task_guidance_required=true；普通闲聊、单个状态查询、单条简单命令、"
-            "一次有界只读查询/核验且没有多步骤产物或验收债务、纯 Runtime 节律事项才是 false。"
+            "用户请求本身要求多步骤/多来源材料研究、工程、调试、测试、报告、长文内化、跨轮推进、执行命令、"
+            "独立产物、验收或证据链交付时，task_guidance_required=true；PRJ 因跨轮而必为 true。"
+            "普通闲聊、直接回答、状态查询、纯 Runtime 节律事项，以及无需另读材料、独立产物或验收债务的"
+            "单轮有界 memory_write 或 DC/EC/FUT 创建/续写/挂接才是 false。直接回答即使需要 memory_search、"
+            "index_view、memory_content_read 或有界只读查证也保持 false；内部工具步骤不等于用户派发检索任务。若沉淀只是更大任务的一步，"
+            "不得据此豁免整个任务。"
+            "suggested_mode 仅预留未来模式选择并写入 intent/audit；当前不切换模式、不注入规则、"
+            "不投影给 Reaction，也不积累默契。"
             "裸文本、旧表格和自然语言判断不生效，不会被解析成起手 intent。"
             "若缺少该工具，Runtime 会把裸文本隔离为 audit 观察，不作为事实或执行证据。"
         )
@@ -1722,17 +1726,24 @@ def _tool_schema(tool_id, meta, active_protocol_tool_guides=None):
     elif tool_id == "file_read":
         description = (
             "读取允许路径内文件，返回配置驱动的 bounded 完整行窗口及 has_more/next_line_start；"
-            "长文续读只复制 next_line_start 到 line_start。必填 path，只可选 line_start。"
+            "长文续读只复制 next_line_start 到 line_start。persona:// 可只读全部 PID 的公共位格文件；"
+            "原始记忆文件读取只算 raw_inspection，不触发召回生命周期。必填 path，只可选 line_start。"
         )
-    elif tool_id == "file_search":
+    elif tool_id == "file_glob":
         description = (
-            "UPSP 通用文件搜索工具；在允许目录内按文件名 glob 搜索候选路径。"
+            "UPSP 通用文件名搜索工具；在允许目录内按文件名 glob 搜索候选路径。"
             "只返回路径候选，不读取正文；默认不递归，只有 recursive=true 时搜索子目录。"
+        )
+    elif tool_id == "file_grep":
+        description = (
+            "UPSP 通用文件正文字面搜索工具；搜索单文件或目录，默认递归且不区分大小写。"
+            "首版不执行正则；返回路径、行号、命中行和可选0–3行上下文。"
+            "coverage_complete=false 时零命中不能证明不存在；命中原始记忆文件仍不触发召回生命周期。"
         )
     elif tool_id == "file_write":
         description = (
             "UPSP 通用文件写入工具；受限档调用后由 Runtime 在 handler 前审批，放行档直接执行。"
-            "可在当前工作区内创建或覆盖普通文件；必须填写 path、content 与 purpose。"
+            "可在当前授权路径创建或覆盖普通文件；必须填写 path、content 与 purpose。"
             "位格真源、Git 内部数据、密钥类路径和危险目标仍由 Runtime 硬拒绝。"
         )
     elif tool_id == "web_fetch":
@@ -1751,9 +1762,8 @@ def _tool_schema(tool_id, meta, active_protocol_tool_guides=None):
     elif tool_id == "shell_command":
         description = (
             "Windows shell 工具；受限档调用后由 Runtime 在 handler 前审批，放行档直接执行。"
-            "禁止 POSIX here-doc；"
-            "多行 Python 写临时 .py 或用 PowerShell here-string。"
-            "危险命令、越权 cwd、后台服务、凭据读取和网络写由 Runtime 拒绝。"
+            "Runtime 校验请求与初始 cwd，并限制超时和输出；不会按命令关键词判断风险。"
+            "sandbox grant 不是进程级文件系统沙箱，命令及其子进程拥有当前 Windows 用户权限。"
         )
     elif tool_id in REACTION_TOOL_DESCRIPTIONS:
         description = REACTION_TOOL_DESCRIPTIONS[tool_id]

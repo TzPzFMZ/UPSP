@@ -95,6 +95,18 @@ class TestStatusBar:
         assert "当前交互对象：TzPz" in rendered
         assert projection["interaction"]["relation_id"] == "REL-1"
 
+    def test_spec739_response_anchor_is_a_statusbar_block(self):
+        from assembly.statusbar import StatusBarBuilder
+
+        builder = StatusBarBuilder()
+        projection = builder.build_projection(
+            self._state(), "reaction", response_anchor="使用英文；只回答结论。")
+        rendered = builder.render(projection)
+
+        assert projection["response_anchor"] == "使用英文；只回答结论。"
+        assert "回答锚点：使用英文；只回答结论。" in rendered
+        assert "回答锚点" not in builder.build_full(self._state(), "reaction")
+
     def test_current_relation_is_first_and_outside_focus_limit(
             self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler

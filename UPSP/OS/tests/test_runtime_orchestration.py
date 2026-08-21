@@ -1,4 +1,5 @@
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -7,6 +8,7 @@ from data.context_store import ContextStore
 from data.state_store import StateStore
 from engines.round_context import SetupResult
 from engines.runtime import Runtime
+from runtime_test_helpers import ConfigStoreStub
 
 
 class FakeHeartbeat:
@@ -86,6 +88,7 @@ def _runtime(tmp_path, **runtime_kwargs):
         heartbeat=FakeHeartbeat(),
         ctx_store=ctx_store,
         assembler=assembler,
+        config_store=ConfigStoreStub(),
         **runtime_kwargs,
     )
 
@@ -169,6 +172,42 @@ def test_runtime_orchestrates_setup_reaction_cleanup_in_order(tmp_path):
     assert cleanup.calls[0][1]["_interaction_meta"]["interaction_object"] == "Codex"
     assert organ_calls[0][0] == "setup_frame_settled"
     assert organ_calls[0][1]["interaction_meta"]["interaction_object"] == "Codex"
+
+
+def test_spec743_runtime_waits_for_reserved_idle_mutation_before_pre_setup(
+        tmp_path):
+    rt = _runtime(tmp_path)
+    rt.setup_runner = FakeSetupRunner(_setup_result())
+    rt.reaction_loop_runner = FakeReactionRunner({"response": "done"})
+    rt.cleanup_pipeline = FakeCleanupPipeline()
+    outcome = {}
+
+    def run_round():
+        try:
+            outcome["result"] = rt._run_one_round(
+                "interactive", rt.sm.load(), {"user_message_waiting": True})
+        except Exception as exc:  # surfaced below
+            outcome["error"] = exc
+
+    assert rt.control.reserve_idle_mutation() is True
+    before = rt.sm.get("base.meta.total_round")
+    thread = threading.Thread(target=run_round)
+    try:
+        thread.start()
+        thread.join(timeout=0.1)
+        assert thread.is_alive() is True
+        assert rt.setup_runner.calls == []
+        assert rt.sm.get("base.meta.total_round") == before
+
+        rt.control.release_idle_mutation()
+        thread.join(timeout=2)
+
+        assert thread.is_alive() is False
+        assert "error" not in outcome
+        assert rt.setup_runner.calls
+    finally:
+        rt.control.release_idle_mutation()
+        thread.join(timeout=2)
 
 
 def test_spec704_round_finished_callback_runs_before_admission_reopens(tmp_path):
@@ -395,8 +434,8 @@ def test_all_active_trigger_groups_enter_setup(tmp_path):
     cases = [
         ({"user_message_waiting": True}, "interactive"),
         ({"rhythm_due": True}, "rhythm"),
+        ({"memory_compression_due": True}, "rhythm"),
         ({"continue_requested": True}, "relay"),
-        ({"evolution_pending": True}, "autonomous"),
         ({"standby_due": True}, "standby"),
     ]
 
@@ -445,6 +484,130 @@ def test_spec721_new_user_permission_replaces_previous_chain(tmp_path):
 
     assert trigger.execution_permission_level == "limited"
     assert trigger.messages == ("new",)
+
+
+def test_spec735_final_response_budget_is_process_local_across_relay(tmp_path):
+    from engines.runtime_rhythm import (
+        park_interaction_for_api_probe,
+        restore_interaction_after_api_probe,
+    )
+    from logic.relay_intent_pool import open_relay_intents
+
+    rt = _runtime(tmp_path)
+    assert rt.submit_message(
+        "query", "limited", final_response_max_chars=128) is True
+    source = rt._new_trigger(
+        "interactive", {"user_message_waiting": True}, rt.sm.load())
+    assert source.final_response_max_chars == 128
+    assert source.as_dict()["final_response_max_chars"] == 128
+    parked_messages = []
+    rt.hb.prepend_messages = lambda messages: parked_messages.extend(messages)
+    rt.hb.dequeue_messages = lambda: list(parked_messages)
+    parked, was_parked = park_interaction_for_api_probe(
+        rt, source, {"api_degraded": True})
+    assert was_parked is True
+    source, _flags = restore_interaction_after_api_probe(
+        rt,
+        parked,
+        {"api_degraded": True},
+        {"status": "ok"},
+        was_parked,
+    )
+    assert source.final_response_max_chars == 128
+    assert rt._pending_final_response_max_chars is None
+
+    rt.cleanup_pipeline._rearm_continue_requested_from_closeout_form(
+        {
+            "_closeout_relay_receipts": [{
+                "status": "continue_requested_set",
+                "source": "closeout_form",
+                "set_flags": ["continue_requested"],
+                "handoff_text": "continue",
+            }],
+        },
+        round_type="interactive",
+        consumed_flags=[],
+        round_num=735,
+    )
+    assert "final_response_max_chars" not in open_relay_intents(rt.sm.load())[-1]
+    rt._continuation_final_response_budget = {
+        "max_chars": 128,
+        "rejections": 1,
+    }
+    relay = rt._new_trigger(
+        "relay", {"continue_requested": True}, rt.sm.load())
+    assert relay.final_response_max_chars == 128
+    assert relay.final_response_length_rejections == 1
+
+    restarted = _runtime(tmp_path)
+    relay_after_restart = restarted._new_trigger(
+        "relay", {"continue_requested": True}, restarted.sm.load())
+    assert relay_after_restart.final_response_max_chars is None
+    assert relay_after_restart.final_response_length_rejections == 0
+
+
+def test_spec738_response_contract_is_process_local_across_relay(tmp_path):
+    from engines.runtime_rhythm import (
+        park_interaction_for_api_probe,
+        restore_interaction_after_api_probe,
+    )
+
+    contract = {
+        "language": "en",
+        "answer_scope": "conclusion_only",
+        "max_sentences": 1,
+    }
+    rt = _runtime(tmp_path)
+    assert rt.submit_message(
+        "query", "limited", response_contract=contract) is True
+    source = rt._new_trigger(
+        "interactive", {"user_message_waiting": True}, rt.sm.load())
+    assert source.response_contract == contract
+    assert source.as_dict()["response_contract"] == contract
+
+    parked_messages = []
+    rt.hb.prepend_messages = lambda messages: parked_messages.extend(messages)
+    rt.hb.dequeue_messages = lambda: list(parked_messages)
+    parked, was_parked = park_interaction_for_api_probe(
+        rt, source, {"api_degraded": True})
+    source, _flags = restore_interaction_after_api_probe(
+        rt, parked, {"api_degraded": True}, {"status": "ok"}, was_parked)
+    assert source.response_contract == contract
+
+    rt._continuation_final_response_budget = {
+        "response_contract": contract,
+    }
+    relay = rt._new_trigger(
+        "relay", {"continue_requested": True}, rt.sm.load())
+    assert relay.response_contract == contract
+
+    restarted = _runtime(tmp_path)
+    relay_after_restart = restarted._new_trigger(
+        "relay", {"continue_requested": True}, restarted.sm.load())
+    assert relay_after_restart.response_contract == {}
+
+
+def test_spec738_task_guidance_suppression_is_process_local_across_relay(tmp_path):
+    rt = _runtime(tmp_path)
+    assert rt.submit_message(
+        "query", "limited", task_guidance_enabled=False) is True
+    source = rt._new_trigger(
+        "interactive", {"user_message_waiting": True}, rt.sm.load())
+    assert source.task_guidance_enabled is False
+    assert source.as_dict()["task_guidance_enabled"] is False
+
+    rt._continuation_final_response_budget = {
+        "task_guidance_enabled": False,
+    }
+    relay = rt._new_trigger(
+        "relay", {"continue_requested": True}, rt.sm.load())
+    assert relay.task_guidance_enabled is False
+
+    restarted = _runtime(tmp_path)
+    relay_after_restart = restarted._new_trigger(
+        "relay", {"continue_requested": True}, restarted.sm.load())
+    assert relay_after_restart.task_guidance_enabled is True
+    assert "task_guidance_enabled" not in relay_after_restart.as_dict()
 
 
 def test_spec725_active_round_permission_changes_at_next_frame_boundary(tmp_path):
@@ -538,6 +701,127 @@ def test_round_lifecycle_closes_only_after_cleanup_settlement(tmp_path):
         "round_settled",
         "round_closed",
     ]
+    assert rt.ctx_store.get_now_entries() == []
+    assert any(
+        entry.get("content") == "done"
+        for entry in rt.ctx_store.get_lately_entries()
+    )
+
+
+def test_spec756_closeout_source_requires_verified_continue_rearm():
+    from logic.runtime_channels import closeout_final_response_source
+
+    pending = {
+        "response": "",
+        "_exit_signal": "continue_requested",
+        "_closeout_relay_receipts": [{
+            "status": "continue_requested_set",
+            "set_flags": ["continue_requested"],
+        }],
+    }
+    verified = {
+        **pending,
+        "_heartbeat_rearm_receipts": [{
+            "status": "continue_requested_rearmed",
+            "set_flags": ["continue_requested"],
+            "relay_intent": {
+                "status": "open",
+                "relay_intent_id": "RI-756",
+            },
+        }],
+    }
+
+    assert closeout_final_response_source(pending) == "reaction.final_reply_text"
+    assert closeout_final_response_source(verified) == "reaction.continue_handoff"
+
+
+def test_spec756_round_closed_projects_verified_continue_handoff(tmp_path):
+    class VerifiedContinueCleanup:
+        def run(self, _context, result):
+            result["_heartbeat_rearm_receipts"] = [{
+                "status": "continue_requested_rearmed",
+                "set_flags": ["continue_requested"],
+                "relay_intent": {
+                    "status": "open",
+                    "relay_intent_id": "RI-756",
+                },
+            }]
+            return {"status": "settled"}
+
+    rt = _runtime(tmp_path)
+    rt.setup_runner = FakeSetupRunner(_setup_result())
+    rt.reaction_loop_runner = FakeReactionRunner({
+        "response": "",
+        "_exit_signal": "continue_requested",
+    })
+    rt.cleanup_pipeline = VerifiedContinueCleanup()
+
+    rt._run_one_round(
+        "interactive", rt.sm.load(), {"user_message_waiting": True})
+
+    closed = next(
+        event for event in rt.audit.get_store().read_events(1)
+        if event["event_type"] == "round_closed"
+    )
+    assert closed["payload"]["final_response"] == ""
+    assert closed["payload"]["final_response_source"] == (
+        "reaction.continue_handoff"
+    )
+
+
+def test_round_lifecycle_rejects_unverified_cleanup_closeout_receipt(tmp_path):
+    class CleanupWithBogusCloseout:
+        def run(self, context, result):
+            result["_current_cache_closeout"] = {"status": "noop"}
+            return {"status": "settled"}
+
+    rt = _runtime(tmp_path)
+    rt.setup_runner = FakeSetupRunner(_setup_result())
+    rt.reaction_loop_runner = FakeReactionRunner({"response": "done"})
+    rt.cleanup_pipeline = CleanupWithBogusCloseout()
+
+    rt._run_one_round(
+        "interactive", rt.sm.load(), {"user_message_waiting": True})
+
+    events = rt.audit.get_store().read_events(1)
+    assert "round_closed" in [event["event_type"] for event in events]
+    receipt = next(
+        event["payload"] for event in events
+        if event["event_type"] == "current_cache_transition"
+    )
+    assert receipt["schema_version"] == "current_cache_transition.v1"
+    assert receipt["boundary"] == "round_closeout"
+    assert rt.ctx_store.get_now_entries() == []
+
+
+def test_round_lifecycle_cache_closeout_failure_never_false_closes(
+        tmp_path, monkeypatch):
+    rt = _runtime(tmp_path)
+    rt.setup_runner = FakeSetupRunner(_setup_result())
+    rt.reaction_loop_runner = FakeReactionRunner({"response": "done"})
+    rt.cleanup_pipeline = FakeCleanupPipeline()
+
+    def fail_closeout(**_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(rt.ctx_store, "transition_current_cache", fail_closeout)
+    rt._run_one_round(
+        "interactive", rt.sm.load(), {"user_message_waiting": True})
+
+    events = rt.audit.get_store().read_events(1)
+    types = [event["event_type"] for event in events]
+    assert "round_unsettled" in types
+    assert "round_closed" not in types
+    assert any(
+        entry.get("content") == "done"
+        for entry in rt.ctx_store.get_now_entries()
+    )
+    unsettled = next(
+        event for event in events if event["event_type"] == "round_unsettled")
+    assert any(
+        "current_cache_closeout:OSError:disk full" in reason
+        for reason in unsettled["payload"]["fatal_reasons"]
+    )
 
 
 def test_unsettled_cleanup_records_debt_without_false_close(tmp_path):

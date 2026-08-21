@@ -64,6 +64,7 @@ def _make_runtime(tmp_path):
     from data.state_store import StateStore
     from data.context_store import ContextStore
     from data.connectivity_store import ConnectivityStore
+    from runtime_test_helpers import ConfigStoreStub
     from engines.heartbeat import HeartbeatManager
     from assembly.context import ContextAssembler
 
@@ -137,6 +138,7 @@ def _make_runtime(tmp_path):
         executor=NoopExecutor(),
         assembler=assembler,
         ctx_store=ctx_store,
+        config_store=ConfigStoreStub(),
         connectivity_store=ConnectivityStore(
             str(tmp_path / "persona" / "STM" / "health" / "base" / "connectivity.json")
         ),
@@ -209,7 +211,7 @@ class TestThreeStepRound:
             call_log.append((step, channel.name))
             if step == "setup":
                 return {
-                    **_mock_setup_finalize(round_type_confirm="interactive"),
+                    **_mock_setup_finalize(),
                     "tokens_input": 100,
                     "tokens_output": 50,
                 }
@@ -360,7 +362,7 @@ class TestThreeStepRound:
             call_log.append(step)
             if step == "setup":
                 return {
-                    **_mock_setup_finalize(round_type_confirm="interactive"),
+                    **_mock_setup_finalize(),
                     "tokens_input": 100,
                     "tokens_output": 50,
                 }

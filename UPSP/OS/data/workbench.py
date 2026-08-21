@@ -27,6 +27,7 @@ RHYTHM_GUIDE_KINDS = {
     "emergency_handling_guide",
     "context_pressure_rhythm_guide",
     "cache_compaction_rhythm_guide",
+    "memory_compression_rhythm_guide",
 }
 
 
@@ -526,7 +527,7 @@ class WorkbenchStore:
         if not isinstance(entry, dict):
             return None
         tool_id = str(entry.get("tool_id") or "").strip()
-        if tool_id not in {"file_read", "web_fetch"}:
+        if tool_id not in {"file_read", "file_grep", "web_fetch"}:
             return None
         status = str(entry.get("status") or "").strip().lower()
         if status not in {"ok", "success", "accepted", "applied"}:
@@ -534,7 +535,7 @@ class WorkbenchStore:
         source_ref = str(entry.get("source_ref") or "").strip()
         path = ""
         url = ""
-        if tool_id == "file_read":
+        if tool_id in {"file_read", "file_grep"}:
             path = str(entry.get("path") or entry.get("file_path") or "").strip()
             source_ref = source_ref or path
             if not source_ref:

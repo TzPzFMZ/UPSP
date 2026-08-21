@@ -506,7 +506,7 @@ class TestSpec719ApiRecoveryProbe(RuntimeTestMixin):
             self, tmp_path):
         runtime = self._make_runtime(tmp_path)
 
-        assert runtime.control.begin_pre_setup_probe() is True
+        assert runtime.control.begin_round_preparation() is True
         assert runtime.runtime_status()["can_stop"] is True
         assert runtime.submit_message("不能插队") is False
         result = runtime.request_stop()
@@ -515,7 +515,7 @@ class TestSpec719ApiRecoveryProbe(RuntimeTestMixin):
         assert result["stage"] == "pre_setup_probe"
         assert runtime.executor.cancellation_requested is True
         assert runtime.hb._msg_queue == []
-        runtime.control.end_pre_setup_probe()
+        runtime.control.end_round_preparation()
 
     def test_successful_probe_fails_closed_when_flag_write_fails(
             self, tmp_path, monkeypatch):

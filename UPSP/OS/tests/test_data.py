@@ -99,13 +99,10 @@ class TestAtomicWriteHelpers:
         memory_heat.MemoryHeat().save_heat(sample)
 
         stm_path = tmp_path / "stm_index.json"
-        ltm_path = tmp_path / "ltm_index.json"
         relation_index_path = tmp_path / "relation_index.json"
         monkeypatch.setattr(memory_index, "KEYWORDS_JSON", str(stm_path))
-        monkeypatch.setattr(memory_index, "LTM_KEYWORDS_JSON", str(ltm_path))
         index = memory_index.MemoryIndex(str(relation_index_path))
         index.save_index(sample)
-        index.save_ltm_index(sample)
         index.save_relation_index(sample)
 
         meta_path = tmp_path / "meta.json"
@@ -137,7 +134,6 @@ class TestAtomicWriteHelpers:
                 connectivity_path,
                 heat_path,
                 stm_path,
-                ltm_path,
                 relation_index_path,
                 meta_path):
             assert path.read_bytes() == expected
@@ -442,7 +438,7 @@ class TestStateStore:
 
         path = tmp_path / "state.json"
         state = default_state()
-        state["base"]["heartbeat_flags"].pop("evolution_pending")
+        state["base"]["heartbeat_flags"].pop("memory_compression_due")
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         before = path.read_bytes()
 
@@ -482,11 +478,32 @@ class TestStateStore:
         from schemas.state import default_state
         path = tmp_path / "state.json"
         state = default_state()
-        state["base"]["heartbeat_flags"].pop("evolution_pending")
+        state["base"]["heartbeat_flags"].pop("memory_compression_due")
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
         with pytest.raises(ReadError):
             StateStore(str(path)).load()
+
+    def test_spec757_migrates_known_retired_memory_and_evolution_flags(self, tmp_path):
+        from data.state_store import StateStore
+        from schemas.state import default_state
+
+        path = tmp_path / "state.json"
+        state = default_state()
+        flags = state["base"]["heartbeat_flags"]
+        flags.pop("memory_compression_due")
+        flags["stm_degrade_pending"] = True
+        flags["evolution_pending"] = False
+        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        store = StateStore(str(path))
+
+        receipt = store.migrate_memory_compression_flags()
+        migrated = store.load()["base"]["heartbeat_flags"]
+
+        assert receipt["status"] == "migrated"
+        assert migrated["memory_compression_due"] is False
+        assert "stm_degrade_pending" not in migrated
+        assert "evolution_pending" not in migrated
 
     def test_load_backfills_unbound_interaction_anchor_without_guessing(self, tmp_path):
         from data.state_store import StateStore
@@ -607,6 +624,57 @@ class TestStateStore:
         n = store.increment_round()
         assert n == 1
         assert store.get_total_round() == 1
+
+    def test_read_modify_write_keeps_concurrent_round_increment(self, tmp_path):
+        from data.state_store import StateStore
+
+        loaded = threading.Event()
+        release = threading.Event()
+
+        class PausingStateStore(StateStore):
+            paused = False
+
+            def load(self):
+                data = super().load()
+                if (
+                    threading.current_thread().name == "stale-writer"
+                    and not self.paused
+                ):
+                    self.paused = True
+                    loaded.set()
+                    assert release.wait(2)
+                return data
+
+        store = PausingStateStore(str(tmp_path / "state.json"))
+        store.init_if_missing()
+        errors = []
+
+        def update_flag():
+            try:
+                store.set_flag("user_message_waiting", True)
+            except Exception as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+
+        def increment():
+            try:
+                store.increment_round()
+            except Exception as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+
+        writer = threading.Thread(target=update_flag, name="stale-writer")
+        writer.start()
+        assert loaded.wait(2)
+        counter = threading.Thread(target=increment, name="round-counter")
+        counter.start()
+        release.set()
+        writer.join(2)
+        counter.join(2)
+
+        assert not writer.is_alive() and not counter.is_alive()
+        assert errors == []
+        state = store.load()
+        assert state["base"]["meta"]["total_round"] == 1
+        assert state["base"]["heartbeat_flags"]["user_message_waiting"] is True
 
     def test_init_if_missing_only_once(self, tmp_path):
         from data.state_store import StateStore
@@ -753,20 +821,37 @@ class TestPeriodicMountStore:
         store = PeriodicMountStore(str(tmp_path / "periodic_mounts.json"))
 
         assert store.load() == {
+            "schema_version": "periodic_mounts.v3",
+            "updated_at": "",
+            "instance_id": "",
             "periodic_memory_items": [],
+            "pending_memory_items": [],
         }
 
-    def test_save_ids_writes_structured_mounts_atomically(self, tmp_path):
+    def test_save_document_writes_v3_mounts_atomically(self, tmp_path):
         from data.periodic_mount_store import PeriodicMountStore
 
         path = tmp_path / "periodic_mounts.json"
         store = PeriodicMountStore(str(path), now_fn=lambda: "2026-05-22T00:00:00+08:00")
 
-        store.save_ids(["MEM-1"])
+        store.save_document({
+            "schema_version": "periodic_mounts.v3",
+            "instance_id": "meta",
+            "periodic_memory_items": [{
+                "id": "MEM-00000001",
+                "source": "user_manual",
+                "mounted_at": "2026-05-22T00:00:00+08:00",
+            }],
+            "pending_memory_items": [],
+        })
         data = store.load()
 
         assert data["updated_at"] == "2026-05-22T00:00:00+08:00"
-        assert data["periodic_memory_items"] == [{"id": "MEM-1", "rendered_text": "MEM-1"}]
+        assert data["periodic_memory_items"] == [{
+            "id": "MEM-00000001",
+            "source": "user_manual",
+            "mounted_at": "2026-05-22T00:00:00+08:00",
+        }]
         assert not path.with_suffix(path.suffix + ".tmp").exists()
 
     def test_load_preserves_unknown_mount_shape_without_compat_rewrite(self, tmp_path):
@@ -780,6 +865,71 @@ class TestPeriodicMountStore:
         store = PeriodicMountStore(str(path))
 
         assert store.load() == {"memories": ["MEM-1"], "skill_tools": ["SKL-habits-a"]}
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda data: data["periodic_memory_items"][0].pop("source"),
+            lambda data: data["periodic_memory_items"][0].update(source=None),
+            lambda data: data["periodic_memory_items"][0].update(mounted_at=""),
+            lambda data: data.update(instance_id=""),
+            lambda data: data.update(updated_at=""),
+        ],
+    )
+    def test_nonempty_v2_requires_complete_manual_mount_provenance(
+            self, tmp_path, mutate):
+        from data.periodic_mount_store import PeriodicMountStore
+        from errors import ReadError
+
+        path = tmp_path / "periodic_mounts.json"
+        data = {
+            "schema_version": "periodic_mounts.v2",
+            "updated_at": "2026-08-13T10:00:00+08:00",
+            "instance_id": "meta",
+            "periodic_memory_items": [{
+                "id": "MEM-00000001",
+                "source": "user_manual",
+                "mounted_at": "2026-08-13T10:00:00+08:00",
+            }],
+        }
+        mutate(data)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        with pytest.raises(ReadError):
+            PeriodicMountStore(str(path)).load()
+
+
+class TestPeriodicPinOwnerStore:
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda data: data["entries"]["MEM-00000001"].update(owners=[]),
+            lambda data: data["entries"]["MEM-00000001"].update(created_at=""),
+            lambda data: data.update(updated_at=""),
+        ],
+    )
+    def test_nonempty_v1_requires_complete_owner_provenance(
+            self, tmp_path, mutate):
+        from data.periodic_pin_owner_store import PeriodicPinOwnerStore
+        from errors import ReadError
+
+        path = tmp_path / "periodic_pin_owners.json"
+        data = {
+            "schema_version": "periodic_pin_owners.v1",
+            "updated_at": "2026-08-13T10:00:00+08:00",
+            "entries": {
+                "MEM-00000001": {
+                    "owners": ["meta"],
+                    "pin_source": "periodic",
+                    "created_at": "2026-08-13T10:00:00+08:00",
+                },
+            },
+        }
+        mutate(data)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        with pytest.raises(ReadError):
+            PeriodicPinOwnerStore(str(path)).load()
 
 
 class TestStateStoreContinued:
@@ -913,6 +1063,32 @@ class TestRoundSnapshotStore:
 
         assert Path(path).is_file()
         assert store.read_events(1)[-1]["event_type"] == "round_closed"
+        assert store.last_retention_receipt["status"] == "error"
+
+    def test_next_round_retries_failed_retention_before_truncating(
+            self, tmp_path):
+        from data.round_snapshot_store import RoundSnapshotStore
+
+        calls = []
+
+        def retention():
+            calls.append(True)
+            if len(calls) == 1:
+                raise OSError("busy")
+            return {"status": "ok"}
+
+        store = RoundSnapshotStore(
+            str(tmp_path / "context"),
+            retention_enforcer=retention,
+        )
+        store.start_round(1, "interactive")
+        store.close_round(1, final_response="done")
+        assert store.last_retention_receipt["status"] == "error"
+
+        store.start_round(2, "interactive")
+
+        assert len(calls) == 2
+        assert store.last_retention_receipt == {"status": "ok"}
 
     def test_spec631_reaction_popup_snapshot_status_requires_one_textual_layer(self):
         from data.round_snapshot_store import reaction_popup_snapshot_status
@@ -947,8 +1123,11 @@ class TestRoundSnapshotStore:
         }) == "popup_content_missing"
 
     def _read_events(self, path):
+        from data.round_audit_codec import RoundAuditDecoder
+
+        decoder = RoundAuditDecoder()
         return [
-            json.loads(line)
+            decoder.feed(json.loads(line))
             for line in path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
@@ -995,7 +1174,7 @@ class TestRoundSnapshotStore:
             "reaction",
             "cleanup",
         ]
-        assert [event["payload"]["messages"] for event in step_events] == [[], [], []]
+        assert all("messages" not in event["payload"] for event in step_events)
         assert [
             event["payload"]["error"]
             for event in step_events
@@ -1047,8 +1226,6 @@ class TestRoundSnapshotStore:
             425,
             "reaction",
             iteration=1,
-            messages=[{"role": "user", "content": "runtime messages"}],
-            system="runtime system",
         )
 
         events = self._read_events(context / "round" / "round_425.jsonl")
@@ -1056,7 +1233,7 @@ class TestRoundSnapshotStore:
             item for item in events
             if item["event_type"] == "step_input_snapshot"
         )
-        assert event["payload"]["messages"] == []
+        assert "messages" not in event["payload"]
         assert event["payload"]["error"] == "legacy_step_json_rejected"
         assert event["payload"]["legacy_step_json_format"] == "messages_list"
         assert event["payload"]["historical"] is False
@@ -1212,7 +1389,7 @@ class TestRoundSnapshotStore:
         )
 
         assert runtime["payload"]["tool_transaction_audit"]["status"] == "ok"
-        assert reaction["payload"]["messages"] == []
+        assert "messages" not in reaction["payload"]
         assert reaction["payload"]["error"] == "legacy_step_json_rejected"
 
     def test_write_snapshot_without_runtime_writes_round_close_event(self, tmp_path):
@@ -1461,7 +1638,7 @@ class TestMemoryStore:
 
         store = ms.MemoryStore()
         store.write_entry("MEM-00001001", "测试记忆", "这是一条测试", weight=5)
-        content = store.read_entry("MEM-00001001")
+        content = store.read_stm_entry("MEM-00001001")
         assert "测试记忆" in content
         assert "MEM-00001001" in content
 
@@ -1481,7 +1658,7 @@ class TestMemoryStore:
             round_num=24,
         )
 
-        content = store.read_entry("MEM-00001001")
+        content = store.read_stm_entry("MEM-00001001")
         assert "**交互对象**：TzPz" in content
         assert "**入库**：第24轮" in content
         assert "**最后调用**：第24轮" in content
@@ -1523,10 +1700,10 @@ class TestMemoryStore:
         store = ms.MemoryStore()
         store.write_entry("MEM-00001001", "低权重上限", body, weight=2)
 
-        content = store.read_entry("MEM-00001001")
-        assert body in content
+        content = store.read_stm_entry("MEM-00001001")
+        assert content.count(body) == 1
         assert "…" not in content
-        assert "**正文**（≤128字）" in content
+        assert "**梗概**（≤128字）" in content
 
     def test_spec224_weight_boundaries_reject_over_limit(
             self, tmp_path, monkeypatch):
@@ -1610,7 +1787,7 @@ class TestMemoryStore:
         store = ms.MemoryStore()
         store.write_entry("MEM-00001001", "测试记忆", "这是一条测试", weight=5)
 
-        content = store.read_entry("MEM-00001001")
+        content = store.read_stm_entry("MEM-00001001")
         assert "梦源：否" in content
         assert "现状概况：" in content
         assert "注释：" not in content
@@ -1644,6 +1821,12 @@ class TestMemoryStore:
 
         store = ms.MemoryStore()
         store.write_entry("MEM-00001001", "旧标题", "原始正文", weight=5)
+        store.set_meta("MEM-00001001", {
+            "id": "MEM-00001001",
+            "title": "旧标题",
+            "access": "public",
+            "weight": 5,
+        })
         store.append_index("MEM-00001001", "F", 5, "旧标题")
 
         store.update_entry_title_and_body(
@@ -1843,7 +2026,9 @@ class TestMemoryStore:
              "last_recalled_at": "2026-08-06T12:00:00+08:00"},
         )
         assert "旧备注" not in projected and "DC-1" not in projected
-        assert "**最近调用轮次**：R000009" in projected
+        assert "**创建轮次**：meta/R000001" in projected
+        assert "**入库轮次**" not in projected
+        assert "**最近调用轮次**：meta/R000009" in projected
         assert "**最近调用时间**：2026-08-06T12:00:00+08:00" in projected
         assert "**挂接备注**：新备注" in projected
         assert "**关联容器**：DC-2" in projected
@@ -2065,67 +2250,6 @@ class TestTrainingMaterialStore:
 # MemoryHeat 测试
 # ============================================================
 
-
-class TestEvolutionStore:
-    def test_should_trigger_when_either_pending_file_reaches_threshold(self, tmp_path):
-        from data.evolution_store import EvolutionStore
-
-        root = tmp_path / "Iteration"
-        store = EvolutionStore(str(root))
-        tacit_pending = root / "Raw" / "Tacit" / "pending.jsonl"
-        connection_pending = root / "Raw" / "Connection" / "pending.jsonl"
-        tacit_pending.parent.mkdir(parents=True)
-        connection_pending.parent.mkdir(parents=True)
-        tacit_pending.write_text('{"action":"kept"}\n{"action":"added"}\n', encoding="utf-8")
-        connection_pending.write_text("", encoding="utf-8")
-
-        assert store.should_trigger({
-            "tacit_pending_threshold": 2,
-            "connection_pending_threshold": 4,
-        }) is True
-
-        tacit_pending.write_text("", encoding="utf-8")
-        connection_pending.write_text('{"word_a":"记忆","word_b":"主体"}\n', encoding="utf-8")
-
-        assert store.should_trigger({
-            "tacit_pending_threshold": 2,
-            "connection_pending_threshold": 1,
-        }) is True
-
-    def test_process_pending_writes_evolution_and_moves_raw_lines(self, tmp_path):
-        from data.evolution_store import EvolutionStore
-
-        root = tmp_path / "Iteration"
-        store = EvolutionStore(str(root))
-        tacit_pending = root / "Raw" / "Tacit" / "pending.jsonl"
-        connection_pending = root / "Raw" / "Connection" / "pending.jsonl"
-        tacit_pending.parent.mkdir(parents=True)
-        connection_pending.parent.mkdir(parents=True)
-        tacit_pending.write_text('{"round":1,"item_id":"MEM-A","action":"kept"}\n', encoding="utf-8")
-        connection_pending.write_text(
-            '{"word_a":"记忆","entry_a":"MEM-A","word_b":"主体","entry_b":"MEM-B"}\n',
-            encoding="utf-8",
-        )
-
-        output = store.process_pending(
-            "模式：记忆与主体被稳定联结。",
-            round_num=9,
-            stats={"tacit_count": 1, "connection_count": 1},
-        )
-
-        assert output.endswith("evolution_R9.md")
-        assert "模式：记忆与主体被稳定联结。" in (root / "Materials" / "Evolution" / "evolution_R9.md").read_text(encoding="utf-8")
-        assert tacit_pending.read_text(encoding="utf-8") == ""
-        assert connection_pending.read_text(encoding="utf-8") == ""
-        assert '"action":"kept"' in (root / "Raw" / "Tacit" / "processed.jsonl").read_text(encoding="utf-8")
-        assert '"word_a":"记忆"' in (root / "Raw" / "Connection" / "processed.jsonl").read_text(encoding="utf-8")
-        tacit_batches = list((root / "Raw" / "Tacit").glob("processed_*_R9.jsonl"))
-        connection_batches = list((root / "Raw" / "Connection").glob("processed_*_R9.jsonl"))
-        assert len(tacit_batches) == 1
-        assert len(connection_batches) == 1
-        assert '"action":"kept"' in tacit_batches[0].read_text(encoding="utf-8")
-        assert '"word_a":"记忆"' in connection_batches[0].read_text(encoding="utf-8")
-
 class TestMemoryHeat:
     def test_default_heat_when_no_file(self, tmp_path, monkeypatch):
         from data import memory_heat as mh
@@ -2297,7 +2421,13 @@ class TestMemoryHeat:
 
     def test_check_upgrade(self, tmp_path, monkeypatch):
         from data import memory_heat as mh
+        from data.memory_store import MemoryStore
         monkeypatch.setattr(mh, "HEAT_JSON", str(tmp_path / "heat.json"))
+        monkeypatch.setattr(
+            MemoryStore,
+            "active_ltm_meta_by_id",
+            lambda _self: {"MEM-UPGRADE01": {"stored_at": ""}},
+        )
         store = mh.MemoryHeat()
         store.get_entry("MEM-UPGRADE01")
         # AH_high 由 tick_decay 结算，测试直接设
@@ -2307,17 +2437,30 @@ class TestMemoryHeat:
         upgrades = store.check_upgrade()
         assert "MEM-UPGRADE01" in upgrades
 
-    def test_mark_stored(self, tmp_path, monkeypatch):
+    def test_heat_entry_has_nine_fields_without_stored(self, tmp_path, monkeypatch):
         from data import memory_heat as mh
         monkeypatch.setattr(mh, "HEAT_JSON", str(tmp_path / "heat.json"))
         store = mh.MemoryHeat()
-        store.get_entry("MEM-STORED01")
-        store.mark_stored("MEM-STORED01")
-        assert store.get_entry("MEM-STORED01")["stored"] is True
+        entry = store.get_entry("MEM-STORED01")
+        assert len(entry) == 9
+        assert "stored" not in entry
+
+    def test_memory_heat_has_no_admission_mutator(self, tmp_path, monkeypatch):
+        from data import memory_heat as mh
+
+        heat_path = tmp_path / "heat.json"
+        monkeypatch.setattr(mh, "HEAT_JSON", str(heat_path))
+        assert not hasattr(mh.MemoryHeat(), "mark_stored")
 
     def test_has_pending_degrade(self, tmp_path, monkeypatch):
         from data import memory_heat as mh
+        from data.memory_store import MemoryStore
         monkeypatch.setattr(mh, "HEAT_JSON", str(tmp_path / "heat.json"))
+        monkeypatch.setattr(
+            MemoryStore,
+            "active_ltm_meta_by_id",
+            lambda _self: {"MEM-PEND01": {"stored_at": ""}},
+        )
         store = mh.MemoryHeat()
         store.get_entry("MEM-PEND01")
         # 手动标记为 degrade
@@ -2325,6 +2468,29 @@ class TestMemoryHeat:
         heat["entries"]["MEM-PEND01"]["degrade"] = True
         store.save_heat(heat)
         assert store.has_pending_degrade() is True
+
+    def test_spec746_admission_checks_use_canonical_ltm_meta(
+            self, tmp_path, monkeypatch):
+        from data import memory_heat as mh
+        from data.memory_store import MemoryStore
+
+        mem_id = "MEM-AD110001"
+        monkeypatch.setattr(mh, "HEAT_JSON", str(tmp_path / "heat.json"))
+        monkeypatch.setattr(
+            MemoryStore,
+            "active_ltm_meta_by_id",
+            lambda _self: {
+                mem_id: {"stored_at": "2026-08-14T00:00:00+08:00"},
+            },
+        )
+        store = mh.MemoryHeat()
+        heat = store.new_entry(weight=5)
+        heat["AH_high"] = 5
+        heat["degrade"] = True
+        store.set_entry(mem_id, heat)
+
+        assert store.check_upgrade() == []
+        assert store.has_pending_degrade() is False
 
     def test_no_tmp_left_behind(self, tmp_path, monkeypatch):
         from data import memory_heat as mh
@@ -2348,7 +2514,6 @@ class TestMemoryIndex:
     def test_add_and_lookup_stm(self, tmp_path, monkeypatch):
         from data import memory_index as mi
         monkeypatch.setattr(mi, "KEYWORDS_JSON", str(tmp_path / "keywords.json"))
-        monkeypatch.setattr(mi, "LTM_KEYWORDS_JSON", str(tmp_path / "ltm_keywords.json"))
 
         store = mi.MemoryIndex()
         store.add_stm_keywords("MEM-IDX001", ["位格", "主体", "记忆"])
@@ -2358,7 +2523,6 @@ class TestMemoryIndex:
     def test_remove_stm_entry(self, tmp_path, monkeypatch):
         from data import memory_index as mi
         monkeypatch.setattr(mi, "KEYWORDS_JSON", str(tmp_path / "keywords.json"))
-        monkeypatch.setattr(mi, "LTM_KEYWORDS_JSON", str(tmp_path / "ltm_keywords.json"))
 
         store = mi.MemoryIndex()
         store.add_stm_keywords("MEM-RM001", ["测试"])
@@ -2368,7 +2532,6 @@ class TestMemoryIndex:
     def test_default_when_no_file(self, tmp_path, monkeypatch):
         from data import memory_index as mi
         monkeypatch.setattr(mi, "KEYWORDS_JSON", str(tmp_path / "nonexist.json"))
-        monkeypatch.setattr(mi, "LTM_KEYWORDS_JSON", str(tmp_path / "nonexist_ltm.json"))
         store = mi.MemoryIndex()
         data = store.load_index()
         assert "index" in data
@@ -2376,7 +2539,6 @@ class TestMemoryIndex:
     def test_add_relation_keywords(self, tmp_path, monkeypatch):
         from data import memory_index as mi
         monkeypatch.setattr(mi, "KEYWORDS_JSON", str(tmp_path / "keywords.json"))
-        monkeypatch.setattr(mi, "LTM_KEYWORDS_JSON", str(tmp_path / "ltm_keywords.json"))
         monkeypatch.setattr(mi, "RELATION_KEYWORDS_JSON", str(tmp_path / "rel_kw.json"))
 
         store = mi.MemoryIndex()
@@ -2966,6 +3128,44 @@ class TestRelationStore:
 # ============================================================
 
 class TestConfigStore:
+    def test_spec749_model_output_limit_defaults_and_validates(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        path = tmp_path / "models.json"
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "models",
+            (str(path), cfs._CONFIG_MAP["models"][1]),
+        )
+        catalog = cfs.default_models_config()
+        catalog["connections"] = [{
+            "id": "conn", "alias": "测试", "protocol": "openai_responses",
+            "url": "https://example.invalid/v1", "api_key_env": "", "api_key": "",
+        }]
+        catalog["models"] = [{
+            "id": "model", "alias": "测试", "connection_id": "conn",
+            "model": "unit", "context_window": 100000,
+            "reasoning": {"supported": [], "default": ""},
+            "streaming": {
+                "enabled": True, "protocol": "openai_sse",
+                "include_usage": True,
+            },
+            "prompt_cache": {"profile": "off"}, "request_overrides": {},
+        }]
+        path.write_text(json.dumps(catalog), encoding="utf-8")
+        store = cfs.ConfigStore()
+
+        assert store.load("models")["models"][0]["output_token_limit"] == 0
+        catalog["models"][0]["output_token_limit"] = 32768
+        store.save("models", catalog)
+        assert store.load("models")["models"][0]["output_token_limit"] == 32768
+
+        for invalid in (-1, 1000001, True):
+            catalog["models"][0]["output_token_limit"] = invalid
+            with pytest.raises(ValueError, match="output_token_limit"):
+                store.save("models", catalog)
+
     def test_load_default_when_no_file(self, tmp_path, monkeypatch):
         from data import config_store as cfs
         from errors import ReadError
@@ -3020,7 +3220,230 @@ class TestConfigStore:
         store.save("system", cfs.default_system_config())
         assert store.get_heartbeat_interval() == 5
         assert store.get_rhythm_interval() == 32
-        assert store.get_round_time_limit() == 600
+        assert store.get_round_time_milestones() == (600, 1200, 1800)
+        assert store.get_response_anchor_prompt() == ""
+
+    def test_spec739_normalizes_and_validates_response_anchor(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        path = tmp_path / "system.json"
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "system",
+            (str(path), cfs._CONFIG_MAP["system"][1]),
+        )
+        legacy = cfs.default_system_config()
+        legacy.pop("response_anchor")
+        path.write_text(json.dumps(legacy), encoding="utf-8")
+        store = cfs.ConfigStore()
+
+        assert store.load("system")["response_anchor"] == {"prompt": ""}
+        migrated, changed = store.migrate_system_audit_policy()
+        assert changed is True
+        migrated["response_anchor"]["prompt"] = "  使用英文回答  "
+        store.save("system", migrated)
+        assert store.get_response_anchor_prompt() == "使用英文回答"
+
+        migrated["response_anchor"]["prompt"] = "x" * 513
+        with pytest.raises(ValueError, match="at most 512"):
+            store.save("system", migrated)
+
+    def test_spec757_migrates_only_known_autonomous_trigger_shape(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        path = tmp_path / "system.json"
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "system",
+            (str(path), cfs._CONFIG_MAP["system"][1]),
+        )
+        legacy = cfs.default_system_config()
+        legacy["_version"] = "Base-0.48.14"
+        legacy["autonomous_trigger"] = {
+            "tacit_pending_threshold": 321,
+            "connection_pending_threshold": 654,
+        }
+        path.write_text(json.dumps(legacy), encoding="utf-8")
+
+        migrated, changed = cfs.ConfigStore().migrate_system_audit_policy()
+
+        assert changed is True
+        assert migrated["_version"] == "Base-0.48.17"
+        assert "autonomous_trigger" not in migrated
+
+        legacy["_version"] = "Base-0.48.13"
+        original = json.dumps(legacy)
+        path.write_text(original, encoding="utf-8")
+        with pytest.raises(ValueError, match="unknown system config version"):
+            cfs.ConfigStore().migrate_system_audit_policy()
+        assert path.read_text(encoding="utf-8") == original
+
+    def test_spec762_migrates_known_hybrid_system_shape_once(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        path = tmp_path / "system.json"
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "system",
+            (str(path), cfs._CONFIG_MAP["system"][1]),
+        )
+        hybrid = cfs.default_system_config()
+        hybrid["_version"] = "Base-0.47.9"
+        hybrid["autonomous_trigger"] = {
+            "tacit_pending_threshold": 512,
+            "connection_pending_threshold": 512,
+        }
+        hybrid["heartbeat"]["interval"] = 17
+        path.write_text(json.dumps(hybrid), encoding="utf-8")
+        store = cfs.ConfigStore()
+
+        migrated, changed = store.migrate_system_audit_policy()
+
+        assert changed is True
+        assert migrated["_version"] == "Base-0.48.17"
+        assert "autonomous_trigger" not in migrated
+        assert migrated["heartbeat"]["interval"] == 17
+        assert store.migrate_system_audit_policy()[1] is False
+
+    def test_spec762_rejects_unknown_retired_shape_without_overwrite(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        path = tmp_path / "system.json"
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "system",
+            (str(path), cfs._CONFIG_MAP["system"][1]),
+        )
+        invalid = cfs.default_system_config()
+        invalid["_version"] = "Base-0.47.9"
+        invalid["autonomous_trigger"] = {
+            "tacit_pending_threshold": 0,
+            "connection_pending_threshold": 512,
+        }
+        original = json.dumps(invalid, ensure_ascii=False, indent=4)
+        path.write_text(original, encoding="utf-8")
+
+        with pytest.raises(ValueError, match="unknown autonomous_trigger shape"):
+            cfs.ConfigStore().migrate_system_audit_policy()
+
+        assert path.read_text(encoding="utf-8") == original
+
+    def test_spec762_readback_failure_restores_original_bytes(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        path = tmp_path / "system.json"
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "system",
+            (str(path), cfs._CONFIG_MAP["system"][1]),
+        )
+        legacy = cfs.default_system_config()
+        legacy["_version"] = "Base-0.47.9"
+        legacy["autonomous_trigger"] = {
+            "tacit_pending_threshold": 512,
+            "connection_pending_threshold": 512,
+        }
+        original = json.dumps(legacy, ensure_ascii=False, separators=(",", ":"))
+        path.write_text(original, encoding="utf-8")
+        store = cfs.ConfigStore()
+        monkeypatch.setattr(
+            store,
+            "_read_json_object",
+            lambda _path: (_ for _ in ()).throw(
+                cfs.ReadError(_path, cause=OSError("readback failed"))
+            ),
+        )
+
+        with pytest.raises(cfs.ReadError):
+            store.migrate_system_audit_policy()
+
+        assert path.read_text(encoding="utf-8") == original
+
+    def test_spec731_migrates_leaked_64_once_and_preserves_custom_value(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        path = tmp_path / "system.json"
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "system",
+            (str(path), cfs._CONFIG_MAP["system"][1]),
+        )
+        legacy = cfs.default_system_config()
+        legacy["audit"] = {
+            "round_snapshot_retention": 64,
+            "state_backup_retention": 8,
+        }
+        path.write_text(json.dumps(legacy), encoding="utf-8")
+        store = cfs.ConfigStore()
+
+        migrated, changed = store.migrate_system_audit_policy()
+        assert changed is True
+        assert migrated["audit"]["round_snapshot_retention"] == 8
+        assert migrated["audit"]["round_snapshot_max_mib"] == 256
+        assert migrated["audit"]["round_snapshot_policy_version"] == 2
+        assert store.migrate_system_audit_policy()[1] is False
+
+        custom = store.load("system")
+        custom["audit"]["round_snapshot_retention"] = 12
+        store.save("system", custom)
+        assert store.migrate_system_audit_policy()[0]["audit"][
+            "round_snapshot_retention"
+        ] == 12
+        custom["audit"]["round_snapshot_policy_version"] = 999
+        custom["audit"]["round_snapshot_retention"] = 0
+        path.write_text(json.dumps(custom), encoding="utf-8")
+        with pytest.raises(ValueError, match="retention out of range"):
+            store.migrate_system_audit_policy()
+
+    @pytest.mark.parametrize(
+        ("legacy_ratio", "expected_ratio"),
+        [(0.7, 0.9), (0.73, 0.73)],
+    )
+    def test_spec742_migrates_only_the_old_default_watermark_once(
+            self, legacy_ratio, expected_ratio, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        path = tmp_path / "system.json"
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "system",
+            (str(path), cfs._CONFIG_MAP["system"][1]),
+        )
+        legacy = cfs.default_system_config()
+        legacy["token_usage"].pop("watermark_policy_version")
+        legacy["token_usage"]["warning_ratio"] = legacy_ratio
+        path.write_text(json.dumps(legacy), encoding="utf-8")
+        store = cfs.ConfigStore()
+
+        migrated, changed = store.migrate_system_audit_policy()
+
+        assert changed is True
+        assert "warning_ratio" not in migrated["token_usage"]
+        assert migrated["token_usage"]["watermark_policy_version"] == 2
+        assert store._migrated_lately_pressure_ratio == expected_ratio
+        assert store.migrate_system_audit_policy()[1] is False
+
+    @pytest.mark.parametrize("ratio", [-1.0, 2.0, float("nan"), True])
+    def test_spec742_rejects_unsafe_token_watermark(
+            self, ratio, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "system",
+            (str(tmp_path / "system.json"), cfs._CONFIG_MAP["system"][1]),
+        )
+        config = cfs.default_system_config()
+        config["token_usage"]["warning_ratio"] = ratio
+
+        with pytest.raises(ValueError, match="warning_ratio"):
+            cfs.ConfigStore().save("system", config)
 
     def test_round_config_no_longer_contains_runtime_wall_timeout(
             self, tmp_path, monkeypatch):
@@ -3032,7 +3455,7 @@ class TestConfigStore:
         store.save("system", cfs.default_system_config())
         data = store.load("system")
 
-        assert store.get_round_time_limit() == 600
+        assert store.get_round_time_milestones() == (600, 1200, 1800)
         assert "wall_timeout_seconds" not in data["round"]
 
     def test_context_config_retired_three_source_compat_layers(self):
@@ -3055,29 +3478,17 @@ class TestConfigStore:
         now = store.load("now")
         lately = store.load("lately")
         assert now["layer"] == "now"
+        assert now["_version"] == "Base-0.12.0"
         assert lately["layer"] == "lately"
         assert "source_lanes" not in now
         assert "source_lanes" not in lately
-        assert now["policy_by_kind"]["interaction"]["lately"] is True
-        assert now["policy_by_kind"]["dialogue_progress"]["lately"] is True
-        assert now["policy_by_kind"]["material"]["lately"] is True
-        assert now["policy_by_kind"]["tool_fact"]["lately"] is True
-        assert now["policy_by_kind"]["setup_fact"] == {
-            "now": True,
-            "lately": True,
-        }
-        assert now["policy_by_kind"]["relay_handoff"] == {
-            "now": True,
-            "lately": True,
-        }
+        assert "policy_by_kind" not in now
         assert "relay_input" not in now["allowed_kinds"]
-        assert "relay_input" not in now["policy_by_kind"]
-        assert "tool_result" not in now["policy_by_kind"]
-        assert "tool_summary" not in now["policy_by_kind"]
-        assert "backup" not in now["policy_by_kind"]["interaction"]
-        assert all("ttl" not in policy for policy in now["policy_by_kind"].values())
-        assert now["budget_chars"] == 65536
-        assert now["trim_chars"] == 16384
+        assert "tool_result" not in now["allowed_kinds"]
+        assert "tool_summary" not in now["allowed_kinds"]
+        assert "budget_chars" not in now
+        assert "trim_chars" not in now
+        assert "fifo_policy" not in now
         assert lately["allowed_kinds"] == [
             "interaction",
             "assistant_reply",
@@ -3088,6 +3499,7 @@ class TestConfigStore:
             "minimum_commitment",
             "fault_note",
             "cache_summary",
+            "interaction_summary",
             "material",
         ]
         assert now["persistent_lanes"] == {
@@ -3100,19 +3512,73 @@ class TestConfigStore:
         assert "raw_log_excluded_kinds" not in lately
         assert "compact_excluded_kinds" not in lately
         assert "relay_input" not in lately["allowed_kinds"]
-        assert lately["budget_chars"] == 262144
-        assert lately["trim_chars"] == 65536
-        assert lately["compact_ratio"] == 0.618
+        assert lately["_version"] == "Base-0.13.0"
+        assert "budget_chars" not in lately
+        assert "trim_chars" not in lately
+        assert "compact_ratio" not in lately
         assert "window_by_step" not in lately
-        assert store.get_now_cache_params() == {
-            "budget_chars": 65536,
-            "trim_chars": 16384,
-        }
         assert store.get_lately_cache_params() == {
-            "budget_chars": 262144,
-            "trim_chars": 65536,
+            "pressure_ratio": 0.9,
+            "protected_interaction_count": 16,
+            "semantic_summary_ratio": 0.125,
+            "cycle_target_ratio": 0.25,
+            "batch_source_chars": 65536,
         }
-        assert store.get_lately_compact_ratio() == 0.618
+
+    def test_spec745_migrates_known_now_watermark_shape_and_discards_limits(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        path = tmp_path / "now.json"
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "now",
+            (str(path), cfs._CONFIG_MAP["now"][1]),
+        )
+        target = cfs.default_now_config()
+        legacy = {key: value for key, value in target.items() if key != "_version"}
+        legacy.update({
+            "description": "旧水位配置",
+            "budget_chars": 98765,
+            "trim_chars": 4321,
+            "fifo_policy": "complete_block",
+            "policy_by_kind": {
+                kind: {"now": True, "lately": True}
+                for kind in (
+                    target["persistent_lanes"]["now_lately_raw"]
+                    + target["persistent_lanes"]["now_lately_no_raw"]
+                )
+            },
+        })
+        path.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+
+        migrated, changed = cfs.ConfigStore().migrate_now_policy()
+
+        assert changed is True
+        assert migrated == target
+        assert json.loads(path.read_text(encoding="utf-8")) == target
+        assert cfs.ConfigStore().migrate_now_policy() == (target, False)
+
+    def test_spec745_now_migration_rejects_unknown_or_mixed_shape_without_overwrite(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+        from errors import ReadError
+
+        path = tmp_path / "now.json"
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "now",
+            (str(path), cfs._CONFIG_MAP["now"][1]),
+        )
+        invalid = cfs.default_now_config()
+        invalid["_version"] = "Base-0.11.9"
+        invalid["budget_chars"] = 65536
+        raw = json.dumps(invalid, ensure_ascii=False)
+        path.write_text(raw, encoding="utf-8")
+
+        with pytest.raises(ReadError):
+            cfs.ConfigStore().migrate_now_policy()
+        assert path.read_text(encoding="utf-8") == raw
 
     def test_unknown_config_raises(self, tmp_path):
         from data.config_store import ConfigStore
@@ -3138,6 +3604,57 @@ class TestConfigStore:
         assert store.get_periodic_limits() == {
             "periodic_memory_items_chars": 12,
         }
+
+    def test_init_all_migrates_known_legacy_periodic_config(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        for name, (_, default_fn) in list(cfs._CONFIG_MAP.items()):
+            path = tmp_path / f"{name}.json"
+            monkeypatch.setitem(cfs._CONFIG_MAP, name, (str(path), default_fn))
+            path.write_text(
+                json.dumps(default_fn(), ensure_ascii=False), encoding="utf-8"
+            )
+        periodic_path = Path(cfs._CONFIG_MAP["periodic"][0])
+        fixture = Path(__file__).parent / "fixtures" / "periodic-base-0.10.0.json"
+        legacy = json.loads(fixture.read_text(encoding="utf-8"))
+        legacy["limits"]["periodic_memory_items_chars"] = 131072
+        periodic_path.write_text(
+            json.dumps(legacy, ensure_ascii=False), encoding="utf-8"
+        )
+
+        store = cfs.ConfigStore()
+        assert store.init_all() == []
+
+        migrated = json.loads(periodic_path.read_text(encoding="utf-8"))
+        expected = cfs.default_periodic_config()
+        expected["limits"]["periodic_memory_items_chars"] = 131072
+        assert migrated == expected
+        assert store.migrate_periodic_policy() == (expected, False)
+
+    def test_periodic_migration_rejects_unknown_version_without_overwrite(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+        from errors import ReadError
+
+        periodic_path = tmp_path / "periodic.json"
+        legacy = json.loads(
+            (Path(__file__).parent / "fixtures" / "periodic-base-0.10.0.json")
+            .read_text(encoding="utf-8")
+        )
+        legacy["_version"] = "Base-0.9.9"
+        legacy["unexpected"] = True
+        raw = json.dumps(legacy, ensure_ascii=False)
+        periodic_path.write_text(raw, encoding="utf-8")
+        monkeypatch.setitem(
+            cfs._CONFIG_MAP,
+            "periodic",
+            (str(periodic_path), cfs._CONFIG_MAP["periodic"][1]),
+        )
+
+        with pytest.raises(ReadError):
+            cfs.ConfigStore().migrate_periodic_policy()
+        assert periodic_path.read_text(encoding="utf-8") == raw
 
 
 # ============================================================
@@ -3262,23 +3779,14 @@ class TestContextStore:
         ]
 
     class _CacheConfig(ConfigStoreStub):
-        def __init__(self, now_budget=32768, now_trim=8192,
-                     lately_budget=65536, lately_trim=16384,
+        def __init__(self, lately_budget=65536, lately_trim=16384,
                      compact_ratio=0.618, compact_shard_chars=8192,
                      compact_shard_ratio=0.314):
-            self.now_budget = now_budget
-            self.now_trim = now_trim
             self.lately_budget = lately_budget
             self.lately_trim = lately_trim
             self.compact_ratio = compact_ratio
             self.compact_shard_chars = compact_shard_chars
             self.compact_shard_ratio = compact_shard_ratio
-
-        def get_now_cache_params(self):
-            return {
-                "budget_chars": self.now_budget,
-                "trim_chars": self.now_trim,
-            }
 
         def get_lately_cache_params(self):
             return {
@@ -3295,19 +3803,6 @@ class TestContextStore:
                 "compact_shard_chars": self.compact_shard_chars,
                 "compact_shard_ratio": self.compact_shard_ratio,
             }
-
-        def get_now_policy_by_kind(self):
-            return {}
-
-        def get_lately_allowed_kinds(self):
-            return [
-                "interaction",
-                "assistant_reply",
-                "minimum_commitment",
-                "fault_note",
-                "cache_summary",
-                "material",
-            ]
 
     def test_spec676_corrupt_cache_config_is_not_silently_defaulted(
             self, tmp_path, monkeypatch):
@@ -3326,9 +3821,7 @@ class TestContextStore:
 
         store = ContextStore(config_store=cfs.ConfigStore())
         for load_params in (
-                store._now_cache_params,
                 store._lately_cache_params,
-                store.get_lately_compaction_params,
                 store._persistent_lanes):
             with pytest.raises(ReadError):
                 load_params()
@@ -3344,19 +3837,21 @@ class TestContextStore:
                 "ttl": "now",
             })
 
-    def test_spec463_default_cache_windows_are_expanded(self):
+    def test_spec745_now_has_no_watermark_and_lately_window_remains(self):
         from schemas.config import default_lately_config, default_now_config
 
         now = default_now_config()
         lately = default_lately_config()
 
-        assert now["budget_chars"] == 65536
-        assert now["trim_chars"] == 16384
-        assert lately["budget_chars"] == 262144
-        assert lately["trim_chars"] == 65536
-        assert lately["compact_ratio"] == 0.618
-        assert lately["compact_shard_chars"] == 8192
-        assert lately["compact_shard_ratio"] == 0.314
+        assert now["_version"] == "Base-0.12.0"
+        assert "budget_chars" not in now
+        assert "trim_chars" not in now
+        assert lately["_version"] == "Base-0.13.0"
+        assert lately["pressure_ratio"] == 0.9
+        assert lately["protected_interaction_count"] == 16
+        assert lately["semantic_summary_ratio"] == 0.125
+        assert lately["cycle_target_ratio"] == 0.25
+        assert lately["batch_source_chars"] == 65536
 
     def test_context_store_drops_legacy_ttl_when_normalizing_corpus(self):
         from data.context_store import ContextStore
@@ -3379,7 +3874,7 @@ class TestContextStore:
         assert block["policy"] == {"now": False, "lately": False}
         assert "ttl" not in block["policy"]
 
-    def test_save_round_writes_now_and_lately_corpus_blocks(self, tmp_path, monkeypatch):
+    def test_save_round_stages_next_frame_package_in_now(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore()
 
@@ -3509,17 +4004,24 @@ class TestContextStore:
         assert all("ttl" not in block["policy"] for block in now_blocks)
 
 
-    def test_latest_oversize_now_block_is_promoted_without_hard_truncation(self, tmp_path, monkeypatch):
+    def test_oversize_now_block_waits_for_frame_transition_without_truncation(
+            self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=10,
-            now_trim=5,
             lately_budget=1024,
             lately_trim=128,
         ))
 
         store.append_to_cache(3, "user", "X" * 50, kind="interaction")
 
+        now_blocks = self._read_jsonl(tmp_path / "cache" / "now_cache.jsonl")
+        assert [block["text"] for block in now_blocks] == ["X" * 50]
+        assert self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl") == []
+
+        store.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000003:reaction:1",
+        )
         now_blocks = self._read_jsonl(tmp_path / "cache" / "now_cache.jsonl")
         lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
         raw_blocks = self._read_jsonl(tmp_path / "buffer" / "raw_log.jsonl")
@@ -3528,42 +4030,21 @@ class TestContextStore:
         assert [block["text"] for block in lately_blocks] == ["X" * 50]
         assert [block["text"] for block in raw_blocks] == ["X" * 50]
 
-    def test_lately_character_budget_trims_oldest_blocks_and_preserves_corpus(self, tmp_path, monkeypatch):
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=20,
-            now_trim=10,
-            lately_budget=35,
-            lately_trim=15,
-        ))
-
-        store.append_to_cache(4, "user", "A" * 12, kind="interaction", iter=1)
-        store.append_to_cache(4, "assistant", "B" * 12, kind="assistant_reply", iter=2)
-        store.append_to_cache(4, "assistant", "C" * 12, kind="assistant_reply", iter=3)
-        store.append_to_cache(4, "assistant", "D" * 12, kind="assistant_reply", iter=4)
-
-        lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        raw_blocks = self._read_jsonl(tmp_path / "buffer" / "raw_log.jsonl")
-        stats = store.get_last_cache_stats()
-
-        assert [block["text"] for block in lately_blocks] == ["A" * 12]
-        assert [block["text"] for block in raw_blocks] == ["A" * 12, "B" * 12, "C" * 12, "D" * 12]
-        assert stats["lately_trimmed"] is True
-        assert stats["lately_deleted_blocks"] == 3
-        assert stats["lately_soft_overflow"] is False
 
     def test_spec721_active_corpus_id_survives_promotion_and_restart(
             self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         config = self._CacheConfig(
-            now_budget=8,
-            now_trim=4,
             lately_budget=1024,
             lately_trim=128,
         )
         store = ctxs.ContextStore(config_store=config)
         store.append_to_cache(
             1, "user", "用户输入会滚入最近缓存", kind="interaction")
+        store.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000001:reaction:1",
+        )
 
         first = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")[0]
         assert first["ref"]["active_corpus_id"] == "C-00001"
@@ -3572,6 +4053,10 @@ class TestContextStore:
         restarted = ctxs.ContextStore(config_store=config)
         restarted.append_to_cache(
             2, "assistant", "新语料", kind="assistant_reply")
+        restarted.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000002:reaction:1",
+        )
         blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
         assert blocks[0]["ref"]["active_corpus_id"] == "C-00001"
         meta = json.loads(
@@ -3587,8 +4072,6 @@ class TestContextStore:
             self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         config = self._CacheConfig(
-            now_budget=1,
-            now_trim=0,
             lately_budget=1024,
             lately_trim=128,
         )
@@ -3620,8 +4103,13 @@ class TestContextStore:
         (tmp_path / "buffer" / "raw_log.jsonl").write_text(
             encoded, encoding="utf-8")
 
-        ctxs.ContextStore(config_store=config).append_to_cache(
+        restarted = ctxs.ContextStore(config_store=config)
+        restarted.append_to_cache(
             2, "assistant", "新语料", kind="assistant_reply")
+        restarted.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000002:reaction:1",
+        )
 
         lately = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
         raw = self._read_jsonl(tmp_path / "buffer" / "raw_log.jsonl")
@@ -3686,12 +4174,7 @@ class TestContextStore:
     def test_spec721_user_inputs_are_protected_for_sixteen_interaction_rounds(
             self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=1,
-            now_trim=0,
-            lately_budget=12,
-            lately_trim=0,
-        ))
+        store = ctxs.ContextStore(config_store=ConfigStoreStub())
         for round_num in range(1, 17):
             store.append_to_cache(
                 round_num,
@@ -3699,48 +4182,42 @@ class TestContextStore:
                 f"用户输入{round_num:02d}",
                 kind="interaction",
             )
+            store.transition_current_cache(
+                boundary="reaction_provider_return",
+                consumer_frame_id=f"R{round_num:06d}:reaction:1",
+            )
         protected = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
         assert len(protected) == 16
-        assert store.get_last_cache_stats()["lately_soft_overflow"] is True
+        pressure = store.prepare_lately_pressure_compaction(
+            16, {
+                "kind": "token_ratio",
+                "round_context_window_tokens": 1_000_000,
+            }
+        )
+        assert pressure["status"] == "completed_with_protected_floor"
+        assert pressure["reason"] == "no_compressible_lately_content"
 
         store.append_to_cache(17, "user", "用户输入17", kind="interaction")
+        store.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000017:reaction:1",
+        )
+        prepared = store.prepare_lately_pressure_compaction(
+            17, {
+                "kind": "token_ratio",
+                "round_context_window_tokens": 1_000_000,
+            }
+        )
+        assert prepared["status"] == "prepared"
         released = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        assert "用户输入01" not in [block["text"] for block in released]
+        assert "用户输入01" in [block["text"] for block in released]
         assert "用户输入02" in [block["text"] for block in released]
         assert "用户输入17" in [block["text"] for block in released]
-
-    def test_spec721_protected_user_input_ignores_explicit_drop_and_transients_get_no_id(
-            self, tmp_path, monkeypatch):
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=1,
-            now_trim=0,
-            lately_budget=1024,
-            lately_trim=128,
-        ))
-        store.append_to_cache(1, "user", "必须保留的用户原始输入", kind="interaction")
-        user_block = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")[0]
-
-        report = store.rewrite_lately_blocks([{
-            "source_block_ids": [user_block["id"]],
-            "action": "drop",
-        }])
-        store.append_call_transient(
-            2,
-            "system",
-            "仅供本次善后的临时资料",
-            kind="material",
-            transient_scope="cleanup_round",
-            transient_target_step="cleanup",
+        debt = store.load_cache_compaction_debt()
+        assert any(
+            "用户输入01" in shard.get("projected_content", "")
+            for shard in debt["shards"]
         )
-        ctxs.ContextStore(config_store=self._CacheConfig()).get_now_entries()
-        transient = self._read_jsonl(tmp_path / "cache" / "now_cache.jsonl")[0]
-
-        assert report["skipped"] == 1
-        assert self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")[0]["text"] == (
-            "必须保留的用户原始输入"
-        )
-        assert "active_corpus_id" not in transient["ref"]
 
     def test_spec721_b1_fingerprint_is_stable_when_lately_content_does_not_change(
             self, tmp_path, monkeypatch):
@@ -3749,8 +4226,6 @@ class TestContextStore:
         from engines.prompt_cache_planner import apply_explicit_breakpoints
 
         config = self._CacheConfig(
-            now_budget=1,
-            now_trim=0,
             lately_budget=16384,
             lately_trim=1024,
         )
@@ -3760,6 +4235,10 @@ class TestContextStore:
             "assistant",
             "稳定最近缓存" * 900,
             kind="assistant_reply",
+        )
+        store.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000001:reaction:1",
         )
 
         def plan(current_store):
@@ -3794,94 +4273,33 @@ class TestContextStore:
         assert first["lately_epoch"] == second["lately_epoch"]
         assert first_entries[0]["active_corpus_id"] == second_entries[0]["active_corpus_id"]
 
-    def test_spec463_lately_trim_stats_expose_compaction_rhythm_plan(self, tmp_path, monkeypatch):
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            lately_budget=35,
-            lately_trim=15,
-            compact_ratio=0.618,
-            compact_shard_chars=8192,
-            compact_shard_ratio=0.314,
-        ))
-        entries = [
-            {"round": 4, "role": "assistant", "kind": "assistant_reply", "content": char * 12}
-            for char in ("A", "B", "C", "D")
-        ]
-
-        active, stats = store._apply_lately_watermark(entries)
-
-        assert [entry["content"] for entry in active] == ["D" * 12]
-        assert stats["lately_trimmed"] is True
-        assert stats["cache_compaction_required"] is True
-        assert stats["lately_surviving_chars"] == 12
-        assert stats["lately_compact_target_chars"] == int(12 * 0.618)
-        assert stats["lately_compact_ratio"] == 0.618
-        assert stats["lately_compact_shard_chars"] == 8192
-        assert stats["lately_compact_shard_ratio"] == 0.314
-
-    def test_spec474_lately_trim_persists_compaction_debt_without_raw_text(
+    def test_spec745_frame_transition_replaces_old_character_watermark(
             self, tmp_path, monkeypatch):
-        from logic.cache_compaction_guide import cache_compaction_due_receipt
-
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=20,
-            now_trim=10,
             lately_budget=35,
             lately_trim=15,
-            compact_ratio=0.618,
-            compact_shard_chars=8192,
-            compact_shard_ratio=0.314,
         ))
-
         for index, char in enumerate(("A", "B", "C", "D"), start=1):
             store.append_to_cache(
-                474,
-                "assistant",
-                char * 12,
-                kind="assistant_reply",
-                iter=index,
-            )
+                4, "assistant", char * 12, kind="assistant_reply", iter=index)
 
-        receipt = cache_compaction_due_receipt(store, 474)
-        store.save_cache_compaction_debt(receipt, 474)
-        debt_path = Path(store.cache_compaction_debt_path())
-        debt = json.loads(debt_path.read_text(encoding="utf-8"))
-        raw = json.dumps(debt, ensure_ascii=False)
-
-        assert receipt["status"] == "due"
-        assert debt_path.is_file()
-        assert debt["schema_version"] == "cache_compaction_debt.v1"
-        assert debt["status"] == "open"
-        assert debt["created_round"] == 474
-        assert debt["candidate_ids"]
-        assert debt["compaction_plan"]["shards"]
-        assert "DDDDDDDDDDDD" not in raw
-        assert "CCCCCCCCCCCC" not in raw
-
-    def test_spec463_lately_compaction_shards_stop_after_global_target(self):
-        from logic.cache_compaction_guide import plan_lately_compaction_shards
-
-        candidates = [
-            {"id": "R000001-user-0000", "chars": 4000, "text": "A" * 4000},
-            {"id": "R000002-assistant-0000", "chars": 4000, "text": "B" * 4000},
-            {"id": "R000003-tool-0000", "chars": 4000, "text": "C" * 4000},
+        assert [entry["content"] for entry in store.get_now_entries()] == [
+            "A" * 12, "B" * 12, "C" * 12, "D" * 12,
         ]
-
-        plan = plan_lately_compaction_shards(
-            candidates,
-            compact_ratio=0.618,
-            shard_chars=8192,
-            shard_ratio=0.314,
+        assert store.get_lately_entries() == []
+        store.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000004:reaction:1",
         )
+        entries = store.get_lately_entries()
+        assert [entry["content"] for entry in entries] == [
+            "A" * 12, "B" * 12, "C" * 12, "D" * 12,
+        ]
+        assert sum(len(entry["content"]) for entry in entries) > 35
+        assert not store.has_cache_compaction_debt()
 
-        assert plan["before_chars"] == 12000
-        assert plan["target_chars"] == int(12000 * 0.618)
-        assert len(plan["shards"]) == 1
-        shard = plan["shards"][0]
-        assert shard["source_block_ids"] == ["R000001-user-0000", "R000002-assistant-0000"]
-        assert shard["input_chars"] == 8000
-        assert shard["target_chars"] == int(8000 * 0.314)
+
 
     def test_protocol_tool_receipt_is_retired_from_model_context(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
@@ -3991,217 +4409,20 @@ class TestContextStore:
 
         assert store.get_lately_entries() == []
 
-    def test_lately_compression_candidates_cover_full_post_trim_survivor_segment(self, tmp_path, monkeypatch):
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        store = ctxs.ContextStore(config_store=self._CacheConfig())
-        blocks = []
-        for idx, kind in enumerate([
-            "interaction",
-            "assistant_reply",
-            "minimum_commitment",
-            "fault_note",
-            "cache_summary",
-        ]):
-            blocks.append({
-                "id": f"R000010-{kind}-{idx:04d}",
-                "role": "system" if kind != "interaction" else "user",
-                "kind": kind,
-                "text": f"{kind} 幸存段哨兵",
-                "loc": {"round": 10, "step": "cleanup", "iter": 0, "time": "2026-05-24T00:00:00+08:00"},
-                "policy": {"now": True, "lately": True},
-                "ref": {"interaction": {"object": "Codex", "identity_status": "declared", "interaction_source": "self_declaration"}},
-            })
-        (tmp_path / "cache").mkdir(parents=True, exist_ok=True)
-        (tmp_path / "cache" / "lately_cache.jsonl").write_text(
-            "\n".join(json.dumps(block, ensure_ascii=False) for block in blocks) + "\n",
-            encoding="utf-8",
-        )
-
-        candidates = store.build_lately_compression_candidates(current_round=10, max_blocks=None)
-        migrated_blocks = self._read_jsonl(
-            tmp_path / "cache" / "lately_cache.jsonl")
-
-        assert [item["id"] for item in candidates] == [
-            block["id"]
-            for block in migrated_blocks
-            if block["kind"] != "interaction"
-        ]
-        assert {item["kind"] for item in candidates} == {
-            "assistant_reply",
-            "minimum_commitment",
-            "fault_note",
-            "cache_summary",
-        }
-        assert sum(item["chars"] for item in candidates) > 0
-
-    def test_cache_compact_merges_survivor_blocks_and_preserves_corpus_original(self, tmp_path, monkeypatch):
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        from logic.cache_compact import execute_cache_compact
-
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=32,
-            now_trim=16,
-            lately_budget=1024,
-            lately_trim=128,
-        ))
-
-        store.append_to_cache(2, "assistant", "pytest 输出很长，需要压缩保留重点", kind="assistant_reply")
-        store.append_to_cache(2, "assistant", "第一段回复也很长，需要一起融合", kind="assistant_reply")
-        store.append_to_cache(2, "system", "flush marker " * 4, kind="fault_note")
-        raw_path = tmp_path / "buffer" / "raw_log.jsonl"
-        raw_before = self._read_jsonl(raw_path)
-        source_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        source_ids = [block["id"] for block in source_blocks]
-
-        assert len(source_ids) >= 2
-        report = execute_cache_compact(
-            store,
-            {
-                "lately_trimmed": True,
-                "compact_ratio": 0.618,
-                "decisions": [{
-                    "source_block_ids": source_ids[:2],
-                    "action": "replace",
-                    "replacement_text": "pytest 已通过，回复确认保留；两段语义融合为同一条近感摘要。",
-                }],
-            }
-        )
-
-        lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        raw_after = self._read_jsonl(raw_path)
-        summary = lately_blocks[0]
-        source_corpus_ids = {
-            block["ref"]["active_corpus_id"] for block in source_blocks[:2]
-        }
-        assert report["status"] == "applied"
-        assert summary["kind"] == "cache_summary"
-        assert summary["ref"]["active_corpus_id"] not in source_corpus_ids
-        assert "两段语义融合" in summary["text"]
-        assert summary["ref"]["source_block_ids"] == source_ids[:2]
-        assert summary["ref"]["raw_log_keys"] == [
-            block["ref"]["raw_log_key"] for block in raw_before[:2]
-        ]
-        assert summary["ref"]["oldest_source_round"] == raw_before[0]["loc"]["round"]
-        assert summary["ref"]["oldest_cached_at"] == raw_before[0]["loc"]["time"]
-        assert summary["ref"]["source_block_count"] == 2
-        assert summary["ref"]["compact_reason"] == "post_lately_trim"
-        assert summary["ref"]["compacted_at"]
-        assert raw_after == raw_before
-
-    def test_spec288_cache_compact_uses_pending_ids_with_action_object(self, tmp_path, monkeypatch):
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        from logic.cache_compact import execute_cache_compact
-
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=40,
-            now_trim=20,
-            lately_budget=1024,
-            lately_trim=128,
-        ))
-
-        store.append_to_cache(2, "assistant", "第一段最近缓存内容需要融合", kind="assistant_reply")
-        store.append_to_cache(2, "assistant", "第二段最近缓存内容需要融合", kind="assistant_reply")
-        store.append_to_cache(2, "system", "flush marker " * 4, kind="fault_note")
-        candidates = store.build_lately_compression_candidates(max_blocks=None)
-        source_ids = [item["id"] for item in candidates]
-
-        report = execute_cache_compact(
-            store,
-            {
-                "lately_trimmed": True,
-                "compact_ratio": 0.5,
-                "source_block_ids": source_ids,
-                "decision": {
-                    "action": "replace",
-                    "replacement_text": "两段最近缓存已融合。",
-                    "reason": "连续语义合并",
-                },
-                "current_round": 12,
-            },
-        )
-
-        lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        assert report["status"] == "applied"
-        assert report["replaced"] == len(source_ids)
-        assert [block["kind"] for block in lately_blocks] == ["cache_summary"]
-        assert lately_blocks[0]["text"] == "两段最近缓存已融合。"
-        assert lately_blocks[0]["ref"]["source_block_ids"] == source_ids
-
-    def test_cache_compact_ratio_zero_clears_and_one_keeps_survivor_segment(self, tmp_path, monkeypatch):
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        from logic.cache_compact import execute_cache_compact
-
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=32,
-            now_trim=16,
-            lately_budget=1024,
-            lately_trim=128,
-        ))
-        store.append_to_cache(7, "assistant", "A" * 24, kind="assistant_reply")
-        store.append_to_cache(7, "assistant", "B" * 24, kind="assistant_reply")
-        before = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        raw_path = tmp_path / "buffer" / "raw_log.jsonl"
-        raw_before = self._read_jsonl(raw_path)
-
-        keep_report = execute_cache_compact(
-            store,
-            {"lately_trimmed": True, "compact_ratio": 1.0, "decisions": []},
-        )
-        assert keep_report["status"] == "skipped_ratio_1"
-        assert self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl") == before
-
-        clear_report = execute_cache_compact(
-            store,
-            {"lately_trimmed": True, "compact_ratio": 0.0, "decisions": []},
-        )
-        assert clear_report["status"] == "cleared"
-        assert self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl") == []
-        assert self._read_jsonl(raw_path) == raw_before
-
-    def test_lately_compression_rewrites_lately_but_preserves_corpus_original(self, tmp_path, monkeypatch):
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=32,
-            now_trim=16,
-            lately_budget=1024,
-            lately_trim=128,
-        ))
-
-        store.append_to_cache(2, "assistant", "pytest 输出很长，需要压缩保留重点", kind="assistant_reply")
-        store.append_to_cache(2, "assistant", "flush marker " * 4, kind="assistant_reply")
-        raw_path = tmp_path / "buffer" / "raw_log.jsonl"
-        raw_before = self._read_jsonl(raw_path)
-        candidates = store.build_lately_compression_candidates(current_round=3)
-
-        assert candidates
-        store.rewrite_lately_blocks([
-            {
-                "candidate_numbers": ["1"],
-                "action": "replace",
-                "replacement_text": "pytest 已通过，保留验证结论。",
-            }
-        ], current_round=3)
-
-        lately_blocks = self._read_jsonl(tmp_path / "cache" / "lately_cache.jsonl")
-        raw_after = self._read_jsonl(raw_path)
-        assert "pytest 已通过" in lately_blocks[0]["text"]
-        assert "pytest 输出很长" in raw_before[0]["text"]
-        assert raw_after == raw_before
-        assert lately_blocks[0]["kind"] == "cache_summary"
-        assert lately_blocks[0]["ref"]["raw_log_keys"] == [raw_before[0]["ref"]["raw_log_key"]]
-        assert lately_blocks[0]["ref"]["source_block_ids"] == [candidates[0]["id"]]
-
     def test_lately_cache_windows_by_step_after_track_trim(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=8,
-            now_trim=4,
             lately_budget=65536,
             lately_trim=16384,
         ))
 
         for round_num in range(1, 42):
             store.save_round_to_cache(round_num, f"用户{round_num}", f"回复{round_num}")
+            store.transition_current_cache(
+                boundary="round_closeout",
+                consumer_frame_id=f"R{round_num:06d}:closeout",
+                expire_call_transients=True,
+            )
 
         setup_rounds = sorted({entry["round"] for entry in store.get_lately_entries("setup")})
         reaction_rounds = sorted({entry["round"] for entry in store.get_lately_entries("reaction")})
@@ -4216,6 +4437,11 @@ class TestContextStore:
 
         for round_num in range(1, 41):
             store.save_round_to_cache(round_num, f"用户{round_num}", f"回复{round_num}")
+            store.transition_current_cache(
+                boundary="round_closeout",
+                consumer_frame_id=f"R{round_num:06d}:closeout",
+                expire_call_transients=True,
+            )
 
         assert (tmp_path / "cache" / "now_cache.jsonl").is_file()
         assert (tmp_path / "cache" / "lately_cache.jsonl").is_file()
@@ -4250,14 +4476,20 @@ class TestContextStore:
 # AlertStore 测试
 # ============================================================
 
-    # Spec625 supersedes the former round-retention settlement contract.
-    def test_material_immediate_watermark_moves_to_lately_without_raw(self, tmp_path, monkeypatch):
+    def test_material_moves_on_successful_frame_without_raw(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=32, now_trim=16, lately_budget=1024, lately_trim=128,
+            lately_budget=1024, lately_trim=128,
         ))
         store.append_to_cache(9, "system", "A" * 18, kind="material")
         store.append_to_cache(9, "system", "B" * 18, kind="material")
+        assert [entry["content"] for entry in store.get_now_entries()] == [
+            "A" * 18, "B" * 18,
+        ]
+        store.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000009:reaction:1",
+        )
         assert store.get_now_entries() == []
         assert [entry["content"] for entry in store.get_lately_entries()] == ["A" * 18, "B" * 18]
         assert self._read_jsonl(tmp_path / "corpus" / "public" / "rounds" / "round_000009.jsonl") == []
@@ -4273,6 +4505,7 @@ class TestContextStore:
         entries = store.get_call_transient_entries(12, "cleanup")
         assert len(entries) == 1
         assert entries[0]["content"] == "cleanup"
+        assert not entries[0].get("active_corpus_id")
         assert store.clear_transient_entries(
             round_num=12, transient_scope="cleanup_round",
             transient_target_step="cleanup",
@@ -4290,22 +4523,33 @@ class TestContextStore:
         store.append_to_cache(11, "tool", "file_read rejected", kind="tool_fact")
         assert [entry["content"] for entry in store.get_now_entries()] == ["file_read rejected"]
 
-    def test_spec623_current_round_material_overflow_is_pinned_until_settlement(self, tmp_path, monkeypatch):
+    def test_spec745_material_package_ignores_retired_now_watermark(
+            self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=50, now_trim=15, lately_budget=1024, lately_trim=128,
+            lately_budget=1024, lately_trim=128,
         ))
         for value in ("A", "B", "C"):
             store.append_to_cache(2, "system", value * 18, kind="material")
-        assert [entry["content"] for entry in store.get_now_entries()] == ["C" * 18]
-        assert [entry["content"] for entry in store.get_lately_entries()] == ["A" * 18, "B" * 18]
+        assert [entry["content"] for entry in store.get_now_entries()] == [
+            "A" * 18, "B" * 18, "C" * 18,
+        ]
+        receipt = store.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000002:reaction:1",
+        )
+        assert store.get_now_entries() == []
+        assert [entry["content"] for entry in store.get_lately_entries()] == [
+            "A" * 18, "B" * 18, "C" * 18,
+        ]
         assert self._read_jsonl(tmp_path / "corpus" / "public" / "rounds" / "round_000002.jsonl") == []
-        assert store.get_last_cache_stats()["now_moved_blocks"] == 2
+        assert receipt["moved_blocks"] == 3
+        assert receipt["lane_b_blocks"] == 3
 
     def test_spec623_seven_16k_material_windows_survive_one_round(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=65536, now_trim=16384, lately_budget=262144, lately_trim=65536,
+            lately_budget=262144, lately_trim=65536,
         ))
         windows = [f"W{index}:" + chr(64 + index) * (16384 - 3) for index in range(1, 8)]
         for iteration, content in enumerate(windows, start=1):
@@ -4315,60 +4559,29 @@ class TestContextStore:
         assert store.get_round_material_chars(623) == sum(map(len, windows))
         assert self._read_jsonl(tmp_path / "corpus" / "public" / "rounds" / "round_000623.jsonl") == []
 
-    def test_spec623_material_is_not_a_lately_compaction_candidate(self, tmp_path, monkeypatch):
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=8, now_trim=4, lately_budget=1024, lately_trim=128,
-        ))
-        store.append_to_cache(623, "system", "complete material", kind="material")
-        assert store.build_lately_compression_candidates() == []
-
-    def test_spec623_settlement_preserves_compaction_signal_for_ordinary_survivors(self, tmp_path, monkeypatch):
-        from logic.cache_compaction_guide import cache_compaction_due_receipt
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=35, now_trim=5, lately_budget=100, lately_trim=20,
-        ))
-        for content in ("A" * 30, "B" * 30, "C" * 30, "D" * 30, "E" * 30):
-            store.append_to_cache(1, "assistant", content, kind="interaction")
-        stats = store.get_last_cache_stats()
-        assert stats["lately_trimmed"] is True
-        assert cache_compaction_due_receipt(store, 1)["status"] == "due"
-
-    def test_spec623_material_only_lately_trim_does_not_create_compaction_due(self, tmp_path, monkeypatch):
-        from logic.cache_compaction_guide import cache_compaction_due_receipt
-        ctxs = self._patch_track_paths(tmp_path, monkeypatch)
-        store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=10, now_trim=5, lately_budget=100, lately_trim=20,
-        ))
-        store.append_to_cache(2, "system", "A" * 70, kind="material")
-        store.append_to_cache(2, "system", "B" * 70, kind="material")
-        due = cache_compaction_due_receipt(store, 2)
-        assert due["status"] == "skipped"
-        assert due["reason"] == "no_compaction_shards"
-
     def test_reasoning_context_is_now_only_with_native_replay(self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore()
         replay = {"provider": "openai_chat", "assistant_message": {"role": "assistant"}}
         store.append_reasoning_context(5, "reasoning", native_replay=replay, iter=0)
         assert store.get_now_entries() == []
-        entries = store.get_call_transient_entries(5, "reaction", reaction_iteration=2)
+        entries = store.get_call_transient_entries(5, "reaction", reaction_iteration=1)
         assert len(entries) == 1
         assert entries[0]["native_replay"] == replay
         assert store.clear_transient_entries(
             round_num=5, transient_scope="reasoning_replay",
-            transient_target_step="reaction", transient_target_iteration=2,
+            transient_target_step="reaction", transient_target_iteration=1,
         )["now_removed"] == 1
 
-    def test_reasoning_context_overflow_drops_whole_block_without_lately(self, tmp_path, monkeypatch):
+    def test_reasoning_context_keeps_complete_c_blocks_out_of_lately(
+            self, tmp_path, monkeypatch):
         ctxs = self._patch_track_paths(tmp_path, monkeypatch)
         store = ctxs.ContextStore(config_store=self._CacheConfig(
-            now_budget=50, now_trim=15, lately_budget=1024, lately_trim=128,
+            lately_budget=1024, lately_trim=128,
         ))
         for value in ("A", "B", "C"):
             store.append_reasoning_context(6, value * 18, native_replay={"provider": "openai_chat"})
-        entries = store.get_call_transient_entries(6, "reaction", reaction_iteration=2)
+        entries = store.get_call_transient_entries(6, "reaction", reaction_iteration=1)
         assert [entry["content"][-18:] for entry in entries] == ["A" * 18, "B" * 18, "C" * 18]
         assert store.get_lately_entries() == []
 

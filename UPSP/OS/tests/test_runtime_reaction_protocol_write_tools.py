@@ -280,6 +280,330 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert result["_final_reply_done"] is True
         assert result["_final_response_source"] == "reaction.natural_final_reply"
 
+    def test_spec735_final_response_budget_rewrites_once_then_blocks(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+
+        candidates = ["第一次完整超长候选回复", "第二次完整超长候选回复"]
+
+        class Executor:
+            def __init__(self):
+                self.calls = []
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                assert _logical_step(step, active_protocol_tool_guides) == "reaction"
+                self.calls.append(list(messages))
+                return {
+                    "response": candidates[len(self.calls) - 1],
+                    "tool_call_envelopes": [],
+                }
+
+        executor = Executor()
+        rt.executor = executor
+        result = rt.reaction_loop_runner._run_loop(
+            rt.sm.load(),
+            "interactive",
+            [],
+            final_response_max_chars=5,
+        )
+
+        assert len(executor.calls) == 2
+        assert result["_settlement_ledgers"][-1]["blocked_reason"] == (
+            "blocked/final_response_length_exhausted")
+        assert result["_final_response_source"] == (
+            "reaction.runtime_auto_blocked_final_reply")
+        receipts = [
+            item for item in result["_reaction_loop_guard_receipts"]
+            if item.get("status") in {
+                "final_response_too_long",
+                "blocked/final_response_length_exhausted",
+            }
+        ]
+        assert [item["actual_chars"] for item in receipts] == [
+            len(item) for item in candidates]
+        assert all("candidate" not in item for item in receipts)
+        assert result["_final_response_length_rejections"] == 2
+        assert not any(
+            str(item.get("text") or "") in candidates
+            for item in result["_message_envelopes"]
+        )
+        assert all(
+            any(
+                "最终回复字符预算" in str(message.get("content") or "")
+                for message in call
+            )
+            for call in executor.calls
+        )
+        assert any(
+            "final_response_too_long" in str(message.get("content") or "")
+            for message in executor.calls[1]
+        )
+
+    def test_spec735_mixed_finalize_cannot_bypass_final_response_budget(
+            self, tmp_path, monkeypatch):
+        from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        monkeypatch.setattr(
+            rt.reaction_loop_runner,
+            "_task_closeout_acceptance",
+            lambda form: {
+                "allowed": False,
+                "reason": "task_acceptance_blocked",
+                "blockers": ["item_blocked"],
+                "terminal_blocked": True,
+            },
+        )
+        helper = self
+        candidates = ["第一次混合超长候选", "第二次终态超长候选"]
+
+        class Executor:
+            def __init__(self):
+                self.calls = []
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                self.calls.append(list(messages))
+                tools = []
+                if len(self.calls) == 1:
+                    tools.append(helper._native_tool_envelope(
+                        "file_read",
+                        {"path": "evidence.txt", "reason": "read evidence"},
+                        call_id="call_budget_read",
+                    ))
+                tools.append(helper._native_reaction_finalize(
+                    call_id=f"call_budget_finalize_{len(self.calls)}",
+                    handoff_text="说明阻塞事实",
+                ))
+                return {
+                    "response": candidates[len(self.calls) - 1],
+                    "tool_call_envelopes": tools,
+                }
+
+        executor = Executor()
+        rt.executor = executor
+        rt.general_tool_dispatcher = GeneralToolDispatcher(
+            load_guide_fn=lambda tool_id: "file_read guide",
+            execute_fn=lambda request: {
+                "tool_id": "file_read",
+                "tool_family": "general_tool",
+                "tool_class": "read_tool",
+                "status": "ok",
+                "source": "general_tool_call",
+                "result_kind": "general_tool_result",
+                "path": request.get("path"),
+                "content": "evidence",
+            },
+        )
+
+        result = rt.reaction_loop_runner._run_loop(
+            rt.sm.load(),
+            "interactive",
+            [],
+            final_response_max_chars=5,
+        )
+
+        assert len(executor.calls) == 2
+        assert result["_general_tool_results"][0]["status"] == "ok"
+        assert result["_settlement_ledgers"][-1]["blocked_reason"] == (
+            "blocked/final_response_length_exhausted")
+        assert result["_final_response_length_rejections"] == 2
+        assert all(
+            candidate not in str(result["_message_envelopes"])
+            for candidate in candidates
+        )
+
+    def test_spec735_relay_inherits_used_rewrite_allowance(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+
+        class Executor:
+            def __init__(self):
+                self.calls = 0
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                self.calls += 1
+                return {"response": "继承后再次超限", "tool_call_envelopes": []}
+
+        executor = Executor()
+        rt.executor = executor
+        result = rt.reaction_loop_runner._run_loop(
+            rt.sm.load(),
+            "relay",
+            [],
+            final_response_max_chars=5,
+            final_response_length_rejections=1,
+        )
+
+        assert executor.calls == 1
+        assert result["_final_response_length_rejections"] == 2
+        assert result["_settlement_ledgers"][-1]["blocked_reason"] == (
+            "blocked/final_response_length_exhausted")
+
+    def test_spec735_rejection_removes_only_current_matching_envelope(
+            self, tmp_path, monkeypatch):
+        from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        repeated = "同文历史进展不应被误删"
+        helper = self
+
+        class Executor:
+            def __init__(self):
+                self.calls = 0
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "response": repeated,
+                        "tool_call_envelopes": [helper._native_tool_envelope(
+                            "file_read",
+                            {"path": "same.txt", "reason": "read"},
+                            call_id="call_same_text_read",
+                        )],
+                    }
+                if self.calls == 2:
+                    return {"response": repeated, "tool_call_envelopes": []}
+                return {"response": "短答", "tool_call_envelopes": []}
+
+        rt.executor = Executor()
+        rt.general_tool_dispatcher = GeneralToolDispatcher(
+            load_guide_fn=lambda tool_id: "file_read guide",
+            execute_fn=lambda request: {
+                "tool_id": "file_read",
+                "tool_family": "general_tool",
+                "tool_class": "read_tool",
+                "status": "ok",
+                "source": "general_tool_call",
+                "result_kind": "general_tool_result",
+                "path": request.get("path"),
+                "content": "ok",
+            },
+        )
+
+        result = rt.reaction_loop_runner._run_loop(
+            rt.sm.load(), "interactive", [], final_response_max_chars=5)
+
+        assert result["response"] == "短答"
+        assert sum(
+            str(item.get("text") or "") == repeated
+            for item in result["_message_envelopes"]
+        ) == 1
+
+    def test_spec735_rejected_candidate_audit_failure_is_not_swallowed(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        rt.executor = ScriptedExecutor({
+            "response": "审计必须保留的超长候选",
+            "tool_call_envelopes": [],
+        })
+        store = rt.audit.get_store()
+        append_event = store.append_event
+
+        def fail_rejected_candidate(round_num, event_type, *args, **kwargs):
+            if event_type == "final_response_candidate_rejected":
+                raise OSError("audit unavailable")
+            return append_event(round_num, event_type, *args, **kwargs)
+
+        monkeypatch.setattr(store, "append_event", fail_rejected_candidate)
+
+        with pytest.raises(OSError, match="audit unavailable"):
+            rt.reaction_loop_runner._run_loop(
+                rt.sm.load(), "interactive", [], final_response_max_chars=5)
+
+    def test_spec739_statusbar_contract_is_prompt_only(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        contract = {
+            "language": "en",
+            "answer_scope": "conclusion_only",
+            "max_sentences": 1,
+        }
+        candidate = "露营安排在下个月。还有别的细节。"
+
+        class Executor:
+            def __init__(self):
+                self.calls = []
+
+            def call(self, step, system, messages, active_protocol_tool_guides=None):
+                self.calls.append(list(messages))
+                return {
+                    "response": candidate,
+                    "tool_call_envelopes": [],
+                }
+
+        executor = Executor()
+        rt.executor = executor
+        result = rt.reaction_loop_runner._run_loop(
+            rt.sm.load(), "interactive", [], response_contract=contract)
+
+        assert result["response"] == candidate
+        assert len(executor.calls) == 1
+        assert all(
+            "回答锚点：使用英文；只回答结论；限一句话。" in str(messages)
+            for messages in executor.calls
+        )
+        assert not any(
+            receipt.get("status", "").startswith("response_contract")
+            for receipt in result["_reaction_loop_guard_receipts"]
+        )
+        assert result["_settlement_ledgers"][-1]["closeout_decision"] == "finish"
+
+    def test_spec739_persona_response_anchor_reaches_every_reaction_frame(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+
+        class Config:
+            @staticmethod
+            def get_response_anchor_prompt():
+                return "先给结论，再给必要证据。"
+
+            @staticmethod
+            def get_execution_permission_level():
+                return "unlimited"
+
+        assembler.config_store = Config()
+        executor = ScriptedExecutor({
+            "response": "这是模型自己的最终回复。",
+            "tool_call_envelopes": [],
+        })
+        rt.executor = executor
+
+        result = rt.reaction_loop_runner._run_loop(
+            rt.sm.load(), "interactive", [])
+
+        assert result["response"] == "这是模型自己的最终回复。"
+        assert len(executor.calls) == 1
+        assert "回答锚点：先给结论，再给必要证据。" in str(executor.calls[0])
+
     def test_spec571_missing_access_natural_reply_clears_task_bootstrap(
             self, tmp_path, monkeypatch):
         from engines.general_tool_dispatcher import GeneralToolDispatcher
@@ -410,7 +734,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         from engines.general_tool_dispatcher import GeneralToolDispatcher
 
         rt = self._make_runtime(tmp_path)
-        monkeypatch.setattr(rt, "_load_time_limit", lambda: 600)
+        monkeypatch.setattr(rt, "_load_time_milestones", lambda: (600, 1200, 1800))
         time_state = {"run_loop_calls": 0}
 
         def fake_time():
@@ -499,7 +823,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         from engines.general_tool_dispatcher import GeneralToolDispatcher
 
         rt = self._make_runtime(tmp_path)
-        monkeypatch.setattr(rt, "_load_time_limit", lambda: 600)
+        monkeypatch.setattr(rt, "_load_time_milestones", lambda: (600, 1200, 1800))
         time_state = {"started": False, "now": 599}
 
         def fake_time():
@@ -592,7 +916,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         import engines.reaction_loop_main as reaction_loop_main_mod
 
         rt = self._make_runtime(tmp_path)
-        monkeypatch.setattr(rt, "_load_time_limit", lambda: 600)
+        monkeypatch.setattr(rt, "_load_time_milestones", lambda: (600, 1200, 1800))
         time_state = {"started": False}
 
         def fake_time():
@@ -1352,7 +1676,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
                 "read_paths": [str(task_root)],
                 "write_paths": [str(output_root)],
                 "shell_cwd": str(task_root),
-                "allowed_tools": ["file_read", "file_write", "file_search"],
+                "allowed_tools": ["file_read", "file_write", "file_glob", "file_grep"],
             }),
         )
         assembler = rt.assembler
@@ -1692,6 +2016,48 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert "reaction_finalize_finish" not in cache_fact
         assert "next_action" not in cache_fact
 
+    def test_spec765_progressive_cache_fact_uses_v3_transaction_truth(self):
+        from engines.reaction_helpers import format_protocol_tool_fact
+
+        fact = format_protocol_tool_fact({
+            "tool_id": "guide_submit",
+            "status": "applied",
+            "guide_id": "cache_compaction:CMP-R000765-A1B2C3D4",
+            "accepted_submissions": [{
+                "item_id": "cache_compaction_due",
+                "option_id": "submit_cache_compaction_batch",
+                "fields": {
+                    "results": [{
+                        "shard_id": "MCS-000001",
+                        "action": "replace",
+                        "semantic_content": "不应复制进短工具事实的摘要正文",
+                    }],
+                },
+            }],
+            "backend_receipts": [{
+                "schema_version": "cache_compaction_batch_receipt.v3",
+                "operation_id": "progressive_cache_compaction",
+                "status": "applied",
+                "completed_ids": ["MCS-000001"],
+                "remaining_ids": ["MCS-000002"],
+                "rewrite_applied": False,
+            }],
+            "cache_compaction": {
+                "status": "applied",
+                "compaction_id": "CMP-R000765-A1B2C3D4",
+                "completed_ids": ["MCS-000001"],
+                "remaining_ids": ["MCS-000002"],
+                "rewrite_applied": False,
+            },
+        })
+
+        assert "submit_cache_compaction_batch" in fact
+        assert "MCS-000001" in fact
+        assert "MCS-000002" in fact
+        assert "progressive_cache_compaction" in fact
+        assert "不应复制进短工具事实的摘要正文" not in fact
+        assert "工具：cache_compact" not in fact
+
     def test_spec419_protocol_read_receipts_keep_total_size_visible(self):
         from engines.reaction_helpers import format_protocol_tool_fact
 
@@ -1758,7 +2124,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert "call_chronicle_stale_focus" in fact
         assert "no_active_chronicle_focus" in fact
         assert "当前没有编年史写入焦点" in fact
-        assert "不要继续调用 chronicle_write" in fact
+        assert "不要重复提交当前编年 guide 选项" in fact
         assert "reaction_finalize" in fact
 
     def test_spec417_memory_subject_failure_fact_is_actionable_not_empty_pointer(self):
@@ -2008,7 +2374,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
                 "status": "ok",
                 "source": "general_tool_call",
                 "backend_type": "python",
-                "handler": "file_search_handler",
+                "handler": "file_glob_handler",
                 "permission_scope": "workspace_read_allowlist",
                 "result_kind": "general_tool_result",
                 "query": request.get("query"),
@@ -2028,12 +2394,13 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
                     return {
                         "response": "",
                         "tool_call_envelopes": [helper._native_tool_envelope(
-                            "file_search",
+                            "file_glob",
                             {
-                                "query": "旧材料",
+                                "root": ".",
+                                "pattern": "*.md",
                                 "reason": "wrong kind progress before relay",
                             },
-                            call_id="call_wrong_kind_file_search",
+                            call_id="call_wrong_kind_file_glob",
                         )],
                     }
                 return {
@@ -2345,6 +2712,15 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
 
             def append_to_cache(self, round_num, role, text, *, kind, **kwargs):
                 self.entries.append((round_num, role, text, kind, kwargs))
+
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                }
+
+            def load_cache_compaction_debt(self):
+                return {}
 
         class CapturingAlerts:
             def __init__(self):
@@ -2659,7 +3035,8 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert result["_reaction_finalize_validated"] is True
         assert result["_memory_write_receipts"][0]["status"] == "applied"
         assert memory_store.entries[0][1] == "节律插写"
-        assert memory_index.keywords == [("MEM-131000AA", ["Spec443", "memory"])]
+        assert memory_store.ltm_entry_state("MEM-131000AA")["meta"]["tags"] == [
+            "Spec443", "memory"]
         backend = result["_guide_submit_receipts"][0]["backend_receipts"][0]
         assert backend["tool_id"] == "chronicle_write"
         assert backend["status"] == "applied"
@@ -2974,7 +3351,9 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert "原生工具调用警告" in second_call_text
         assert "停止调用未开通或缺少运行时契约的工具" in second_call_text
         assert result["_chronicle_write_receipts"] == []
-        assert result["_write_pending_settlement"]["pendings"] == []
+        assert result["_reaction_obligations"]["memory_write_rewrite"][
+            "pending_items"
+        ] == []
 
     def test_spec350_chronicle_write_rejects_without_active_focus(self):
         from logic.chronicle_write import apply_chronicle_write_declarations
@@ -4121,7 +4500,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assembler = rt.assembler
         monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
         helper = self
 
@@ -4521,7 +4899,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assembler = rt.assembler
         monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
         create_task_bootstrap_guide(rt.workbench, reason="spec727")
         helper = self

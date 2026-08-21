@@ -153,7 +153,7 @@ def render_task_execution_action_guide(guide, workbench_store):
     lines = [
         f"任务执行指南｜行动卡：{guide_id}",
         "看板在 40_high_freq；本卡只管下一步行动。",
-        "真实工作优先；证据后登记：缺产物用 file_write/file_edit，缺验证用 shell_command，缺来源正文用 file_read/web_fetch/web_search。",
+        "真实工作优先；证据后登记：缺产物用 file_write/file_edit，缺隔离执行或验证用 subagent_dispatch，缺来源正文用 file_read/file_grep/web_fetch/web_search。",
         TASK_ORIGINAL_GOAL_NON_SHRINK_REMINDER,
         "工具调用走 native 通道；正文只写简短进展，不承载 DSML/JSON/完整参数。",
     ]

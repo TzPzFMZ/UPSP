@@ -11,6 +11,8 @@ import type {
   ModelContextResolution,
   PageId,
   PermissionLevel,
+  PeriodicMemoryMountReceipt,
+  PersonaCatalogPayload,
   PersonaCorePayload,
   PersonaStatePayload,
   ProtocolCatalogPayload,
@@ -28,6 +30,7 @@ import {
   els,
   polling,
   personaProjection,
+  personaCatalogProjection,
   protocolProjection,
   runtimePages,
   runtimeProjection,
@@ -48,11 +51,13 @@ import {
   renderStage,
   renderGlobalSettings,
   openGlobalSettings,
+  openMemoryDetail,
   renderStageAndFocus,
   selectDepositionItem,
 } from "./view";
 
 let contextPrefixDiffController: AbortController | null = null;
+const depositionDetailRequests = new Map<string, Promise<boolean>>();
 
 class RuntimeRequestError extends Error {
   status: number;
@@ -794,35 +799,55 @@ export function loadActiveDepositionDetail(pageId: PageId): void {
   if (selection?.[1]) void loadDepositionDetail(selection[0], selection[1]);
 }
 
-export async function loadDepositionDetail(kind: DepositionKind, itemId: string, { force = false, render = true }: { force?: boolean; render?: boolean } = {}): Promise<void> {
-  if (!itemId || depositionProjection.pendingDetails.has(`${kind}:${itemId}`)) return;
-  if (!force && depositionProjection.details[kind]?.[itemId]) return;
+export function loadDepositionDetail(kind: DepositionKind, itemId: string, { force = false, render = true }: { force?: boolean; render?: boolean } = {}): Promise<boolean> {
+  if (!itemId) return Promise.resolve(false);
   const key = `${kind}:${itemId}`;
+  const pending = depositionDetailRequests.get(key);
+  if (pending) {
+    return force
+      ? pending.then(() => loadDepositionDetail(kind, itemId, { force: true, render }))
+      : pending;
+  }
+  if (!force && depositionProjection.details[kind]?.[itemId]) return Promise.resolve(true);
   depositionProjection.pendingDetails.add(key);
   delete depositionProjection.detailErrors[key];
-  try {
-    const payload = await fetchRuntimeJson<DepositionDetailPayload>(`./api/deposition/${kind}?id=${encodeURIComponent(itemId)}`);
-    if (payload.schema_version !== "seed_gui_deposition_detail.v1" || payload.kind !== kind || payload.item?.id !== itemId) {
-      throw new Error("deposition_detail_schema_mismatch");
+  const request = (async () => {
+    try {
+      const payload = await fetchRuntimeJson<DepositionDetailPayload>(`./api/deposition/${kind}?id=${encodeURIComponent(itemId)}`);
+      if (payload.schema_version !== "seed_gui_deposition_detail.v1" || payload.kind !== kind || payload.item?.id !== itemId) {
+        throw new Error("deposition_detail_schema_mismatch");
+      }
+      depositionProjection.details[kind][itemId] = payload;
+      return true;
+    } catch (error: unknown) {
+      const failure = errorView(error);
+      depositionProjection.detailErrors[key] = `${t("详情读取失败")}：${failure.code || failure.message || "unknown"}`;
+      return false;
     }
-    depositionProjection.details[kind][itemId] = payload;
-  } catch (error: unknown) {
-    const failure = errorView(error);
-    depositionProjection.detailErrors[key] = `${t("详情读取失败")}：${failure.code || failure.message || "unknown"}`;
-  } finally {
+  })();
+  const tracked = request.finally(() => {
+    depositionDetailRequests.delete(key);
     depositionProjection.pendingDetails.delete(key);
-  }
-  if (render && state.activePage === depositionPage(kind)) renderStage(state.activePage);
+    if (render && state.activePage === depositionPage(kind)) renderStage(state.activePage);
+  });
+  depositionDetailRequests.set(key, tracked);
+  return tracked;
 }
 
 export function pollDeposition({ force = false, ignoreVisibility = false }: { force?: boolean; ignoreVisibility?: boolean } = {}): Promise<boolean> {
   if (document.hidden && !ignoreVisibility) return Promise.resolve(false);
   if (polling.deposition) {
-    if (force) polling.depositionForceQueued = true;
+    if (force) {
+      polling.depositionForceQueued = true;
+      return polling.deposition.then(() => (
+        polling.deposition || pollDeposition({ force: true, ignoreVisibility })
+      ));
+    }
     return polling.deposition;
   }
   if (!depositionProjection.index) depositionProjection.loading = true;
   let changed = force;
+  let loaded = false;
   const request = (async () => {
     try {
       const payload = await fetchRuntimeJson<DepositionIndexPayload>("./api/deposition");
@@ -837,6 +862,7 @@ export function pollDeposition({ force = false, ignoreVisibility = false }: { fo
       depositionProjection.index = payload;
       depositionProjection.renderKey = nextKey;
       depositionProjection.error = "";
+      loaded = true;
       if (changed) {
         const selected: Array<[DepositionKind, DepositionItem | null]> = [
           ["memory", selectDepositionItem("memory", payload.memory)],
@@ -862,7 +888,7 @@ export function pollDeposition({ force = false, ignoreVisibility = false }: { fo
         loadActiveDepositionDetail(state.activePage);
       }
     }
-    return true;
+    return loaded;
   })();
   polling.deposition = request.finally(() => {
     polling.deposition = null;
@@ -990,6 +1016,75 @@ export async function submitRuntimeMessage(event: SubmitEvent): Promise<void> {
   }
 }
 
+export async function submitPeriodicMemory(
+  action: "mount" | "unmount",
+  memId: string,
+): Promise<void> {
+  const mutation = depositionProjection.periodicMutation;
+  if (mutation.pending) return;
+  mutation.pending = true;
+  mutation.memId = memId;
+  mutation.feedback = "";
+  mutation.receipt = null;
+  let mutationAccepted = false;
+  let truthReloaded = false;
+  const detailKey = `memory:${memId}`;
+  openMemoryDetail(memId, { retry: true });
+  try {
+    const payload = await fetchRuntimeJson<{
+      schema_version: string;
+      submission_source: string;
+      receipt?: PeriodicMemoryMountReceipt;
+    }>("./api/deposition/memory/periodic", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, mem_id: memId }),
+    });
+    if (payload.schema_version !== "seed_gui_periodic_memory_result.v1"
+        || payload.submission_source !== "seed_gui"
+        || payload.receipt?.schema_version !== "periodic_memory_mount_receipt.v2"
+        || payload.receipt.tool_id !== "periodic_memory_mount"
+        || payload.receipt.mem_id !== memId
+        || !["applied", "noop"].includes(payload.receipt.status)) {
+      throw new Error("periodic_memory_receipt_mismatch");
+    }
+    mutation.receipt = payload.receipt;
+    mutationAccepted = true;
+    const indexReloaded = await pollDeposition({ force: true, ignoreVisibility: true });
+    const detailReloaded = await loadDepositionDetail("memory", memId, { force: true, render: false });
+    const truth = depositionProjection.details.memory[memId]?.item;
+    const mounted = truth?.periodic_mounted;
+    const mountStatus = truth?.periodic_mount_status || (mounted ? "mounted" : "unmounted");
+    truthReloaded = indexReloaded
+      && detailReloaded
+      && typeof mounted === "boolean"
+      && mountStatus === (payload.receipt.mount_status || (action === "mount" ? "mounted" : "unmounted"));
+    if (!truthReloaded) {
+      delete depositionProjection.details.memory[memId];
+      depositionProjection.detailErrors[detailKey] = t("操作已提交，但记忆真源重读失败；为避免显示旧状态，请重新读取详情。");
+      throw new Error("periodic_memory_truth_reload_failed");
+    }
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    const labels = {
+      400: t("定期层挂载参数无效"),
+      403: t("请求来源被拒绝"),
+      404: t("记忆条目不存在"),
+      409: t("Runtime 正忙或挂载状态冲突"),
+      503: t("本地定期层处理器不可用"),
+    };
+    mutation.feedback = mutationAccepted && !truthReloaded
+      ? t("操作已提交，但记忆真源重读失败；为避免显示旧状态，请重新读取详情。")
+      : failure.code === "periodic_memory_budget_exceeded"
+        ? t("定期层已达到当前配置上限，请先取消其他挂载或调整上限后再试。")
+        : `${labels[failure.status as keyof typeof labels] || t("定期层挂载变更失败")}：${failure.code || failure.message}`;
+    window.alert(mutation.feedback);
+  } finally {
+    mutation.pending = false;
+    openMemoryDetail(memId, { retry: true });
+  }
+}
+
 export async function submitRuntimePermissionChange(): Promise<void> {
   const status = runtimeProjection.status;
   if (!status?.current_round || !status.can_stop || runtimeProjection.permissionChanging) return;
@@ -1097,6 +1192,66 @@ export function pollAbout({ force = false }: { force?: boolean } = {}): Promise<
   })();
   polling.about = request.finally(() => { polling.about = null; });
   return polling.about;
+}
+
+export function pollPersonaCatalog({ force = false }: { force?: boolean } = {}): Promise<boolean> {
+  if (polling.personas) return polling.personas;
+  if (!force && personaCatalogProjection.data) return Promise.resolve(false);
+  personaCatalogProjection.loading = true;
+  const request = (async () => {
+    try {
+      const payload = await fetchRuntimeJson<PersonaCatalogPayload>("./api/personas");
+      if (payload.schema_version !== "seed_gui_persona_catalog.v1") {
+        throw new Error("persona_catalog_schema_mismatch");
+      }
+      personaCatalogProjection.data = payload;
+      personaCatalogProjection.error = "";
+    } catch (error: unknown) {
+      const failure = errorView(error);
+      personaCatalogProjection.error = failure.code || failure.message;
+    } finally {
+      personaCatalogProjection.loading = false;
+    }
+    renderIdentity();
+    return true;
+  })();
+  polling.personas = request.finally(() => { polling.personas = null; });
+  return polling.personas;
+}
+
+export async function submitInstanceMutation(
+  path: string,
+  body: JsonObject,
+): Promise<void> {
+  if (personaCatalogProjection.pending) return;
+  personaCatalogProjection.pending = true;
+  personaCatalogProjection.error = "";
+  renderIdentity();
+  try {
+    const receipt = await fetchRuntimeJson<JsonObject>(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (receipt.schema_version !== "seed_gui_instance_mutation_receipt.v1") {
+      throw new Error("instance_mutation_receipt_mismatch");
+    }
+    if (receipt.restart_required === true) {
+      runtimeProjection.sendFeedback = t("正在切换位格或分身");
+    } else {
+      await pollPersonaCatalog({ force: true });
+    }
+  } catch (error: unknown) {
+    const failure = errorView(error);
+    personaCatalogProjection.error = failure.code === "instance_restart_host_required"
+      ? t("此操作需要桌面客户端安全重启后端。")
+      : failure.code === "instance_mutation_failed"
+        ? t("位格或分身变更失败，请重试。")
+      : failure.code || failure.message;
+  } finally {
+    personaCatalogProjection.pending = false;
+    renderIdentity();
+  }
 }
 
 export async function submitRuntimeStop(): Promise<void> {

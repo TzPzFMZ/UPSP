@@ -49,7 +49,6 @@ def test_spec244_native_protocol_write_no_longer_requires_loaded_guide():
             "mem_id": "MEM-1",
             "operation": "remove",
             "container_refs": ["DC-1"],
-            "current_overview": "removed stale reference",
             "reason": "retire old route",
         },
         tool_class="sync_tool",
@@ -120,8 +119,52 @@ def test_spec246_native_focus_tools_have_single_iteration_slot():
     assert any(
         item.get("tool_id") == "memory_container_write"
         and item.get("reason") == "focus_tool_iteration_conflict"
+        and item.get("accepted_focus_tool") == "container_focus"
         for item in routed["invalid_tool_requests"]
     )
+
+    from engines.reaction_helpers import native_tool_feedback_action
+    from engines.reaction_protocol_tool_execution import model_visible_error_hint
+
+    conflict = next(
+        item for item in routed["invalid_tool_requests"]
+        if item.get("reason") == "focus_tool_iteration_conflict"
+    )
+    hint = model_visible_error_hint(conflict)
+    action, messages = native_tool_feedback_action(conflict["reason"], conflict)
+    assert hint == {
+        "kind": "validation",
+        "retry": "next_frame",
+        "attempted": {"tool_id": "memory_container_write"},
+        "current": {"accepted_focus_tool": "container_focus"},
+        "expected": {"max_focus_tools_per_iteration": 1},
+        "next_action": "本帧已有焦点工具被接受；等待其回执，下一帧只提交一个焦点工具。",
+    }
+    assert action == "wait_next_frame_single_focus_tool"
+    assert any("container_focus" in message for message in messages)
+    assert any("下一帧只提交一个焦点工具" in message for message in messages)
+
+
+def test_spec756_focus_tool_headers_forbid_same_frame_batching():
+    from logic.native_tool_calls import export_provider_tool_schemas
+
+    schemas = export_provider_tool_schemas(
+        include_protocol_writes=True,
+        include_step_terminal_tools={"reaction_finalize"},
+        execution_permission_level="limited",
+    )
+    descriptions = {
+        item.get("name"): str(item.get("description") or "")
+        for item in schemas
+    }
+    for tool_id in (
+        "container_focus",
+        "memory_container_create",
+        "memory_container_write",
+    ):
+        description = descriptions[tool_id]
+        assert "每个 provider Frame/反应迭代最多调用一个焦点工具" in description
+        assert "下一帧" in description
 
 
 def test_spec246_multiple_sync_tools_can_route_in_one_iteration():
@@ -134,30 +177,29 @@ def test_spec246_multiple_sync_tools_can_route_in_one_iteration():
                 "mem_id": "MEM-1",
                 "operation": "remove",
                 "container_refs": ["DC-1"],
-                "current_overview": "removed stale reference",
                 "reason": "sync one",
             },
             tool_class="sync_tool",
             index=0,
         ),
         _envelope(
-            "pending_cancel",
+            "relay_intent_settle",
             {
-                "pending_id": "PENDING-1",
-                "reason_code": "obsolete_intent",
+                "relay_intent_id": "RI-1",
+                "status": "completed",
             },
             tool_class="sync_tool",
             index=1,
         ),
     ], native_mode=True, active_protocol_tool_guides=[
         "memory_link_update",
-        "pending_cancel",
+        "relay_intent_settle",
     ])
 
     assert routed["invalid_tool_requests"] == []
     assert routed["protocol_tool_submissions"] == [
         "memory_link_update",
-        "pending_cancel",
+        "relay_intent_settle",
     ]
     assert routed["memory_link_update_declarations"]
-    assert routed["pending_cancel_requests"]
+    assert routed["relay_intent_settle_requests"]

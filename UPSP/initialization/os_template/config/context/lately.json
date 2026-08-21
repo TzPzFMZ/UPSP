@@ -1,4 +1,5 @@
 {
+  "_version": "Base-0.13.0",
   "layer": "lately",
   "description": "最近缓存：允许进入语料履带的近期语料块集合；主源为 STM/context/cache/lately_cache.jsonl",
   "store": {
@@ -16,16 +17,12 @@
     "minimum_commitment",
     "fault_note",
     "cache_summary",
+    "interaction_summary",
     "material"
   ],
-  "budget_chars": 262144,
-  "trim_chars": 65536,
-  "compact_ratio": 0.618,
-  "compact_shard_chars": 8192,
-  "compact_shard_ratio": 0.314,
-  "fifo_policy": "complete_block",
-  "retired_round_window": {
-    "window_by_step": "retired by Spec 061; lately length is character-managed",
-    "retention_rounds": "retired by Spec 061; batch deletion uses trim_chars"
-  }
+  "pressure_ratio": 0.9,
+  "protected_interaction_count": 16,
+  "semantic_summary_ratio": 0.125,
+  "cycle_target_ratio": 0.25,
+  "batch_source_chars": 65536
 }

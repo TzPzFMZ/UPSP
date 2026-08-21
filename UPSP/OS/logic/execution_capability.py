@@ -1,14 +1,13 @@
 """Capability gate for general_tool requests before handler execution."""
-import re
 
 from logic.general_tools import (
     _clean,
-    _dangerous_command_reason,
     _file_read_allowed_roots,
     _permission_denial,
     _resolve_request_path,
     _split_list_text,
     _url_denial,
+    PERSONA_READ_ALIAS,
     UNRESTRICTED_ALLOWED_ROOTS,
 )
 from logic.protocol_tools import normalize_tool_id
@@ -58,11 +57,15 @@ def _decision(tool_id, phase, allowed, reason="", details=None):
     }
 
 
-def _path_denial(raw_path, allowed_roots=None):
+def _path_denial(raw_path, allowed_roots=None, *, access="read"):
+    if (
+            access != "read"
+            and _clean(raw_path).lower().startswith(PERSONA_READ_ALIAS)):
+        return str(raw_path), "persona_alias_read_only", ""
     path = _resolve_request_path(raw_path, allowed_roots)
     if path is None:
         return "", "missing_path", ""
-    denial = _permission_denial(path, allowed_roots)
+    denial = _permission_denial(path, allowed_roots, access=access)
     return str(path), denial, ""
 
 
@@ -70,15 +73,6 @@ def _stable_path_reason(denial):
     if denial == "outside_allowlist":
         return "outside_allowlist"
     return "capability_denied"
-
-
-def _remote_script_pipe_reason(command):
-    lowered = (command or "").strip().lower()
-    if not re.search(r"\b(curl|wget|invoke-webrequest|iwr)\b", lowered):
-        return ""
-    if re.search(r"\|\s*(bash|sh|pwsh|powershell|iex|invoke-expression|python|node)\b", lowered):
-        return "remote_script_pipe"
-    return ""
 
 
 def _check_shell_command(request, tool_id, phase, allowed_roots=None):
@@ -91,18 +85,9 @@ def _check_shell_command(request, tool_id, phase, allowed_roots=None):
             "capability_denied",
             {"denial": "missing_command"},
         )
-    danger_reason = _remote_script_pipe_reason(command) or _dangerous_command_reason(command)
-    if danger_reason:
-        return _decision(
-            tool_id,
-            phase,
-            False,
-            "dangerous_shell_command",
-            {"danger_reason": danger_reason, "command": command},
-        )
     cwd = request.get("cwd")
     if _clean(cwd):
-        path, denial, _ = _path_denial(cwd, allowed_roots)
+        path, denial, _ = _path_denial(cwd, allowed_roots, access="shell")
         if denial:
             return _decision(
                 tool_id,
@@ -130,8 +115,10 @@ def _check_file_read(request, tool_id, phase, allowed_roots=None):
     return _decision(tool_id, phase, True)
 
 
-def _check_file_search(request, tool_id, phase, allowed_roots=None):
-    path, denial, _ = _path_denial(request.get("root"), allowed_roots)
+def _check_file_discovery(request, tool_id, phase, allowed_roots=None):
+    path, denial, _ = _path_denial(
+        request.get("root"), _file_read_allowed_roots(allowed_roots)
+    )
     if denial:
         return _decision(
             tool_id,
@@ -144,7 +131,9 @@ def _check_file_search(request, tool_id, phase, allowed_roots=None):
 
 
 def _check_file_edit(request, tool_id, phase, allowed_roots=None):
-    path, denial, _ = _path_denial(request.get("path"), allowed_roots)
+    path, denial, _ = _path_denial(
+        request.get("path"), allowed_roots, access="write"
+    )
     if denial:
         return _decision(
             tool_id,
@@ -175,7 +164,9 @@ def _check_file_edit(request, tool_id, phase, allowed_roots=None):
 
 
 def _check_file_write(request, tool_id, phase, allowed_roots=None):
-    path, denial, _ = _path_denial(request.get("path"), allowed_roots)
+    path, denial, _ = _path_denial(
+        request.get("path"), allowed_roots, access="write"
+    )
     if denial:
         return _decision(
             tool_id,
@@ -329,7 +320,8 @@ def check_general_tool_request(
                 "active_guide": sorted(task_bootstrap_required)[0],
                 "allowed_before_bootstrap": [
                     "file_read",
-                    "file_search",
+                    "file_glob",
+                    "file_grep",
                     "memory_write",
                     "web_fetch",
                     "web_search",
@@ -369,8 +361,10 @@ def check_general_tool_request(
     )
     if tool_id == "file_read":
         return _check_file_read(request, tool_id, normalized_phase, allowed_roots)
-    if tool_id == "file_search":
-        return _check_file_search(request, tool_id, normalized_phase, allowed_roots)
+    if tool_id in {"file_glob", "file_grep"}:
+        return _check_file_discovery(
+            request, tool_id, normalized_phase, allowed_roots
+        )
     if tool_id == "shell_command":
         return _check_shell_command(request, tool_id, normalized_phase, allowed_roots)
     if tool_id == "file_edit":

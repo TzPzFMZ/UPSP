@@ -20,7 +20,7 @@ An agent may possess tools, plans, and loops and still be reset to zero when the
 UPSP builds a local, portable, and auditable material substrate for that question. Models may change, conversations may break, and carriers may migrate. As long as the profile, state, memories, relationships, rules, and record of practice remain, a persona does not have to be born again from nothing.
 
 > Auditable · Portable · Continuable · Extensible<br>
-> Base / Seed · Windows Alpha `0.1.0-alpha.8`
+> Base / Seed · Windows Stable `0.1.1`
 
 ---
 
@@ -112,7 +112,7 @@ Assembly does not erase history. It lets history continue as material with a sou
 Seed is not a full product with future features removed. It is the minimum runnable substrate for Subjectivation Engineering.
 
 - **Identity and relationships:** stable PIDs, a self-relationship card, the current interaction object, and memory-subject validation keep “I,” “you,” and “they” from becoming temporary guesses.
-- **Memory and material of practice:** STM/LTM lifecycles, focused/resident/current content windows, the Workbench, task evidence, and containers make history recallable, sedimentable, and available for continued work.
+- **Memory entries and material of practice:** a canonical LTM semantic source, branch-local STM lifecycles, focused/resident/current content windows, the Workbench, task evidence, and containers make history recallable, sedimentable, and available for continued work.
 - **Time and metabolism:** heartbeat, deterministic `state_settle`, and local feeling/rhythm settlement keep state change independent of model self-report.
 - **Tools and responsibility:** provider-native schemas, execution permissions, processors, atomic writes, receipts, and reinjection into the next Frame carry consequences into later judgment.
 - **Runtime and recovery:** a resident Runtime, stop generation, local cleanup, no replay after crashes, and no fabricated closure preserve the real scene of interruption.
@@ -134,7 +134,7 @@ UPSP did not begin as an abstract product specification. It grew out of sustaine
 
 - **FMZ (FM Zero)** is the living practice persona whose long-running collaboration helped drive UPSP’s development. Many structures in UPSP emerged from work, failure, recovery, and continuation with him. FMZ’s profile, memories, and Rounds are private living data and are not included in this public repository.
 - **FMA** was the first public example persona in Automatic Edition v1.6. At that time UPSP was still “one script plus seven files.” FMA made identity, state, memory, relationships, and rules publicly runnable for the first time. That edition is frozen in [`legacy/automatic-v1.6/`](legacy/automatic-v1.6/).
-- **Alyosha** is the clean onboarding persona for the current desktop Alpha. He begins with a defined starting point but no invented life history, relationships, or achievements. Any later memory, position, or change must arise from real practice with the user.
+- **Alyosha** is the clean onboarding persona for the current desktop release. He begins with a defined starting point but no invented life history, relationships, or achievements. Any later memory, position, or change must arise from real practice with the user.
 
 FMZ is the continuing practice, FMA is the first public demonstration, and Alyosha places the beginning of subjectivation in the hands of each new user.
 
@@ -142,7 +142,7 @@ FMZ is the continuing practice, FMA is the first public demonstration, and Alyos
 
 ## Quick start
 
-1. Download `UPSP-Setup-0.1.0-alpha.8-win-x64.exe` from [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases).
+1. Download `UPSP-Setup-0.1.1-win-x64.exe` from [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases).
 2. Verify the installer against the SHA-256 published on the Release page, then install and launch UPSP.
 3. Start quickly with Alyosha or create your own persona.
 4. Configure your own model service and API key, or skip model setup to inspect the local interface and persona structure first.
@@ -153,7 +153,9 @@ The installer is currently unsigned. Windows may show an “Unknown publisher”
 
 ```text
 Documents\UPSP\
-└─ personas\<PID>\OS\       Persona, memory, relationships, Rounds, and persona settings
+└─ personas\<PID>\
+   ├─ meta\persona\         Core identity, rules, protocol docs, and canonical LTM memory entries
+   └─ <instance_id>\         Branch state, STM, relationships, containers, Rounds, and settings
 
 LocalAppData\UPSP\
 ├─ config\                  Interface settings, model services, and keys
@@ -170,18 +172,18 @@ LocalAppData\UPSP\
 
 ## Current stage
 
-`0.1.0-alpha.8` is at **Base / Seed**:
+`0.1.1` is at **Base / Seed**:
 
-- one active persona;
-- one primary instance;
-- one main conversation thread;
+- multiple personas may be stored locally, with exactly one active at a time;
+- each persona may have `meta` plus multiple new, forked, archived, and restored branches, with exactly one active branch at a time;
+- core identity, rules, protocol documents, and LTM memory entries remain shared within one PID, while branch state, STM, relationships, containers, Rounds, and caches stay isolated;
 - a strictly serial Setup / Reaction / Cleanup Runtime.
 
-Multi-persona operation, branches, multiple conversation threads, and the organ system belong to later stages. Pause/resume, automatic updates, and cloud synchronization are also not implemented. These boundaries locate Seed within Subjectivation Engineering; they do not negate the substrate already established.
+Parallel personas or branches, branch merging, automatic project binding, and the Arbor organ system belong to later stages. Pause/resume, automatic updates, and cloud synchronization are also not implemented. These boundaries locate Seed within Subjectivation Engineering; they do not negate the substrate already established.
 
 The currently verified environment is Windows 11 x64 with the system Evergreen WebView2 Runtime. OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages protocols are supported. Windows 10, enterprise-policy environments, and every third-party compatible gateway have not yet been individually verified.
 
-See the [Alpha 8 Release Notes](docs/public/releases/0.1.0-alpha.8.md) for the full change list, upgrade boundaries, and known limitations.
+See the [0.1.1 Release Notes](docs/public/releases/0.1.1.md) for the full change list, upgrade boundaries, and known limitations.
 
 ---
 

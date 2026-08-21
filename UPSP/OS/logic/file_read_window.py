@@ -8,7 +8,6 @@ from typing import Any
 WINDOW_STRATEGY = "context_budget_v1"
 RUNTIME_CONTEXT_KEY = "_runtime_file_read_context"
 FILE_READ_BATCH_BUDGET_EXHAUSTED = "file_read_batch_budget_exhausted"
-MATERIAL_BUDGET_UNKNOWN = "material_budget_unknown"
 MATERIAL_CONTEXT_BUDGET_EXHAUSTED = "material_context_budget_exhausted"
 LEGACY_FLOOR_CHARS = 4096
 DEFAULT_MAX_CHARS = 16384
@@ -25,11 +24,7 @@ def _positive_int(value: Any) -> int:
     return number if number > 0 else 0
 
 
-def runtime_file_read_context(
-    state_store: Any,
-    context_store: Any = None,
-    round_num: Any = None,
-) -> dict[str, int]:
+def runtime_file_read_context(state_store: Any) -> dict[str, int]:
     """Read the latest provider usage coordinates without mutating state."""
     if state_store is None or not hasattr(state_store, "get"):
         context = {"current_tokens": 0, "context_window": 0}
@@ -42,17 +37,6 @@ def runtime_file_read_context(
                 state_store.get("base.token_usage.window_size", 0)
             ),
         }
-    if context_store is not None:
-        material_chars = getattr(
-            context_store, "get_round_material_chars", None
-        )
-        now_budget = getattr(context_store, "get_now_budget_chars", None)
-        if callable(material_chars):
-            context["round_material_chars"] = max(
-                _positive_int(material_chars(round_num)), 0
-            )
-        if callable(now_budget):
-            context["now_budget_chars"] = max(_positive_int(now_budget()), 0)
     return context
 
 
@@ -112,16 +96,6 @@ class FileReadBatchBudget:
         self.remaining_chars: int | None = None
         self.legacy_floor_chars = LEGACY_FLOOR_CHARS
         self.exhaustion_reason = FILE_READ_BATCH_BUDGET_EXHAUSTED
-        current_tokens = _positive_int(self.runtime_context.get("current_tokens"))
-        context_window = _positive_int(self.runtime_context.get("context_window"))
-        if not current_tokens or not context_window or current_tokens >= context_window:
-            now_budget = _positive_int(self.runtime_context.get("now_budget_chars"))
-            retained = _positive_int(
-                self.runtime_context.get("round_material_chars")
-            )
-            if now_budget:
-                self.remaining_chars = max(now_budget - retained, 0)
-                self.exhaustion_reason = MATERIAL_BUDGET_UNKNOWN
 
     def exhausted_for(self, tool_id: str) -> bool:
         return (
@@ -142,11 +116,7 @@ class FileReadBatchBudget:
     def rejection_details(self) -> dict[str, Any]:
         return {
             "window_strategy": WINDOW_STRATEGY,
-            "window_budget_status": (
-                MATERIAL_BUDGET_UNKNOWN
-                if self.exhaustion_reason == MATERIAL_BUDGET_UNKNOWN
-                else "batch_floor_exhausted"
-            ),
+            "window_budget_status": "batch_floor_exhausted",
             "window_batch_consumed_before_chars": int(self.consumed_chars),
             "window_batch_remaining_after_chars": int(self.remaining_chars or 0),
         }

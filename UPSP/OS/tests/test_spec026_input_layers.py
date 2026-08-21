@@ -109,30 +109,8 @@ class TestToolFeedbackCorpusBlocks:
         monkeypatch.setattr(ctxs, "STM_CONTEXT_NOW_CACHE_JSONL", str(tmp_path / "cache" / "now_cache.jsonl"), raising=False)
         monkeypatch.setattr(ctxs, "STM_CONTEXT_LATELY_CACHE_JSONL", str(tmp_path / "cache" / "lately_cache.jsonl"), raising=False)
 
-        class CacheConfig(ConfigStoreStub):
-            def get_now_cache_params(self):
-                return {"budget_chars": 80, "trim_chars": 40}
-
-            def get_lately_cache_params(self):
-                return {"budget_chars": 1024, "trim_chars": 128}
-
-            def get_now_policy_by_kind(self):
-                return {}
-
-            def get_lately_allowed_kinds(self):
-                return [
-                    "interaction",
-                    "assistant_reply",
-                    "tool_fact",
-                    "setup_fact",
-                    "relay_handoff",
-                    "minimum_commitment",
-                    "fault_note",
-                    "cache_summary",
-                ]
-
         store = ctxs.ContextStore(
-            config_store=CacheConfig(),
+            config_store=ConfigStoreStub(),
             raw_log_jsonl=str(tmp_path / "buffer" / "raw_log.jsonl"),
             raw_log_md=str(tmp_path / "buffer" / "raw_log.md"),
             corpus_rhythms_dir=str(tmp_path / "corpus" / "public" / "rhythms"),
@@ -142,6 +120,10 @@ class TestToolFeedbackCorpusBlocks:
         store.append_to_cache(18, "tool", "已读取文件：book.md。", kind="tool_fact")
         store.append_to_cache(18, "user", "继续从第 164 行读取。", kind="relay_handoff")
         store.append_to_cache(18, "system", "原始资料正文" * 20, kind="material")
+        store.transition_current_cache(
+            boundary="reaction_provider_return",
+            consumer_frame_id="R000018:reaction:1",
+        )
 
         now_blocks = [
             json.loads(line)
@@ -165,6 +147,7 @@ class TestToolFeedbackCorpusBlocks:
         lately_kinds = {block["kind"] for block in lately_blocks}
         raw_kinds = {block["kind"] for block in raw_blocks}
 
+        assert now_kinds == set()
         assert "material" in lately_kinds
         assert "material" not in raw_kinds
         assert {"interaction", "setup_fact", "tool_fact", "relay_handoff"} <= lately_kinds

@@ -436,6 +436,12 @@ def _corpus_header_lines(rendered, content, current_round=None):
         ]
 
     if kind == "dialogue_progress":
+        if not current:
+            return [
+                f"【历史进展记录，来自第 {source_label} 轮】",
+                "这是历史轮助手此前播报的过程进展，仅作对话连续性参考；"
+                "不代表本轮仍在执行，也不是当前资料、工具事实或最终回复。",
+            ]
         return [
             "【轮中进展记录】",
             "这是助手此前播报的过程进展，仅作对话连续性参考；不是当前资料、工具事实或最终回复。",
@@ -461,9 +467,9 @@ def _corpus_header_lines(rendered, content, current_round=None):
 
     if kind == "relay_handoff":
         title = (
-            "【本轮交接任务】"
+            "【上轮交接任务】"
             if current
-            else f"【上轮交接任务，来自第 {source_label} 轮】"
+            else f"【历史交接任务，来自第 {source_label} 轮】"
         )
         return [
             title,
@@ -500,8 +506,30 @@ def _corpus_header_lines(rendered, content, current_round=None):
         return [f"【第 {_minimum_commitment_round(content, source_round)} 轮已闭合】"]
 
     if kind == "fault_note":
-        title = "【本轮故障记录】" if current else f"【故障记录，来自第 {source_label} 轮】"
-        return [title, "注意：这是故障记录，不是任务完成事实。"]
+        if current:
+            return ["【本轮故障记录】", "注意：这是故障记录，不是任务完成事实。"]
+        return [
+            f"【历史故障记录，来自第 {source_label} 轮】",
+            "注意：这是历史故障记录，不代表本轮发生故障，也不是任务完成事实。",
+        ]
+
+    if kind == "interaction_summary":
+        source_start = _int_or_none(rendered.get("source_round_start"))
+        source_end = _int_or_none(rendered.get("source_round_end"))
+        if source_start is not None and source_end is not None:
+            source_range = (
+                f"第 {source_start} 轮"
+                if source_start == source_end
+                else f"第 {source_start} 至 {source_end} 轮"
+            )
+            title = f"【历史交互摘要，来源{source_range}】"
+        else:
+            title = "【历史交互摘要】"
+        return [
+            title,
+            "这是一次历史用户输入及其后续内容的压缩，不是当前用户输入或当前指令。",
+            "需要精确事实时，应读取记忆、容器、原始语料或审计记录核验。",
+        ]
 
     if kind == "cache_summary":
         if compact_reason == "round_retention_settlement":
@@ -514,6 +542,12 @@ def _corpus_header_lines(rendered, content, current_round=None):
                 "【最近缓存压缩摘要】",
                 "这是最近缓存水位触发后的语义压缩，用于保持上下文连续。",
                 "需要精确事实时，应查看记忆、容器、审计记录或本轮工具回执。",
+            ]
+        if compact_reason == "progressive_lately_pressure":
+            return [
+                "【最近缓存压缩摘要】",
+                "这是首次用户交互前的历史背景压缩，不是当前用户输入或当前指令。",
+                "需要精确事实时，应读取记忆、容器、原始语料或审计记录核验。",
             ]
         return [
             f"【历史摘要，来自第 {source_label} 轮】",
@@ -842,7 +876,7 @@ def build_reaction_step_guide_popup(step):
 记忆与容器沉淀看 POPUP 提醒层的“记忆提醒”；工具字段、权重和回执纪律以 provider-native schema、processor 回执为准。
 
 ## 工具三轴
-- 只读工具：file_read、file_search、memory_content_read、container_read、relation_read。
+- 只读工具：file_read、file_glob、file_grep、memory_content_read、container_read、relation_read。
 - 同步工具：memory_write、memory_link_update、relation_card_write。
 - 焦点工具：container_focus；同一反应迭代谨慎保持单焦点。
 
@@ -959,7 +993,8 @@ def build_general_tool_guide(tool_id):
     properties = sorted((schema.get("properties") or {}).keys())
     label = {
         "file_read": "文件读取通用工具",
-        "file_search": "文件搜索通用工具",
+        "file_glob": "文件名搜索通用工具",
+        "file_grep": "文件正文搜索通用工具",
         "file_edit": "文件编辑通用工具",
         "web_fetch": "网页抓取通用工具",
         "web_search": "网页搜索通用工具",
@@ -977,9 +1012,14 @@ def build_general_tool_guide(tool_id):
             "Windows 下当前按 cmd.exe 语义执行；优先用 `dir`、`type`、`python -m pytest`；"
             "PowerShell cmdlet 需显式 `powershell -NoProfile -Command ...`。"
         )
-    if normalized == "file_search":
+    if normalized == "file_glob":
         lines.append(
             "只搜索候选路径，不读取正文；默认不递归，只有显式 recursive=true 才搜索子目录。"
+        )
+    if normalized == "file_grep":
+        lines.append(
+            "只做字面正文搜索，默认递归且不区分大小写；coverage_complete=false 时"
+            "零命中不能证明不存在。"
         )
     lines.append("仍需通过 ExecutionCapabilityGate；失败时按 native_tool_result 修正。")
     return (

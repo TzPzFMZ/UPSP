@@ -47,11 +47,13 @@ class StatusBarBuilder:
             total = 0
         return f"R{total:06d}"
 
-    def build_full(self, state, round_type="interactive"):
+    def build_full(self, state, round_type="interactive", response_anchor=""):
         """构造 STATUSBAR 全量（独立状态栏层）"""
-        return self.render(self.build_projection(state, round_type))
+        return self.render(self.build_projection(
+            state, round_type, response_anchor=response_anchor))
 
-    def build_projection(self, state, round_type="interactive"):
+    def build_projection(self, state, round_type="interactive",
+                         response_anchor=""):
         """生成模型 STATUSBAR 与 GUI 共用的结构化只读投影。"""
         base = state.get("base", {})
         meta = base.get("meta", {})
@@ -64,7 +66,7 @@ class StatusBarBuilder:
             k for k, v in flags.items()
             if v and k not in RESERVED_STATUSBAR_FLAGS
         ]
-        return {
+        projection = {
             "schema": "statusbar_snapshot.v1",
             "observed_at": now.isoformat(),
             "round": {
@@ -87,6 +89,10 @@ class StatusBarBuilder:
             "relation_cards": [],
             "supplemental_sections": [],
         }
+        response_anchor = str(response_anchor or "").strip()
+        if response_anchor:
+            projection["response_anchor"] = response_anchor
+        return projection
 
     @classmethod
     def render(cls, projection):
@@ -123,6 +129,14 @@ class StatusBarBuilder:
             "kind": "status_summary",
             "content": "\n".join(lines),
         }]
+        response_anchor = str(projection.get("response_anchor") or "").strip()
+        if response_anchor:
+            blocks.append({
+                "block_id": "status:response_anchor",
+                "title": "回答锚点",
+                "kind": "status_response_anchor",
+                "content": f"回答锚点：{response_anchor}",
+            })
         for index, item in enumerate(projection.get("supplemental_sections") or [], 1):
             content = str(item or "").strip()
             if content:

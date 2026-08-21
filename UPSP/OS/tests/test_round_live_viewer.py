@@ -70,6 +70,139 @@ def _layers_manifest(snapshot):
     ]}
 
 
+def test_spec735_rejected_final_candidate_is_audit_only_in_live_projection():
+    candidate = "这是一条不应进入 GUI 的超长最终候选"
+    tool_call = {
+        "tool_id": "file_read",
+        "call_id": "call_budget_read",
+        "arguments": {"path": "evidence.txt"},
+    }
+    events = [
+        _event(1, "round_started", {
+            "input_snapshot": {
+                "trigger": {"final_response_max_chars": 5},
+            },
+        }),
+        _event(2, "llm_stream_delta", {
+            "stream_id": "stream-budget",
+            "content_delta": candidate,
+        }, phase="reaction", iteration=1),
+        _event(3, "llm_output_raw", {
+            "response": candidate,
+            "tool_call_envelopes": [tool_call],
+        }, phase="reaction", iteration=1),
+        _event(4, "llm_output_parsed", {
+            "natural_final_reply_candidate": candidate,
+            "assistant_progress": candidate,
+            "message_envelopes": [{
+                "channel": "assistant_text",
+                "text": candidate,
+                "terminal_text_candidate": True,
+            }],
+        }, phase="reaction", iteration=1),
+        _event(5, "final_response_candidate_rejected", {
+            "candidate": candidate,
+            "status": "final_response_too_long",
+        }, phase="reaction", iteration=1),
+        _event(6, "llm_output_raw", {
+            "response": "合法过程",
+            "tool_call_envelopes": [{
+                "tool_id": "file_search",
+                "call_id": "call_visible_tool",
+                "arguments": {"query": "needle"},
+            }],
+        }, phase="reaction", iteration=2),
+        _event(7, "llm_output_parsed", {
+            "assistant_progress": "合法过程",
+            "message_envelopes": [{
+                "channel": "assistant_text",
+                "text": "合法过程",
+            }],
+        }, phase="reaction", iteration=2),
+        _event(8, "llm_output_raw", {
+            "response": "合法短答",
+        }, phase="reaction", iteration=3),
+        _event(9, "llm_output_parsed", {
+            "natural_final_reply_candidate": "合法短答",
+            "message_envelopes": [{
+                "channel": "assistant_text",
+                "text": "合法短答",
+                "terminal_text_candidate": True,
+                "terminal_decision": "finish",
+            }],
+        }, phase="reaction", iteration=3),
+        _event(10, "round_closed", {
+            "status": "closed",
+            "final_response": "合法短答",
+        }),
+    ]
+
+    pending = build_live_state(events[:4])
+    assert candidate not in json.dumps(pending, ensure_ascii=False)
+    assert any(
+        card.get("type") == "tool-call"
+        and card.get("frame_id") == "R000614:reaction:1"
+        for card in pending["conversation"]
+    )
+    state = build_live_state(events)
+    incremental = events_after(events)
+
+    assert candidate not in json.dumps(state, ensure_ascii=False)
+    assert candidate not in json.dumps(incremental, ensure_ascii=False)
+    assert "合法过程" in json.dumps(state, ensure_ascii=False)
+    assert "合法短答" in json.dumps(state, ensure_ascii=False)
+    assert any(
+        card.get("type") == "tool-call"
+        and card.get("frame_id") == "R000614:reaction:1"
+        for card in state["conversation"]
+    )
+    assert any(
+        card.get("type") == "tool-call"
+        and card.get("frame_id") == "R000614:reaction:2"
+        for card in state["conversation"]
+    )
+    assert incremental["last_event_index"] == 10
+    assert all(
+        event.get("event_type") != "final_response_candidate_rejected"
+        for event in incremental["events"]
+    )
+
+
+def test_spec739_soft_response_contract_does_not_hide_terminal_candidate():
+    candidate = "这是只受软提示约束的候选。"
+    events = [
+        _event(1, "round_started", {
+            "input_snapshot": {"trigger": {"response_contract": {
+                "language": "en",
+                "answer_scope": "conclusion_only",
+                "max_sentences": 1,
+            }}},
+        }),
+        _event(2, "llm_output_raw", {
+            "response": candidate,
+            "tool_call_envelopes": [{
+                "tool_id": "file_read",
+                "call_id": "call_contract_read",
+                "arguments": {"path": "evidence.txt"},
+            }],
+        }, phase="reaction", iteration=1),
+        _event(3, "llm_output_parsed", {
+            "natural_final_reply_candidate": candidate,
+            "message_envelopes": [{
+                "channel": "assistant_text",
+                "text": candidate,
+                "terminal_text_candidate": True,
+                "terminal_decision": "finish",
+            }],
+        }, phase="reaction", iteration=1),
+    ]
+
+    state = build_live_state(events)
+
+    assert candidate in json.dumps(state, ensure_ascii=False)
+    assert any(card.get("type") == "tool-call" for card in state["conversation"])
+
+
 def test_live_viewer_prefers_explicit_frame_id():
     event = _event(1, "llm_call_started", {}, phase="reaction", iteration=3)
     event["frame_id"] = "R000614:reaction:explicit-3"
@@ -1108,6 +1241,18 @@ def test_live_projection_recovers_unmarked_lately_and_now_by_message_position():
                     "role": "system",
                     "content": "【历史回复，来自第 617 轮】\n历史回复正文。",
                 },
+                {
+                    "role": "assistant",
+                    "content": "【历史进展记录，来自第 617 轮】\n历史处理进展。",
+                },
+                {
+                    "role": "user",
+                    "content": "【历史交接任务，来自第 617 轮】\n历史交接正文。",
+                },
+                {
+                    "role": "system",
+                    "content": "【历史故障记录，来自第 617 轮】\n历史故障正文。",
+                },
                 {"role": "system", "content": "<!-- 高频层 -->\n## 容器索引"},
                 {
                     "role": "system",
@@ -1120,6 +1265,14 @@ def test_live_projection_recovers_unmarked_lately_and_now_by_message_position():
                 {
                     "role": "assistant",
                     "content": "【轮中进展记录】\n正在处理。",
+                },
+                {
+                    "role": "user",
+                    "content": "【上轮交接任务】\n继续处理交接任务。",
+                },
+                {
+                    "role": "system",
+                    "content": "【本轮故障记录】\n本轮发生可恢复故障。",
                 },
                 {
                     "role": "system",
@@ -1138,10 +1291,15 @@ def test_live_projection_recovers_unmarked_lately_and_now_by_message_position():
     assert "【历史工具事实摘要" in panes["30_lately"]["content_md"]
     assert "【历史交互" in panes["30_lately"]["content_md"]
     assert "【历史回复" in panes["30_lately"]["content_md"]
+    assert "【历史进展记录" in panes["30_lately"]["content_md"]
+    assert "【历史交接任务" in panes["30_lately"]["content_md"]
+    assert "【历史故障记录" in panes["30_lately"]["content_md"]
     assert panes["50_now"]["chars"] > 5000
     assert "【本轮工具事实】" in panes["50_now"]["content_md"]
     assert "正文材料。" in panes["50_now"]["content_md"]
     assert "【轮中进展记录】" in panes["50_now"]["content_md"]
+    assert "【上轮交接任务】" in panes["50_now"]["content_md"]
+    assert "【本轮故障记录】" in panes["50_now"]["content_md"]
     assert "【最终回复记录】" in panes["50_now"]["content_md"]
     assert "STATUSBAR" not in panes["50_now"]["content_md"]
     assert "GUIDE｜指南" not in panes["50_now"]["content_md"]

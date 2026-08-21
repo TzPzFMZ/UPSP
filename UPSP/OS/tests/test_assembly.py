@@ -144,7 +144,7 @@ def test_spec286_corpus_headers_are_kind_specific_chinese_and_hide_audit_fields(
             "role": "user",
             "content": "继续从第 164 行读取。",
             "round": 499,
-        }, "【上轮交接任务，来自第 499 轮】"),
+        }, "【历史交接任务，来自第 499 轮】"),
         ({
             "kind": "minimum_commitment",
             "role": "system",
@@ -157,7 +157,7 @@ def test_spec286_corpus_headers_are_kind_specific_chinese_and_hide_audit_fields(
             "content": "反应步缺少有效收束表单。",
             "round": 499,
             "step": "reaction",
-        }, "【故障记录，来自第 499 轮】"),
+        }, "【历史故障记录，来自第 499 轮】"),
         ({
             "kind": "cache_summary",
             "role": "system",
@@ -838,7 +838,8 @@ def test_spec526_task_execution_action_guide_hides_status_update_coordinates(
     assert "真实工作优先" in text
     assert "证据后登记" in text
     assert "file_write" in text
-    assert "shell_command" in text
+    assert "subagent_dispatch" in text
+    assert "shell_command" not in text
     assert "不要把用户原始目标改写成更小的阶段性目标" in text
     assert "部分完成不能登记为全部 done/passed" in text
     assert "任务验收 checkpoint" in text
@@ -1099,6 +1100,12 @@ def test_spec409_cache_entries_use_current_label_only_in_same_round(tmp_path):
     store.append_to_cache(617, "system", "起手事实。", kind="setup_fact", step="setup")
     store.append_to_cache(617, "tool", "已读取文件。", kind="tool_fact", step="reaction")
     store.append_to_cache(617, "system", "资料正文。", kind="material", step="reaction")
+    store.append_to_cache(
+        617, "assistant", "我正在继续处理。", kind="dialogue_progress", step="reaction")
+    store.append_to_cache(
+        617, "user", "继续完成上轮任务。", kind="relay_handoff", step="setup")
+    store.append_to_cache(
+        617, "system", "本轮发生可恢复故障。", kind="fault_note", step="reaction")
 
     same_round = "\n".join(
         entry["content"]
@@ -1121,10 +1128,65 @@ def test_spec409_cache_entries_use_current_label_only_in_same_round(tmp_path):
     assert "【本轮起手事实】" in same_round
     assert "【本轮工具事实】" in same_round
     assert "【本轮资料】" in same_round
+    assert "【轮中进展记录】" in same_round
+    assert "【上轮交接任务】" in same_round
+    assert "【本轮故障记录】" in same_round
     assert "【历史交互，来自第 617 轮】" in next_round
     assert "【历史起手事实，来自第 617 轮】" in next_round
     assert "【历史工具事实，来自第 617 轮】" in next_round
     assert "【历史资料，来自第 617 轮】" in next_round
+    assert "【历史进展记录，来自第 617 轮】" in next_round
+    assert "【历史交接任务，来自第 617 轮】" in next_round
+    assert "【历史故障记录，来自第 617 轮】" in next_round
+
+
+def test_spec750_now_to_lately_keeps_truth_and_changes_only_visible_tense(tmp_path):
+    from assembly.context_helpers import render_corpus_entries_for_context
+    from data.context_store import ContextStore
+
+    store = ContextStore(
+        cache_dir=str(tmp_path / "cache"),
+        raw_log_jsonl=str(tmp_path / "buffer" / "raw_log.jsonl"),
+        raw_log_md=str(tmp_path / "buffer" / "raw_log.md"),
+    )
+    source = [
+        ("assistant", "正在检查。", "dialogue_progress", "reaction"),
+        ("system", "出现可恢复故障。", "fault_note", "reaction"),
+        ("user", "继续上一轮工作。", "relay_handoff", "setup"),
+    ]
+    for role, text, kind, step in source:
+        store.append_to_cache(750, role, text, kind=kind, step=step)
+
+    before = store.get_now_entries()
+    receipt = store.transition_current_cache(
+        boundary="reaction_provider_success",
+        consumer_frame_id="R000750:reaction:1",
+    )
+    lately = store.get_lately_entries()
+
+    assert receipt["status"] == "applied"
+    assert receipt["moved_blocks"] == 3
+    assert store.get_now_entries() == []
+    assert [item["kind"] for item in lately] == [item["kind"] for item in before]
+    assert [item["content"] for item in lately] == [item["content"] for item in before]
+    assert [item["active_corpus_id"] for item in lately] == [
+        item["active_corpus_id"] for item in before
+    ]
+
+    same_round = "\n".join(
+        item["content"]
+        for item in render_corpus_entries_for_context(lately, current_round=750)
+    )
+    next_round = "\n".join(
+        item["content"]
+        for item in render_corpus_entries_for_context(lately, current_round=751)
+    )
+    assert "【轮中进展记录】" in same_round
+    assert "【上轮交接任务】" in same_round
+    assert "【本轮故障记录】" in same_round
+    assert "【历史进展记录，来自第 750 轮】" in next_round
+    assert "【历史交接任务，来自第 750 轮】" in next_round
+    assert "【历史故障记录，来自第 750 轮】" in next_round
 
 
 def test_spec663_same_interaction_text_remains_current_in_next_round(
@@ -2756,9 +2818,9 @@ class TestContextAssembler:
             current_round=474,
         )
 
-        assert "当前可见轮次：R000474" in text
-        assert "创建轮次：R000472" in text
-        assert "最近召回轮次：R000473" in text
+        assert "当前可见轮次：meta/R000474" in text
+        assert "创建轮次：meta/R000472" in text
+        assert "最近召回轮次：meta/R000473" in text
 
     def test_spec089_resident_relation_body_enters_content_with_summary(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
@@ -2859,11 +2921,15 @@ class TestContextAssembler:
         for directory in (association_dir, connection_dir, stm_dir, ltm_dir, skills_dir, relation_dir):
             directory.mkdir(parents=True)
 
+        association_pairs = {
+            "alpha|||beta": 2,
+            "alpha|||gamma": 1,
+        }
+        association_pairs.update({
+            f"alpha|||degree-{index}": 1 for index in range(14)
+        })
         (association_dir / "assoc_kw_kw.json").write_text(
-            json.dumps({
-                "alpha|||beta": 2,
-                "alpha|||gamma": 1,
-            }, ensure_ascii=False),
+            json.dumps(association_pairs, ensure_ascii=False),
             encoding="utf-8",
         )
         (connection_dir / "pending.jsonl").write_text(
@@ -3014,6 +3080,97 @@ class TestContextAssembler:
         assert "索引正文闭环" in index_text
         assert read_result["memory_layer"] == "LTM/Summary"
         assert "可被读取" in read_result["body"]
+
+    def test_spec735_ltm_query_searches_body_and_ranks_distinct_terms_first(
+            self, tmp_path, monkeypatch):
+        from assembly.context import ContextAssembler
+        from data import memory_store as ms
+
+        layers = {
+            "FULL": ("Full", "full.md"),
+            "SUMMARY": ("Summary", "summary.md"),
+            "ABSTRACT": ("Abstract", "abstract.md"),
+            "PINNED": ("Pinned", "pinned.md"),
+        }
+        paths = {}
+        for key, (directory, body_name) in layers.items():
+            root = tmp_path / directory
+            root.mkdir()
+            paths[key] = (root / "meta.json", root / body_name)
+            paths[key][0].write_text("{}", encoding="utf-8")
+            paths[key][1].write_text("", encoding="utf-8")
+
+        correct_id = "MEM-0DFBBD5A"
+        wrong_id = "MEM-0E2440E6"
+        paths["ABSTRACT"][0].write_text(json.dumps({
+            correct_id: {
+                "id": correct_id, "type": "A", "title": "家庭计划",
+                "access": "public", "tags": ["未来安排"],
+            },
+            wrong_id: {
+                "id": wrong_id, "type": "A", "title": "露营回忆",
+                "access": "public", "tags": ["露营"],
+            },
+            "MEM-0BAD0001": {
+                "id": "MEM-0BAD0001", "type": "A", "title": "私密露营",
+                "access": "private", "tags": ["下个月", "孩子", "露营"],
+            },
+        }, ensure_ascii=False), encoding="utf-8")
+        paths["ABSTRACT"][1].write_text(
+            "\n".join((
+                f"## {correct_id}  [A]  权重2",
+                "**标题**：家庭计划",
+                "**梗概**（≤128字）：计划下个月带孩子去露营。",
+                f"## {wrong_id}  [A]  权重2",
+                "**标题**：露营回忆",
+                "**梗概**（≤128字）：去年已经结束的露营。",
+                "## MEM-0BAD0001  [A]  权重2",
+                "**梗概**（≤128字）：下个月带孩子露营的私密内容。",
+            )),
+            encoding="utf-8",
+        )
+        for key, (meta_path, body_path) in paths.items():
+            monkeypatch.setattr(ms, f"LTM_{key}_META_JSON", str(meta_path))
+            body_constant = {
+                "FULL": "LTM_FULL_FULL_MD",
+                "SUMMARY": "LTM_SUMMARY_SUMMARY_MD",
+                "ABSTRACT": "LTM_ABSTRACT_ABSTRACT_MD",
+                "PINNED": "LTM_PINNED_PINNED_MD",
+            }[key]
+            monkeypatch.setattr(ms, body_constant, str(body_path))
+        monkeypatch.setattr(ms, "MEMORY_MD", str(tmp_path / "empty_stm.md"))
+        monkeypatch.setattr(ms, "META_JSON", str(tmp_path / "empty_stm_meta.json"))
+
+        receipt = ContextAssembler().build_memory_search(
+            query_terms=["　下个月　", "孩子", "露营", "露营"],
+            limit=8,
+        )
+
+        assert receipt["status"] == "accepted"
+        assert receipt["query_terms"] == ["下个月", "孩子", "露营"]
+        assert receipt["content"].index(correct_id) < receipt["content"].index(wrong_id)
+        assert "MEM-PRIVATE1" not in receipt["content"]
+        assert "命中字段：summary, body" in receipt["content"]
+        snippets = [
+            line.split("定位片段：", 1)[1]
+            for line in receipt["content"].splitlines()
+            if "定位片段：" in line
+        ]
+        assert snippets and all(len(value) <= 32 for value in snippets)
+
+    def test_spec735_ltm_query_validation_is_fail_closed(self):
+        from assembly.context import ContextAssembler
+
+        assembler = ContextAssembler()
+        too_many = assembler.build_memory_search(
+            [str(index) for index in range(9)])
+        legacy_query = assembler.build_index_view(
+            "ltm_inverted", query_terms=["露营"])
+
+        assert too_many["status"] == "rejected"
+        assert too_many["reason"] == "query_terms_too_many"
+        assert legacy_query["status"] == "rejected"
+        assert legacy_query["reason"] == "use_memory_search"
 
     def test_assemble_setup_returns_system_and_messages(self, tmp_path, monkeypatch):
         from assembly import context as ctx
@@ -3433,7 +3590,7 @@ class TestContextAssembler:
         assert "<!-- [STEP_TOOLBELT:cleanup] -->" in cleanup_high_freq
         assert "connection_material_settle" in cleanup_high_freq
         assert "tacit_material_settle" in cleanup_high_freq
-        assert "cache_compact" in cleanup_high_freq
+        assert "cache_compact" not in cleanup_high_freq
         assert "cleanup_handoff" in cleanup_high_freq
         assert "tool_request_card" not in cleanup_popup
         assert "### 善后步指南" in cleanup_popup
@@ -3761,7 +3918,9 @@ class TestContextAssembler:
         assert "### 工具指南：`memory_link_update`" in popup
         assert "tool_id:" not in popup
         assert "记忆关联历史修复工具" in popup
-        assert "current_overview" in popup
+        assert "operation" in popup
+        assert "container_refs" in popup
+        assert "current_overview" not in popup
         assert "memory_write 感受词清单（仅词条，不含数值）" not in popup
         assert "### 交互感受词" not in popup
         assert "### 关系感受词" not in popup
@@ -4289,20 +4448,20 @@ class TestContextAssembler:
         (stm_dir / "keywords.json").write_text(
             json.dumps({
                 "index": {
-                    "alpha": ["MEM-HIDDEN22", "MEM-VISIBLE2"],
+                    "alpha": ["MEM-A1DDE022", "MEM-B151B1E2"],
                 }
             }, ensure_ascii=False),
             encoding="utf-8",
         )
         (stm_dir / "meta.json").write_text(
             json.dumps({
-                "MEM-HIDDEN22": {
-                    "id": "MEM-HIDDEN22",
+                "MEM-A1DDE022": {
+                    "id": "MEM-A1DDE022",
                     "title": "本轮新写隐藏条目",
                     "access": "public",
                 },
-                "MEM-VISIBLE2": {
-                    "id": "MEM-VISIBLE2",
+                "MEM-B151B1E2": {
+                    "id": "MEM-B151B1E2",
                     "title": "既有可见条目",
                     "access": "public",
                 },
@@ -4313,8 +4472,12 @@ class TestContextAssembler:
             json.dumps({"index": {}}, ensure_ascii=False),
             encoding="utf-8",
         )
+        association_pairs = {"seed|||alpha": 2}
+        association_pairs.update({
+            f"seed|||degree-{index}": 1 for index in range(15)
+        })
         (association_dir / "assoc_kw_kw.json").write_text(
-            json.dumps({"seed|||alpha": 2}, ensure_ascii=False),
+            json.dumps(association_pairs, ensure_ascii=False),
             encoding="utf-8",
         )
         (connection_dir / "pending.jsonl").write_text("", encoding="utf-8")
@@ -4327,30 +4490,34 @@ class TestContextAssembler:
         monkeypatch.setattr(paths, "CONNECTION_SET_DIR", str(connection_dir))
         monkeypatch.setattr(MemoryHeat, "load_heat", lambda self: {
             "entries": {
-                "MEM-HIDDEN22": {"H": 90, "zone": "hot"},
-                "MEM-VISIBLE2": {"H": 80, "zone": "warm"},
+                "MEM-A1DDE022": {"H": 90, "zone": "hot"},
+                "MEM-B151B1E2": {"H": 80, "zone": "warm"},
             }
         })
         monkeypatch.setattr(MemoryStore, "load_meta", lambda self: {
-            "MEM-HIDDEN22": {
-                "id": "MEM-HIDDEN22",
+            "MEM-A1DDE022": {
+                "id": "MEM-A1DDE022",
                 "title": "本轮新写隐藏条目",
                 "access": "public",
             },
-            "MEM-VISIBLE2": {
-                "id": "MEM-VISIBLE2",
+            "MEM-B151B1E2": {
+                "id": "MEM-B151B1E2",
                 "title": "既有可见条目",
                 "access": "public",
             },
         })
 
         assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
-        assembler._hidden_stm_memory_ids = {"MEM-HIDDEN22"}
+        assembler._hidden_stm_memory_ids = {"MEM-A1DDE022"}
 
         heat = assembler._build_stm_heat_index()
         inverted = assembler._build_keyword_index("stm", limit=8)
         association = assembler._build_association_index(
             limit=8,
+            input_keywords=["seed"],
+        )
+        association_first_page = assembler._build_association_index(
+            limit=1,
             input_keywords=["seed"],
         )
 
@@ -4360,6 +4527,7 @@ class TestContextAssembler:
         assert "既有可见条目" in heat
         assert "既有可见条目" in inverted
         assert "既有可见条目" in association
+        assert "既有可见条目" in association_first_page
 
     def test_private_memory_body_not_loaded_while_feature_is_deferred(self, monkeypatch):
         from assembly.context import ContextAssembler
@@ -4678,28 +4846,14 @@ class TestContextAssembler:
         monkeypatch.setattr(ctxs, "STM_CONTEXT_NOW_CACHE_JSONL", str(tmp_path / "cache" / "now_cache.jsonl"), raising=False)
         monkeypatch.setattr(ctxs, "STM_CONTEXT_LATELY_CACHE_JSONL", str(tmp_path / "cache" / "lately_cache.jsonl"), raising=False)
 
-        class CacheConfig(ConfigStoreStub):
-            def get_now_cache_params(self):
-                return {"budget_chars": 8, "trim_chars": 4}
-
-            def get_lately_cache_params(self):
-                return {"budget_chars": 65536, "trim_chars": 16384}
-
-            def get_now_policy_by_kind(self):
-                return {}
-
-            def get_lately_allowed_kinds(self):
-                return [
-                    "interaction",
-                    "assistant_reply",
-                    "tool_fact",
-                    "minimum_commitment",
-                    "fault_note",
-                ]
-
-        store = ctxs.ContextStore(config_store=CacheConfig())
+        store = ctxs.ContextStore(config_store=ConfigStoreStub())
         for round_num in range(1, 42):
             store.save_round_to_cache(round_num, f"用户{round_num}", f"回复{round_num}")
+            store.transition_current_cache(
+                boundary="round_closeout",
+                consumer_frame_id=f"R{round_num:06d}:closeout",
+                expire_call_transients=True,
+            )
 
         assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
         monkeypatch.setattr(assembler, "_build_permanent", lambda *args: "永固")
@@ -5053,6 +5207,39 @@ class TestContextAssembler:
         assert "实质改变交付结果或授权边界" in rendered
         assert "范围最小、可回退的带界假设" in rendered
 
+    def test_spec738_setup_guide_can_omit_task_guidance_without_new_tool_head(
+            self, tmp_path, monkeypatch):
+        from assembly.context import ContextAssembler
+        from assembly.popup import PopupManager
+
+        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+        monkeypatch.setattr(
+            PopupManager,
+            "load_guide_template",
+            lambda kind: (
+                "保留起手边界。\n"
+                "设置 task_guidance_required=true。\n"
+                "起手步只声明任务债务，真实读取、建账在反应步。"
+                if kind == "setup" else ""
+            ),
+        )
+        monkeypatch.setattr(
+            assembler, "_extract_schema_section",
+            lambda _name: "schema 含 task_guidance_route 与 task_bootstrap。",
+        )
+
+        normal = assembler._build_handoff_popup(
+            "setup", task_guidance_enabled=True)
+        direct = assembler._build_handoff_popup(
+            "setup", task_guidance_enabled=False)
+
+        assert "task_guidance_required" in normal
+        assert "任务债务" in normal
+        assert "保留起手边界" in direct
+        assert "task_guidance" not in direct
+        assert "任务债务" not in direct
+        assert "task_bootstrap" not in direct
+
     def test_now_lately_layers_are_rendered_without_retired_layer_names(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
 
@@ -5076,3 +5263,45 @@ class TestContextAssembler:
         assert "交互输入层" not in combined
         assert "资料输入层" not in combined
         assert "内部交接层" not in combined
+def test_spec765_temporary_hidden_sets_restore_after_assembly_failures(
+        tmp_path, monkeypatch):
+    from assembly.context import ContextAssembler
+
+    assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+    assembler._hidden_stm_memory_ids = {"MEM-original"}
+    assembler._hidden_lately_block_ids = {"block-original"}
+    monkeypatch.setattr(
+        assembler,
+        "_build_full_context",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("assembly sentinel")),
+    )
+
+    with pytest.raises(RuntimeError, match="assembly sentinel"):
+        assembler.assemble_reaction(
+            {"base": {}},
+            "interactive",
+            hidden_stm_memory_ids={"MEM-temporary"},
+            hidden_lately_block_ids={"block-temporary"},
+        )
+
+    assert assembler._hidden_stm_memory_ids == {"MEM-original"}
+    assert assembler._hidden_lately_block_ids == {"block-original"}
+
+
+def test_spec765_index_view_restores_hidden_stm_after_builder_failure(
+        tmp_path, monkeypatch):
+    from assembly.context import ContextAssembler
+
+    assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+    assembler._hidden_stm_memory_ids = {"MEM-original"}
+    monkeypatch.setattr(
+        assembler,
+        "_build_ltm_heat_index",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("index sentinel")),
+    )
+
+    with pytest.raises(RuntimeError, match="index sentinel"):
+        assembler.build_index_view(
+            "ltm_heat", hidden_stm_memory_ids={"MEM-temporary"})
+
+    assert assembler._hidden_stm_memory_ids == {"MEM-original"}

@@ -18,6 +18,14 @@ def _normalize_mem_id(value):
     return _clean_text(value)
 
 
+def _resolve_mem_id(value, pending_memory_ids):
+    raw_mem_id = _normalize_mem_id(value)
+    if not raw_mem_id.startswith("PENDING"):
+        return raw_mem_id, raw_mem_id
+    resolved = _normalize_mem_id((pending_memory_ids or {}).get(raw_mem_id))
+    return raw_mem_id, resolved or raw_mem_id
+
+
 def _base_receipt(tool_id, source, declaration):
     return {
         "tool_id": tool_id,
@@ -198,7 +206,15 @@ def apply_memory_container_create_declarations(
             "memory_container_create_declaration",
             declaration,
         )
-        invalid = _validate_common(receipt, declaration)
+        raw_mem_id, mem_id = _resolve_mem_id(
+            declaration.get("mem_id"),
+            (modules or {}).get("pending_memory_ids"),
+        )
+        resolved_declaration = dict(declaration, mem_id=mem_id)
+        if raw_mem_id != mem_id:
+            receipt["requested_mem_id"] = raw_mem_id
+            receipt["mem_id"] = mem_id
+        invalid = _validate_common(receipt, resolved_declaration)
         if invalid:
             receipts.append(invalid)
             continue
@@ -223,7 +239,6 @@ def apply_memory_container_create_declarations(
             receipts.append(_reject(receipt, "skill_fields_require_skl"))
             continue
 
-        mem_id = _normalize_mem_id(declaration.get("mem_id"))
         preview_container_id = _preview_focus_container_id(
             container_store,
             container_type,
@@ -331,7 +346,17 @@ def apply_memory_container_write_declarations(
             "memory_container_write_declaration",
             declaration,
         )
-        invalid = _validate_common(receipt, declaration, require_container_id=True)
+        raw_mem_id, mem_id = _resolve_mem_id(
+            declaration.get("mem_id"),
+            (modules or {}).get("pending_memory_ids"),
+        )
+        resolved_declaration = dict(declaration, mem_id=mem_id)
+        if raw_mem_id != mem_id:
+            receipt["requested_mem_id"] = raw_mem_id
+            receipt["mem_id"] = mem_id
+        invalid = _validate_common(
+            receipt, resolved_declaration, require_container_id=True
+        )
         if invalid:
             receipts.append(invalid)
             continue
@@ -347,7 +372,6 @@ def apply_memory_container_write_declarations(
             receipts.append(_reject(receipt, "container_not_found"))
             continue
 
-        mem_id = _normalize_mem_id(declaration.get("mem_id"))
         container_type = container_store.resolve_container_type(container_id)
         if container_type not in SUPPORTED_FOCUS_CONTAINER_TYPES:
             receipts.append(_reject(receipt, "unsupported_container_type"))

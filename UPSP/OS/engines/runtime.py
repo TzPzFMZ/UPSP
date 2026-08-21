@@ -2,42 +2,41 @@
 from datetime import datetime
 from collections import deque
 import traceback
-from constants import local_now
 from engines.cleanup_pipeline import CleanupPipeline
 from engines.heartbeat import round_decision_from_heartbeat_flags, round_type_from_heartbeat_flags
 from engines.organ_runtime import OrganRuntime, organ_runtime_context
 from engines.product_committer import RuntimeProductCommitter
 from engines.reaction_loop import ReactionLoopRunner
 from engines.round_audit import RoundAuditRecorder
-from engines.round_context import RoundContext, RuntimeTrigger
+from engines.round_context import RoundContext
 from engines.round_lifecycle import settle_round
-from engines.runtime_rhythm import chronicle_state_sample, park_interaction_for_api_probe, prepare_chronicle_focus_for_active_guide, prepare_round_before_setup, refresh_round_alert_recovery, restore_interaction_after_api_probe
+from engines.runtime_rhythm import chronicle_state_sample, continuation_response_policy, new_runtime_trigger, park_interaction_for_api_probe, prepare_chronicle_focus_for_active_guide, prepare_round_before_setup, refresh_round_alert_recovery, restore_interaction_after_api_probe
 from engines.runtime_services import RuntimeServices
 from engines.runtime_control import RuntimeControl
 from engines.tool_approval import ToolApprovalCoordinator, request_runtime_tool_approval
 from engines.runtime_task_guidance import materialize_work_intent_debt_if_needed, prepare_task_bootstrap_guide, record_work_intent_debt_if_needed
 from engines.setup_runner import SetupRunner
 from errors import ProviderCallCancelled
-from logic.cache_compaction_guide import cache_compaction_due_receipt
 from logic.feeling_lookup import FeelingWordTable
 from logic.rhythm_guide_materializer import materialize_current_rhythm_guide
 from logic.sandbox_grant import load_sandbox_grant
 from logic.execution_permission import DEFAULT_LEVEL, ExecutionPermissionChain, RuntimePermissionUpdates, execution_permission_audit
 from logic.single_round_probe_policy import single_round_probe_enabled
+from logic.response_contract import normalize_response_contract
 from paths import ORGAN_TOPOLOGY
 class Runtime:
     _SERVICE_ATTRS = {
-        "sm", "heat", "cfg", "connectivity_store", "evolution_store", "hb",
+        "sm", "heat", "cfg", "connectivity_store", "hb",
         "executor", "ctx_store", "assembler", "alert_store", "workbench",
         "dream_store", "state_backup_store", "memory_store", "memory_index", "container_store",
         "relation_store", "protocol_tool_dispatcher",
-        "general_tool_dispatcher", "on_round_complete",
+        "general_tool_dispatcher", "memory_recall", "on_round_complete",
     }
 
     def __init__(self, state_store=None, heartbeat=None, executor=None,
                  assembler=None, heat=None, ctx_store=None, config_store=None,
                  alert_store=None, connectivity_store=None,
-                 workbench_store=None, dream_store=None, evolution_store=None,
+                 workbench_store=None, dream_store=None,
                  state_backup_store=None, memory_store=None, memory_index=None,
                  container_store=None, relation_store=None,
                  organ_topology_path=None, organ_handlers=None,
@@ -54,7 +53,6 @@ class Runtime:
             connectivity_store=connectivity_store,
             workbench_store=workbench_store,
             dream_store=dream_store,
-            evolution_store=evolution_store,
             state_backup_store=state_backup_store,
             memory_store=memory_store,
             memory_index=memory_index,
@@ -88,9 +86,14 @@ class Runtime:
         self.on_round_finished = None
         self.cleanup_pipeline.stage_callback = self.control.set_stage
         self.permission_chain = ExecutionPermissionChain(self.executor, self.assembler, self.general_tool_dispatcher, self.setup_runner, self.reaction_loop_runner, self.cleanup_pipeline)
+        self._pending_final_response_max_chars = None
+        self._continuation_final_response_budget = None
+        self._pending_response_contract, self._pending_task_guidance_enabled = {}, True
         self.permission_updates = RuntimePermissionUpdates(self.permission_chain, self.audit, self.control, self.hb)
         self.setup_runner.permission_boundary_callback = self.permission_updates.apply
         self.reaction_loop_runner.permission_boundary_callback = self.permission_updates.apply
+        self.services.reconcile_context_cache_lifecycle_on_startup()
+        self.services.restore_cache_compaction_due_on_startup()
     def __setattr__(self, name, value):
         object.__setattr__(self, name, value)
         services = self.__dict__.get("services")
@@ -126,31 +129,14 @@ class Runtime:
             raise AttributeError(name)
         return getattr(services, name)
 
-    def _new_trigger(self, round_type, flags):
-        self._trigger_seq += 1
-        flags = flags or {}
-        messages = []
-        if flags.get("user_message_waiting") and round_type in {
-                "interactive", "rhythm"}:
-            dequeue = getattr(self.hb, "dequeue_messages", None)
-            if callable(dequeue):
-                messages = list(dequeue() or [])
-        permission_level = self.permission_chain.consume(messages, flags)
-        return RuntimeTrigger(
-            trigger_id=f"T{self._trigger_seq:08d}",
-            trigger_seq=self._trigger_seq,
-            observed_at=local_now().isoformat(),
-            round_type=round_type,
-            flags=dict(flags or {}),
-            messages=tuple(messages),
-            execution_permission_level=permission_level,
-        )
+    def _new_trigger(self, round_type, flags, state=None):
+        return new_runtime_trigger(self, round_type, flags, state)
 
     def enqueue_trigger(self, flags, state=None):
         round_type = self._determine_round_type(flags, state)
         if round_type is None:
             return None
-        trigger = self._new_trigger(round_type, flags)
+        trigger = self._new_trigger(round_type, flags, state)
         self._trigger_queue.append(trigger)
         return trigger
 
@@ -203,10 +189,15 @@ class Runtime:
         self.control.request_shutdown(self)
     def release_stop_latch(self):
         return self.control.release_stop_latch(self.executor)
-    def submit_message(self, message, execution_permission_level=DEFAULT_LEVEL):
+    def submit_message(self, message, execution_permission_level=DEFAULT_LEVEL,
+                       final_response_max_chars=None, response_contract=None, task_guidance_enabled=True):
+        response_contract = normalize_response_contract(response_contract)
         if not self.release_stop_latch():
             return False
         self.permission_chain.queue(execution_permission_level)
+        self._continuation_final_response_budget = None
+        self._pending_final_response_max_chars = final_response_max_chars
+        self._pending_response_contract, self._pending_task_guidance_enabled = response_contract, task_guidance_enabled is not False
         self.hb.enqueue_message(message)
         self.hb.resume()
         return True
@@ -217,8 +208,10 @@ class Runtime:
         return receipt
     def cancel_pending_input(self):
         self.permission_chain.cancel_pending()
+        self._pending_final_response_max_chars = None
+        self._continuation_final_response_budget = None
+        self._pending_response_contract, self._pending_task_guidance_enabled = {}, True
         return self.control.cancel_pending_input(self)
-
     def runtime_status(self):
         return self.permission_updates.attach_status(
             self.tool_approval.attach_status(self.control.snapshot(self.hb)))
@@ -231,49 +224,50 @@ class Runtime:
 
     def _run_one_round(
         self, round_type, state, flags, *, probe_policy=None, trigger=None):
-        trigger = trigger or self._new_trigger(round_type, flags or {})
-        trigger, parked_probe_input = park_interaction_for_api_probe(self, trigger, flags or {})
-        probing = bool((flags or {}).get("api_degraded"))
-        if probing and not self.control.begin_pre_setup_probe():
-            return {"status": "round_stopped", "response": "", "error": None}
+        trigger = trigger or self._new_trigger(round_type, flags or {}, state)
+        if not self.control.begin_round_preparation():
+            self.cancel_pending_input()
+            return {"status": "round_stopped", "response": "", "error": None,
+                    "_user_stop_requested": True}
         try:
+            trigger, parked_probe_input = park_interaction_for_api_probe(
+                self, trigger, flags or {})
             (
                 round_type, flags, pre_setup_cleared,
                 pre_setup_api_probe, probe_guard, skipped,
             ) = prepare_round_before_setup(self, round_type, state, flags)
+            if skipped:
+                return skipped
+            trigger, flags = restore_interaction_after_api_probe(
+                self, trigger, flags, pre_setup_api_probe, parked_probe_input)
+            self.audit.reset()
+            audit_input = {
+                "flags": dict(flags or {}),
+                "trigger": trigger.as_dict(),
+                "pre_setup_alert_recovery": {
+                    "cleared_flags": list(pre_setup_cleared),
+                    "effective_round_type": round_type,
+                },
+                "pre_setup_api_probe": dict(pre_setup_api_probe or {}),
+                "context_profile": str(
+                    getattr(self.assembler, "context_profile", "full") or "full"
+                ),
+                "execution_permission": execution_permission_audit(
+                    trigger.execution_permission_level),
+            }
+            if probe_guard.get("enabled"):
+                audit_input["single_round_probe"] = dict(
+                    probe_policy or probe_guard
+                )
+
+            def establish():
+                number = self.sm.increment_round()
+                self.audit.start(number, round_type, audit_input)
+                return number
+
+            round_num = self.control.establish_round(round_type, establish)
         finally:
-            if probing:
-                self.control.end_pre_setup_probe()
-        if skipped:
-            return skipped
-        trigger, flags = restore_interaction_after_api_probe(
-            self, trigger, flags, pre_setup_api_probe, parked_probe_input)
-        self.audit.reset()
-        audit_input = {
-            "flags": dict(flags or {}),
-            "trigger": trigger.as_dict(),
-            "pre_setup_alert_recovery": {
-                "cleared_flags": list(pre_setup_cleared),
-                "effective_round_type": round_type,
-            },
-            "pre_setup_api_probe": dict(pre_setup_api_probe or {}),
-            "context_profile": str(
-                getattr(self.assembler, "context_profile", "full") or "full"
-            ),
-            "execution_permission": execution_permission_audit(
-                trigger.execution_permission_level),
-        }
-        if probe_guard.get("enabled"):
-            audit_input["single_round_probe"] = dict(
-                probe_policy or probe_guard
-            )
-
-        def establish():
-            number = self.sm.increment_round()
-            self.audit.start(number, round_type, audit_input)
-            return number
-
-        round_num = self.control.establish_round(round_type, establish)
+            self.control.end_round_preparation()
         if round_num is None:
             self.cancel_pending_input()
             return {
@@ -288,6 +282,8 @@ class Runtime:
             "identity_status": "unknown",
             "interaction_source": "unresolved",
         }
+        logical_context_window = self.cfg.get_round_context_window_tokens()
+        self.executor.round_context_window_tokens = logical_context_window
         context = RoundContext(
             round_num=round_num,
             round_type=round_type,
@@ -297,6 +293,11 @@ class Runtime:
             trigger=trigger,
             topology_version=self.organ_runtime.topology_version,
             execution_permission_level=trigger.execution_permission_level,
+            final_response_max_chars=trigger.final_response_max_chars,
+            final_response_length_rejections=trigger.final_response_length_rejections,
+            response_contract=dict(trigger.response_contract),
+            task_guidance_enabled=trigger.task_guidance_enabled,
+            context_window_tokens=logical_context_window,
         )
         last_phase = "presub"
         self.permission_chain.apply(trigger.execution_permission_level)
@@ -367,15 +368,11 @@ class Runtime:
                     context.state,
                     context.round_num,
                 )
-                self._record_work_intent_debt_if_needed(
-                    context,
-                    setup_result,
-                )
-                self._prepare_task_bootstrap_guide(
-                    setup_result.intent,
-                    context=context,
-                )
-                self._materialize_work_intent_debt_if_needed(context)
+                if context.task_guidance_enabled:
+                    self._record_work_intent_debt_if_needed(context, setup_result)
+                    self._prepare_task_bootstrap_guide(
+                        setup_result.intent, context=context)
+                    self._materialize_work_intent_debt_if_needed(context)
                 self.sm.set_phase("main")
                 result = self._run_reaction_loop(
                     context.state,
@@ -440,6 +437,8 @@ class Runtime:
             self.permission_chain.finish(self.permission_chain.current, result, self.sm)
             stopped, settlement = bool(result.get("_user_stop_requested")), str((result.get("_settlement") or {}).get("status") or "")
             latch_until_explicit = stopped or settlement in {"degraded", "unsettled"}
+            self._continuation_final_response_budget = continuation_response_policy(
+                self, context, result)
             try:
                 try:
                     if latch_until_explicit:
@@ -524,29 +523,12 @@ class Runtime:
         )
 
     def _record_cache_compaction_rhythm_if_needed(self, round_num):
-        try:
-            receipt = cache_compaction_due_receipt(self.ctx_store, round_num)
-            if receipt.get("status") == "due":
-                debt_saver = getattr(self.ctx_store, "save_cache_compaction_debt", None)
-                if callable(debt_saver) and receipt.get("source") != "cache_compaction_debt":
-                    debt = debt_saver(receipt, round_num)
-                    if debt:
-                        receipt["debt_path"] = self.ctx_store.cache_compaction_debt_path()
-                self.sm.set_flag("cache_compaction_due", True)
-                receipt["set_flags"] = ["cache_compaction_due"]
-        except Exception as exc:
-            receipt = {"status": "error", "reason": str(exc)}
-        if isinstance(receipt, dict) and receipt.get("status") != "skipped":
-            try:
-                self.audit.get_store().append_event(
-                    round_num,
-                    "cache_compaction_rhythm",
-                    receipt,
-                    phase="cleanup",
-                )
-            except Exception:
-                pass
-        return receipt
+        if bool((self.sm.get_flags() or {}).get("cache_compaction_due")):
+            self.sm.clear_flags(["cache_compaction_due"])
+        return {
+            "status": "skipped",
+            "reason": "progressive_compaction_waits_for_natural_reaction",
+        }
 
     def _materialize_runtime_rhythm_guide(self, context):
         try:

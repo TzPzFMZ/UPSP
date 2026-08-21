@@ -11,6 +11,7 @@ import {
   pollDeposition,
   pollAbout,
   pollPersonaState,
+  pollPersonaCatalog,
   pollProtocolCatalog,
   pollRuntime,
   runtimePollingActive,
@@ -21,6 +22,7 @@ import { els } from "./state";
 import { render } from "./view";
 
 function startRuntimeUi(): void {
+  void pollPersonaCatalog({ force: true });
   void pollRuntime();
   void pollDeposition();
   void pollTaskProjection();

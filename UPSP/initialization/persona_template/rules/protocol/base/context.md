@@ -44,11 +44,11 @@
 
 ## §CTX-05 now 与 lately
 
-`now` 是当前缓存，承接本轮交互、工具事实、起手事实、交接任务和资料材料。它靠近末位，适合处理当前任务。
+`now` 是下一次 provider Frame 的待消费包，承接本轮交互、工具事实、起手事实、交接任务和资料材料。Setup 起手包在首个 Reaction 仍完整可见；此后每个成功 Reaction／Cleanup 返回消费调用前的包，并由该 Frame 结果形成下一包。
 
 `lately` 是最近缓存，保留近期语料履带。它帮助连续性，但不是长期记忆，也不是完整历史。需要精确回想时，应读记忆条目、工作容器、关系卡、round 审计或其他真源，而不是从最近缓存里脑补。
 
-语料块生命周期只按三轨决定。A 轨 `Corpus + now→lately` 承接 interaction、assistant_reply、dialogue_progress、tool_fact、setup_fact、relay_handoff、minimum_commitment 和 fault_note；B 轨 `now→lately` 只承接文件正文、网页正文、搜索候选、索引展开等正式 `material`，不进 Corpus 或 cache summary；C 轨只承接明确目标调用的 cleanup/final-reply 材料或推理续接，目标调用完成后立即清除。now 水位触发时 A/B 最早完整块立即滚入 lately，lately 再按完整块 FIFO 自然淘汰。当前读写声明必须看本轮真实工具结果、processor receipt 或 round audit。
+ABC 三轨只决定条目被消费后的去向，不决定迁移时机。A 轨 `Corpus + now→lately` 承接 interaction、assistant_reply、dialogue_progress、tool_fact、setup_fact、relay_handoff、minimum_commitment 和 fault_note；B 轨 `now→lately` 只承接文件正文、网页正文、搜索候选、索引展开等正式 `material`，不进 raw、Corpus 或 cache summary；C 轨只承接明确目标调用的 cleanup/final-reply 材料或推理续接，目标调用完成后立即清除。成功 provider Frame 才消费调用前的 A/B 包并按原序迁入 lately，provider 失败不推进；Round closeout 排空持久包并清除 C 轨。成功调用输入 Token 达到实际端点窗口 90% 时，Runtime 只在善后安全点按完整块 FIFO 并建立语义压缩债务，最近 16 个交互轮内的用户原始输入不可强删。当前读写声明必须看本轮真实工具结果、processor receipt 或 round audit。
 
 `corpus_block` 保持精简结构：顶层用 `id`、`role`、`kind`、`text`、`loc`、`policy`、`ref` 表达来源和生命周期。不要把外部性、安全判断、POPUP 类型或关系信息重新拆成一堆顶层字段。
 

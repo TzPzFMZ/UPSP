@@ -47,15 +47,60 @@ def _round_data_js(round_num: int, payload: object) -> str:
     )
 
 
-def _prune_stale_round_js(data_dir: Path, expected_names: set[str]) -> None:
+def _write_index(audit_dir: Path, rounds: list[dict], generated_at: str) -> dict:
+    index = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": generated_at,
+        "source": "round_jsonl_static_projection",
+        "rounds": rounds,
+    }
+    atomic_write_text(
+        audit_dir / "round-index.js",
+        _assignment("window.UPSP_ROUND_AUDIT_INDEX", index),
+        newline="\n",
+    )
+    return index
+
+
+def write_static_round_index(round_dir, audit_dir) -> dict:
+    audit_dir = Path(audit_dir)
+    rounds = []
+    for item in list_rounds(str(round_dir)):
+        indexed = dict(item)
+        static_file = f"round-data/round_{int(item['round'])}.js"
+        if not (audit_dir / static_file).is_file():
+            continue
+        indexed["static_file"] = static_file
+        rounds.append(indexed)
+    return _write_index(audit_dir, rounds, _now())
+
+
+def prune_stale_round_js(data_dir: str | os.PathLike[str], expected_names: set[str]) -> list[dict]:
+    """Remove only generated per-Round projections absent from the live FIFO."""
+    requested_dir = Path(data_dir)
+    if requested_dir.is_symlink():
+        raise RuntimeError("round_static_projection_directory_unsafe")
+    data_dir = requested_dir.resolve()
     if not data_dir.is_dir():
-        return
+        return []
+    deleted = []
     for path in data_dir.iterdir():
-        if path.is_file() and STATIC_ROUND_RE.fullmatch(path.name) and path.name not in expected_names:
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        if not STATIC_ROUND_RE.fullmatch(path.name):
+            continue
+        resolved = path.resolve()
+        if path.is_symlink() or resolved.parent != data_dir or not resolved.is_file():
+            raise RuntimeError(f"round_static_projection_path_unsafe:{path.name}")
+        if path.name in expected_names:
+            continue
+        size = resolved.stat().st_size
+        try:
+            resolved.unlink()
+        except OSError as exc:
+            raise RuntimeError(
+                f"round_static_projection_delete_failed:{path.name}:{exc}"
+            ) from exc
+        deleted.append({"file": path.name, "bytes": size})
+    return deleted
 
 
 def write_static_projection(round_dir: str | os.PathLike[str], audit_dir: str | os.PathLike[str]) -> dict:
@@ -91,16 +136,5 @@ def write_static_projection(round_dir: str | os.PathLike[str], audit_dir: str | 
         indexed["static_file"] = f"round-data/{data_file}"
         index_rounds.append(indexed)
 
-    _prune_stale_round_js(data_dir, expected_round_files)
-    index = {
-        "schema_version": SCHEMA_VERSION,
-        "generated_at": generated_at,
-        "source": "round_jsonl_static_projection",
-        "rounds": index_rounds,
-    }
-    atomic_write_text(
-        audit_dir / "round-index.js",
-        _assignment("window.UPSP_ROUND_AUDIT_INDEX", index),
-        newline="\n",
-    )
-    return index
+    prune_stale_round_js(data_dir, expected_round_files)
+    return _write_index(audit_dir, index_rounds, generated_at)

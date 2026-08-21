@@ -27,6 +27,7 @@ from constants import STM_INDEX_DISPLAY_LIMIT, DREAMS_DISPLAY_LIMIT
 
 from assembly.statusbar import StatusBarBuilder
 from assembly.popup import PopupManager
+from logic.response_contract import render_response_contract
 from assembly.context_helpers import (
     active_corpus_ids_from_messages,
     build_general_tool_guide,
@@ -107,6 +108,7 @@ class ContextAssembler:
         "minimum_commitment",
         "fault_note",
         "cache_summary",
+        "interaction_summary",
     }
     RETIRED_CONTEXT_KINDS = {
         "tool_result",
@@ -161,6 +163,12 @@ class ContextAssembler:
                 and bool(str(entry.get("caused_by") or "").strip())
                 and bool(content)
             )
+        if kind == "material" and source in {
+            "cache_compaction",
+            "memory_compression_rhythm",
+            "memory_write_rewrite",
+        }:
+            return bool(str(entry.get("source_block_id") or "").strip()) and bool(content)
         return (
             kind == "runtime_retry_notice"
             and source == "runtime_retry_notice"
@@ -248,7 +256,7 @@ class ContextAssembler:
 
     def assemble_setup(self, state, round_type, user_messages=None,
                        material_inputs=None, internal_handoff=None,
-                       interaction_meta=None):
+                       interaction_meta=None, task_guidance_enabled=True):
         self._current_interaction_meta = (
             dict(interaction_meta) if isinstance(interaction_meta, dict) else None
         )
@@ -259,7 +267,8 @@ class ContextAssembler:
             include_content=False, mount_ids=None,
             user_messages=user_messages,
             material_inputs=material_inputs,
-            internal_handoff=internal_handoff)
+            internal_handoff=internal_handoff,
+            task_guidance_enabled=task_guidance_enabled)
         return system, full_messages
 
     def assemble_reaction(self, state, round_type, mount_ids=None,
@@ -269,10 +278,14 @@ class ContextAssembler:
                           reaction_loop_phase="loop",
                           native_tool_feedbacks=None,
                           hidden_stm_memory_ids=None,
+                          hidden_lately_block_ids=None,
                           runtime_focus_entries=None,
-                          current_reaction_iteration=None):
+                          current_reaction_iteration=None,
+                          response_contract=None):
         previous_hidden = set(getattr(self, "_hidden_stm_memory_ids", set()))
+        previous_hidden_lately = set(getattr(self, "_hidden_lately_block_ids", set()))
         self._hidden_stm_memory_ids = set(hidden_stm_memory_ids or [])
+        self._hidden_lately_block_ids = set(hidden_lately_block_ids or [])
         try:
             system, full_messages = self._build_full_context(
                 step="reaction", round_type=round_type, state=state,
@@ -284,10 +297,12 @@ class ContextAssembler:
                 reaction_loop_phase=reaction_loop_phase,
                 native_tool_feedbacks=native_tool_feedbacks,
                 runtime_focus_entries=runtime_focus_entries,
-                current_reaction_iteration=current_reaction_iteration)
+                current_reaction_iteration=current_reaction_iteration,
+                response_contract=response_contract)
             return system, full_messages
         finally:
             self._hidden_stm_memory_ids = previous_hidden
+            self._hidden_lately_block_ids = previous_hidden_lately
 
     def assemble_cleanup(self, state, round_type, result,
                          material_inputs=None, internal_handoff=None,
@@ -318,7 +333,9 @@ class ContextAssembler:
                             native_tool_feedbacks=None,
                             popup_fragments=None,
                             runtime_focus_entries=None,
-                            current_reaction_iteration=None):
+                            current_reaction_iteration=None,
+                            response_contract=None,
+                            task_guidance_enabled=True):
         """构建完整 messages 数组——每层一条 system 消息标注频率层，语料保持 user/assistant 格式"""
         context_step = step
         cc = state.get("base", {}).get("context_cache", {})
@@ -432,12 +449,22 @@ class ContextAssembler:
             )
             messages.extend(now_section)
         # 6. STATUSBAR 状态栏层：位于 now 之后、POPUP 之前。
+        response_anchor = ""
+        if step == "reaction":
+            response_anchor = render_response_contract(response_contract)
+            if not response_anchor:
+                cfg = self.config_store
+                if cfg is None:
+                    from data.config_store import ConfigStore
+                    cfg = ConfigStore()
+                response_anchor = cfg.get_response_anchor_prompt()
         statusbar = self._build_statusbar_with_relations(
             state,
             round_type,
             current_input_text=visible_input_text,
             interaction_meta=visible_interaction_meta,
             relation_summary_mounts=self._relation_summary_mounts(mount_ids),
+            response_anchor=response_anchor,
         )
         if statusbar:
             messages.append({
@@ -520,7 +547,8 @@ class ContextAssembler:
                 self.popup_policy.split_fragments(relay_intent_pool_popup)
             )
         handoff_popup = self._build_handoff_popup(
-            step, round_type, reaction_loop_phase)
+            step, round_type, reaction_loop_phase,
+            task_guidance_enabled=task_guidance_enabled)
         if handoff_popup:
             popup_parts.extend(self.popup_policy.split_fragments(handoff_popup))
         native_feedback_popup = build_native_tool_feedback_popup(
@@ -587,7 +615,12 @@ class ContextAssembler:
         if ctx is None:
             from data.context_store import ContextStore
             ctx = ContextStore()
-        return list(ctx.get_lately_entries(step))
+        entries = list(ctx.get_lately_entries(step))
+        hidden = set(getattr(self, "_hidden_lately_block_ids", set()))
+        if step == "reaction" and hidden:
+            entries = [item for item in entries if str(
+                item.get("source_block_id") or item.get("id") or "") not in hidden]
+        return entries
 
     def _get_now_entries(self):
         """当前缓存条目：由 now_cache.jsonl 读取普通持久语料。"""
@@ -715,7 +748,9 @@ class ContextAssembler:
             return ""
         return self.popup.build_relation_registration_event()
 
-    def _build_handoff_popup(self, step, round_type=None, reaction_loop_phase="loop"):
+    def _build_handoff_popup(
+            self, step, round_type=None, reaction_loop_phase="loop",
+            task_guidance_enabled=True):
         if step == "setup":
             if str(round_type or "").strip().lower() == "standby":
                 message = PopupManager.load_guide_template("standby_setup") or ""
@@ -734,6 +769,9 @@ class ContextAssembler:
             message = PopupManager.load_guide_template("setup") or ""
             fields = "mount_requests, security_verdict, suggested_mode, relation_reminder"
             fmt = self._extract_schema_section("SETUP_FORMAT")
+            if not task_guidance_enabled:
+                message = self._without_task_guidance_lines(message)
+                fmt = ""
             return format_step_guide_popup(
                 kind="setup_handoff",
                 step="setup",
@@ -775,6 +813,14 @@ class ContextAssembler:
             )
         return ""
 
+    @staticmethod
+    def _without_task_guidance_lines(message):
+        markers = ("task_guidance_", "任务债务", "真实读取、建账")
+        return "\n".join(
+            line for line in str(message or "").splitlines()
+            if not any(marker in line for marker in markers)
+        ).strip()
+
     # ==============================================================
     # 频率层缓存（DDS §21 过期标记与重建策略）
     # ==============================================================
@@ -796,7 +842,7 @@ class ContextAssembler:
         self._mark_layer_fresh(layer)
         return text
 
-    def invalidate_layer(self, layer):
+    def invalidate_layer(self, layer, *, strict=False):
         """外部数据源变更时调用：标记该层下次需重建"""
         for key in list(self._layer_cache):
             if key[1] == layer:
@@ -809,7 +855,8 @@ class ContextAssembler:
                 try:
                     self.state_store.set("base.context_cache.popup_active", True)
                 except Exception:
-                    pass
+                    if strict:
+                        raise
             return
         if layer not in EXPIRED_CONTEXT_LAYERS:
             return
@@ -818,7 +865,8 @@ class ContextAssembler:
                 self.state_store._set_internal(
                     f"base.context_cache.{layer}_expired", True)
             except Exception:
-                pass
+                if strict:
+                    raise
 
     def _mark_layer_fresh(self, layer):
         """标记该层已刷新，在下次数据源变更前可复用"""
@@ -1073,7 +1121,6 @@ class ContextAssembler:
                 "| connection_material_settle | substrate_tool | sync_tool | 承接联系集处理表 |",
                 "| tacit_material_settle | substrate_tool | sync_tool | 承接默契集处理表 |",
                 "| association_count_update | substrate_tool | sync_tool | 基于有效材料更新联想计数 |",
-                "| cache_compact | substrate_tool | sync_tool | 执行最近缓存删后幸存段压缩 |",
                 "| cleanup_handoff | substrate_tool | sync_tool | 写入善后内部整理提示 |",
             ])
         return ""
@@ -1184,13 +1231,19 @@ class ContextAssembler:
     def _derive_keywords_from_text(self, text):
         try:
             import json as _json, os as _os
-            from paths import KEYWORDS_JSON
-            if not text or not _os.path.isfile(KEYWORDS_JSON):
+            from paths import KEYWORDS_JSON, LTM_KEYWORDS_JSON
+            if not text:
                 return []
-            with open(KEYWORDS_JSON, "r", encoding="utf-8") as f:
-                data = _json.load(f)
-            index = data.get("index", {})
-            return [kw for kw in index if kw and kw in text][:8]
+            keywords = []
+            for path in (KEYWORDS_JSON, LTM_KEYWORDS_JSON):
+                if not _os.path.isfile(path):
+                    continue
+                with open(path, "r", encoding="utf-8") as f:
+                    data = _json.load(f)
+                for keyword in data.get("index", {}):
+                    if keyword and keyword in text and keyword not in keywords:
+                        keywords.append(keyword)
+            return keywords[:8]
         except Exception:
             return []
 
@@ -1420,27 +1473,24 @@ class ContextAssembler:
 
     def build_index_view(self, scope, zone=None, offset=0, limit=8,
                          current_input_text=None, interaction_meta=None,
-                         input_keywords=None, hidden_stm_memory_ids=None):
+                         input_keywords=None, hidden_stm_memory_ids=None,
+                         query_terms=None):
         """返回 index_view 只读工具回执。"""
         previous_hidden = set(getattr(self, "_hidden_stm_memory_ids", set()))
         if hidden_stm_memory_ids is not None:
             self._hidden_stm_memory_ids = set(hidden_stm_memory_ids or [])
         scope = str(scope or "").strip()
         zone = str(zone or "").strip() or None
-        try:
-            offset = max(0, int(offset or 0))
-        except (TypeError, ValueError):
-            offset = 0
-        try:
-            limit = max(1, min(32, int(limit or 8)))
-        except (TypeError, ValueError):
-            limit = 8
+        from assembly.context_indexes import normalize_index_view_page
+        offset, limit = normalize_index_view_page(offset, limit)
+        query_error = "use_memory_search" if query_terms not in (None, []) else ""
 
         builders = {
             "ltm_heat": lambda: self._build_ltm_heat_index(limit=limit, offset=offset),
             "stm_heat": lambda: self._build_stm_heat_index(limit=limit, offset=offset),
             "skills_inverted": lambda: self._build_keyword_index("skills", limit=limit, offset=offset),
-            "ltm_inverted": lambda: self._build_keyword_index("ltm", limit=limit, offset=offset),
+            "ltm_inverted": lambda: self._build_keyword_index(
+                "ltm", limit=limit, offset=offset),
             "stm_inverted": lambda: self._build_keyword_index("stm", limit=limit, offset=offset),
             "association": lambda: self._build_association_index(
                 limit=limit, input_keywords=input_keywords, offset=offset),
@@ -1455,7 +1505,7 @@ class ContextAssembler:
             "tool_id": "index_view",
             "tool_family": "protocol_tool",
             "tool_class": "read_tool",
-            "status": "accepted" if scope in builders else "rejected",
+            "status": "accepted" if scope in builders and not query_error else "rejected",
             "source": "protocol_tool_request",
             "scope": scope,
             "zone": zone or "",
@@ -1468,10 +1518,42 @@ class ContextAssembler:
             if scope not in builders:
                 receipt["reason"] = "unsupported_scope"
                 return receipt
+            if query_error:
+                receipt["reason"] = query_error
+                return receipt
             receipt["content"] = builders[scope]()
             return receipt
         finally:
             self._hidden_stm_memory_ids = previous_hidden
+
+    def build_memory_search(self, query_terms, offset=0, limit=8):
+        """Return locator-only public LTM candidates without recall side effects."""
+        from assembly.context_indexes import build_ltm_memory_search
+
+        receipt = {
+            "tool_id": "memory_search",
+            "tool_family": "protocol_tool",
+            "tool_class": "read_tool",
+            "status": "accepted",
+            "source": "protocol_tool_request",
+            "locator_only": True,
+            "next_action": "memory_content_read",
+            "protocol_tool_receipt": True,
+        }
+        try:
+            receipt.update(build_ltm_memory_search(
+                query_terms,
+                limit=limit,
+                offset=offset,
+            ))
+        except Exception as exc:
+            receipt.update({
+                "status": "rejected",
+                "reason": str(exc) or "memory_search_failed",
+                "content": "",
+                "candidates": [],
+            })
+        return receipt
 
     def _relation_focus_max_slots(self):
         cfg = self.config_store
@@ -1489,9 +1571,11 @@ class ContextAssembler:
     def _build_statusbar_with_relations(self, state, round_type,
                                         current_input_text=None,
                                         interaction_meta=None,
-                                        relation_summary_mounts=None):
+                                        relation_summary_mounts=None,
+                                        response_anchor=""):
         """生成 STATUSBAR 结构化投影，再渲染为模型可见文本。"""
-        projection = self.statusbar.build_projection(state, round_type)
+        projection = self.statusbar.build_projection(
+            state, round_type, response_anchor=response_anchor)
         try:
             from logic.execution_permission import (
                 load_execution_permission_level,

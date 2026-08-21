@@ -10,32 +10,26 @@ from constants import local_now, local_fromtimestamp
 from constants import STANDBY_COUNTDOWN_INITIAL
 from errors import ProviderCallCancelled
 from engines.cleanup_helpers import (
-    append_ltm_index,
-    extract_memory_field,
-    ltm_has_entry,
     round_text,
-    strip_memory_heading,
 )
-from engines.ltm_degradation import LTMDegradationManager
+from data.memory_compression_store import MemoryCompressionManager
 from engines.round_context import FrameRef, RoundContext
 from engines.runtime_services import EngineComponent
 from logic.interaction_meta import cache_interaction_meta
 from logic.cleanup_processor import process_cleanup
 from logic.native_tool_calls import project_step_finalize, terminal_finalize_from_envelopes
 from logic.task_acceptance import DONE_ITEM_STATUSES, PASSED_ACCEPTANCE_STATUSES
-from logic.evolution_set import (
-    extract_evolution_blocks,
-)
 from logic.mem_id import make_meta_template
 from logic.state_settlement import StateSettlementError, settle_state
 from logic.relay_target import normalize_pending_target
+from logic.runtime_channels import closeout_final_response_source
 from logic.sandbox_grant import load_sandbox_grant
 from logic.relay_intent_pool import (
     create_relay_intent,
     open_relay_intents,
     settle_open_relay_intents,
 )
-from logic.write_pending_settlement import rhythm_chronicle_write_applied
+from logic.rhythm_guidance import rhythm_chronicle_write_applied
 
 
 CALENDAR_FLAG_TO_LAYER = {
@@ -55,13 +49,19 @@ ALERT_FLAG_NAMES = {
 
 def _inherit_ltm_memory_meta(entry, source, round_num):
     for key in (
-        "created_at", "last_recalled_at", "linked_containers",
-        "current_overview", "current_overview_updated_at",
+        "created_at", "last_recalled_at", "created_instance_id",
+        "last_recalled_instance_id",
     ):
         if key in source:
             entry[key] = source[key]
     entry["created_round"] = source.get("created_round", round_num)
     entry["last_recalled_round"] = source.get("last_recalled_round", round_num)
+    for key in (
+        "linked_containers", "current_overview", "current_overview_updated_at",
+    ):
+        if key in source:
+            entry[key] = source[key]
+    return entry
 
 
 class CleanupPipeline(EngineComponent):
@@ -233,56 +233,55 @@ class CleanupPipeline(EngineComponent):
             return {"status": "error", "reason": str(exc)}
 
     def _prepare_lately_compression_pending(self, result, round_num):
-        try:
-            cache_stats = self.ctx_store.get_last_cache_stats()
-            if not cache_stats.get("lately_trimmed"):
-                return None
-            compact_ratio = self.ctx_store.get_lately_compact_ratio()
-            compact_ratio = min(1.0, max(0.0, float(compact_ratio)))
-            if compact_ratio >= 1.0:
-                return None
-            candidates = list(
-                self.ctx_store.build_lately_compression_candidates(
-                    max_blocks=None,
-                ) or []
-            )
-            source_ids = [
-                str(item.get("id") or "").strip()
-                for item in candidates
-                if str(item.get("id") or "").strip()
-            ]
-            if not source_ids:
-                return None
-            total_chars = sum(int(item.get("chars", 0) or 0) for item in candidates)
-            pending = {
-                "lately_trimmed": True,
-                "compact_ratio": compact_ratio,
-                "current_round": round_num,
-                "source_block_ids": source_ids,
-                "candidate_blocks": len(source_ids),
-                "before_chars": total_chars,
-                "target_chars": int(total_chars * compact_ratio),
-            }
-            if isinstance(result, dict):
-                result["_lately_compression_pending"] = pending
-            return pending
-        except Exception as exc:
-            if isinstance(result, dict):
-                result["_lately_compression_pending_error"] = str(exc)
+        observation = dict(self.services.cache_pressure_observation or {})
+        if not observation:
             return None
-
-    @staticmethod
-    def _lately_compression_popup(pending):
-        if not pending:
-            return ""
-        ratio = pending.get("compact_ratio", 0.618)
-        count = pending.get("candidate_blocks", 0)
-        return (
-            "【最近缓存压缩提醒】\n"
-            f"最近缓存发生水位删除，删后幸存段仍在“最近缓存 lately”层，共 {count} 个语料块。"
-            f"建议压缩比例为 {ratio}。本轮善后只置位 cache_compaction_due；"
-            "下一轮由维护节律 guide 处理压缩，不要把压缩内容写成交接。"
+        pending = self.ctx_store.prepare_lately_pressure_compaction(
+            round_num,
+            observation,
         )
+        if not isinstance(pending, dict) or not pending.get("status"):
+            raise RuntimeError("invalid_lately_pressure_compaction_receipt")
+        debt = pending.get("debt") if isinstance(pending.get("debt"), dict) else {}
+        plan = debt.get("compaction_plan") if isinstance(
+            debt.get("compaction_plan"), dict
+        ) else {}
+        shards = debt.get("shards") if isinstance(debt.get("shards"), list) else []
+        audit_payload = {
+            "status": pending.get("status"),
+            "reason": pending.get("reason"),
+            "pressure_observation": observation,
+        }
+        for key in (
+                "lately_chars", "released_chars", "releasable_chars",
+                "shortfall_chars", "recovered"):
+            if key in pending:
+                audit_payload[key] = pending[key]
+        cache_stats = pending.get("cache_stats")
+        if isinstance(cache_stats, dict):
+            audit_payload["cache_stats"] = dict(cache_stats)
+        if debt:
+            audit_payload.update({
+                "compaction_id": debt.get("compaction_id"),
+                "debt_phase": debt.get("phase"),
+                "planned_shards": len(shards or plan.get("shards") or []),
+                "target_chars": debt.get("target_chars", plan.get("target_chars")),
+                "fifo": dict(debt.get("fifo") or {}),
+            })
+        self._get_round_audit_store().append_event(
+            round_num,
+            "lately_pressure_compaction",
+            audit_payload,
+            phase="cleanup",
+        )
+        if pending.get("status") == "error":
+            raise RuntimeError(
+                str(pending.get("reason") or "lately_pressure_compaction_failed")
+            )
+        self.services.cache_pressure_observation = {}
+        if isinstance(result, dict):
+            result["_lately_compression_pending"] = pending
+        return pending
 
     def run(self, *args, **kwargs):
         if args and isinstance(args[0], RoundContext):
@@ -365,35 +364,7 @@ class CleanupPipeline(EngineComponent):
             except Exception as exc:
                 fatal_reasons.append(failure_reason("heat_decay", exc))
 
-        # ② 遗忘分流
-        forgetting_text = ""
-        if not user_stop:
-            try:
-                forgetting_text = self._build_forgetting_context()
-            except Exception as exc:
-                fatal_reasons.append(failure_reason("forgetting_context", exc))
-        cleanup_task_materials = []
-        if forgetting_text:
-            cleanup_task_materials.append((
-                "STM 遗忘压缩",
-                "cleanup_forgetting_task",
-                forgetting_text,
-            ))
-        # 日历日节律：LTM降格压缩任务作为善后步临时材料挂载。
-        if round_type == "rhythm" and not user_stop:
-            try:
-                flags = state.get("base", {}).get("heartbeat_flags", {})
-                if flags.get("calendar_day_due"):
-                    self._prepare_ltm_degradation_for_day(round_num)
-                    ltm_tasks = self._build_ltm_degradation_context()
-                    if ltm_tasks:
-                        cleanup_task_materials.append((
-                            "LTM 降格处理",
-                            "cleanup_ltm_degradation_task",
-                            ltm_tasks,
-                        ))
-            except Exception as exc:
-                fatal_reasons.append(failure_reason("ltm_degradation", exc))
+        # ② 语义压缩不再进入 Cleanup provider 输入；这里只保留机械结算。
         result["_user_input"] = user_input_text
         interaction_meta = result.get("_interaction_meta", {}) if isinstance(result, dict) else {}
         cache_meta = cache_interaction_meta(interaction_meta)
@@ -404,22 +375,6 @@ class CleanupPipeline(EngineComponent):
                 result,
                 cache_meta,
             )
-            for title, source, content in cleanup_task_materials:
-                self._write_cleanup_task_material(
-                    round_num,
-                    title,
-                    content,
-                    source,
-                    result,
-                )
-        lately_pending = (
-            self._prepare_lately_compression_pending(result, round_num)
-            if not user_stop else None
-        )
-        cleanup_popup_fragments = []
-        lately_popup = self._lately_compression_popup(lately_pending)
-        if lately_popup:
-            cleanup_popup_fragments.append(lately_popup)
         cleanup_result = {}
         executed_phases = ("setup", "reaction", "cleanup")
         if isinstance(result, dict):
@@ -452,8 +407,6 @@ class CleanupPipeline(EngineComponent):
                 raise ProviderCallCancelled("cleanup_provider_skipped_after_user_stop")
             set_stage("cleanup_model")
             cleanup_assemble_kwargs = {}
-            if cleanup_popup_fragments:
-                cleanup_assemble_kwargs["popup_fragments"] = cleanup_popup_fragments
             organ_runtime = getattr(self, "organ_runtime", None)
             if organ_runtime is not None:
                 organ_materials = organ_runtime.begin_frame_materials(frame_ref)
@@ -469,6 +422,14 @@ class CleanupPipeline(EngineComponent):
                 messages,
                 round_num,
                 iteration=1,
+            )
+            self._transition_current_cache(
+                round_num,
+                boundary="cleanup_provider_return",
+                consumer_frame_id=cleanup_frame_ref(1).frame_id,
+                phase="cleanup",
+                iteration=1,
+                expire_call_transients=True,
             )
             cleanup_iteration = 1
             retry_needed, parsed, terminal_invalids = (
@@ -488,18 +449,39 @@ class CleanupPipeline(EngineComponent):
                     cleanup_iteration,
                     retry_settlement,
                 )
-                messages = self._cleanup_finalize_retry_messages(
-                    messages,
-                    terminal_invalids,
+                next_iteration = cleanup_iteration + 1
+                retry_popup = self._cleanup_finalize_retry_popup(
+                    terminal_invalids)
+                cleanup_assemble_kwargs = {
+                    "popup_fragments": [retry_popup],
+                }
+                if organ_runtime is not None:
+                    organ_materials = organ_runtime.begin_frame_materials(
+                        cleanup_frame_ref(next_iteration))
+                    if organ_materials:
+                        cleanup_assemble_kwargs["material_inputs"] = (
+                            organ_materials)
+                system, messages = self.assembler.assemble_cleanup(
+                    state,
+                    round_type,
+                    result,
+                    **cleanup_assemble_kwargs,
                 )
                 try:
-                    next_iteration = cleanup_iteration + 1
                     cleanup_result = self._call_llm_with_round_audit(
                         "cleanup",
                         system,
                         messages,
                         round_num,
                         iteration=next_iteration,
+                    )
+                    self._transition_current_cache(
+                        round_num,
+                        boundary="cleanup_provider_return",
+                        consumer_frame_id=cleanup_frame_ref(next_iteration).frame_id,
+                        phase="cleanup",
+                        iteration=next_iteration,
+                        expire_call_transients=True,
                     )
                 except Exception as retry_exc:
                     interrupted = (
@@ -530,7 +512,12 @@ class CleanupPipeline(EngineComponent):
                     "_terminal_invalids": list(terminal_invalids or []),
                 }
             self._isolate_cleanup_natural_response(cleanup_result)
-            self._update_token_usage(cleanup_result)
+            self._update_token_usage(
+                cleanup_result,
+                round_num=round_num,
+                phase="cleanup",
+                iteration=cleanup_iteration,
+            )
 
             self._process_cleanup_output(
                 cleanup_result,
@@ -579,26 +566,32 @@ class CleanupPipeline(EngineComponent):
         except Exception as exc:
             fatal_reasons.append(f"state_settle:{type(exc).__name__}:{exc}")
 
-        # ⑤ 遗忘压缩落盘（独立——API失败也有兜底处理）
+        # ⑤ STM 遗忘机械结算：需语义压缩者先记共享账本再删除 STM。
         if not user_stop:
             try:
-                self._process_forgetting_result(cleanup_result, round_num)
+                self._process_forgetting_settlement(
+                    round_num, settlement_result=result)
             except Exception as exc:
-                fatal_reasons.append(failure_reason("forgetting_persist", exc))
+                degraded_reasons.append(failure_reason("forgetting_settle", exc))
 
         # ⑥ 升格检查（独立）
         if not user_stop:
             try:
-                self._process_memory_lifecycle(round_num)
+                self._process_memory_lifecycle(
+                    round_num, settlement_result=result)
             except Exception as exc:
-                fatal_reasons.append(failure_reason("memory_lifecycle", exc))
+                degraded_reasons.append(failure_reason("memory_lifecycle", exc))
 
-        # ⑥.4 进化集整理（自主轮阈值触发，独立）
-        if not user_stop:
-            try:
-                self._process_evolution_set(round_type, state, result, round_num)
-            except Exception as exc:
-                fatal_reasons.append(failure_reason("evolution_set", exc))
+        try:
+            for receipt in result.get("_memory_lifecycle_receipts", []):
+                self._get_round_audit_store().append_event(
+                    round_num,
+                    str(receipt.get("event") or "memory_lifecycle_receipt"),
+                    receipt,
+                    phase="cleanup",
+                )
+        except Exception as exc:
+            fatal_reasons.append(failure_reason("memory_lifecycle_audit", exc))
 
         # ⑦ 保存语料缓冲（独立）
         no_progress_block = self._guard_no_progress_relay(
@@ -606,7 +599,8 @@ class CleanupPipeline(EngineComponent):
         if no_progress_block and "no_progress_relay" not in degraded_reasons:
             degraded_reasons.append("no_progress_relay")
         resp_text = result.get("response", "")
-        if not result.get("_l3_emergency_buffer_saved"):
+        cache_saved = bool(result.get("_l3_emergency_buffer_saved"))
+        if not cache_saved:
             try:
                 self.ctx_store.save_round_to_cache(
                     round_num,
@@ -617,8 +611,34 @@ class CleanupPipeline(EngineComponent):
                     response=resp_text,
                     **cache_meta,
                 )
+                cache_saved = True
             except Exception as exc:
                 fatal_reasons.append(failure_reason("round_cache_save", exc))
+        closeout_drained = False
+        if cache_saved:
+            try:
+                closeout_receipt = self._transition_current_cache(
+                    round_num,
+                    boundary="round_closeout",
+                    consumer_frame_id=f"R{int(round_num):06d}:closeout",
+                    phase="cleanup",
+                    expire_call_transients=True,
+                )
+                result["_current_cache_closeout"] = closeout_receipt
+                closeout_drained = True
+            except Exception as exc:
+                fatal_reasons.append(
+                    failure_reason("current_cache_closeout", exc))
+        if (
+                cache_saved
+                and closeout_drained
+                and self.services.cache_pressure_observation):
+            try:
+                self._prepare_lately_compression_pending(result, round_num)
+            except Exception as exc:
+                result["_lately_compression_pending_error"] = str(exc)
+                fatal_reasons.append(
+                    failure_reason("lately_pressure_compaction", exc))
 
         # ⑧ round 审计事件流（写入 round_{N}.jsonl）
         try:
@@ -660,12 +680,12 @@ class CleanupPipeline(EngineComponent):
                 except Exception as exc:
                     fatal_reasons.append(failure_reason("raw_log_archive", exc))
             try:
-                self._process_calendar_cleanup(
+                degraded_reasons.extend(self._process_calendar_cleanup(
                     cleanup_result,
                     round_num,
                     state,
                     settlement_result=result,
-                )
+                ) or [])
             except Exception as exc:
                 fatal_reasons.append(failure_reason("calendar_cleanup", exc))
 
@@ -700,10 +720,9 @@ class CleanupPipeline(EngineComponent):
             try:
                 self._get_round_audit_store().close_round(
                     round_num,
-                    final_response_source=(
-                        "runtime.user_stop"
-                        if user_stop and not resp_text
-                        else "reaction.final_reply_text"
+                    final_response_source=closeout_final_response_source(
+                        result,
+                        user_stop=user_stop,
                     ),
                     final_response=resp_text,
                 )
@@ -756,10 +775,6 @@ class CleanupPipeline(EngineComponent):
             flag for flag in self._alert_flags_cleared_by_result(result or {})
             if heartbeat_flags.get(flag)
         )
-        if (
-                heartbeat_flags.get("cache_compaction_due")
-                and self._cache_compaction_cleared_by_result(result or {})):
-            flags_to_clear.append("cache_compaction_due")
         updates = {
             "base.meta.last_round_closed_at": local_now().isoformat(),
         }
@@ -837,21 +852,6 @@ class CleanupPipeline(EngineComponent):
         except Exception:
             pass
 
-    def _process_evolution_set(self, round_type, state, result, round_num):
-        """解析自主轮进化集块，写入 Materials/Evolution 并迁移 pending。"""
-        if round_type != "autonomous" or not isinstance(result, dict):
-            return []
-        if not result.get("_evolution_requested"):
-            return []
-        blocks = extract_evolution_blocks(result.get("response", ""))
-        if not blocks:
-            return []
-        stats = result.get("_evolution_stats") or {}
-        outputs = []
-        for block in blocks:
-            outputs.append(self.evolution_store.process_pending(block, round_num, stats))
-        return outputs
-
     def _process_rest_cycle(self, *_args, **_kwargs):
         """Deferred compatibility hook; Seed cleanup does not call it."""
         return None
@@ -916,28 +916,6 @@ class CleanupPipeline(EngineComponent):
                 if layer == expected_layer:
                     flags.add(flag)
         return flags
-
-    @staticmethod
-    def _cache_compaction_cleared_by_result(result):
-        if not isinstance(result, dict):
-            return False
-        receipts = []
-        for key in ("_protocol_tool_receipts",):
-            receipts.extend(result.get(key) or [])
-        for receipt in CleanupPipeline._iter_receipts_with_backend(receipts):
-            if not isinstance(receipt, dict):
-                continue
-            completed = {
-                str(flag or "").strip()
-                for flag in receipt.get("completed_flags") or []
-                if str(flag or "").strip()
-            }
-            if "cache_compaction_due" in completed:
-                return True
-            compaction = receipt.get("cache_compaction")
-            if isinstance(compaction, dict) and compaction.get("all_done"):
-                return True
-        return False
 
     @staticmethod
     def _interaction_consumed_by_result(result):
@@ -1132,8 +1110,7 @@ class CleanupPipeline(EngineComponent):
 
     def _finalize_flags(self, state, round_type, round_num, result=None):
         """善后步终态：清零本轮已消费的 flags"""
-        # 通用清理：stm_degrade_pending 每轮都清（心跳下次按实际状态重新置位）
-        flags_to_clear = ["stm_degrade_pending"]
+        flags_to_clear = []
         heartbeat_flags = state.get("base", {}).get("heartbeat_flags", {})
         rhythm_chronicle_applied = (
             round_type != "rhythm"
@@ -1156,10 +1133,6 @@ class CleanupPipeline(EngineComponent):
                 if heartbeat_flags.get(flag)
             )
             if (
-                    heartbeat_flags.get("cache_compaction_due")
-                    and self._cache_compaction_cleared_by_result(result or {})):
-                flags_to_clear.append("cache_compaction_due")
-            if (
                     heartbeat_flags.get("user_message_waiting")
                     and self._interaction_consumed_by_result(result or {})):
                 flags_to_clear.append("user_message_waiting")
@@ -1169,7 +1142,7 @@ class CleanupPipeline(EngineComponent):
             if "continue_requested" not in flags_to_clear:
                 flags_to_clear.append("continue_requested")
         elif round_type == "autonomous":
-            flags_to_clear.extend(["feeling_settle_due", "evolution_pending"])
+            flags_to_clear.append("feeling_settle_due")
 
         # checkpoint + 日历更新时间戳
         update_meta = {}
@@ -1461,12 +1434,10 @@ class CleanupPipeline(EngineComponent):
         )
 
     def _process_calendar_cleanup(
-            self, cleanup_result, round_num, state, settlement_result=None):
+            self, _cleanup_result, _round_num, state, settlement_result=None):
         """日历节律善后步：语料合并 + 保留清理"""
-        import re as _re
         from data.chronicle_store import ChronicleStore, CorpusStore
 
-        response = cleanup_result.get("response", "")
         flags = state.get("base", {}).get("heartbeat_flags", {})
         completed = self._calendar_flags_cleared_by_result(
             settlement_result or {})
@@ -1477,14 +1448,6 @@ class CleanupPipeline(EngineComponent):
 
         ch_store = ChronicleStore()
         co_store = CorpusStore()
-
-        # LTM降格压缩落盘（从LLM响应提取 <!-- LTM_DEGRADE:MEM-xxx --> 块）
-        if response and "calendar_day_due" in cal_flags:
-            ltm_pattern = r'<!--\s*LTM_DEGRADE:(MEM-[0-9A-F]{8})\s*-->\s*\n?(.*?)\n?\s*<!--\s*/LTM_DEGRADE\s*-->'
-            try:
-                self._apply_ltm_degradation(_re.findall(ltm_pattern, response, _re.DOTALL), round_num)
-            except Exception:
-                pass
 
         # 语料合并（逐层）
         merge_chain = [
@@ -1498,7 +1461,7 @@ class CleanupPipeline(EngineComponent):
             "calendar_year_due": "yearly",
         }
         for src, tgt in merge_chain:
-                # 只在目标层激活时合并（日报→日合并；周报→周合并）
+            # 只在目标层激活时合并（日报→日合并；周报→周合并）
             tgt_flag = [k for k, v in active_names.items() if v == tgt]
             if tgt_flag and tgt_flag[0] in cal_flags:
                 co_store.merge_layer(src, tgt)
@@ -1522,6 +1485,7 @@ class CleanupPipeline(EngineComponent):
                 self._cleanup_trash()
             except Exception:
                 pass
+        return []
 
     def _cleanup_trash(self):
         """清理 trash/ 目录中超过1年的文件"""
@@ -1549,152 +1513,84 @@ class CleanupPipeline(EngineComponent):
                 except OSError:
                     pass
 
-    def _build_ltm_degradation_context(self):
-        """Build LTM degradation compression context for due Full/Summary entries."""
-        return LTMDegradationManager().build_compression_context()
-
-    def _apply_ltm_degradation(self, degradation_results, round_num):
-        """Apply cleanup LLM LTM degradation results for Full/Summary only."""
-        return LTMDegradationManager().apply_compression_results(
-            degradation_results,
-            round_num,
-        )
-
-    def _prepare_ltm_degradation_for_day(self, round_num):
-        """Settle daily LTM countdowns and direct Abstract -> Backup moves."""
-        return LTMDegradationManager().prepare_daily_degradation(round_num)
-
-    def _process_memory_lifecycle(self, round_num):
-        """STM→LTM 升格：AH_high ≥ 5 的条目复制到 LTM Full"""
-        import os as _os
-        import json as _json
-        from paths import LTM_FULL_DIR, LTM_FULL_META_JSON
-
-        try:
-            candidates = self.heat.check_upgrade()
-        except Exception:
-            candidates = []
-        if not candidates:
-            return
-
+    def _process_memory_lifecycle(self, round_num, settlement_result=None):
+        """Promote STM only after LTM body, meta and indexes verify."""
+        candidates = self.heat.check_upgrade()
+        receipts = []
+        failures = []
         ms = self.memory_store
         for mem_id in candidates:
             try:
-                entry = ms.read_entry(mem_id)
-                meta = ms.load_meta()
-                mem_meta = meta.get(mem_id, {})
-                clean_id = mem_id[4:] if mem_id.startswith("MEM-") else mem_id
+                source = ms.read_stm_meta_by_id(mem_id)
+                if str(source.get("access") or "public").strip().lower() != "public":
+                    raise ValueError("private_memory_deferred")
+                ltm = ms.ltm_entry_state(mem_id, include_backup=False)
+                if ltm is None:
+                    raise ValueError("ltm_canonical_truth_missing")
+                if int(ltm["meta"].get("weight")) != int(source.get("weight")):
+                    raise ValueError("memory_weight_conflict")
+                admission = ms.admit_ltm_entry(mem_id)
+                receipts.append({
+                    "event": "memory_lifecycle_stored",
+                    "status": "stored",
+                    "mem_id": mem_id,
+                    "tier": ltm["tier"],
+                    "stored_at": admission["stored_at"],
+                    "stm_retained": True,
+                })
+            except Exception as exc:
+                failures.append(mem_id)
+                receipts.append({
+                    "event": "memory_lifecycle_failed",
+                    "status": "failed",
+                    "mem_id": mem_id,
+                    "tier": "Full",
+                    "reason": f"{type(exc).__name__}:{exc}",
+                })
+        if isinstance(settlement_result, dict) and receipts:
+            settlement_result.setdefault(
+                "_memory_lifecycle_receipts", []).extend(receipts)
+        if failures:
+            raise RuntimeError(
+                "memory_lifecycle_failed:" + ",".join(failures))
+        return receipts
 
-                _os.makedirs(LTM_FULL_DIR, exist_ok=True)
-                full_md = _os.path.join(LTM_FULL_DIR, "full.md")
-                entry_body = strip_memory_heading(entry)
-                with open(full_md, "a", encoding="utf-8") as f:
-                    f.write(f"\n## MEM-{clean_id}\n{entry_body}\n")
-
-                fm = {}
-                if _os.path.isfile(LTM_FULL_META_JSON):
-                    with open(LTM_FULL_META_JSON, "r", encoding="utf-8") as f:
-                        fm = _json.load(f)
-                fm[mem_id] = make_meta_template(
-                    mem_id, title=mem_meta.get("title", mem_id),
-                    weight=5, subject=mem_meta.get("subject", ""),
-                    model=mem_meta.get("model", ""))
-                _inherit_ltm_memory_meta(fm[mem_id], mem_meta, round_num)
-                tmp = LTM_FULL_META_JSON + ".tmp"
-                with open(tmp, "w", encoding="utf-8") as f:
-                    _json.dump(fm, f, ensure_ascii=False, indent=2)
-                _os.replace(tmp, LTM_FULL_META_JSON)
-                self.heat.mark_stored(mem_id)
-            except Exception:
-                pass
-
-    def _build_forgetting_context(self):
-        """STM 遗忘分流：找出需要 LLM 语义压缩的 F/S 级条目，
-        组装为追加到善后步 messages 的压缩指令文本。
-        不额外调 API——复用善后步同一次调用。"""
-        to_delete, to_abstract, need_compress = self._forgetting_candidates()
-
-        if not need_compress:
-            return ""
-
-        ms = self.memory_store
-        parts = ["## STM 遗忘压缩（本轮 AH_low 到线的 F/S 级条目，请语义压缩后输出）\n"]
-        for mem_id in need_compress:
+    def _process_forgetting_settlement(
+            self, round_num, settlement_result=None):
+        """Settle every due STM entry without reading provider prose."""
+        _to_delete, _to_abstract, _need_compress = self._forgetting_candidates()
+        ordered = list(dict.fromkeys(
+            list(_to_delete) + list(_to_abstract) + list(_need_compress)))
+        manager = MemoryCompressionManager(
+            memory_store=self.memory_store,
+            instance_id=getattr(self.memory_store, "instance_id", None),
+        )
+        receipts = []
+        failures = []
+        for mem_id in ordered:
             try:
-                entry = ms.read_entry(mem_id)
-            except Exception:
-                entry = f"*(条目 {mem_id} 正文读取失败)*"
-            parts.append(
-                f"### {mem_id}\n原文：\n{entry}\n\n"
-                f"请将以上内容压缩为梗概（约128-256字），"
-                f"用 `<!-- FORGET:{mem_id} -->` 和 `<!-- /FORGET -->` 包裹输出。"
-            )
-        return "\n".join(parts)
-
-    def _process_forgetting_result(self, cleanup_result, round_num):
-        """遗忘处理落盘：
-        - F 级   → 取 LLM 压缩结果 → 写 LTM Summary → 删 STM 副本
-        - S 级   → 取 LLM 压缩结果 → 写 LTM Abstract → 删 STM 副本
-        - A 级   → 直接搬 LTM Abstract → 删 STM 副本
-        - 已归档  → 直接删 STM 副本
-        """
-        import re as _re
-        to_delete, to_abstract, need_compress = self._forgetting_candidates()
-
-        response = cleanup_result.get("response", "")
-        ms = self.memory_store
-
-        # ① F/S 级：解析 LLM 压缩输出 → F 写 Summary，S 写 Abstract
-        compress_results = {}
-        if response and need_compress:
-            pattern = r'<!--\s*FORGET:(MEM-[0-9A-F]{8})\s*-->\s*\n?(.*?)\n?\s*<!--\s*/FORGET\s*-->'
-            for mem_id, compressed_text in _re.findall(pattern, response, _re.DOTALL):
-                compress_results[mem_id] = compressed_text.strip()
-
-        for mem_id in need_compress:
-            if ltm_has_entry(mem_id):
-                try:
-                    self._remove_stm_copy(mem_id, ms)
-                except Exception:
-                    pass
-                continue
-            compressed = compress_results.get(mem_id, "")
-            if not compressed:
-                # LLM 没产出压缩版 → 截断兜底，下轮善后步重试
-                try:
-                    compressed = ms.read_entry(mem_id)
-                except Exception:
-                    compressed = f"*(记忆 {mem_id} 压缩失败)*"
-            try:
-                self._archive_compressed_stm(mem_id, compressed, round_num, ms)
-                self._remove_stm_copy(mem_id, ms)
-            except Exception:
-                pass
-
-        # ② A 级：直接搬 LTM Abstract（不需语义压缩）
-        for mem_id in to_abstract:
-            if ltm_has_entry(mem_id):
-                try:
-                    self._remove_stm_copy(mem_id, ms)
-                except Exception:
-                    pass
-                continue
-            try:
-                entry = ms.read_entry(mem_id)
-            except Exception:
-                entry = f"*(记忆 {mem_id} 自动归档)*"
-            try:
-                self._archive_to_abstract(mem_id, entry, round_num, ms)
-                self._remove_stm_copy(mem_id, ms)
-            except Exception:
-                pass
-
-        # ③ 已归档（stored=True）：直接删 STM 副本
-        for mem_id in to_delete:
-            try:
-                self._remove_stm_copy(mem_id, ms)
-            except Exception:
-                pass
+                settled = manager.settle_stm_forgetting(
+                    mem_id, round_num=round_num)
+                receipts.append({
+                    "event": "memory_lifecycle_settled",
+                    "status": "applied",
+                    **settled,
+                })
+            except Exception as exc:
+                failures.append(mem_id)
+                receipts.append({
+                    "event": "memory_lifecycle_failed",
+                    "status": "failed",
+                    "mem_id": mem_id,
+                    "reason": f"{type(exc).__name__}:{exc}",
+                })
+        if isinstance(settlement_result, dict) and receipts:
+            settlement_result.setdefault(
+                "_memory_lifecycle_receipts", []).extend(receipts)
+        if failures:
+            raise RuntimeError(
+                "memory_lifecycle_failed:" + ",".join(failures))
+        return receipts
 
     def _forgetting_candidates(self):
         """Exclude dormant private entries from every cleanup forgetting path."""
@@ -1703,170 +1599,21 @@ class CleanupPipeline(EngineComponent):
 
         entries = self.heat.load_heat().get("entries", {})
         memory_store = self.memory_store
+        canonical_meta = memory_store.active_ltm_meta_by_id()
         public_entries = {}
+        public_meta = {}
         for mem_id, heat_entry in entries.items():
-            try:
-                access = str(
-                    memory_store.get_meta(mem_id).get("access") or "public"
-                ).strip().lower()
-            except Exception:
+            if not heat_entry.get("degrade"):
                 continue
+            meta_entry = canonical_meta.get(mem_id)
+            if not isinstance(meta_entry, dict):
+                raise ValueError(f"ltm_canonical_truth_missing:{mem_id}")
+            access = str(meta_entry.get("access") or "public").strip().lower()
             if MEMORY_PRIVACY_ENABLED or access != "private":
                 public_entries[mem_id] = heat_entry
+                public_meta[mem_id] = meta_entry
         calculator = getattr(self.heat, "calculator", None) or STMHeatCalculator()
-        return calculator.process_forgetting(public_entries)
-
-    def _remove_stm_copy(self, mem_id, ms=None):
-        """删除 STM 层同编号副本：正文、meta、index、keywords、heat 同步收口。"""
-        ms = ms or self.memory_store
-        for action in (
-            lambda: ms.remove_entry(mem_id),
-            lambda: ms.delete_meta(mem_id),
-            lambda: ms.remove_index(mem_id),
-            lambda: self.memory_index.remove_stm_entry(mem_id),
-            lambda: self.heat.remove_entry(mem_id),
-        ):
-            try:
-                action()
-            except Exception:
-                pass
-
-    def _format_ltm_memory_body(self, text, mem_meta, round_num, tier):
-        body = strip_memory_heading(text)
-        subject = extract_memory_field(body, "交互对象") or mem_meta.get("subject", "—") or "—"
-        title = extract_memory_field(body, "标题") or mem_meta.get("title", "记忆归档")
-        gist = (
-            extract_memory_field(body, "梗概")
-            or title
-        )
-        content = (
-            extract_memory_field(body, "摘要")
-            or extract_memory_field(body, "内容")
-            or body.strip()
-            or gist
-        )
-        tags = extract_memory_field(body, "标签")
-        if not tags and mem_meta.get("tags"):
-            tags = ", ".join(str(t) for t in mem_meta.get("tags", []))
-        feelings = extract_memory_field(body, "感受词") or "无"
-        linked = extract_memory_field(body, "关联容器")
-        created_at = extract_memory_field(body, "入库时间") or mem_meta.get("created_at", "")
-        created_round = mem_meta.get("created_round", round_num)
-        gist = gist[:128] + ("…" if len(gist) > 128 else "")
-
-        lines = [
-            f"**交互对象**：{subject}",
-            f"**入库**：{round_text(created_round)}",
-            f"**最后调用**：{round_text(round_num)}",
-            f"**标题**：{title}",
-            f"**梗概**（≤128字）：{gist}",
-        ]
-        if tier == "Summary":
-            summary = content[:512] + ("…" if len(content) > 512 else "")
-            lines.append(f"**摘要**（≤512字）：{summary}")
-        if created_at:
-            lines.append(f"入库时间：{created_at}")
-        lines.extend([
-            f"标签：{tags}",
-            f"感受词：{feelings}",
-            f"关联容器：{linked}",
-            f"注释：{extract_memory_field(body, '注释') or 'null'}",
-        ])
-        return "\n".join(lines), title, gist, subject, tags
-
-    def _archive_to_abstract(self, mem_id, text, round_num, ms):
-        """写一条记忆到 LTM Abstract 层"""
-        import os as _os
-        import json as _json
-        from paths import (
-            LTM_ABSTRACT_DIR, LTM_ABSTRACT_META_JSON, LTM_ABSTRACT_ABSTRACT_MD,
-            LTM_ABSTRACT_INDEX_MD,
-        )
-
-        clean_id = mem_id[4:] if mem_id.startswith("MEM-") else mem_id
-        _os.makedirs(LTM_ABSTRACT_DIR, exist_ok=True)
-
-        am = {}
-        if _os.path.isfile(LTM_ABSTRACT_META_JSON):
-            with open(LTM_ABSTRACT_META_JSON, "r", encoding="utf-8") as f:
-                am = _json.load(f)
-
-        meta = ms.load_meta()
-        mem_meta = meta.get(mem_id, {})
-        source_weight = int(mem_meta.get("weight", 1) or 1)
-        body, title, gist, subject, tags_text = self._format_ltm_memory_body(
-            text, mem_meta, round_num, "Abstract")
-        with open(LTM_ABSTRACT_ABSTRACT_MD, "a", encoding="utf-8") as f:
-            f.write(f"\n## MEM-{clean_id}  [A]  权重{source_weight}\n{body}\n")
-        append_ltm_index(
-            LTM_ABSTRACT_INDEX_MD, mem_id, "A", source_weight,
-            title, subject, round_num)
-
-        am[mem_id] = make_meta_template(
-            mem_id, title=title,
-            weight=source_weight, subject=subject,
-            model=mem_meta.get("model", ""))
-        am[mem_id]["type"] = "A"
-        if tags_text:
-            am[mem_id]["tags"] = [t.strip() for t in tags_text.split(",") if t.strip()]
-        _inherit_ltm_memory_meta(am[mem_id], mem_meta, round_num)
-        tmp = LTM_ABSTRACT_META_JSON + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            _json.dump(am, f, ensure_ascii=False, indent=2)
-        _os.replace(tmp, LTM_ABSTRACT_META_JSON)
-
-    def _archive_compressed_stm(self, mem_id, text, round_num, ms):
-        """按 STM 原始权重把遗忘压缩结果写入对应 LTM 层。"""
-        try:
-            mem_meta = ms.load_meta().get(mem_id, {})
-        except Exception:
-            mem_meta = {}
-        weight = int(mem_meta.get("weight", 2) or 2)
-        if weight >= 5:
-            self._archive_to_summary(mem_id, text, round_num, ms)
-        else:
-            self._archive_to_abstract(mem_id, text, round_num, ms)
-
-    def _archive_to_summary(self, mem_id, text, round_num, ms):
-        """写一条记忆到 LTM Summary 层"""
-        import os as _os
-        import json as _json
-        from paths import (
-            LTM_SUMMARY_DIR, LTM_SUMMARY_META_JSON, LTM_SUMMARY_SUMMARY_MD,
-            LTM_SUMMARY_INDEX_MD,
-        )
-
-        clean_id = mem_id[4:] if mem_id.startswith("MEM-") else mem_id
-        _os.makedirs(LTM_SUMMARY_DIR, exist_ok=True)
-
-        sm = {}
-        if _os.path.isfile(LTM_SUMMARY_META_JSON):
-            with open(LTM_SUMMARY_META_JSON, "r", encoding="utf-8") as f:
-                sm = _json.load(f)
-
-        meta = ms.load_meta()
-        mem_meta = meta.get(mem_id, {})
-        source_weight = int(mem_meta.get("weight", 5) or 5)
-        body, title, gist, subject, tags_text = self._format_ltm_memory_body(
-            text, mem_meta, round_num, "Summary")
-        with open(LTM_SUMMARY_SUMMARY_MD, "a", encoding="utf-8") as f:
-            f.write(f"\n## MEM-{clean_id}  [S]  权重{source_weight}\n{body}\n")
-        append_ltm_index(
-            LTM_SUMMARY_INDEX_MD, mem_id, "S", source_weight,
-            title, subject, round_num)
-
-        sm[mem_id] = make_meta_template(
-            mem_id, title=title,
-            weight=source_weight, subject=subject,
-            model=mem_meta.get("model", ""))
-        sm[mem_id]["type"] = "S"
-        if tags_text:
-            sm[mem_id]["tags"] = [t.strip() for t in tags_text.split(",") if t.strip()]
-        _inherit_ltm_memory_meta(sm[mem_id], mem_meta, round_num)
-        tmp = LTM_SUMMARY_META_JSON + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            _json.dump(sm, f, ensure_ascii=False, indent=2)
-        _os.replace(tmp, LTM_SUMMARY_META_JSON)
+        return calculator.process_forgetting(public_entries, public_meta)
 
     @staticmethod
     def _cleanup_finalize_retry_parse(cleanup_result, state=None, result=None):
@@ -2117,7 +1864,7 @@ class CleanupPipeline(EngineComponent):
         return settlement
 
     @staticmethod
-    def _cleanup_finalize_retry_messages(messages, terminal_invalids=None):
+    def _cleanup_finalize_retry_popup(terminal_invalids=None):
         truth_violation = any(
             isinstance(item, dict)
             and item.get("reason") == "cleanup_internalization_truth_violation"
@@ -2137,11 +1884,13 @@ class CleanupPipeline(EngineComponent):
                 "请立刻只调用 cleanup_finalize 工具完成善后步终端确认；"
                 "不要用普通文本替代。"
             )
-        retry = {
-            "role": "user",
-            "content": content,
-        }
-        return list(messages or []) + [retry]
+        return (
+            "- kind: structure_warning\n"
+            "  tier: warning\n"
+            "  decision_required: false\n"
+            "  source: cleanup_finalize_retry\n"
+            f"  message: {content}"
+        )
 
     @staticmethod
     def _isolate_cleanup_natural_response(cleanup_result):
@@ -2187,38 +1936,10 @@ class CleanupPipeline(EngineComponent):
         # 执行善后步落盘管线
         report = process_cleanup(parsed, state, round_num, result, data_modules)
 
-        pending = result.get("_lately_compression_pending") if isinstance(result, dict) else None
-        if isinstance(pending, dict) and pending.get("lately_trimmed"):
-            report["_lately_compression"] = {
-                "status": "skipped",
-                "reason": "moved_to_cache_compaction_rhythm",
-                "flag": "cache_compaction_due",
-            }
-
-        # 执行训练材料落盘（默契集/联系集 — logic只产出数据，engine层执行I/O）
-        import os as _os2
-        from paths import TACIT_SET_DIR, CONNECTION_SET_DIR, ASSOCIATION_SET_DIR
-        from data.training_material_store import write_tacit_set, write_connection_set, write_association_counts
-        if report.get("_tacit_associations"):
-            try:
-                count = write_tacit_set(
-                    _os2.path.join(TACIT_SET_DIR, "pending.jsonl"),
-                    _os2.path.join(TACIT_SET_DIR, "processed.jsonl"),
-                    round_num, report["_tacit_associations"])
-                if count:
-                    report.setdefault("warnings", []).append(f"默契集: {count} 条")
-            except Exception as e:
-                report.setdefault("errors", []).append(f"默契集写入失败: {e}")
-        if report.get("_connection_bridges"):
-            try:
-                count = write_connection_set(
-                    _os2.path.join(CONNECTION_SET_DIR, "pending.jsonl"),
-                    _os2.path.join(CONNECTION_SET_DIR, "processed.jsonl"),
-                    round_num, report["_connection_bridges"])
-                if count:
-                    report.setdefault("warnings", []).append(f"联系集: {count} 条")
-            except Exception as e:
-                report.setdefault("errors", []).append(f"联系集写入失败: {e}")
+        # Raw/Tacit 与 Raw/Connection 已退役为历史只读材料；保留 wire
+        # 兼容，但不再生成新的 pending/processed 记录。
+        from paths import ASSOCIATION_SET_DIR
+        from data.training_material_store import write_association_counts
         # 联想集五表落盘（同条目内暴力计数）
         if report.get("_association_counts"):
             try:

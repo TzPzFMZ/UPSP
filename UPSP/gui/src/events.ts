@@ -8,7 +8,8 @@ import type {
 } from "./contracts";
 import { t } from "./i18n";
 import { initMarkdownInteractions } from "./markdown";
-import { els, runtimeProjection, settingsProjection, state } from "./state";
+import { openPersonaCreation } from "./bootstrap";
+import { els, personaCatalogProjection, runtimeProjection, settingsProjection, state } from "./state";
 import {
   depositionPage,
   exportCurrentEvidence,
@@ -28,10 +29,12 @@ import {
   retryProjection,
   resolveModelContextWindow,
   submitContainerFocus,
+  submitPeriodicMemory,
   submitRuntimeMessage,
   submitRuntimePermissionChange,
   submitRuntimeRelay,
   submitRuntimeStop,
+  submitInstanceMutation,
   submitToolApproval,
   submitProviderKey,
   submitModelCatalog,
@@ -193,13 +196,78 @@ export function initEvents(): void {
     const personaNameOption = target.closest<HTMLButtonElement>("[data-persona-name-variant]");
     if (personaNameOption) {
       if (selectPersonaNameVariant(personaNameOption.dataset.personaNameVariant || "")) {
-        els.personaNameSelector.open = false;
-        window.requestAnimationFrame(() => els.personaNameSummary.focus());
+        els.personaMoreMenu.open = false;
+        window.requestAnimationFrame(() => els.personaMoreToggle.focus());
       }
       return;
     }
-    if (els.personaNameSelector.open && !target.closest("#personaNameSelector")) {
-      els.personaNameSelector.open = false;
+    if (target.closest("#personaMoreToggle")) els.instanceMoreMenu.open = false;
+    if (target.closest("#instanceMoreToggle")) els.personaMoreMenu.open = false;
+    if (els.personaMoreMenu.open && !target.closest("#personaMoreMenu")) els.personaMoreMenu.open = false;
+    if (els.instanceMoreMenu.open && !target.closest("#instanceMoreMenu")) els.instanceMoreMenu.open = false;
+    if (target.closest("[data-create-persona]")) {
+      openPersonaCreation();
+      return;
+    }
+    const personaButton = target.closest<HTMLButtonElement>("[data-activate-persona]");
+    if (personaButton) {
+      if (personaButton.dataset.activatePersona === personaCatalogProjection.data?.active.pid) return;
+      void submitInstanceMutation("./api/instances/activate", {
+        pid: personaButton.dataset.activatePersona || "",
+        instance_id: "meta",
+      });
+      return;
+    }
+    const instanceButton = target.closest<HTMLButtonElement>("[data-activate-instance]");
+    if (instanceButton) {
+      if (instanceButton.dataset.activateInstance === personaCatalogProjection.data?.active.instance_id) return;
+      void submitInstanceMutation("./api/instances/activate", {
+        pid: instanceButton.dataset.personaId || "",
+        instance_id: instanceButton.dataset.activateInstance || "",
+      });
+      return;
+    }
+    if (target.closest("[data-create-instance]")) {
+      const label = window.prompt(t("新分身名称"), "");
+      if (label?.trim()) {
+        void submitInstanceMutation("./api/instances", {
+          mode: "new",
+          label: label.trim(),
+          source_instance_id: "meta",
+        });
+      }
+      return;
+    }
+    const branchButton = target.closest<HTMLButtonElement>("[data-fork-instance]");
+    if (branchButton) {
+      const label = window.prompt(t("分支名称"), "");
+      if (label?.trim()) {
+        void submitInstanceMutation("./api/instances", {
+          mode: "fork",
+          label: label.trim(),
+          source_instance_id: branchButton.dataset.forkInstance || "",
+        });
+      }
+      return;
+    }
+    const archiveButton = target.closest<HTMLButtonElement>("[data-archive-instance]");
+    if (archiveButton) {
+      els.instanceMoreMenu.open = false;
+      const accepted = window.confirm(
+        state.locale === "zh-CN" ? "归档后该分身冻结，可稍后恢复。继续？" : "Archive and freeze this branch? You can restore it later.",
+      );
+      if (accepted) void submitInstanceMutation("./api/instances/archive", {
+        instance_id: archiveButton.dataset.archiveInstance || "",
+      });
+      return;
+    }
+    const restoreButton = target.closest<HTMLButtonElement>("[data-restore-instance]");
+    if (restoreButton) {
+      els.instanceMoreMenu.open = false;
+      void submitInstanceMutation("./api/instances/restore", {
+        instance_id: restoreButton.dataset.restoreInstance || "",
+      });
+      return;
     }
     const retryButton = target.closest<HTMLElement>("[data-retry-projection]");
     if (retryButton) {
@@ -469,6 +537,16 @@ export function initEvents(): void {
       return;
     }
 
+    const periodicMemoryButton = target.closest<HTMLElement>("[data-periodic-memory-action]");
+    if (periodicMemoryButton) {
+      const action = periodicMemoryButton.dataset.periodicMemoryAction;
+      const memId = periodicMemoryButton.dataset.memoryId || "";
+      if (action === "mount" || action === "unmount") {
+        void submitPeriodicMemory(action, memId);
+      }
+      return;
+    }
+
     const depositionButton = target.closest<HTMLElement>("[data-deposition-kind][data-deposition-id]");
     if (depositionButton) {
       const kind = depositionButton.dataset.depositionKind as DepositionKind;
@@ -616,6 +694,7 @@ export function initEvents(): void {
           connection_id: text("connection_id"),
           model: text("model"),
           context_window: Number.parseInt(text("context_window"), 10),
+          output_token_limit: Number.parseInt(text("output_token_limit") || "0", 10),
           detected_context_window: Number.parseInt(text("detected_context_window") || "0", 10),
           context_window_source: text("context_window_source") || "unknown",
           reasoning_supported: text("reasoning_supported").split(",").map((item) => item.trim()).filter(Boolean),
@@ -775,10 +854,16 @@ export function initEvents(): void {
 }
 
 function handleKeyboard(event: KeyboardEvent): void {
-  if (event.key === "Escape" && els.personaNameSelector.open) {
+  if (event.key === "Escape" && els.personaMoreMenu.open) {
     event.preventDefault();
-    els.personaNameSelector.open = false;
-    els.personaNameSummary.focus();
+    els.personaMoreMenu.open = false;
+    els.personaMoreToggle.focus();
+    return;
+  }
+  if (event.key === "Escape" && els.instanceMoreMenu.open) {
+    event.preventDefault();
+    els.instanceMoreMenu.open = false;
+    els.instanceMoreToggle.focus();
     return;
   }
   if (state.globalSettingsOpen) {
@@ -831,6 +916,21 @@ function handleKeyboard(event: KeyboardEvent): void {
   if (protocolEntry && ["Enter", " ", "Spacebar"].includes(event.key)) {
     event.preventDefault();
     protocolEntry.click();
+    return;
+  }
+
+  const identityTab = eventElement(event)?.closest<HTMLButtonElement>("[data-identity-tab]");
+  if (identityTab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+    const strip = identityTab.closest<HTMLElement>(".identity-tab-strip");
+    if (!strip) return;
+    const tabs = [...strip.querySelectorAll<HTMLButtonElement>("[data-identity-tab]:not([disabled])")];
+    if (!tabs.length) return;
+    let index = tabs.indexOf(identityTab);
+    if (event.key === "Home") index = 0;
+    else if (event.key === "End") index = tabs.length - 1;
+    else index = (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    event.preventDefault();
+    tabs[index]?.focus();
     return;
   }
 

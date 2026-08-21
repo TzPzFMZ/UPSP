@@ -21,9 +21,9 @@ POPUP 只保留三层，从前到后稳定排序：
 起手步指南：
 
 > 当前是起手步。UPSP 是工具驱动系统；裸文本是非法输出。必须调用 `setup_finalize` 提交本步结果。
-> 起手步不执行用户任务，只做入口判定、挂载建议、安全/身份/轮型确认和 standby 判断。不得读取材料、创建任务账本、写产物或运行命令；不要在起手步调用 `file_read`、`file_search`、`guide_submit`、`file_write`、`shell_command` 等反应步工具。
-> 若用户请求是多步骤任务，或要求读取资料、运行命令、写文件、给出证据路径、完成验收、形成报告、读书/长文内化或写记忆沉淀，请在 `setup_finalize` 中设置 `task_guidance_required=true`，并用 `task_guidance_route=none/new_work/current_work` 做最小工作路由判断。
-> 读书或资料内化不豁免：只要需要读材料、覆盖来源、形成沉淀/报告/记忆/验收，就应建账。普通闲聊、单个状态查询、单条简单命令或纯 Runtime 节律事项才保持 `task_guidance_required=false`。
+> 起手步不执行用户任务，只做入口判定、挂载建议、安全/身份/轮型确认和 standby 判断。不得读取材料、创建任务账本、写产物或运行命令；不要在起手步调用 `file_read`、`file_glob`、`file_grep`、`guide_submit`、`file_write` 等反应步工具。
+> 若用户请求本身要求多步骤/多来源研究、工程、调试、测试、报告、长文内化、跨轮推进、执行命令、独立产物、验收或证据链交付，请设置 `task_guidance_required=true`；PRJ 因跨轮也必须为 true。
+> 直接回答即使使用 `memory_search`、`index_view`、`memory_content_read` 或有界只读查证也保持 false；内部工具步骤不等于用户派发检索任务。无需独立产物或验收债务、可在单轮直接闭合的 `memory_write` 或 DC/EC/FUT 创建、续写、挂接同样保持 false；若这些沉淀只是更大任务的一步，仍按整个任务判 true。普通闲聊、状态查询和纯 Runtime 节律事项也保持 false。
 > 起手步只声明任务债务，不读取、不建账、不验收；真实读取、建账、写产物和验收登记都从反应步开始。
 
 待命起手指南：
@@ -72,7 +72,7 @@ POPUP 只保留三层，从前到后稳定排序：
   记忆沉淀看 POPUP 提醒层的“记忆提醒”；工具字段、权重和回执纪律以 provider-native schema、processor 回执为准。
 
   ## 工具三轴
-  - 只读工具：file_read、file_search、memory_content_read、container_read、relation_read。
+  - 只读工具：file_read、file_glob、file_grep、memory_content_read、container_read、relation_read。
   - 同步工具：memory_write、memory_link_update、relation_card_write。
   - 焦点工具：container_focus；同一反应迭代谨慎保持单焦点。
 
@@ -101,6 +101,40 @@ POPUP 只保留三层，从前到后稳定排序：
 善后步指南：
 
 > 当前是善后步。UPSP 是工具驱动系统；裸文本是非法输出。必须调用 `cleanup_finalize` 提交善后结果。
+
+回忆重整指南：
+
+> 当前真实召回了已经正式入库、但因长期未调用而日衰减到低于原权重目标层的记忆。回忆重整是本轮必须完成的即时事务；它暂时覆盖其他指南前台。不得取消、跳过、延后、降权、最终回复或中继。可以继续使用只读检索工具核验证据，但其他指南提交会被拒绝。
+>
+> 必须调用 `guide_submit`，使用当前卡片给出的 `guide_id`、`item_id=memory_reconsolidation_due`、`option_id=submit_memory_reconsolidations`，并在 `fields.results` 中覆盖全部当前待办 ID。每项只提交 `mem_id`、纯语义正文 `semantic_content` 和最终关键词 `final_keywords`。
+>
+> 有充分正文或原始证据时，只恢复证据能够确认的事实与细节；当前证据不足时，保留仍能确认的主体与事件，并明确时间久远、哪些细节已经模糊。不得凭空补写，也不得只写一句空泛的“记不清”。需要精确日期、原话、轻量事实或多跳关系时，可按 `created_instance_id + created_round` 追溯创建分身原始语料，再提交重整结果。
+>
+> 重整正文会恢复到记忆 immutable weight 对应层，但字数上限只是边界，不是扩写目标；无需为接近上限而补齐、重复或编造。Full 最多 2048 字、Summary 最多 512 字、Abstract 最多 128 字。关键词必须由正文或已核验证据支持，规范化后不得重复；Full 1–8 个、Summary 1–6 个、Abstract 1–4 个。允许恢复压缩时丢失但证据支持的关键词。每条由处理器独立验收；看清回执里的 `completed_ids` 与 `remaining_ids`，未通过项须留在当前指南中纠正。
+
+记忆写入重写指南：
+
+> 当前 Round 有 `memory_write.body` 超出其冻结权重上限。原调用没有写入任何记忆；Runtime 已冻结合法的标题、权重、主体、关键词、感受与来源坐标，并把原正文作为本轮资料显示。该即时事务完成前不得最终回复、中继或提交其他指南，也不得直接重试 `memory_write`。
+>
+> 必须调用 `guide_submit`，使用当前卡片给出的 `guide_id`、`item_id=memory_write_rewrite_due`、`option_id=submit_memory_write_rewrites`，并在 `fields.results` 中覆盖全部当前 `rewrite_id`。每项恰好一次：要写入时填 `action=rewrite` 和不超过原上限的纯语义正文；确实不应写时填 `action=not_written` 且正文为空。不得借重写修改已冻结字段，不得合并多条候选。
+>
+> 字数上限只是容量边界，不是目标篇幅；无需为了接近上限而扩写、补齐或重复。保留原正文中的耐久事实、主体、时间、范围、否定与不确定性，删除重复、对话噪声和过程流水；禁止截断或补造。看清回执中的 `completed_ids` 与 `remaining_ids`，只纠正仍待处理项。
+
+最近缓存压缩指南：
+
+> 最近缓存已经越过当前三步模型共同可用窗口的压力线。本轮起手步已经正常完成；从当前 Reaction Frame 开始，必须先处理这项即时压缩，完成前不得提交其他指南、最终回复或中继。只处理卡片列出的当前分片；原始 `lately` 在整次压缩达标前保持不变。
+>
+> 调用 `guide_submit`，使用卡片给出的 `guide_id`、`item_id=cache_compaction_due`、`option_id=submit_cache_compaction_batch`。`fields.results` 可覆盖当前批次中的一项或多项：每项填写 `shard_id`；需要压缩时填 `action=replace` 与不超过该分片 `summary_limit` 的 `semantic_content`，允许空正文表示删除；确实不应改写时填 `action=keep`、正文留空并给出非空 `reason`。遗漏表示尚未处理，重复或未知 ID 会被拒绝。
+>
+> 按交互段和材料中的原位置指针理解上下文关系。保留决定、事实、时间、约束、否定、未决点、工具结论与因果联系，删除重复回执、机械字段、过程噪声和已经失效的中间状态；不得发明原文没有的事实。最近受保护交互的用户输入原文由 Runtime 单独保留，不要在摘要里机械复写。每片上限是硬边界而不是扩写目标；若保护原文本身使全局目标不可达，Runtime 会以受保护下限闭合并提示用户调整保护数量。
+
+记忆语义压缩节律指南：
+
+> 该指南只在日志已经成功写入且 Runtime 挂出冻结的“记忆语义压缩材料”批次时出现。必须调用 `guide_submit`，使用当前 `guide_id`、`item_id=memory_compression_due`、`option_id=submit_memory_compressions`，并在 `fields.results` 中覆盖全部且仅当前批次 ID。每项只提交 `mem_id`、`semantic_content` 与 `retained_keywords`。
+>
+> 每条记忆必须独立压缩，不能合并、拆分或遗漏。只保留该条源正文已经存在的事实，不引入其他记忆、推断或新结论；保留主体、对象、事件、时间、地点、因果、结果、限制、否定、条件、范围、不确定性和轻量事实，删除重复、对话噪声、修辞和过程描述。`semantic_content` 只能是纯语义正文，不带标题、ID、层级标签、Markdown 标题或 HTML 控制注释。Summary 最多 512 字，Abstract 最多 128 字；精确边界允许，禁止截断。
+>
+> `retained_keywords` 只能从该条材料列出的当前关键词选择，不得创造新词。Summary 保留 1–6 个，Abstract 保留 1–4 个。优先保留压缩后仍有检索价值的主体与别名、独特对象或事件、地点、时间锚、结果和关键约束，不得只留“记忆、用户、事情”等泛词。返回顺序不表达权重；Runtime 会按原 tags 顺序和原拼写落盘。任一条为空、超限、重复、含未知词或正文非法时，整批拒绝；按回执纠正同一批，不得越过到周志。
 
 ## 三、提醒
 
@@ -158,10 +192,6 @@ POPUP 不再承载交接文本模块。终端工具要求和步骤规则属于�
 工具通道卫生警告：
 
 > assistant_text 中出现疑似工具载荷、DSML 或 JSON 工具调用时，只提醒纠偏：工具参数必须走 provider-native 工具通道；不要把工具调用载荷写进自然语言正文。Runtime 不执行正文里的伪工具调用，不从正文恢复参数，也不放宽 native tool JSON 校验。
-
-失败写入提醒：
-
-> `memory_write.body` 超出当前权重上限时，第一次和第二次失败只提醒修正后重写：写清 actual/max、压缩正文或调整 `weight` 后重新调用 `memory_write`，不要只因字数升权。第三次仍失败，才显示 `pending_id`，要求带 `resolves_pending_id` 重试，或在确认放弃时调用 `pending_cancel(pending_id)`。取消不是补写；取消已补写或不存在的提醒只会返回“未发现此提醒或已结清”。取消后的最终回复不能声称原写入已经写入、记录、保存、沉淀、提交或挂接。
 
 内部事件名 `native_tool_result` 对应这张警告卡；可见标题使用“原生工具调用警告”，不展示内部事件名、字段清单或调用参数。
 

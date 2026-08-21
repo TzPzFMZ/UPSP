@@ -1,6 +1,7 @@
 {
+  "_version": "Base-0.12.0",
   "layer": "now",
-  "description": "当前缓存：当前步/当前轮高注意力语料块集合；主源为 STM/context/cache/now_cache.jsonl",
+  "description": "当前缓存：下一次 provider Frame 待消费的语料包；主源为 STM/context/cache/now_cache.jsonl",
   "store": {
     "path": "STM/context/cache/now_cache.jsonl",
     "format": "jsonl",
@@ -18,9 +19,6 @@
     "minimum_commitment",
     "fault_note"
   ],
-  "budget_chars": 65536,
-  "trim_chars": 16384,
-  "fifo_policy": "complete_block",
   "persistent_lanes": {
     "now_lately_raw": [
       "interaction",
@@ -36,54 +34,16 @@
       "material"
     ]
   },
-  "policy_by_kind": {
-    "interaction": {
-      "now": true,
-      "lately": true
-    },
-    "assistant_reply": {
-      "now": true,
-      "lately": true
-    },
-    "dialogue_progress": {
-      "now": true,
-      "lately": true
-    },
-    "tool_fact": {
-      "now": true,
-      "lately": true
-    },
-    "setup_fact": {
-      "now": true,
-      "lately": true
-    },
-    "relay_handoff": {
-      "now": true,
-      "lately": true
-    },
-    "minimum_commitment": {
-      "now": true,
-      "lately": true
-    },
-    "fault_note": {
-      "now": true,
-      "lately": true
-    },
-    "material": {
-      "now": true,
-      "lately": true
-    }
-  },
   "source_kinds": {
     "interaction": "用户/频道交互语料，携带 ref.interaction 三字段",
     "assistant_reply": "反应步对外回复或可进入语料履带的回复摘要",
-    "dialogue_progress": "反应循环中由 assistant_text 消息信封产生的用户可见轮中进展语料块，不是私有笔记、资料正文、工具事实或任务证据；合法收束投影也使用 assistant_text phase=closeout",
-    "material": "文件、网页、搜索、图片说明等外部只读资料；走 now→lately、不进 raw 的 B 轨",
+    "dialogue_progress": "反应循环中由 assistant_text 消息信封产生的用户可见进展语料块；来源轮显示轮中进展记录，跨轮动态显示历史进展记录，不是私有笔记、资料正文、工具事实或任务证据；合法收束投影也使用 assistant_text phase=closeout",
+    "material": "文件、网页、搜索、图片说明等外部只读资料；下一帧成功返回后进入 lately，不进 raw 的 B 轨",
     "reasoning_context": "接口推理续接，仅走单次目标 reaction 调用的 C 轨",
-    "tool_fact": "工具执行或协议动作的短事实条，只保留模型继续工作需要的信息，允许滚入 lately/raw_log 作为历史证明",
-    "setup_fact": "起手步 provider-native setup_finalize 投影出的自然语言短事实，允许滚入 lately/raw_log 作为历史证明",
-    "relay_handoff": "下一轮 relay setup 从 relay_intents[] 投影的跨轮交接任务，role=user，但不是用户原始输入；同轮 handoff_text 不直接写 cache",
+    "tool_fact": "工具执行或协议动作的短事实条，只保留模型继续工作需要的信息；下一成功 Frame 后进入 lately/raw_log 作为历史证明",
+    "setup_fact": "起手步 provider-native setup_finalize 投影出的自然语言短事实；与起手包留到首个成功 Reaction 后进入 lately/raw_log",
+    "relay_handoff": "目标 relay 轮由 setup 从 relay_intents[] 投影的上轮交接任务，role=user，但不是用户原始输入；继续留存到更后轮次时动态显示历史交接任务；同轮 handoff_text 不直接写 cache",
     "minimum_commitment": "善后步最小承诺边界语料",
-    "fault_note": "故障记账语料块，alerts.md 同步保留告警索引"
+    "fault_note": "故障记账语料块；来源轮显示本轮故障记录，跨轮动态显示历史故障记录，alerts.md 同步保留告警索引"
   }
 }

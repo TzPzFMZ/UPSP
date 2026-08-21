@@ -1,5 +1,6 @@
 import os
 import sys
+from copy import deepcopy
 
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -14,6 +15,9 @@ class DummyMemoryStore:
         self.private_owners = {}
         self.index_rows = []
         self.link_calls = []
+        self.ltm = {}
+        self.stm_bodies = {}
+        self.heat_entries = {}
 
     def write_entry(self, mem_id, title, summary, **kwargs):
         self.entries.append((mem_id, title, summary, kwargs))
@@ -26,6 +30,49 @@ class DummyMemoryStore:
 
     def get_meta(self, mem_id):
         return dict(self.meta[mem_id])
+
+    def render_entry(self, mem_id, title, summary="", **kwargs):
+        self.entries.append((mem_id, title, summary, kwargs))
+        return f"## {mem_id} {title}\n**标题**：{title}\n**正文**：{summary}"
+
+    def snapshot_stm_files(self):
+        return deepcopy((self.stm_bodies, self.meta, self.heat_entries))
+
+    def snapshot_ltm_files(self):
+        return deepcopy(self.ltm)
+
+    def restore_stm_files(self, snapshot):
+        self.stm_bodies, self.meta, self.heat_entries = deepcopy(snapshot)
+
+    def restore_ltm_files(self, snapshot):
+        self.ltm = deepcopy(snapshot)
+
+    def store_ltm_entry(self, tier, mem_id, body, meta):
+        self.ltm[mem_id] = {
+            "tier": tier, "body": body, "meta": deepcopy(meta),
+        }
+
+    def replace_stm_body(self, mem_id, body):
+        self.stm_bodies[mem_id] = body
+
+    def replace_stm_meta(self, mem_id, meta):
+        self.meta[mem_id] = deepcopy(meta)
+
+    def rebuild_stm_index(self):
+        return None
+
+    def rebuild_stm_keywords(self):
+        return None
+
+    def ltm_entry_state(self, mem_id, *, include_backup=True):
+        return deepcopy(self.ltm.get(mem_id))
+
+    def stm_entry_state(self, mem_id):
+        return {
+            "body": self.stm_bodies.get(mem_id),
+            "meta": deepcopy(self.meta.get(mem_id)),
+            "heat": deepcopy(self.heat_entries.get(mem_id)),
+        }
 
     def private_subjects_for_memory(self, mem_id):
         return list(self.private_owners.get(mem_id, []))
@@ -57,11 +104,14 @@ class DummyMemoryIndex:
 
 
 class DummyHeat:
-    def __init__(self):
+    def __init__(self, memory_store=None):
         self.entries = []
+        self.memory_store = memory_store
 
     def set_entry(self, mem_id, entry):
         self.entries.append((mem_id, dict(entry)))
+        if self.memory_store is not None:
+            self.memory_store.heat_entries[mem_id] = dict(entry)
 
     @staticmethod
     def new_entry(weight=2):
@@ -176,6 +226,7 @@ def test_spec243_memory_write_no_longer_directly_links_or_writes_container_stub(
     import logic.memory_write as memory_write_mod
 
     memory_store = DummyMemoryStore()
+    memory_heat = DummyHeat(memory_store)
     container_store = DummyContainerStore()
     monkeypatch.setattr(memory_write_mod, "generate_mem_id", lambda: "MEM-243WRITE")
 
@@ -193,7 +244,7 @@ def test_spec243_memory_write_no_longer_directly_links_or_writes_container_stub(
         data_modules={
             "memory_store": memory_store,
             "memory_index": DummyMemoryIndex(),
-            "memory_heat": DummyHeat(),
+            "memory_heat": memory_heat,
             "container_store": container_store,
             "relation_store": DummyRelationStore(),
         },

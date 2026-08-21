@@ -224,6 +224,7 @@ export interface RuntimeStatus {
   send_in_flight?: boolean;
   relay_in_flight?: boolean;
   mutation_in_flight?: boolean;
+  restart_requested?: boolean;
   pending_tool_approval?: {
     schema_version: "general_tool_approval.v1";
     approval_id: string;
@@ -418,6 +419,13 @@ export interface DepositionItem {
   tags?: string[];
   source_refs?: string[];
   memory_layer?: string;
+  memory_layers?: string[];
+  stm_present?: boolean;
+  ltm_layer?: string;
+  periodic_mounted?: boolean;
+  periodic_pin_owned?: boolean;
+  periodic_mount_status?: string;
+  periodic_mount_reason?: string;
   linked_containers?: string[];
   prefix?: string;
   type?: string;
@@ -426,8 +434,12 @@ export interface DepositionItem {
   focus?: boolean;
   category?: string;
   created_round?: number | null;
+  created_instance_id?: string;
   last_recalled_round?: number | null;
+  last_recalled_instance_id?: string;
   created_at?: string;
+  stored_at?: string;
+  admission_status?: string;
   last_recalled_at?: string;
   entries?: ContainerEntry[];
 }
@@ -498,6 +510,41 @@ export interface RuntimeProjection {
   contextPrefixDiffError: string;
 }
 
+export interface PeriodicMemoryResidence {
+  memory_layers?: string[];
+  stm_present?: boolean;
+  ltm_layer?: string;
+  periodic_mounted?: boolean;
+  periodic_pin_owned?: boolean;
+  pin_source?: string;
+  periodic_mount_status?: string;
+  periodic_mount_reason?: string;
+}
+
+export interface PeriodicMemoryMountReceipt {
+  schema_version: "periodic_memory_mount_receipt.v2";
+  tool_id: "periodic_memory_mount";
+  receipt_id?: string;
+  status: "applied" | "noop";
+  action: "mount" | "unmount";
+  mem_id: string;
+  instance_id?: string;
+  before?: PeriodicMemoryResidence;
+  after?: PeriodicMemoryResidence;
+  owners_before?: string[];
+  owners_after?: string[];
+  periodic_chars_before?: number;
+  periodic_chars_after?: number;
+  periodic_chars_limit?: number;
+  cache_invalidated?: boolean;
+  provider_called?: boolean;
+  recall_applied?: boolean;
+  recorded_at?: string;
+  mount_status?: string;
+  outcome?: string;
+  pending_reason?: string;
+}
+
 export interface DepositionProjection {
   index: DepositionIndexPayload | null;
   details: Record<DepositionKind, Record<string, DepositionDetailPayload>>;
@@ -507,6 +554,12 @@ export interface DepositionProjection {
     pending: boolean;
     feedback: string;
     receipt: ContainerFocusReceipt | null;
+  };
+  periodicMutation: {
+    pending: boolean;
+    memId: string;
+    feedback: string;
+    receipt: PeriodicMemoryMountReceipt | null;
   };
   loading: boolean;
   error: string;
@@ -572,6 +625,7 @@ export interface ModelProfile {
   connection_id: string;
   model: string;
   context_window: number;
+  output_token_limit: number;
   detected_context_window?: number;
   context_window_source?: "provider" | "registry" | "legacy_manual" | "unknown";
   reasoning: ModelReasoningConfig;
@@ -687,9 +741,15 @@ export interface BootstrapPersonaPreset {
 export interface BootstrapStatusPayload {
   schema_version: "seed_gui_bootstrap_status.v1";
   persona: {
-    state: "missing" | "incomplete" | "ready";
+    state: "missing" | "incomplete" | "config_error" | "ready";
     ready: boolean;
     missing: string[];
+    config_error?: {
+      code: "persona_config_migration_failed";
+      config: string;
+      path: string;
+      reason: string;
+    };
   };
   identity: BootstrapIdentity | null;
   preset: BootstrapPersonaPreset | null;
@@ -730,12 +790,41 @@ export interface BootstrapProjection {
   preview: boolean;
   testToken: string;
   skipModelSetup: boolean;
+  manageNewPersona: boolean;
   draft: BootstrapDraft;
+}
+
+export interface InstanceCatalogItem {
+  instance_id: string;
+  kind: "meta" | "branch";
+  label: string;
+  source_instance_id: string;
+  source_round: number;
+  created_at: string;
+  archived: boolean;
+}
+
+export interface PersonaCatalogPayload {
+  schema_version: "seed_gui_persona_catalog.v1";
+  active: { pid: string; instance_id: string };
+  personas: Array<{
+    pid: string;
+    identity: Partial<BootstrapIdentity>;
+    instances: InstanceCatalogItem[];
+  }>;
+}
+
+export interface PersonaCatalogProjection {
+  data: PersonaCatalogPayload | null;
+  loading: boolean;
+  pending: boolean;
+  error: string;
 }
 
 export interface PollingState {
   about: Promise<boolean> | null;
   bootstrap: Promise<boolean> | null;
+  personas: Promise<boolean> | null;
   runtime: Promise<boolean> | null;
   runtimeForceQueued: boolean;
   task: Promise<boolean> | null;
@@ -778,10 +867,17 @@ export interface Elements {
   bootstrapRoot: HTMLElement;
   app: HTMLElement;
   leftRail: HTMLElement;
-  personaNameSelector: HTMLDetailsElement;
-  personaNameSummary: HTMLElement;
-  personaNameValue: HTMLElement;
+  personaTabs: HTMLElement;
+  personaMoreMenu: HTMLDetailsElement;
+  personaMoreToggle: HTMLElement;
   personaNameOptions: HTMLElement;
+  createPersonaButton: HTMLButtonElement;
+  instanceTabs: HTMLElement;
+  instanceMoreMenu: HTMLDetailsElement;
+  instanceMoreToggle: HTMLElement;
+  instanceOptions: HTMLElement;
+  createInstanceButton: HTMLButtonElement;
+  identityFeedback: HTMLElement;
   statusReadouts: HTMLElement;
   productVersionName: HTMLElement;
   productVersionNumber: HTMLElement;

@@ -5,6 +5,7 @@ import copy
 import pytest
 
 from data.request_prefix_diff import build_request_prefix_diff
+from data.round_snapshot_store import RoundSnapshotStore
 from data.provider_request_wire import (
     WIRE_BODY_ENCODING,
     build_request_body_source_map,
@@ -589,3 +590,47 @@ def test_spec725_diff_reports_identical_and_skips_incompatible_connection(tmp_pa
         "state": "unavailable",
         "reason": "compatible_previous_frame_not_found",
     }
+
+
+def test_spec731_request_prefix_diff_reads_compact_v2_snapshots(tmp_path):
+    context = tmp_path / "context"
+    store = RoundSnapshotStore(context)
+    store.start_round(731, "interactive")
+    layers1 = _layers(high_freq="A" * 5000)
+    layers2 = _layers(high_freq="A" * 5000 + "B")
+
+    def snapshot(layers):
+        return {
+            "schema": "context_layers_snapshot.v1",
+            "source": "context/reaction/layers",
+            "layer_order": [item["layer_key"] for item in layers],
+            "layers": layers,
+        }
+
+    store.record_step_input(
+        731,
+        "reaction",
+        1,
+        provider_request_envelope=_envelope(
+            _body(high_freq="A" * 5000), layers1
+        ),
+        layers_snapshot=snapshot(layers1),
+    )
+    store.record_step_input(
+        731,
+        "reaction",
+        2,
+        provider_request_envelope=_envelope(
+            _body(high_freq="A" * 5000 + "B"), layers2
+        ),
+        layers_snapshot=snapshot(layers2),
+    )
+
+    result = build_request_prefix_diff(
+        context / "round",
+        731,
+        "R000731:reaction:2",
+    )
+    assert result["state"] == "ready"
+    assert result["previous"]["frame_id"] == "R000731:reaction:1"
+    assert result["target"]["pane_id"] == "40_high_freq"

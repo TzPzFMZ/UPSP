@@ -1,11 +1,11 @@
 {
-  "_comment": "定期层装配规则（32轮级刷新，periodic_mounts.json机器源）",
-  "_version": "Base-0.10.0",
+  "_comment": "定期层装配规则（人工挂载持续到显式取消，periodic_mounts.v2机器源）",
+  "_version": "Base-0.10.1",
   "_dds_ref": "§19.5 / §21.1",
 
   "layer": {
     "frequency": "periodic",
-    "refresh": "rhythm_round",
+    "refresh": "source_change",
     "cache_hit_rate": "~100%",
     "attention_position": "mid-front (after permanent)"
   },
@@ -17,22 +17,9 @@
   "content": {
     "machine_source": "periodic_mounts.json",
     "includes": [
-      "定期记忆投影 (CONTENT)",
-      "LTM各层索引 (EXPLORER)",
-      "容器索引 (EXPLORER)",
-      "关系域索引 (EXPLORER)",
-      "场景RULES (RULES)",
-      "热度100常驻STM条目 (EXPLORER)",
-      "位格层软规范 (RULES)"
+      "GUI人工挂载的公共Pinned记忆稳定投影 (CONTENT)"
     ]
   },
 
-  "trim_policy": "trim_after_popup_and_rules",
-  "trim_order": [
-    "场景RULES (按trigger匹配度从低到高)",
-    "位格层软规范 (behaviors→preferences→social)",
-    "索引超出top-N的条目",
-    "关系域有焦点标记的条目不裁",
-    "热度100常驻STM条目不裁"
-  ]
+  "trim_policy": "reject_whole_mount_transaction_when_over_limit"
 }

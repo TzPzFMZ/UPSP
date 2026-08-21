@@ -11,7 +11,13 @@ import uuid
 from data.persona_identity import public_identity
 from engines.executor import APIExecutor
 from errors import APIBridgeError, ReadError
-from paths import ACTIVE_PID, PERSONA_DIR, PERSONA_PRESETS_DIR, PERSONA_TEMPLATE_DIR
+from paths import (
+    ACTIVE_PID,
+    PERSONA_DIR,
+    PERSONA_PRESETS_DIR,
+    PERSONA_TEMPLATE_DIR,
+    SHARED_PERSONA_DIR,
+)
 
 from .persona_initializer import (
     PersonaInitializationError,
@@ -55,7 +61,7 @@ class BootstrapService:
         self.settings = settings_service
         self.configs = settings_service.configs
         self.initializer = initializer or PersonaInitializer(
-            PERSONA_DIR,
+            SHARED_PERSONA_DIR,
             PERSONA_TEMPLATE_DIR,
             PERSONA_PRESETS_DIR,
             pid=ACTIVE_PID,
@@ -113,6 +119,29 @@ class BootstrapService:
 
     def status(self):
         persona = self.initializer.status()
+        local_root = os.path.abspath(PERSONA_DIR)
+        shared_root = os.path.abspath(str(self.initializer.persona_dir))
+        if persona["ready"] and local_root != shared_root:
+            missing = [
+                relative for relative in (
+                    "state.json", "STM", "relation", "LTM",
+                )
+                if not os.path.exists(os.path.join(local_root, relative))
+            ]
+            if missing:
+                persona = {"state": "incomplete", "ready": False, "missing": missing}
+        config_status = (
+            self.settings.persona_config_status()
+            if hasattr(self.settings, "persona_config_status")
+            else {"ready": True, "error": None}
+        )
+        if persona["ready"] and not config_status["ready"]:
+            persona = {
+                "state": "config_error",
+                "ready": False,
+                "missing": [],
+                "config_error": config_status["error"],
+            }
         try:
             preset = load_preset(self.initializer.preset_dir, "alyosha")
         except PersonaInitializationError:

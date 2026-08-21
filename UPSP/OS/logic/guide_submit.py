@@ -8,9 +8,16 @@ from pathlib import Path
 
 from errors import ReadError
 from logic.alert_mode_settle import apply_alert_mode_settlement_declarations
-from logic.cache_compact import execute_cache_compact
 from logic.chronicle_write import apply_chronicle_write_declarations
 from logic.fault_record import apply_fault_record_declarations
+from logic.memory_reconsolidation import (
+    GUIDE_ID_PREFIX as MEMORY_RECONSOLIDATION_GUIDE_PREFIX,
+    apply_memory_reconsolidation_guide,
+)
+from logic.memory_write_rewrite import (
+    GUIDE_ID_PREFIX as MEMORY_WRITE_REWRITE_GUIDE_PREFIX,
+    apply_memory_write_rewrite_guide,
+)
 from logic.task_acceptance import validate_task_closeout
 from logic.task_guide import (
     BOOTSTRAP_ITEM_ID,
@@ -39,12 +46,11 @@ RHYTHM_GUIDE_KINDS = {
     "calendar_rhythm_guide",
     "emergency_handling_guide",
     "context_pressure_rhythm_guide",
-    "cache_compaction_rhythm_guide",
+    "memory_compression_rhythm_guide",
 }
 
 GUIDE_SUBMIT_RESERVED_ARGUMENT_KEYS = {
     "guide_id",
-    "resolves_pending_id",
     "submissions",
     "item_id",
     "option_id",
@@ -72,6 +78,182 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     evidence_context = dict(evidence_context or {})
     evidence_context.setdefault("workbench_store", workbench_store)
     guide_id = str(arguments.get("guide_id") or "").strip()
+    context_store = evidence_context.get("context_store")
+    progressive_debt = {}
+    if context_store is not None:
+        loader = getattr(context_store, "load_cache_compaction_debt", None)
+        progressive_debt = loader() if callable(loader) else {}
+    if progressive_debt.get("schema_version") == "cache_compaction_debt.v3":
+        expected_guide_id = (
+            "cache_compaction:" + str(progressive_debt.get("compaction_id") or "")
+        )
+        item_id = str(arguments.get("item_id") or "").strip()
+        option_id = str(arguments.get("option_id") or "").strip()
+        if (
+                guide_id != expected_guide_id
+                or item_id != "cache_compaction_due"
+                or option_id != "submit_cache_compaction_batch"):
+            return _reject(
+                guide_id,
+                "cache_compaction_pending",
+                {
+                    "current": {
+                        "guide_id": expected_guide_id,
+                        "item_id": "cache_compaction_due",
+                        "option_id": "submit_cache_compaction_batch",
+                    },
+                    "next_action": "先按当前最近缓存压缩指南提交本批分片。",
+                },
+            )
+        fields = arguments.get("fields") if isinstance(
+            arguments.get("fields"), dict) else {}
+        stager = getattr(context_store, "stage_progressive_cache_compaction", None)
+        if not callable(stager):
+            return _reject(guide_id, "cache_compaction_v3_stager_missing", {})
+        report = stager(
+            fields.get("results"),
+            current_round=evidence_context.get("round_num"),
+            current_reaction_iteration=evidence_context.get(
+                "current_reaction_iteration"
+            ),
+        )
+        receipt = _base_receipt(guide_id)
+        receipt.update({
+            "status": report.get("status", "rejected"),
+            "reason": report.get("reason", ""),
+            "action": "cache_compaction_batch_settled",
+            "accepted_submissions": (
+                [_normalize_submission(arguments)]
+                if report.get("status") == "applied" else []
+            ),
+            "backend_receipts": [{
+                "schema_version": "cache_compaction_batch_receipt.v3",
+                "operation_id": "progressive_cache_compaction",
+                **report,
+            }],
+            "cache_compaction": report,
+            "completed_ids": report.get("completed_ids") or [],
+            "remaining_ids": report.get("remaining_ids") or [],
+        })
+        return receipt
+    reconsolidation_tracker = evidence_context.get(
+        "memory_reconsolidation_tracker"
+    )
+    reconsolidation_pending = bool(
+        reconsolidation_tracker is not None
+        and callable(getattr(reconsolidation_tracker, "has_pending", None))
+        and reconsolidation_tracker.has_pending()
+    )
+    if reconsolidation_pending:
+        if guide_id != reconsolidation_tracker.guide_id:
+            return _reject(
+                guide_id,
+                "memory_reconsolidation_pending",
+                {
+                    "attempted": {"guide_id": guide_id},
+                    "current": {
+                        "guide_id": reconsolidation_tracker.guide_id
+                    },
+                    "next_action": (
+                        "先按当前回忆重整指南提交全部待处理记忆。"
+                    ),
+                },
+            )
+        backend = apply_memory_reconsolidation_guide(
+            arguments, evidence_context
+        )
+        receipt = _base_receipt(guide_id)
+        receipt.update({
+            "status": backend.get("status", "rejected"),
+            "reason": backend.get("reason", ""),
+            "action": "memory_reconsolidation_settled",
+            "accepted_submissions": (
+                [_normalize_submission(arguments)]
+                if backend.get("status") == "applied" else []
+            ),
+            "backend_receipts": backend.get("backend_receipts") or [],
+            "completed_ids": backend.get("completed_ids") or [],
+            "remaining_ids": backend.get("remaining_ids") or [],
+        })
+        if receipt["status"] == "rejected":
+            receipt["error_hint"] = _guide_error_hint(
+                receipt["reason"],
+                {
+                    "current": {"guide_id": guide_id},
+                    "expected": {
+                        "guide_id": reconsolidation_tracker.guide_id,
+                        "pending_ids": reconsolidation_tracker.pending_ids(),
+                    },
+                    "next_action": (
+                        "按回执修正 semantic_content/final_keywords，"
+                        "并重新提交仍待处理的全部 ID。"
+                    ),
+                },
+            )
+        return receipt
+    if guide_id.startswith(f"{MEMORY_RECONSOLIDATION_GUIDE_PREFIX}:"):
+        return _reject(
+            guide_id,
+            "memory_reconsolidation_guide_not_active",
+            {"current": {"guide_id": ""}},
+        )
+    rewrite_tracker = evidence_context.get("memory_write_rewrite_tracker")
+    rewrite_pending = bool(
+        rewrite_tracker is not None
+        and callable(getattr(rewrite_tracker, "has_pending", None))
+        and rewrite_tracker.has_pending()
+    )
+    if rewrite_pending:
+        if guide_id != rewrite_tracker.guide_id:
+            return _reject(
+                guide_id,
+                "memory_write_rewrite_pending",
+                {
+                    "attempted": {"guide_id": guide_id},
+                    "current": {"guide_id": rewrite_tracker.guide_id},
+                    "next_action": "先按当前记忆写入重写指南结清全部待办。",
+                },
+            )
+        backend = apply_memory_write_rewrite_guide(
+            arguments, evidence_context
+        )
+        receipt = _base_receipt(guide_id)
+        receipt.update({
+            "status": backend.get("status", "rejected"),
+            "reason": backend.get("reason", ""),
+            "action": "memory_write_rewrites_settled",
+            "accepted_submissions": (
+                [_normalize_submission(arguments)]
+                if backend.get("status") == "applied" else []
+            ),
+            "backend_receipts": backend.get("backend_receipts") or [],
+            "completed_ids": backend.get("completed_ids") or [],
+            "remaining_ids": backend.get("remaining_ids") or [],
+            "created_memory_ids": backend.get("created_memory_ids") or [],
+            "not_written_ids": backend.get("not_written_ids") or [],
+        })
+        if receipt["status"] == "rejected":
+            receipt["error_hint"] = _guide_error_hint(
+                receipt["reason"],
+                {
+                    "current": {"guide_id": guide_id},
+                    "expected": {
+                        "guide_id": rewrite_tracker.guide_id,
+                        "pending_ids": rewrite_tracker.pending_ids(),
+                    },
+                    "next_action": (
+                        "按回执修正 action/semantic_content，并重新提交"
+                        "仍待处理的全部 rewrite_id。"
+                    ),
+                },
+            )
+        return receipt
+    if guide_id.startswith(f"{MEMORY_WRITE_REWRITE_GUIDE_PREFIX}:"):
+        return _reject(
+            guide_id,
+            "memory_write_rewrite_guide_not_active",
+            {"current": {"guide_id": ""}},
+        )
     if guide_id == REACTION_LOOP_GUIDE_ID:
         return _apply_reaction_loop_resident_submit(
             workbench_store,
@@ -103,6 +285,9 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     except (ReadError, FileNotFoundError, ValueError):
         return _reject(guide_id, "guide_not_active", {"active_guide": active_guide_id})
 
+    if str(guide.get("kind") or "").strip() == "cache_compaction_rhythm_guide":
+        return _reject(guide_id, "retired_cache_compaction_guide")
+
     submissions = _coerce_guide_submissions(arguments)
     if not isinstance(submissions, list):
         return _reject(guide_id, "invalid_guide_submission", {"field": "submissions"})
@@ -128,6 +313,7 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     pending_input_update = None
     backend_receipts = []
     completed_flags = []
+    reopened_flags = []
     cache_compaction_status = None
     backend_applied = False
     for submission in submissions:
@@ -335,6 +521,7 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                 )
             backend_receipts.extend(backend.get("backend_receipts") or [])
             completed_flags.extend(backend.get("completed_flags") or [])
+            reopened_flags.extend(backend.get("reopened_flags") or [])
             if backend.get("cache_compaction"):
                 cache_compaction_status = backend.get("cache_compaction")
             if backend.get("status") == "applied":
@@ -358,6 +545,8 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     if backend_receipts:
         receipt["backend_receipts"] = backend_receipts
         receipt["completed_flags"] = _unique(completed_flags)
+        if reopened_flags:
+            receipt["reopened_flags"] = _unique(reopened_flags)
         if cache_compaction_status:
             receipt["cache_compaction"] = cache_compaction_status
         if backend_applied:
@@ -838,6 +1027,47 @@ def _apply_rhythm_guide_submission(
                 "chronicle_focus": evidence_context.get("chronicle_focus"),
             },
         )
+        if item_id == "calendar_day_due" and any(
+                str(receipt.get("status") or "").strip().lower() == "applied"
+                for receipt in receipts if isinstance(receipt, dict)):
+            from data.memory_compression_store import MemoryCompressionManager
+            from constants import local_now
+            import hashlib
+            import json
+
+            manager = MemoryCompressionManager(
+                memory_store=evidence_context.get("memory_store"),
+            )
+            chronicle_hash = hashlib.sha256(json.dumps(
+                receipts, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"), default=str,
+            ).encode("utf-8")).hexdigest()
+            maintenance = manager.prepare_daily_cycle(
+                local_date=local_now().date().isoformat(),
+                round_num=evidence_context.get("round_num"),
+                chronicle_receipt_hash=chronicle_hash,
+            )
+            receipts.append({
+                "tool_id": "memory_compression_daily_maintenance",
+                **maintenance,
+            })
+            state_store = evidence_context.get("state_store")
+            compression_active = manager.has_active_cycle()
+            if state_store is not None:
+                state_store.set_flag(
+                    "memory_compression_due",
+                    compression_active,
+                )
+            result = _backend_result(
+                item_id,
+                receipts,
+                applied_tools={"chronicle_write"},
+            )
+            if compression_active:
+                # A prior cycle may have completed earlier in this Round.
+                # Reopen the flag for the newly created daily cycle.
+                result["reopened_flags"] = ["memory_compression_due"]
+            return result
         return _backend_result(item_id, receipts, applied_tools={"chronicle_write"})
 
     if kind in {"emergency_handling_guide", "context_pressure_rhythm_guide"}:
@@ -883,229 +1113,40 @@ def _apply_rhythm_guide_submission(
             return _backend_result(item_id, receipts, applied_tools={"fault_record"})
         return {"status": "accepted", "backend_receipts": [], "completed_flags": []}
 
-    if kind == "cache_compaction_rhythm_guide":
-        if option_id != "submit_cache_compaction_shard":
+    if kind == "memory_compression_rhythm_guide":
+        if option_id != "submit_memory_compressions":
             return _backend_reject("unsupported_rhythm_guide_option")
-        context_store = evidence_context.get("context_store")
-        if context_store is None:
-            return _backend_reject("missing_context_store")
-        source_ids = fields.get("source_block_ids") or []
-        if not isinstance(source_ids, list):
-            source_ids = [source_ids]
-        shard_validation = _validate_cache_compaction_shard_submission(
-            guide,
-            fields.get("shard_id"),
-            source_ids,
+        from data.memory_compression_store import MemoryCompressionManager
+
+        manager = MemoryCompressionManager(
+            memory_store=evidence_context.get("memory_store"),
         )
-        if shard_validation is not None:
-            return shard_validation
-        summary = str(fields.get("summary") or "").strip()
-        report = execute_cache_compact(
-            context_store,
-            {
-                "lately_trimmed": True,
-                "compact_ratio": fields.get("compact_ratio"),
-                "source_block_ids": source_ids,
-                "current_round": evidence_context.get("round_num"),
-                "decision": {
-                    "action": "replace",
-                    "source_block_ids": source_ids,
-                    "summary": summary,
-                    "replacement_text": summary,
-                    "shard_id": fields.get("shard_id"),
-                    "input_chars": fields.get("input_chars"),
-                    "output_chars": fields.get("output_chars"),
-                },
-            },
-        )
-        status = str(report.get("status") or "").strip()
-        receipts = [{
-            "tool_id": "cache_compact",
-            "tool_family": "substrate_tool",
-            "tool_class": "sync_tool",
-            **report,
-        }]
-        if status == "applied":
-            compaction_status = _record_cache_compaction_shard(
-                workbench_store,
-                context_store,
-                guide,
-                item_id,
-                fields.get("shard_id"),
+        try:
+            receipt = manager.apply_batch(
+                fields.get("results"),
+                expected_batch_id=str(fields.get("batch_id") or ""),
+                round_num=evidence_context.get("round_num"),
             )
-            return {
-                "status": "applied",
-                "backend_receipts": receipts,
-                "completed_flags": (
-                    [item_id, "cache_compaction_due"]
-                    if compaction_status.get("all_done") else []
-                ),
-                "cache_compaction": compaction_status,
-            }
+        except Exception as exc:
+            return _backend_reject(
+                str(exc) or "memory_compression_batch_rejected",
+                {"error_type": type(exc).__name__},
+            )
+        remaining = manager.has_active_cycle()
+        state_store = evidence_context.get("state_store")
+        if state_store is not None:
+            state_store.set_flag("memory_compression_due", remaining)
         return {
-            "status": "rejected",
-            "reason": status or "cache_compact_not_applied",
-            "backend_receipts": receipts,
+            "status": "applied",
+            "backend_receipts": [receipt],
+            "completed_flags": [] if remaining else ["memory_compression_due"],
         }
 
     return _backend_reject("unsupported_rhythm_guide_kind")
 
 
-def _record_cache_compaction_shard(workbench_store, context_store, guide, item_id, shard_id):
-    guide = dict(guide or {})
-    item_id = str(item_id or "").strip()
-    shard_id = str(shard_id or "").strip()
-    plan = guide.get("compaction_plan") if isinstance(guide.get("compaction_plan"), dict) else {}
-    target_chars = _int_or_none(plan.get("target_chars"))
-    planned_shards = _unique(
-        shard.get("shard_id")
-        for shard in plan.get("shards") or []
-        if isinstance(shard, dict)
-    )
-    completed_shards = _unique(
-        list(guide.get("completed_shards") or []) + ([shard_id] if shard_id else [])
-    )
-    remaining_shards = [
-        planned
-        for planned in planned_shards
-        if planned not in set(completed_shards)
-    ]
-    current_chars = _current_lately_compaction_chars(context_store)
-    target_met = (
-        target_chars is not None
-        and current_chars is not None
-        and current_chars <= target_chars
-    )
-    planned_done = not planned_shards or not remaining_shards
-    measurement_available = target_chars is not None and current_chars is not None
-    all_done = target_met or (not measurement_available and planned_done)
-    skipped_shards = remaining_shards if target_met else []
-    if target_met:
-        remaining_shards = []
-    guide["completed_shards"] = completed_shards
-    if all_done:
-        guide["status"] = "done"
-    updated_items = []
-    for item in guide.get("items") or []:
-        item = dict(item or {})
-        if item_id and str(item.get("item_id") or "").strip() == item_id:
-            item["status"] = "done" if all_done else "open"
-        updated_items.append(item)
-    guide["items"] = updated_items
-    if workbench_store is not None:
-        workbench_store.save_guide(guide, active=True)
-        workbench_store.append_guide_ledger(guide.get("guide_id"), {
-            "event": "cache_compaction_shard_applied",
-            "shard_id": shard_id,
-            "completed_shards": completed_shards,
-            "remaining_shards": remaining_shards,
-            "skipped_shards": skipped_shards,
-            "current_chars": current_chars,
-            "target_chars": target_chars,
-            "target_met": target_met,
-            "all_done": all_done,
-        })
-    updater = getattr(context_store, "update_cache_compaction_debt", None)
-    if callable(updater):
-        updater(
-            completed_shards=completed_shards,
-            remaining_shards=remaining_shards,
-            skipped_shards=skipped_shards,
-            current_chars=current_chars,
-            target_chars=target_chars,
-            target_met=target_met,
-            all_done=all_done,
-        )
-    if all_done:
-        clearer = getattr(context_store, "clear_cache_compaction_debt", None)
-        if callable(clearer):
-            clearer()
-    return {
-        "completed_shards": completed_shards,
-        "remaining_shards": remaining_shards,
-        "skipped_shards": skipped_shards,
-        "current_chars": current_chars,
-        "target_chars": target_chars,
-        "target_met": target_met,
-        "all_done": all_done,
-    }
-
-
-def _validate_cache_compaction_shard_submission(guide, shard_id, source_ids):
-    plan = guide.get("compaction_plan") if isinstance(guide.get("compaction_plan"), dict) else {}
-    planned_shards = [
-        shard
-        for shard in plan.get("shards") or []
-        if isinstance(shard, dict) and str(shard.get("shard_id") or "").strip()
-    ]
-    if not planned_shards:
-        return None
-    planned_by_id = {
-        str(shard.get("shard_id") or "").strip(): shard
-        for shard in planned_shards
-    }
-    shard_id = str(shard_id or "").strip()
-    allowed_shards = list(planned_by_id.keys())
-    if shard_id not in planned_by_id:
-        return _backend_reject(
-            "cache_compaction_shard_not_in_plan",
-            {
-                "shard_id": shard_id,
-                "allowed_shards": allowed_shards,
-            },
-        )
-    completed = set(_unique(guide.get("completed_shards") or []))
-    if shard_id in completed:
-        return _backend_reject(
-            "cache_compaction_shard_already_completed",
-            {
-                "shard_id": shard_id,
-                "completed_shards": sorted(completed),
-            },
-        )
-    expected_source_ids = _unique(
-        planned_by_id[shard_id].get("source_block_ids") or []
-    )
-    submitted_source_ids = _unique(source_ids)
-    if expected_source_ids and submitted_source_ids != expected_source_ids:
-        return _backend_reject(
-            "cache_compaction_source_ids_mismatch",
-            {
-                "shard_id": shard_id,
-                "expected_source_block_ids": expected_source_ids,
-                "submitted_source_block_ids": submitted_source_ids,
-            },
-        )
-    return None
-
-
-def _current_lately_compaction_chars(context_store):
-    getter = getattr(context_store, "build_lately_compression_candidates", None)
-    if not callable(getter):
-        return None
-    try:
-        candidates = getter(max_blocks=None)
-    except TypeError:
-        candidates = getter()
-    total = 0
-    for item in candidates or []:
-        if not isinstance(item, dict):
-            continue
-        chars = _int_or_none(item.get("chars"))
-        if chars is None:
-            chars = len(str(item.get("text") or ""))
-        total += max(0, chars)
-    return total
-
-
-def _int_or_none(value):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _backend_result(item_id, receipts, *, applied_tools):
+    """Aggregate deterministic rhythm backend receipts."""
     receipts = [receipt for receipt in receipts or [] if isinstance(receipt, dict)]
     applied = [
         receipt for receipt in receipts

@@ -8,15 +8,35 @@ EMERGENCY_FLAGS = (
 )
 
 CONTEXT_PRESSURE_FLAGS = (
-    ("token_usage_warning", "上下文压力处理", "当前存在上下文窗口或挂载压力。请取消不必要挂载，或确认后续维护动作；处理后结算。"),
     ("context_pressure", "上下文压力处理", "当前存在 Runtime 置位的上下文压力。请根据可见状态处理或搁置，并形成可审计结算。"),
 )
 
-CACHE_COMPACTION_ITEMS = (
-    ("cache_compaction_due", "最近缓存压缩", "最近缓存 lately 发生水位删除，需要按可见缓存压缩清单处理幸存段压缩。"),
-)
-
 DEFAULT_DEFER_SECONDS = 3600
+
+
+def rhythm_chronicle_write_applied(result):
+    """Check nested guide receipts for an applied rhythm chronicle write."""
+    if not isinstance(result, dict):
+        return False
+    receipts = []
+    for key in ("_chronicle_write_receipts", "_protocol_tool_receipts"):
+        receipts.extend(result.get(key) or [])
+    stack = list(receipts)
+    while stack:
+        receipt = stack.pop(0)
+        if not isinstance(receipt, dict):
+            continue
+        stack[0:0] = list(receipt.get("backend_receipts") or [])
+        tool_id = str(receipt.get("tool_id") or "").strip()
+        status = str(receipt.get("status") or "").strip().lower()
+        if (
+            tool_id == "chronicle_write"
+            and status == "applied"
+            and str(receipt.get("layer") or "").strip() == "rhythms"
+            and str(receipt.get("round_type") or "").strip() == "rhythm"
+        ):
+            return True
+    return False
 
 CALENDAR_ITEMS = (
     ("calendar_day_due", "日志", "按当前 active guide 的 item_id=calendar_day_due，选择 option_id=write_chronicle，并在 fields.content 填写日志正文。"),
@@ -32,6 +52,7 @@ HIGH_PRIORITY_BEFORE_INTERACTION = {
     "cache_compaction",
     "main_axis_rhythm",
     "calendar_day",
+    "memory_compression",
     "calendar_week",
     "calendar_month",
     "calendar_quarter",
@@ -154,21 +175,21 @@ def _context_pressure_guide(flags, completed_flags=None):
     }
 
 
-def _cache_compaction_guide(flags, completed_flags=None):
-    marker = _checkbox("cache_compaction_due", completed_flags)
+def _memory_compression_guide(flags, completed_flags=None):
+    marker = _checkbox("memory_compression_due", completed_flags)
     return {
-        "kind": "cache_compaction_rhythm_guide",
+        "kind": "memory_compression_rhythm_guide",
         "text": "\n".join([
-            "GUIDE｜最近缓存压缩维护指南",
+            "GUIDE｜记忆语义压缩指南",
             "",
-            "最近缓存 lately 已发生水位删除，Runtime 会把压缩分片清单物化为 active guide。",
+            "日志已经写入；现在按本轮资料中的冻结批次处理记忆语义压缩。",
             "",
-            f"{marker} 按当前 active guide 的 option_id=submit_cache_compaction_shard 逐片提交压缩摘要。",
-            "每片压缩后 Runtime 会实测 lately 当前字符数；达到全局目标后当前压缩节律自动完成。",
-            "",
-            f"{marker} 压缩节律完成后，继续本轮后续 guide 或自然收束。",
+            f"{marker} 调用 guide_submit，使用当前 guide_id、item_id=memory_compression_due、option_id=submit_memory_compressions。",
+            "fields.results 必须覆盖全部且仅当前批次条目；每项提交 mem_id、semantic_content、retained_keywords。",
+            "正文与关键词选择必须遵守永久 POPUP 合同和本轮资料列出的目标层上限。",
+            "提交失败时按回执纠正同一批次；不得越过失败项进入周志。",
         ]).rstrip(),
-        "items": [{"flag": "cache_compaction_due", "title": "最近缓存压缩"}],
+        "items": [{"flag": "memory_compression_due", "title": "记忆语义压缩"}],
     }
 
 
@@ -277,9 +298,11 @@ def current_guide(flags, completed_flags=None):
     if head.get("kind") == "context_pressure":
         return _context_pressure_guide(flags, completed_flags)
     if head.get("kind") == "cache_compaction":
-        return _cache_compaction_guide(flags, completed_flags)
+        return None
     if head.get("kind") == "main_axis_rhythm":
         return _main_axis_guide(flags, completed_flags)
+    if head.get("kind") == "memory_compression":
+        return _memory_compression_guide(flags, completed_flags)
     if str(head.get("kind") or "").startswith("calendar_"):
         target_flag = (head.get("flags") or [""])[0]
         return _calendar_guide(flags, completed_flags, target_flag=target_flag)

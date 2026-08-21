@@ -54,7 +54,13 @@ from logic.single_round_probe_policy import (
 )
 from initialization.persona_initializer import PersonaInitializer
 from data.persona_identity import public_identity
-from paths import ACTIVE_PID, PERSONA_DIR, PERSONA_PRESETS_DIR, PERSONA_TEMPLATE_DIR
+from paths import (
+    ACTIVE_PID,
+    PERSONA_DIR,
+    PERSONA_PRESETS_DIR,
+    PERSONA_TEMPLATE_DIR,
+    SHARED_PERSONA_DIR,
+)
 
 
 def init_environment():
@@ -68,16 +74,18 @@ def init_environment():
     for name in created:
         print(f"  config/{name}.json 已创建")
 
+    sm = StateStore()
+    sm.migrate_memory_compression_flags()
+
     status = PersonaInitializer(
         PERSONA_DIR,
         PERSONA_TEMPLATE_DIR,
         PERSONA_PRESETS_DIR,
         pid=ACTIVE_PID,
+        shared_persona_dir=SHARED_PERSONA_DIR,
     ).status()
     if not status["ready"]:
         raise RuntimeError("persona_initialization_required")
-
-    sm = StateStore()
 
     # 仅在完整位格已经存在后确保运行时派生目录。
     import os as _os
@@ -101,6 +109,7 @@ def build_runtime(sm, cfg, *, context_profile="full"):
     executor = APIExecutor(config_store=cfg)
     assembler = ContextAssembler(
         state_store=sm,
+        config_store=cfg,
         context_profile=context_profile,
     )
     heartbeat = HeartbeatManager(state_store=sm, config_store=cfg)
@@ -110,6 +119,7 @@ def build_runtime(sm, cfg, *, context_profile="full"):
         heartbeat=heartbeat,
         executor=executor,
         assembler=assembler,
+        config_store=cfg,
     )
     return runtime
 

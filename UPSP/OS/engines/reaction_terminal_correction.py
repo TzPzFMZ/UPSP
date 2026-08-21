@@ -21,7 +21,6 @@ REACTION_ACTIVITY_KEYS = (
     "relation_card_declarations",
     "memory_write_declarations",
     "memory_annotation_declarations",
-    "memory_recall_completion_requests",
     "memory_link_update_declarations",
     "memory_container_create_declarations",
     "memory_container_write_declarations",

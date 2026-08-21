@@ -39,16 +39,18 @@ def task_acceptance_feedback(result):
     if not blockers:
         blockers = str(result.get("reason") or "task_acceptance_blocked")
     reason = str((result or {}).get("reason") or "").strip()
-    if reason == "task_bootstrap_required":
+    if reason in {"task_bootstrap_required", "task_bootstrap_pending"}:
         return (
             "WARNING｜任务清单入口未闭合。"
             f"阻断项=[{blockers}]。"
-            "当前用户请求已经形成 work_intent_debt，先建立任务指南清单，再执行。"
-            "下一步应处理 task_bootstrap：读取必要材料后用 guide_submit "
-            "提交 build_initial_task_guide / submit_initial_guide；"
-            f"{task_acceptance_checkpoint_text()}"
+            "当前存在 task_bootstrap；不要更新不存在的当前任务清单。"
+            "若这是可在本轮直接回答的请求，立即调用 guide_submit："
+            "guide_id=task_bootstrap；item_id=build_initial_task_guide；option_id=not_a_task；"
+            "并填写 reason 说明无需清单化；"
+            "若用户确实派发了需清单化的任务，再读取必要材料并以同一 guide/item 调用 "
+            "option_id=submit_initial_guide。"
             f"{closeout_final_reply_reminder(task_delivery=True)}"
-            "账本闭合后再自然回复用户；只有需要跨轮继续时，才调用 reaction_finalize(handoff_text)。"
+            "task_bootstrap 撤下或建账完成后再自然回复用户；只有需要跨轮继续时，才调用 reaction_finalize(handoff_text)。"
         )
     guide_id = str((result or {}).get("guide_id") or "").strip()
     if not guide_id:

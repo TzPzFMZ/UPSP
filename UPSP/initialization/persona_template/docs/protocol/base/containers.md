@@ -22,6 +22,10 @@
 
 WB（工作台）是调度台非容器，不进 container_registry。
 
+### 主动建链判定
+
+当证据已经形成持久关系时，模型应按永久 `containers.md` 主动创建、复用或续写：可复用推演与判断修正进 DC，同一事件的有序状态变化进 EC，跨轮目标与交付进 PRJ，待未来核验的预测、承诺或计划进 FUT。单一孤立事实、一次性草稿推理、临时任务步骤和无证据关系不得建链。同一种语义职责复用同类型主链；不同职责可由不同类型并存，同一 `MEM-*` 可桥接多种真实关系。`memory_route_pending` 可 `deferred/open` 只是 Runtime 防死循环边界，不改变永久行为合同。
+
 ---
 
 ## 二、注册表必选字段（8+1）
@@ -146,7 +150,7 @@ Seed 不规定技能卡成熟度模板、自动采用结算或投影生命周期
 | ID格式 | ITR-{date}-{seq} |
 | 子目录 | Lineage/ Blueprints/ Raw/ Materials/ Logs/ |
 | Raw三子集 | Tacit/(pending+processed) + Association/(五张计数表) + Connection/(pending+processed) |
-| Materials | Evolution/（进化集，自主轮提炼） |
+| Materials | Evolution/（历史进化集，只读保留；当前 Seed 不再生成） |
 | 状态机 | collecting → planned → training → deployed → retired |
 | Base版默认 | collecting 状态（正在收集训练材料） |
 

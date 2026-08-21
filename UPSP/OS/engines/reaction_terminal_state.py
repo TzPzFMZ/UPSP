@@ -5,7 +5,6 @@ from engines.reaction_task_acceptance import (
     task_acceptance_block_signature as _task_acceptance_block_signature,
     task_acceptance_feedback as _task_acceptance_feedback,
 )
-from logic.write_pending_settlement import render_write_pending_blocker
 from logic.work_intent_debt import clear_work_intent_debt
 from logic.reaction_time_policy import reaction_time_milestone_seconds
 
@@ -15,7 +14,6 @@ RHYTHM_GUIDE_KINDS = {
     "calendar_rhythm_guide",
     "emergency_handling_guide",
     "context_pressure_rhythm_guide",
-    "cache_compaction_rhythm_guide",
 }
 TASK_BOOTSTRAP_ACCESS_FAILURE_TOOLS = {
     "file_read",
@@ -233,7 +231,6 @@ def rhythm_guide_acceptance_feedback(result):
 def validate_natural_final_reply_candidate(
         *,
         closeout_form_validator,
-        write_pending_tracker,
         current_state,
         round_type,
         runtime_guide_completed_flags,
@@ -258,20 +255,10 @@ def validate_natural_final_reply_candidate(
             ),
             "reasons": list(validation.get("reasons") or []),
         }
+    validation_ledger = dict(validation.get("settlement_ledger") or {})
+    if validation_ledger.get("closeout_decision") == "blocked":
+        closeout_form["closeout_decision"] = "blocked"
 
-    write_pending_blocker = write_pending_tracker.finalize_blocker()
-    deferred_subject_resolution = list(
-        write_pending_blocker.get("deferred_subject_resolution") or []
-    )
-    if write_pending_blocker.get("blocked"):
-        return {
-            "allowed": False,
-            "status": "write_pending_blocked",
-            "source": "natural_final_reply_candidate",
-            "reason": write_pending_blocker.get("reason"),
-            "pendings": write_pending_blocker.get("pendings", []),
-            "feedback": render_write_pending_blocker(write_pending_blocker),
-        }
 
     rhythm_acceptance = rhythm_guide_closeout_acceptance(
         closeout_form,
@@ -299,7 +286,7 @@ def validate_natural_final_reply_candidate(
         )
         if missing_access:
             settlement_ledger = dict(validation.get("settlement_ledger") or {})
-            settlement_ledger["closeout_decision"] = "finish"
+            settlement_ledger.setdefault("closeout_decision", "finish")
             settlement_ledger.setdefault(
                 "source",
                 "natural_final_reply_candidate",
@@ -332,16 +319,6 @@ def validate_natural_final_reply_candidate(
                 ),
                 "blockers": list(task_acceptance.get("blockers") or []),
             })
-            if deferred_subject_resolution:
-                settlement_ledger["write_status"] = (
-                    "subject_resolution_waiting_for_user"
-                )
-                settlement_ledger["write_applied"] = False
-                settlement_ledger["deferred_write_reasons"] = sorted({
-                    _text(item.get("reason"))
-                    for item in deferred_subject_resolution
-                    if _text(item.get("reason"))
-                })
             return {
                 "allowed": True,
                 "closeout_form": blocked_closeout_form,
@@ -360,16 +337,8 @@ def validate_natural_final_reply_candidate(
         }
 
     settlement_ledger = dict(validation.get("settlement_ledger") or {})
-    settlement_ledger["closeout_decision"] = "finish"
+    settlement_ledger.setdefault("closeout_decision", "finish")
     settlement_ledger.setdefault("source", "natural_final_reply_candidate")
-    if deferred_subject_resolution:
-        settlement_ledger["write_status"] = "subject_resolution_waiting_for_user"
-        settlement_ledger["write_applied"] = False
-        settlement_ledger["deferred_write_reasons"] = sorted({
-            _text(item.get("reason"))
-            for item in deferred_subject_resolution
-            if _text(item.get("reason"))
-        })
     if str(settlement_ledger.get("read_status") or "").strip() == "partial_user_wait":
         reminder = build_unfinished_file_read_final_reply_reminder(
             unfinished_file_reads,
@@ -532,8 +501,9 @@ def apply_reaction_handoff_relay_receipt(state_manager, relay_receipt, trace=Non
 def build_runtime_auto_continue_closeout(
         state_manager, *, elapsed_seconds=0, time_limit_seconds=600):
     elapsed = int(max(0, elapsed_seconds or 0))
-    limit = int(max(1, time_limit_seconds or 600))
-    _reminder_at, _warning_at, auto_relay_at = reaction_time_milestone_seconds(limit)
+    reminder_at, warning_at, auto_relay_at = reaction_time_milestone_seconds(
+        time_limit_seconds
+    )
     if auto_relay_at % 60 == 0:
         auto_relay_label = f"{auto_relay_at // 60}分钟"
     else:
@@ -552,7 +522,9 @@ def build_runtime_auto_continue_closeout(
         trace={
             "source": "runtime_auto_continue",
             "elapsed_seconds": elapsed,
-            "time_limit_seconds": limit,
+            "reminder_seconds": reminder_at,
+            "warning_seconds": warning_at,
+            "auto_relay_seconds": auto_relay_at,
         },
     )
     settlement_ledger = {
@@ -561,7 +533,9 @@ def build_runtime_auto_continue_closeout(
         "reason": reason,
         "source": "runtime_auto_continue",
         "elapsed_seconds": elapsed,
-        "time_limit_seconds": limit,
+        "reminder_seconds": reminder_at,
+        "warning_seconds": warning_at,
+        "auto_relay_seconds": auto_relay_at,
     }
     guard_receipt = {
         "tool_id": "reaction_finalize",
@@ -571,7 +545,9 @@ def build_runtime_auto_continue_closeout(
         "source": "runtime_auto_continue",
         "reason": reason,
         "elapsed_seconds": elapsed,
-        "time_limit_seconds": limit,
+        "reminder_seconds": reminder_at,
+        "warning_seconds": warning_at,
+        "auto_relay_seconds": auto_relay_at,
         "set_flags": ["continue_requested"],
     }
     return relay_receipt, settlement_ledger, guard_receipt
@@ -626,6 +602,21 @@ def runtime_auto_blocked_final_response(settlement_ledgers=None):
             "Runtime 已在本地阻止第四次 provider 调用。"
             "用户原始任务、已读证据、活动任务和未完成状态均保留，"
             "本轮不计为成功，修正当前任务引导后可继续。"
+        )
+    if reason == "blocked/protocol_read_correction_exhausted":
+        return (
+            "Runtime 已阻止本轮继续重复读取同一资料。\n\n"
+            "原因：protocol_read_correction_exhausted。\n"
+            f"最近三次拒绝：{shown}。\n\n"
+            "同一协议读取连续三次命中本轮已有结果且没有产生新证据；"
+            "Runtime 已在第三个连续拒绝帧后停止，不再发起下一次 provider 调用。"
+            "已有读取结果和用户问题均保留，本轮不计为成功。"
+        )
+    if reason == "blocked/final_response_length_exhausted":
+        return (
+            "Runtime 已阻断本轮：自然语言最终回复连续两次超过本次字符上限。\n\n"
+            "原因：final_response_length_exhausted。\n"
+            "两次完整候选均已保留在本轮审计中，Runtime 没有截断或冒充合格回复。"
         )
     return (
         "Runtime auto-blocked 本轮，不能把本轮说成成功完成。\n\n"

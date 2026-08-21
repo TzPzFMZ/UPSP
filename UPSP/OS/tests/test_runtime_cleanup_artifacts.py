@@ -43,11 +43,8 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
         pipeline = rt.cleanup_pipeline
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
         monkeypatch.setattr(rt.executor, "call", lambda *a, **kw: {"response": ""})
-        monkeypatch.setattr(pipeline, "_build_forgetting_context", lambda: "")
         monkeypatch.setattr(pipeline, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(pipeline, "_process_forgetting_result", lambda *a, **kw: None)
         monkeypatch.setattr(pipeline, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(pipeline, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(pipeline, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
         monkeypatch.setattr(rt.assembler, "assemble_cleanup", lambda *a, **kw: ("sys", []))
@@ -75,11 +72,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             if event["phase"] == "cleanup"
         ]
         assert [event["iteration"] for event in cleanup_events] == [1, 2, 3]
-        assert [event["payload"]["messages"] for event in step_events[:3]] == [
-            [],
-            [],
-            [],
-        ]
+        assert all("messages" not in event["payload"] for event in step_events[:3])
         assert [event["payload"]["error"] for event in step_events[:3]] == [
             "legacy_step_json_rejected",
             "legacy_step_json_rejected",
@@ -128,11 +121,8 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
         monkeypatch.setattr(rt.executor, "call", lambda *a, **kw: {"response": ""})
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "")
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
         monkeypatch.setattr(
@@ -189,11 +179,8 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
         monkeypatch.setattr(rt.executor, "call", lambda *a, **kw: {"response": ""})
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "")
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
         monkeypatch.setattr(
@@ -253,11 +240,8 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
         pipeline = rt.cleanup_pipeline
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
         monkeypatch.setattr(rt.executor, "call", lambda *a, **kw: {"response": ""})
-        monkeypatch.setattr(pipeline, "_build_forgetting_context", lambda: "")
         monkeypatch.setattr(pipeline, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(pipeline, "_process_forgetting_result", lambda *a, **kw: None)
         monkeypatch.setattr(pipeline, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(pipeline, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(pipeline, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
         monkeypatch.setattr(rt.assembler, "assemble_cleanup", lambda *a, **kw: ("sys", []))
@@ -304,12 +288,9 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
         monkeypatch.setattr(rt.executor, "call", fake_call)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "STM遗忘交接哨兵")
-        monkeypatch.setattr(rt, "_build_ltm_degradation_context", lambda: "LTM降格交接哨兵")
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None)
+        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
 
@@ -318,22 +299,24 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             "_reaction_internal_handoff": "反应步结构化交接哨兵",
         }, 26, "本轮用户输入")
 
-        assert any("STM遗忘交接哨兵" in m.get("content", "") for m in captured["messages"])
-        assert any("LTM降格交接哨兵" in m.get("content", "") for m in captured["messages"])
+        assert not any("STM遗忘交接哨兵" in m.get("content", "") for m in captured["messages"])
+        assert not any("LTM降格交接哨兵" in m.get("content", "") for m in captured["messages"])
         assert not any("反应步结构化交接哨兵" in m.get("content", "") for m in captured["messages"])
         step_messages = captured["messages"]
-        assert any("STM遗忘交接哨兵" in m.get("content", "") for m in step_messages)
-        assert any("LTM降格交接哨兵" in m.get("content", "") for m in step_messages)
+        assert not any("STM遗忘交接哨兵" in m.get("content", "") for m in step_messages)
+        assert not any("LTM降格交接哨兵" in m.get("content", "") for m in step_messages)
         assert not any("反应步结构化交接哨兵" in m.get("content", "") for m in step_messages)
         now_text = "\n".join(m.get("content", "") for m in step_messages)
         assert "【本轮资料】" in now_text
-        assert "善后内部任务：STM 遗忘压缩" in now_text
-        assert "善后内部任务：LTM 降格处理" in now_text
+        assert "善后内部任务：STM 遗忘压缩" not in now_text
+        assert "善后内部任务：LTM 降格处理" not in now_text
 
-    def test_cleanup_mounts_lately_compression_reminder_without_candidates(self, tmp_path, monkeypatch):
+    def test_cleanup_prepares_pressure_only_after_final_cache_save(self, tmp_path, monkeypatch):
         import json
 
         rt = self._make_runtime(tmp_path)
+        events = []
+        transitions = []
 
         class CandidateContext:
             def get_last_cache_stats(self):
@@ -342,19 +325,33 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             def get_lately_compact_ratio(self):
                 return 0.618
 
-            def build_lately_compression_candidates(self, *args, **kwargs):
-                return [{
-                    "id": "R000002-tool-0000",
-                    "round": 2,
-                    "kind": "tool_result",
-                    "chars": 42,
-                    "text": "工具输出压缩候选哨兵",
-                }]
-
             def save_round_to_cache(self, *args, **kwargs):
-                pass
+                events.append("cache_saved")
+
+            def transition_current_cache(self, **kwargs):
+                events.append("cache_drained")
+                transitions.append(dict(kwargs))
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "applied",
+                }
+
+            def prepare_lately_pressure_compaction(self, round_num, observation):
+                events.append("pressure_prepared")
+                assert round_num == 28
+                assert observation["kind"] == "token_ratio"
+                return {
+                    "status": "prepared",
+                    "reason": "cache_compaction_due",
+                }
 
         rt.ctx_store = CandidateContext()
+        rt.services.cache_pressure_observation = {
+            "kind": "token_ratio",
+            "input_tokens": 900,
+            "context_window": 1000,
+            "usage_ratio": 0.9,
+        }
         captured = {}
         result = {"response": "反应步最终回复"}
 
@@ -364,17 +361,40 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
         monkeypatch.setattr(rt.executor, "call", fake_call)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "")
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
 
         rt._run_cleanup("interactive", rt.sm.load(), result, 28, "本轮用户输入")
 
-        assert result["_lately_compression_pending"]["source_block_ids"] == ["R000002-tool-0000"]
-        assert any("最近缓存压缩提醒" in m.get("content", "") for m in captured["messages"])
+        assert events == [
+            "cache_drained",
+            "cache_drained",
+            "cache_drained",
+            "cache_saved",
+            "cache_drained",
+            "pressure_prepared",
+        ]
+        assert [item["boundary"] for item in transitions] == [
+            "cleanup_provider_return",
+            "cleanup_provider_return",
+            "cleanup_provider_return",
+            "round_closeout",
+        ]
+        assert all(item["expire_call_transients"] is True
+                   for item in transitions)
+        assert result["_lately_compression_pending"]["status"] == "prepared"
+        assert rt.services.cache_pressure_observation == {}
+        pressure_events = [
+            event for event in rt.audit.get_store().read_events(28)
+            if event.get("event_type") == "lately_pressure_compaction"
+        ]
+        assert len(pressure_events) == 1
+        assert pressure_events[0]["payload"]["status"] == "prepared"
+        assert pressure_events[0]["payload"]["pressure_observation"][
+            "usage_ratio"
+        ] == 0.9
+        assert not any("最近缓存压缩提醒" in m.get("content", "") for m in captured["messages"])
         assert not any("<!-- 最近缓存 lately -->" in m.get("content", "") for m in captured["messages"])
         assert not any("cleanup_finalize.lately_compression" in m.get("content", "") for m in captured["messages"])
         assert not any("候选 1" in m.get("content", "") for m in captured["messages"])
@@ -383,7 +403,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
         assert not any("compact_ratio=" in m.get("content", "") for m in captured["messages"])
         assert not any("target_chars=" in m.get("content", "") for m in captured["messages"])
         step_messages = captured["messages"]
-        assert any("最近缓存压缩提醒" in m.get("content", "") for m in step_messages)
+        assert not any("最近缓存压缩提醒" in m.get("content", "") for m in step_messages)
         assert not any("候选 1" in m.get("content", "") for m in step_messages)
         assert not any("工具输出压缩候选哨兵" in m.get("content", "") for m in step_messages)
         assert not any("source_block_id" in m.get("content", "") for m in step_messages)
@@ -400,11 +420,14 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             def get_lately_compact_ratio(self):
                 return 1.0
 
-            def build_lately_compression_candidates(self, *args, **kwargs):
-                raise AssertionError("ratio=1.0 keeps survivors and should not mount LLM compaction")
-
             def save_round_to_cache(self, *args, **kwargs):
                 pass
+
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                }
 
         rt.ctx_store = CandidateContext()
         captured = {}
@@ -415,11 +438,8 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
         monkeypatch.setattr(rt.executor, "call", fake_call)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "")
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
 
         rt._run_cleanup("interactive", rt.sm.load(), {"response": "反应步最终回复"}, 30, "本轮用户输入")
@@ -443,11 +463,14 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             def get_last_cache_stats(self):
                 return {"lately_trimmed": False}
 
-            def build_lately_compression_candidates(self, current_round=None):
-                raise AssertionError("compression candidates require a lately trim event")
-
             def save_round_to_cache(self, *args, **kwargs):
                 pass
+
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                }
 
         rt.ctx_store = CandidateContext()
         captured = {}
@@ -458,11 +481,8 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
         monkeypatch.setattr(rt.executor, "call", fake_call)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "")
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
 
         rt._run_cleanup("interactive", rt.sm.load(), {"response": "反应步最终回复"}, 29, "本轮用户输入")
@@ -485,11 +505,8 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
         monkeypatch.setattr(rt.executor, "call", fake_call)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "")
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_evolution_set", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
         rt._run_cleanup("interactive", rt.sm.load(), {"response": "反应步最终回复"}, 27, "本轮用户输入")

@@ -20,7 +20,7 @@
 
 我的工作分四段，我只做中间一段。
 
-① 接收输入——脚本装配善后步上下文：压缩版频率层 + 最近缓存/当前缓存字符窗口 + 本轮反应步原始输出。身体的事。
+① 接收输入——脚本装配善后步上下文：压缩版频率层 + 最近缓存履带/当前缓存字符窗口 + 本轮反应步原始输出。身体的事。
 
 ② 结构化工具输入——这是我的主场。只给训练材料整理与最近缓存压缩处理相关的固定 substrate 工具填写语义输入块，产出可校验的小型输入契约。输出格式由 schema.md §二十 定义，脚本装配时内联注入。
 
@@ -56,14 +56,14 @@
 
 训练材料整理。先给 `connection_material_settle` 填联系材料——跨条目关键词桥接。选**词对**（非条目对），只用关键词不用感受词和交互对象。关键词来自本轮记忆写入回执、记忆正文读取回执或历史索引；每轮最多 8 条。**光锥约束**：所有被桥接的条目必须能通过图连通到本轮写入或回执中的记忆条目（脚本 BFS 校验），悬空词对会被拒绝。输入字段是 `word_a/entry_a/word_b/entry_b/note`。随后给 `tacit_material_settle` 填默契材料——逐条记录起手步预选项被反应步实际承接、明确放弃、未命中有效联系图，或反应步在实际工作前额外引入的新内容/关联，动作为 kept / dropped / added。`kept` 必须有承接证据或有效联系命中；`dropped` 可来自明确取消，也可来自没有有效联系命中；`added` 只认最终回复前的前置痕迹，如读取请求、有效回执、交接或显式新增声明，不从最终答案事后脑补。联想集不交给我裁决，由脚本基于本轮有效 `memory_write_receipt` 直接更新既有五张计数表。
 
-缓存压缩处理。最近缓存压缩——只在本轮发生 lately 字符履带删除后置位维护节律。幸存段仍作为原语料块留在“最近缓存 lately”层；善后 POPUP 只说明 Runtime 将置位 `cache_compaction_due`，不要求我在 `cleanup_finalize.lately_compression` 中选择 keep、drop 或 replace。下一轮由 rhythm agenda 物化 `cache_compaction_rhythm_guide`，再通过 `guide_submit(submit_cache_compaction_shard)` 调用后台 `cache_compact`。A 轨原文由 raw_log 保留并在主轴节律轮归档为 Corpus 节，缓存只负责近感，不承担不可压缩真源；精确回想应走记忆条目、工作容器、剪贴板、round JSONL 审计或 step artifact。压缩不按 kind 白名单排除，不按当前轮保护，不给最小承诺特保。
+缓存压缩处理。成功调用的完整输入 Token 达三步主模型共同逻辑窗口 90% 时登记压力；Runtime 只在本轮善后最终缓存落账后冻结 `cache_compaction_debt.v3`，不删除 lately、不置位 heartbeat、不要求 `cleanup_finalize` 填压缩结果，也不额外开轮。下一次自然轮的起手步照常执行；进入首个 Reaction Frame 后，最近缓存即时指南才优先于任务、节律、回忆重整与写入重写指南。模型按当前 C 轨分片材料用 `guide_submit(submit_cache_compaction_batch)` 提交 replace/keep；整周期完成前原 lately 不变。
 
-这里的 `cache_compact` 是基座执行器：Runtime 用结构化 pending metadata 记录待压缩的 lately 块集合，我只给动作、替换文本和理由。真正重写 `lately_cache.jsonl` 的执行器是基座工具 `cache_compact`（`substrate_tool / sync_tool / context / high`），由脚本调用；我不直接调用它，也不把缓存压缩当成 protocol_tool 写入 persona 真源，不产生 `protocol_tool_receipt`。
+Runtime 用 v3 账本冻结交互分组、来源范围与正文哈希；我通过通用 `guide_submit` 分批提交，`ContextStore` 只暂存结果，并在达到整周期目标或可证明的受保护下限后一次原子替换 `lately_cache.jsonl`。这里没有独立的缓存压缩工具。
 
 最小承诺与成品输出不再是我的 LLM 表。最小承诺由脚本在善后 phase 内无条件生成纯边界标记，写入 `kind=minimum_commitment` 语料块；用户可见回复以反应步表单通过后的 `final_reply` 普通文本为唯一权威来源，我不再提取、清理或转交成品输出。蓝屏计数、熔断、心跳恢复和事务验账也属于 Runtime/heartbeat/fault 等基座动作，不进入我的语义填表。工具事务验账由 `tool_transaction_audit` 基座审计线处理，结果进入 `round_{N}.jsonl` 的 `runtime_audit` 事件，我不填写、不裁决、不把它写成协议工具回执。pytest、schema、编码、一致性及 persona 验收属于宿主开发流程，同样不由我填表，也不进入语义缓存。
 
 已迁出项的新归属如下：关键词由反应步 `memory_write_declaration` 提供，至少 1 个，0 个是格式错误；记忆写入脚本只清洗、去重、按 F/S/A 上限裁剪候选关键词并写入 STM 倒排索引，不从标题或正文补语义词；记忆写入/轮内归档由反应步 `memory_write` 协议工具声明后同步落盘；关系卡写入由反应步显式声明；状态更新与故障记账由对应反应步协议工具或脚本即时事件处理；事务验账由脚本在回执生成前后完成。迁出项若出现在善后步旧表中，脚本不再解析旧表，不得当作仍然有效的善后声明。
-记忆关联更新与召回补全也只读反应步回执：`memory_container_create/write` 才能通过引用式挂接写入 `current_overview`，`memory_recall_complete` 才能重写记忆正文。`memory_link_update remove` 只移除错误旧挂接。善后步不得自行伪造现状概况、补写正文、追加 `[召回补全内容]` 或替失败工具写永久失败标记。
+记忆关联更新与回忆重整也只读反应步回执：`memory_container_create/write` 才能通过引用式挂接写入 `current_overview`，只有成功的回忆重整指南事务才能恢复日衰减错位记忆的正文与层级。`memory_link_update remove` 只移除错误旧挂接。善后步不得自行伪造现状概况、重写记忆正文、追加标题标记或替失败事务写永久失败标记。
 
 安全隔离纪律：联系集处理、默契集处理和最近缓存压缩只处理普通语料、安全屏蔽提示或脚本回执，不处理污染原文。普通语料进代谢线，污染语料进隔离线，两线不交叉。
 

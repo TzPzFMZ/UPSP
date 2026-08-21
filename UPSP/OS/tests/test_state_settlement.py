@@ -250,7 +250,7 @@ def test_corrupt_round_audit_fails_closed_and_writes_error_receipt(tmp_path):
 
     assert "JSONDecodeError" in caught.value.receipt["reason"]
     assert state.load()["base"]["meta"]["last_state_settlement_id"] is None
-    assert '"status": "error"' in open(
+    assert '"status":"error"' in open(
         round_path, "r", encoding="utf-8").read()
 
 

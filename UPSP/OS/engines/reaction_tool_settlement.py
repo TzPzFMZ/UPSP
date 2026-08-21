@@ -3,6 +3,7 @@
 import json
 
 from assembly.context_helpers import active_corpus_ids_from_messages
+from assembly.context_indexes import normalize_index_view_page, normalize_ltm_query_terms
 from engines.reaction_helpers import (
     attach_native_trace_to_receipts,
     merge_mount_requests,
@@ -14,6 +15,7 @@ from engines.reaction_helpers import (
 from engines.reaction_protocol_tool_execution import (
     apply_corpus_read_requests,
     apply_index_view_requests,
+    apply_memory_search_requests,
     visible_relation_body_ids_from_mounts,
 )
 from engines.product_committer import RuntimeProductCommitter
@@ -29,6 +31,9 @@ from logic.memory_privacy import (
     apply_memory_privacy_declarations,
     apply_memory_privacy_declassify_declarations,
 )
+from logic.memory_write_rewrite import (
+    memory_write_rewrite_pending_receipts,
+)
 from logic.relation_read import apply_relation_read_requests
 from logic.relay_intent_pool import settle_relay_intent
 
@@ -43,6 +48,12 @@ PROTOCOL_READ_SIGNATURE_FIELDS = {
         "tool_id",
         "scope",
         "zone",
+        "offset",
+        "limit",
+    ),
+    "memory_search": (
+        "tool_id",
+        "query_terms",
         "offset",
         "limit",
     ),
@@ -83,6 +94,9 @@ PROTOCOL_READ_SIGNATURE_FIELDS = {
 def _read_signature(tool_id, payload):
     fields = PROTOCOL_READ_SIGNATURE_FIELDS.get(tool_id, ("tool_id",))
     payload = payload or {}
+    page = normalize_index_view_page(
+        payload.get("offset"), payload.get("limit")
+    ) if tool_id in {"index_view", "memory_search"} else None
     data = {}
     for field in fields:
         if field == "tool_id":
@@ -91,6 +105,15 @@ def _read_signature(tool_id, payload):
             value = payload.get(field)
         if value is None:
             value = ""
+        if field == "query_terms":
+            try:
+                value = sorted(normalize_ltm_query_terms(value or []))
+            except ValueError:
+                pass
+        elif page and field == "offset":
+            value = page[0]
+        elif page and field == "limit":
+            value = page[1]
         data[field] = value
     return json.dumps(data, ensure_ascii=False, sort_keys=True)
 
@@ -128,6 +151,7 @@ def _duplicate_read_receipt(tool_id, request, prior, pending_signature=""):
             "corpus_id",
             "scope",
             "zone",
+            "query_terms",
             "line_start",
             "line_end",
             "char_start",
@@ -170,37 +194,6 @@ class ReactionToolSettlementDispatcher:
             receipts,
         )
         return receipts
-
-    def handle_pending_cancel(
-        self,
-        *,
-        iter_accepted_tools,
-        iter_pending_cancel_requests,
-        write_pending_tracker,
-        accumulated_messages,
-        iter_native_tool_call_envelopes,
-        all_pending_cancel_receipts,
-        all_protocol_tool_receipts,
-    ):
-        runner = self.runner
-        if not (
-            "pending_cancel" in iter_accepted_tools
-            and iter_pending_cancel_requests
-        ):
-            return []
-        receipts = [
-            write_pending_tracker.cancel_pending(request)
-            for request in iter_pending_cancel_requests or []
-            if isinstance(request, dict)
-        ]
-        return self._record_receipts(
-            receipts=receipts,
-            declarations=iter_pending_cancel_requests,
-            accumulated_messages=accumulated_messages,
-            iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
-            specific_receipts=all_pending_cancel_receipts,
-            all_protocol_tool_receipts=all_protocol_tool_receipts,
-        )
 
     def handle_relay_intent_settle(
         self,
@@ -384,11 +377,7 @@ class ReactionToolSettlementDispatcher:
         interaction_meta,
     ):
         runner = self.runner
-        runtime_context = runtime_file_read_context(
-            runner.sm,
-            getattr(runner, "ctx_store", None),
-            round_num,
-        )
+        runtime_context = runtime_file_read_context(runner.sm)
         runtime_context.update({
             "round_num": round_num,
             "iteration": iteration,
@@ -448,6 +437,8 @@ class ReactionToolSettlementDispatcher:
         hidden_stm_memory_ids,
         boosted_memory_ids,
         mount_ids,
+        memory_write_rewrite_tracker=None,
+        rewrite_pending_at_frame_start=False,
     ):
         runner = self.runner
         if not (
@@ -456,18 +447,60 @@ class ReactionToolSettlementDispatcher:
         ):
             return mount_ids
 
-        memory_write_receipts = self._commit(
-            "memory_write",
-            iter_memory_write_declarations,
-            round_num=runner.sm.get_total_round(),
-            interaction_meta=interaction_meta,
-        )
+        if rewrite_pending_at_frame_start:
+            memory_write_receipts = memory_write_rewrite_pending_receipts(
+                iter_memory_write_declarations
+            )
+        else:
+            memory_write_receipts = self._commit(
+                "memory_write",
+                iter_memory_write_declarations,
+                round_num=runner.sm.get_total_round(),
+                interaction_meta=interaction_meta,
+            )
         attach_native_trace_to_receipts(
             memory_write_receipts,
             iter_memory_write_declarations,
         )
+        if (
+            not rewrite_pending_at_frame_start
+            and memory_write_rewrite_tracker is not None
+        ):
+            memory_write_rewrite_tracker.register_receipts(
+                iter_memory_write_declarations,
+                memory_write_receipts,
+            )
+        return self._settle_memory_write_receipts(
+            memory_write_receipts,
+            round_num=round_num,
+            accumulated_messages=accumulated_messages,
+            all_memory_write_receipts=all_memory_write_receipts,
+            all_protocol_tool_receipts=all_protocol_tool_receipts,
+            pending_memory_ids=pending_memory_ids,
+            hidden_stm_memory_ids=hidden_stm_memory_ids,
+            boosted_memory_ids=boosted_memory_ids,
+            mount_ids=mount_ids,
+        )
+
+    def _settle_memory_write_receipts(
+        self,
+        memory_write_receipts,
+        *,
+        round_num,
+        accumulated_messages,
+        all_memory_write_receipts,
+        all_protocol_tool_receipts,
+        pending_memory_ids,
+        hidden_stm_memory_ids,
+        boosted_memory_ids,
+        mount_ids,
+        include_protocol_receipts=True,
+        settle_feedback=True,
+    ):
+        runner = self.runner
         all_memory_write_receipts.extend(memory_write_receipts)
-        all_protocol_tool_receipts.extend(memory_write_receipts)
+        if include_protocol_receipts:
+            all_protocol_tool_receipts.extend(memory_write_receipts)
         record_pending_memory_ids(
             pending_memory_ids,
             memory_write_receipts,
@@ -493,11 +526,58 @@ class ReactionToolSettlementDispatcher:
                 mount_ids,
                 memory_write_mounts,
             )
-        settle_receipts_for_next_iteration(
-            accumulated_messages,
-            memory_write_receipts,
-        )
+        if settle_feedback:
+            settle_receipts_for_next_iteration(
+                accumulated_messages,
+                memory_write_receipts,
+            )
         return mount_ids
+
+    def settle_guide_memory_writes(
+        self,
+        guide_receipts,
+        *,
+        round_num,
+        accumulated_messages,
+        all_memory_write_receipts,
+        all_protocol_tool_receipts,
+        pending_memory_ids,
+        hidden_stm_memory_ids,
+        boosted_memory_ids,
+        mount_ids,
+        frame_pending_memory_ids=None,
+    ):
+        backend_receipts = [
+            dict(backend)
+            for guide in guide_receipts or []
+            if isinstance(guide, dict)
+            for backend in guide.get("backend_receipts") or []
+            if (
+                isinstance(backend, dict)
+                and backend.get("tool_id") == "memory_write"
+            )
+        ]
+        if not backend_receipts:
+            return mount_ids
+        settled_mount_ids = self._settle_memory_write_receipts(
+            backend_receipts,
+            round_num=round_num,
+            accumulated_messages=accumulated_messages,
+            all_memory_write_receipts=all_memory_write_receipts,
+            all_protocol_tool_receipts=all_protocol_tool_receipts,
+            pending_memory_ids=pending_memory_ids,
+            hidden_stm_memory_ids=hidden_stm_memory_ids,
+            boosted_memory_ids=boosted_memory_ids,
+            mount_ids=mount_ids,
+            include_protocol_receipts=False,
+            settle_feedback=False,
+        )
+        if frame_pending_memory_ids is not None:
+            record_pending_memory_ids(
+                frame_pending_memory_ids,
+                backend_receipts,
+            )
+        return settled_mount_ids
 
     def handle_memory_link_update(
         self,
@@ -545,6 +625,7 @@ class ReactionToolSettlementDispatcher:
         iter_native_tool_call_envelopes,
         all_guide_submit_receipts,
         all_protocol_tool_receipts,
+        current_reaction_iteration=None,
     ):
         runner = self.runner
         if not (
@@ -559,13 +640,29 @@ class ReactionToolSettlementDispatcher:
             "active_corpus_ids": active_corpus_ids_from_messages(accumulated_messages),
             "round_num": runner.sm.get_total_round(),
             "round_type": getattr(runner, "_current_round_type", ""),
+            "current_reaction_iteration": current_reaction_iteration,
             "state_store": runner.sm,
             "context_store": runner.ctx_store,
+            "memory_store": getattr(runner, "memory_store", None),
             "alert_store": runner.alert_store,
             "chronicle_store": getattr(runner, "chronicle_store", None),
             "chronicle_focus": getattr(runner, "chronicle_focus", None),
             "workbench_store": runner.workbench,
             "interaction_meta": getattr(runner, "_current_interaction_meta", {}),
+            "memory_reconsolidation_tracker": getattr(
+                runner, "_current_memory_reconsolidation_tracker", None
+            ),
+            "memory_reconsolidation_processor": getattr(
+                runner, "_current_memory_reconsolidation_processor", None
+            ),
+            "memory_write_rewrite_tracker": getattr(
+                runner, "_current_memory_write_rewrite_tracker", None
+            ),
+            "memory_heat": getattr(runner, "heat", None),
+            "relation_store": getattr(runner, "relation_store", None),
+            "periodic_mount_processor": getattr(
+                runner, "_current_periodic_mount_processor", None
+            ),
         }
         sandbox_grant = load_sandbox_grant()
         if sandbox_grant:
@@ -603,6 +700,7 @@ class ReactionToolSettlementDispatcher:
         all_memory_container_create_receipts,
         all_protocol_tool_receipts,
         all_created_containers,
+        pending_memory_ids,
     ):
         runner = self.runner
         if not (
@@ -615,6 +713,7 @@ class ReactionToolSettlementDispatcher:
             iter_memory_container_create_declarations,
             round_num=runner.sm.get_total_round(),
             interaction_meta=interaction_meta,
+            pending_memory_ids=pending_memory_ids,
         )
         applied_ids = [
             receipt.get("container_id")
@@ -643,6 +742,7 @@ class ReactionToolSettlementDispatcher:
         iter_native_tool_call_envelopes,
         all_memory_container_write_receipts,
         all_protocol_tool_receipts,
+        pending_memory_ids,
     ):
         runner = self.runner
         if not (
@@ -656,6 +756,7 @@ class ReactionToolSettlementDispatcher:
             round_num=runner.sm.get_total_round(),
             interaction_meta=interaction_meta,
             visible_focus_id=visible_focus_id,
+            pending_memory_ids=pending_memory_ids,
         )
         return self._record_receipts(
             receipts=receipts,
@@ -714,6 +815,44 @@ class ReactionToolSettlementDispatcher:
             accumulated_messages=accumulated_messages,
             iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
             specific_receipts=all_index_view_receipts,
+            all_protocol_tool_receipts=all_protocol_tool_receipts,
+        )
+
+    def handle_memory_search(
+        self,
+        *,
+        iter_memory_search_requests,
+        accumulated_messages,
+        iter_native_tool_call_envelopes,
+        all_memory_search_receipts,
+        all_protocol_tool_receipts,
+    ):
+        runner = self.runner
+        if not iter_memory_search_requests:
+            return []
+        executable_requests, duplicate_receipts, duplicate_requests = (
+            self._filter_duplicate_protocol_reads(
+                "memory_search",
+                iter_memory_search_requests,
+                all_memory_search_receipts,
+            )
+        )
+        receipts = apply_memory_search_requests(
+            runner.assembler,
+            executable_requests,
+        )
+        receipts = self._finalize_protocol_read_receipts(
+            "memory_search",
+            receipts,
+            executable_requests,
+            duplicate_receipts,
+        )
+        return self._record_receipts(
+            receipts=receipts,
+            declarations=list(executable_requests or []) + duplicate_requests,
+            accumulated_messages=accumulated_messages,
+            iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
+            specific_receipts=all_memory_search_receipts,
             all_protocol_tool_receipts=all_protocol_tool_receipts,
         )
 
@@ -863,6 +1002,7 @@ class ReactionToolSettlementDispatcher:
         all_protocol_tool_receipts,
         hidden_stm_memory_ids,
         boosted_memory_ids,
+        memory_reconsolidation_tracker,
         round_num,
         mount_ids,
     ):
@@ -879,13 +1019,23 @@ class ReactionToolSettlementDispatcher:
             iter_memory_content_read_requests,
             all_memory_content_read_receipts,
         )
+        memory_recall = getattr(runner, "memory_recall", None)
+        if not (
+            getattr(memory_recall, "memory_store", None) is runner.memory_store
+            and getattr(memory_recall, "heat", None) is runner.heat
+        ):
+            memory_recall = None
         memory_content_read_receipts = apply_memory_content_read_requests(
             executable_requests,
             runner._build_protocol_processor_state(interaction_meta),
             {
                 "memory_store": runner.memory_store,
                 "relation_store": runner.relation_store,
+                "memory_recall": memory_recall,
             },
+            round_num=round_num,
+            memory_heat_boosted_ids=boosted_memory_ids,
+            memory_reconsolidation_tracker=memory_reconsolidation_tracker,
         )
         (
             memory_content_read_receipts,
@@ -909,17 +1059,6 @@ class ReactionToolSettlementDispatcher:
                 mount_ids,
                 memory_content_mounts,
             )
-            for receipt in memory_content_read_receipts:
-                if (
-                    receipt.get("status") == "accepted"
-                    and receipt.get("mount_mode") != "none"
-                ):
-                    runner._boost_mounted_memory_once(
-                        receipt.get("mem_id"),
-                        round_num,
-                        boosted_memory_ids,
-                        receipt.get("memory_layer") or "STM",
-                    )
         attach_native_trace_to_receipts(
             memory_content_read_receipts,
             list(executable_requests or []) + duplicate_requests,
@@ -1121,39 +1260,6 @@ class ReactionToolSettlementDispatcher:
             accumulated_messages=accumulated_messages,
             iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
             specific_receipts=all_memory_annotation_receipts,
-            all_protocol_tool_receipts=all_protocol_tool_receipts,
-        )
-
-    def handle_memory_recall_complete(
-        self,
-        *,
-        iter_accepted_tools,
-        active_protocol_tool_guides,
-        iter_memory_recall_completion_requests,
-        interaction_meta,
-        accumulated_messages,
-        iter_native_tool_call_envelopes,
-        all_memory_recall_completion_receipts,
-        all_protocol_tool_receipts,
-    ):
-        runner = self.runner
-        if not (
-            "memory_recall_complete" in iter_accepted_tools
-            and iter_memory_recall_completion_requests
-        ):
-            return []
-        receipts = self._commit(
-            "memory_recall_complete",
-            iter_memory_recall_completion_requests,
-            round_num=runner.sm.get_total_round(),
-            interaction_meta=interaction_meta,
-        )
-        return self._record_receipts(
-            receipts=receipts,
-            declarations=iter_memory_recall_completion_requests,
-            accumulated_messages=accumulated_messages,
-            iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
-            specific_receipts=all_memory_recall_completion_receipts,
             all_protocol_tool_receipts=all_protocol_tool_receipts,
         )
 

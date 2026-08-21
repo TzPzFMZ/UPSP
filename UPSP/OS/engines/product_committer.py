@@ -9,7 +9,6 @@ from logic.memory_container_tools import (
     apply_memory_container_write_declarations,
 )
 from logic.memory_link_update import apply_memory_link_update_declarations
-from logic.memory_recall_complete import apply_memory_recall_completion_requests
 from logic.memory_write import apply_memory_write_declarations
 from logic.interaction_meta import active_relation_card, interaction_meta_for_card
 
@@ -17,7 +16,6 @@ from logic.interaction_meta import active_relation_card, interaction_meta_for_ca
 ORGAN_PRODUCT_TOOLS = frozenset({
     "memory_write",
     "relation_card_write",
-    "memory_recall_complete",
     "memory_link_update",
     "memory_container_create",
     "memory_container_write",
@@ -53,7 +51,7 @@ class RuntimeProductCommitter:
             self, tool_id, declarations, *, round_num, interaction_meta=None,
             pending_memory_ids=None, visible_focus_id="",
             visible_relation_body_ids=(), chronicle_store=None,
-            chronicle_focus=None):
+            chronicle_focus=None, memory_heat_boosted_ids=None):
         s = self.services
         tool_id = str(tool_id or "").strip()
         declarations = list(declarations or [])
@@ -80,6 +78,7 @@ class RuntimeProductCommitter:
                 "container_store": s.container_store,
                 "workbench_store": s.workbench,
                 "relation_store": s.relation_store,
+                "pending_memory_ids": pending_memory_ids or {},
             }, round_num=round_num, state=state)
         if tool_id == "memory_container_write":
             return apply_memory_container_write_declarations(declarations, {
@@ -88,12 +87,7 @@ class RuntimeProductCommitter:
                 "workbench_store": s.workbench,
                 "visible_focus_id": visible_focus_id,
                 "relation_store": s.relation_store,
-            }, round_num=round_num, state=state)
-        if tool_id == "memory_recall_complete":
-            return apply_memory_recall_completion_requests(declarations, {
-                "memory_store": s.memory_store,
-                "container_store": s.container_store,
-                "relation_store": s.relation_store,
+                "pending_memory_ids": pending_memory_ids or {},
             }, round_num=round_num, state=state)
         if tool_id == "chronicle_write":
             return apply_chronicle_write_declarations(declarations, {
@@ -142,7 +136,8 @@ class RuntimeProductCommitter:
             self, product, *, frame_ref, role_id, sequence, allowed_tools,
             round_num, interaction_meta=None, pending_memory_ids=None,
             visible_focus_id="", visible_relation_body_ids=(),
-            chronicle_store=None, chronicle_focus=None):
+            chronicle_store=None, chronicle_focus=None,
+            memory_heat_boosted_ids=None):
         product = product if isinstance(product, dict) else {}
         tool_id = str(product.get("tool_id") or "").strip()
         frame = frame_ref.as_dict() if hasattr(frame_ref, "as_dict") else dict(frame_ref or {})
@@ -165,6 +160,7 @@ class RuntimeProductCommitter:
             visible_relation_body_ids=visible_relation_body_ids,
             chronicle_store=chronicle_store,
             chronicle_focus=chronicle_focus,
+            memory_heat_boosted_ids=memory_heat_boosted_ids,
         )
         return [{**dict(receipt or {}), **meta} for receipt in receipts]
 

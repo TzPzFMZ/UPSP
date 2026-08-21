@@ -8,6 +8,8 @@ import os
 import re
 import socket
 import subprocess
+from fnmatch import fnmatch
+from collections import deque
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path, PureWindowsPath
@@ -18,10 +20,9 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from constants import local_now
 from paths import (
     PROGRAM_UPSP_ROOT,
-    PERSONA_DIR,
+    UPSP_DATA_ROOT,
+    ACTIVE_PID,
     GLOBAL_CONFIG_DIR,
-    STATE_JSON,
-    CORE_MD,
     WEB_BACKEND_HEALTH_JSON,
 )
 from utils.content_ranges import apply_explicit_range, range_kwargs_from_request
@@ -38,14 +39,11 @@ from utils.read_tool_material import read_tool_material_content
 
 
 WORKSPACE_ROOT = Path(PROGRAM_UPSP_ROOT).resolve()
+PERSONAS_ROOT = (Path(UPSP_DATA_ROOT).resolve() / "personas").resolve()
 DEFAULT_ALLOWED_ROOTS = (WORKSPACE_ROOT,)
 UNRESTRICTED_ALLOWED_ROOTS = object()
-DEFAULT_DENIED_ROOTS = (
-    Path(PERSONA_DIR).resolve() / "STM",
-    Path(PERSONA_DIR).resolve() / "LTM",
-    Path(PERSONA_DIR).resolve() / "relation",
-)
-DEFAULT_DENIED_FILES = {Path(STATE_JSON).resolve(), Path(CORE_MD).resolve()}
+DEFAULT_DENIED_ROOTS = ()
+DEFAULT_DENIED_FILES = set()
 DEFAULT_CREDENTIAL_ROOTS = tuple(
     path.resolve()
     for path in (
@@ -88,7 +86,7 @@ SECRET_NAME_FRAGMENTS = (
     "api_key",
     "password",
 )
-PERSONA_LIVE_PARTS = {"stm", "ltm", "relation"}
+PERSONA_READ_ALIAS = "persona://"
 PUBLIC_WEB_READ_SCOPE = "public_web_read"
 WORKSPACE_PATCH_SCOPE = "workspace_patch_allowlist"
 WORKSPACE_SHELL_SCOPE = "workspace_shell_allowlist"
@@ -96,10 +94,6 @@ SUBAGENT_TASK_SCOPE = "subagent_task_scope"
 SHELL_OUTPUT_LIMIT = 12000
 SHELL_UNDECODABLE_TEMPLATE = "[无法可靠解码 {stream_name}，原始字节已记录长度与 sha256]"
 SHELL_REPLACEMENT_HIDDEN = "[输出含无法解码字符，已隐藏乱码片段]"
-WINDOWS_POSIX_HEREDOC_HINT = (
-    "Windows shell 不支持 POSIX Bash here-doc。需要多行 Python 时，"
-    "请优先用 file_write 写临时 .py 后执行，或使用 PowerShell here-string 管道。"
-)
 SUBAGENT_WRITE_MODES = {
     "write",
     "edit",
@@ -145,8 +139,16 @@ WEB_FIND_TEXT_MAX_CHARS = 256
 DEFAULT_FILE_READ_WINDOW_CHARS = 16384
 DEFAULT_WEB_FETCH_WINDOW_CHARS = 4096
 DEFAULT_WEB_SEARCH_WINDOW_RESULTS = 5
-FILE_SEARCH_DEFAULT_MAX_RESULTS = 20
-FILE_SEARCH_MAX_RESULTS = 100
+FILE_GLOB_DEFAULT_MAX_RESULTS = 20
+FILE_GLOB_MAX_RESULTS = 100
+FILE_GREP_DEFAULT_MAX_RESULTS = 20
+FILE_GREP_MAX_RESULTS = 100
+FILE_GREP_MAX_QUERY_CHARS = 1024
+FILE_GREP_MAX_FILES = 10_000
+FILE_GREP_MAX_BYTES = 256 * 1024 * 1024
+FILE_GREP_MAX_FILE_BYTES = 64 * 1024 * 1024
+FILE_GREP_MAX_CONTEXT_LINES = 3
+FILE_GREP_MAX_DISPLAY_LINE_CHARS = 2000
 WEB_BACKEND_HEALTH_ENV = "UPSP_WEB_BACKEND_HEALTH_PATH"
 WEB_FETCH_BACKENDS = ("direct_fetch", "jina_reader")
 WEB_SEARCH_BACKENDS = ("ddgs", "html_fallback")
@@ -201,19 +203,57 @@ def _file_read_allowed_roots(allowed_roots):
         return UNRESTRICTED_ALLOWED_ROOTS
     if allowed_roots is not None:
         return allowed_roots
-    return DEFAULT_ALLOWED_ROOTS + _extra_file_read_roots()
+    return DEFAULT_ALLOWED_ROOTS + (PERSONAS_ROOT,) + _extra_file_read_roots()
 
 
 def _resolve_request_path(raw_path, allowed_roots):
     text = _clean(raw_path)
     if not text:
         return None
+    if text.lower().startswith(PERSONA_READ_ALIAS):
+        return _resolve_persona_alias(text)
     path = Path(text)
     if _is_foreign_windows_path_syntax(text, native_is_absolute=path.is_absolute()):
         return _foreign_windows_path_placeholder(text)
     if not path.is_absolute():
         path = _resolved_roots(allowed_roots)[0] / path
     return path.resolve()
+
+
+def _resolve_persona_alias(raw_path):
+    text = _clean(raw_path)
+    if not text.lower().startswith(PERSONA_READ_ALIAS):
+        return None
+    suffix = text[len(PERSONA_READ_ALIAS):]
+    if "\\" in suffix or "\x00" in suffix:
+        return None
+    parts = [part for part in suffix.split("/") if part]
+    if any(part in {".", ".."} or ":" in part for part in parts):
+        return None
+    if parts and parts[0].casefold() == "active":
+        parts[0] = str(ACTIVE_PID)
+    candidate = PERSONAS_ROOT.joinpath(*parts)
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(PERSONAS_ROOT)
+    except (OSError, ValueError):
+        return None
+    return resolved
+
+
+def _display_path(path):
+    resolved = Path(path).resolve()
+    try:
+        relative = resolved.relative_to(PERSONAS_ROOT)
+    except ValueError:
+        return str(resolved)
+    suffix = relative.as_posix()
+    return PERSONA_READ_ALIAS + suffix if suffix else PERSONA_READ_ALIAS
+
+
+def _persona_alias_invalid(raw_path):
+    text = _clean(raw_path)
+    return text.lower().startswith(PERSONA_READ_ALIAS) and _resolve_persona_alias(text) is None
 
 
 def _bounded_int(value, default, minimum, maximum):
@@ -386,28 +426,82 @@ def _base_result(tool_id="file_read", status="rejected", reason=""):
     return result
 
 
-def _permission_denial(path, allowed_roots, denied_roots=None, denied_files=None):
+def _is_persona_truth_path(path):
+    try:
+        relative = Path(path).resolve().relative_to(PERSONAS_ROOT)
+    except ValueError:
+        return False
+    parts = [part.casefold() for part in relative.parts]
+    return len(parts) >= 3 and parts[2] == "persona"
+
+
+def _is_memory_storage_path(path):
+    lowered = [part.casefold() for part in Path(path).parts]
+    return any(
+        lowered[index:index + 2] in (["stm", "memory"], ["ltm", "memory"])
+        for index in range(max(0, len(lowered) - 1))
+    )
+
+
+def _contains_private_access(value):
+    if isinstance(value, dict):
+        if str(value.get("access") or "").strip().casefold() == "private":
+            return True
+        return any(_contains_private_access(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_private_access(item) for item in value)
+    return False
+
+
+def _private_read_denial(path):
+    path = Path(path)
+    lowered_name = path.name.casefold()
+    if lowered_name.endswith(".private.md"):
+        return "private_persona_denied"
+    if not (
+            lowered_name == "meta.json"
+            and _is_memory_storage_path(path)
+            and path.exists()
+            and path.is_file()):
+        return ""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return "private_scope_unverified"
+    if _contains_private_access(value):
+        return "private_persona_denied"
+    return ""
+
+
+def _permission_denial(
+        path,
+        allowed_roots,
+        denied_roots=None,
+        denied_files=None,
+        *,
+        access="read"):
+    path = Path(path).resolve()
     lowered_parts = [part.lower() for part in path.parts]
-    for index, part in enumerate(lowered_parts[:-1]):
-        if part == "persona" and lowered_parts[index + 1] in PERSONA_LIVE_PARTS:
-            return "persona_live_denied"
-
-    denied_files = set(denied_files or DEFAULT_DENIED_FILES)
-    if path in denied_files:
-        return "persona_live_denied"
-
     if path in DEFAULT_CREDENTIAL_FILES or any(
             path.is_relative_to(root) for root in DEFAULT_CREDENTIAL_ROOTS):
         return "secret_like_path"
-
-    denied_roots = _resolved_roots(denied_roots or DEFAULT_DENIED_ROOTS)
-    if any(path.is_relative_to(root) for root in denied_roots):
-        return "persona_live_denied"
 
     if allowed_roots is not UNRESTRICTED_ALLOWED_ROOTS:
         allowed = _resolved_roots(allowed_roots)
         if not any(path.is_relative_to(root) for root in allowed):
             return "outside_allowlist"
+
+    effective_denied_files = set(
+        DEFAULT_DENIED_FILES if denied_files is None else denied_files
+    )
+    if path in effective_denied_files:
+        return "path_denied"
+    effective_denied_roots = _resolved_roots(
+        DEFAULT_DENIED_ROOTS if denied_roots is None else denied_roots
+    ) if (denied_roots is not None or DEFAULT_DENIED_ROOTS) else ()
+    if any(path.is_relative_to(root) for root in effective_denied_roots):
+        return "path_denied"
+
     if ".git" in lowered_parts:
         return "git_internal_denied"
 
@@ -416,6 +510,10 @@ def _permission_denial(path, allowed_roots, denied_roots=None, denied_files=None
         return "secret_like_path"
     if any(fragment in lowered_name for fragment in SECRET_NAME_FRAGMENTS):
         return "secret_like_path"
+    if access == "read":
+        return _private_read_denial(path)
+    if access in {"write", "shell"} and _is_persona_truth_path(path):
+        return "persona_write_denied"
     return ""
 
 
@@ -602,23 +700,29 @@ def _file_read_range_request(request):
 
 def _execute_file_read(request, allowed_roots=None, denied_roots=None, denied_files=None):
     read_roots = _file_read_allowed_roots(allowed_roots)
+    raw_path = request.get("path")
     path = _resolve_request_path(request.get("path"), read_roots)
     if path is None:
-        return _base_result(status="rejected", reason="missing_path")
+        reason = "invalid_persona_alias" if _persona_alias_invalid(raw_path) else "missing_path"
+        return _base_result(status="rejected", reason=reason)
 
-    denial = _permission_denial(path, read_roots, denied_roots, denied_files)
+    display_path = _display_path(path)
+
+    denial = _permission_denial(
+        path, read_roots, denied_roots, denied_files, access="read"
+    )
     if denial:
         result = _base_result(status="rejected", reason=denial)
-        result["path"] = str(path)
+        result["path"] = display_path
         return result
 
     if not path.exists():
         result = _base_result(status="rejected", reason="file_not_found")
-        result["path"] = str(path)
+        result["path"] = display_path
         return result
     if not path.is_file():
         result = _base_result(status="rejected", reason="not_a_file")
-        result["path"] = str(path)
+        result["path"] = display_path
         return result
 
     encoding = _clean(request.get("encoding")) or "utf-8"
@@ -626,7 +730,7 @@ def _execute_file_read(request, allowed_roots=None, denied_roots=None, denied_fi
         text = _read_text_file(path, encoding)
     except (OSError, UnicodeError) as exc:
         result = _base_result(status="rejected", reason="text_read_failed")
-        result["path"] = str(path)
+        result["path"] = display_path
         result["detail"] = str(exc)
         return result
 
@@ -634,7 +738,7 @@ def _execute_file_read(request, allowed_roots=None, denied_roots=None, denied_fi
         range_request, requested_range = _file_read_range_request(request)
     except ValueError as exc:
         result = _base_result(status="rejected", reason=str(exc))
-        result["path"] = str(path)
+        result["path"] = display_path
         return result
 
     total_lines = len(text.splitlines())
@@ -684,7 +788,7 @@ def _execute_file_read(request, allowed_roots=None, denied_roots=None, denied_fi
         window["next_start_line"] = window["end_line"] + 1
     result = _base_result(status="ok")
     result.update({
-        "path": str(path),
+        "path": display_path,
         "content": window["content"],
         "chars": len(window["content"]),
         "read_mode": "bounded",
@@ -715,13 +819,18 @@ def _execute_file_read(request, allowed_roots=None, denied_roots=None, denied_fi
         "next_char_start": window["next_char_start"],
         "next_char_end": window["next_char_end"],
         "encoding": encoding,
-        "evidence_refs": [f"file_read:{path}"],
+        "evidence_refs": [f"file_read:{display_path}"],
         **window_plan,
     })
+    if display_path.startswith(PERSONA_READ_ALIAS):
+        result["host_path"] = str(path)
+    if _is_memory_storage_path(path):
+        result["read_semantics"] = "raw_inspection"
+        result["memory_lifecycle_effects"] = []
     return result
 
 
-def _file_search_pattern_denial(pattern):
+def _file_glob_pattern_denial(pattern):
     text = str(pattern or "").strip()
     if not text:
         return "missing_pattern"
@@ -735,75 +844,371 @@ def _file_search_pattern_denial(pattern):
     return ""
 
 
-def _execute_file_search(request, allowed_roots=None, denied_roots=None, denied_files=None):
+def _execute_file_glob(request, allowed_roots=None, denied_roots=None, denied_files=None):
     read_roots = _file_read_allowed_roots(allowed_roots)
-    root = _resolve_request_path(request.get("root"), read_roots)
+    raw_root = request.get("root")
+    root = _resolve_request_path(raw_root, read_roots)
     if root is None:
-        return _base_result(tool_id="file_search", status="rejected", reason="missing_root")
+        reason = "invalid_persona_alias" if _persona_alias_invalid(raw_root) else "missing_root"
+        return _base_result(tool_id="file_glob", status="rejected", reason=reason)
 
-    denial = _permission_denial(root, read_roots, denied_roots, denied_files)
+    display_root = _display_path(root)
+    denial = _permission_denial(
+        root, read_roots, denied_roots, denied_files, access="read"
+    )
     if denial:
-        result = _base_result(tool_id="file_search", status="rejected", reason=denial)
-        result["root"] = str(root)
+        result = _base_result(tool_id="file_glob", status="rejected", reason=denial)
+        result["root"] = display_root
         return result
     if not root.exists():
-        result = _base_result(tool_id="file_search", status="rejected", reason="root_not_found")
-        result["root"] = str(root)
+        result = _base_result(tool_id="file_glob", status="rejected", reason="root_not_found")
+        result["root"] = display_root
         return result
     if not root.is_dir():
-        result = _base_result(tool_id="file_search", status="rejected", reason="not_a_directory")
-        result["root"] = str(root)
+        result = _base_result(tool_id="file_glob", status="rejected", reason="not_a_directory")
+        result["root"] = display_root
         return result
 
     pattern = _clean(request.get("pattern"))
-    pattern_denial = _file_search_pattern_denial(pattern)
+    pattern_denial = _file_glob_pattern_denial(pattern)
     if pattern_denial:
-        result = _base_result(tool_id="file_search", status="rejected", reason=pattern_denial)
-        result["root"] = str(root)
+        result = _base_result(tool_id="file_glob", status="rejected", reason=pattern_denial)
+        result["root"] = display_root
         return result
 
     recursive = bool(request.get("recursive") is True)
     max_results = _bounded_int(
         request.get("max_results"),
-        FILE_SEARCH_DEFAULT_MAX_RESULTS,
+        FILE_GLOB_DEFAULT_MAX_RESULTS,
         1,
-        FILE_SEARCH_MAX_RESULTS,
+        FILE_GLOB_MAX_RESULTS,
     )
-    iterator = root.rglob(pattern) if recursive else root.glob(pattern)
     matches = []
     has_more = False
-    for candidate in iterator:
+    discovery_stats = {"restricted_skipped": 0}
+    for candidate in _iter_glob_matches(
+            root, pattern, recursive, discovery_stats):
         try:
             resolved = candidate.resolve()
+            resolved.relative_to(root)
         except OSError:
+            discovery_stats["restricted_skipped"] += 1
             continue
-        if _permission_denial(resolved, read_roots, denied_roots, denied_files):
+        except ValueError:
+            discovery_stats["restricted_skipped"] += 1
+            continue
+        if _permission_denial(
+                resolved,
+                read_roots,
+                denied_roots,
+                denied_files,
+                access="read"):
+            discovery_stats["restricted_skipped"] += 1
             continue
         if len(matches) >= max_results:
             has_more = True
             break
         matches.append({
-            "path": str(resolved),
+            "path": _display_path(resolved),
             "name": resolved.name,
             "is_file": resolved.is_file(),
             "is_dir": resolved.is_dir(),
         })
 
-    result = _base_result(tool_id="file_search", status="ok")
+    result = _base_result(tool_id="file_glob", status="ok")
     result.update({
-        "root": str(root),
+        "root": display_root,
         "pattern": pattern,
         "recursive": recursive,
         "matches": matches,
         "result_count": len(matches),
         "max_results": max_results,
         "has_more": has_more,
+        "restricted_skipped": discovery_stats["restricted_skipped"],
         "read_mode": "bounded",
-        "window_kind": "file_search_bounded",
-        "evidence_refs": [f"file_search:{root}:{pattern}"],
+        "window_kind": "file_glob_bounded",
+        "evidence_refs": [f"file_glob:{display_root}:{pattern}"],
     })
+    if display_root.startswith(PERSONA_READ_ALIAS):
+        result["host_root"] = str(root)
     if not matches:
         result["reason"] = "search_no_results"
+    return result
+
+
+def _grep_text_window(value, match_span=None, limit=FILE_GREP_MAX_DISPLAY_LINE_CHARS):
+    text = str(value or "").rstrip("\r\n")
+    if len(text) <= limit:
+        return text, False, 0, len(text)
+    if match_span is None:
+        return text[:limit - 1] + "…", True, 0, limit - 1
+
+    match_start, match_end = match_span
+    room = max(1, limit - 2)
+    start = max(0, min(match_start - room // 3, len(text) - room))
+    end = min(len(text), start + room)
+    prefix = "…" if start else ""
+    suffix = "…" if end < len(text) else ""
+    return prefix + text[start:end] + suffix, True, start, end
+
+
+def _literal_match_span(text, query, case_sensitive):
+    if case_sensitive:
+        start = text.find(query)
+        return None if start < 0 else (start, start + len(query))
+
+    folded_text = text.casefold()
+    folded_query = query.casefold()
+    folded_start = folded_text.find(folded_query)
+    if folded_start < 0:
+        return None
+    if len(folded_text) == len(text):
+        return folded_start, folded_start + len(folded_query)
+
+    folded_end = folded_start + len(folded_query)
+    source_start = None
+    source_end = len(text)
+    cursor = 0
+    for index, char in enumerate(text):
+        next_cursor = cursor + len(char.casefold())
+        if source_start is None and folded_start < next_cursor:
+            source_start = index
+        if folded_end <= next_cursor:
+            source_end = index + 1
+            break
+        cursor = next_cursor
+    return source_start or 0, source_end
+
+
+def _iter_glob_matches(root, pattern, recursive, stats, *, files_only=False):
+    if root.is_file():
+        yield root
+        return
+
+    def walk(directory):
+        try:
+            entries = sorted(
+                os.scandir(directory),
+                key=lambda item: (item.name.casefold(), item.name),
+            )
+        except OSError:
+            stats["restricted_skipped"] += 1
+            return
+        for entry in entries:
+            try:
+                if entry.is_symlink():
+                    stats["restricted_skipped"] += 1
+                    continue
+                is_dir = entry.is_dir(follow_symlinks=False)
+                is_file = entry.is_file(follow_symlinks=False)
+            except OSError:
+                stats["restricted_skipped"] += 1
+                continue
+            path = Path(entry.path)
+            if fnmatch(entry.name, pattern) and (is_file or (is_dir and not files_only)):
+                yield path
+            if recursive and is_dir:
+                yield from walk(path)
+
+    yield from walk(root)
+
+
+def _execute_file_grep(request, allowed_roots=None, denied_roots=None, denied_files=None):
+    read_roots = _file_read_allowed_roots(allowed_roots)
+    raw_root = request.get("root")
+    root = _resolve_request_path(raw_root, read_roots)
+    if root is None:
+        reason = "invalid_persona_alias" if _persona_alias_invalid(raw_root) else "missing_root"
+        return _base_result(tool_id="file_grep", status="rejected", reason=reason)
+
+    display_root = _display_path(root)
+    denial = _permission_denial(
+        root, read_roots, denied_roots, denied_files, access="read"
+    )
+    if denial:
+        result = _base_result(tool_id="file_grep", status="rejected", reason=denial)
+        result["root"] = display_root
+        return result
+    if not root.exists():
+        result = _base_result(tool_id="file_grep", status="rejected", reason="root_not_found")
+        result["root"] = display_root
+        return result
+    if not (root.is_file() or root.is_dir()):
+        result = _base_result(tool_id="file_grep", status="rejected", reason="invalid_root_type")
+        result["root"] = display_root
+        return result
+
+    query = str(request.get("query") or "")
+    if not query:
+        result = _base_result(tool_id="file_grep", status="rejected", reason="missing_query")
+        result["root"] = display_root
+        return result
+    if (
+            len(query) > FILE_GREP_MAX_QUERY_CHARS
+            or "\x00" in query
+            or "\r" in query
+            or "\n" in query):
+        result = _base_result(tool_id="file_grep", status="rejected", reason="invalid_query")
+        result["root"] = display_root
+        return result
+
+    file_pattern = _clean(request.get("file_pattern")) or "*"
+    pattern_denial = _file_glob_pattern_denial(file_pattern)
+    if pattern_denial:
+        result = _base_result(tool_id="file_grep", status="rejected", reason=pattern_denial)
+        result["root"] = display_root
+        return result
+    recursive = request.get("recursive") is not False
+    case_sensitive = request.get("case_sensitive") is True
+    context_lines = _bounded_int(
+        request.get("context_lines"), 0, 0, FILE_GREP_MAX_CONTEXT_LINES
+    )
+    max_results = _bounded_int(
+        request.get("max_results"),
+        FILE_GREP_DEFAULT_MAX_RESULTS,
+        1,
+        FILE_GREP_MAX_RESULTS,
+    )
+    encoding = _clean(request.get("encoding")) or "utf-8"
+    matches = []
+    scanned_files = 0
+    scanned_bytes = 0
+    restricted_skipped = 0
+    skipped_files = 0
+    stop_reason = ""
+    raw_memory_match_count = 0
+    discovered_files = 0
+    discovery_stats = {"restricted_skipped": 0}
+    for candidate in _iter_glob_matches(
+            root, file_pattern, recursive, discovery_stats, files_only=True):
+        if discovered_files >= FILE_GREP_MAX_FILES:
+            stop_reason = "max_files"
+            break
+        discovered_files += 1
+        try:
+            path = candidate.resolve()
+            if root.is_dir():
+                path.relative_to(root)
+        except (OSError, ValueError):
+            restricted_skipped += 1
+            continue
+        if _permission_denial(
+                path,
+                read_roots,
+                denied_roots,
+                denied_files,
+                access="read"):
+            restricted_skipped += 1
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            skipped_files += 1
+            continue
+        if size > FILE_GREP_MAX_FILE_BYTES:
+            skipped_files += 1
+            continue
+        if scanned_bytes + size > FILE_GREP_MAX_BYTES:
+            stop_reason = "max_bytes"
+            break
+
+        scanned_files += 1
+        scanned_bytes += size
+        file_match_start = len(matches)
+        file_raw_memory_start = raw_memory_match_count
+        previous = deque(maxlen=context_lines)
+        pending = []
+        limit_reached = False
+        try:
+            with path.open("r", encoding=encoding, errors="strict") as handle:
+                for line_number, line in enumerate(handle, start=1):
+                    if "\x00" in line:
+                        raise UnicodeError("binary_nul_detected")
+                    context_line, context_was_truncated, _, _ = _grep_text_window(line)
+                    for item in list(pending):
+                        item["context_after"].append(context_line)
+                        if context_was_truncated:
+                            item["context_truncated"] = True
+                        item["_remaining"] -= 1
+                        if item["_remaining"] <= 0:
+                            item.pop("_remaining", None)
+                            pending.remove(item)
+                    match_span = _literal_match_span(line, query, case_sensitive)
+                    if not limit_reached and match_span is not None:
+                        display_line, line_truncated, line_char_start, line_char_end = (
+                            _grep_text_window(line, match_span=match_span)
+                        )
+                        display_path = _display_path(path)
+                        item = {
+                            "path": display_path,
+                            "line_number": line_number,
+                            "line": display_line,
+                            "line_truncated": line_truncated,
+                            "line_char_start": line_char_start,
+                            "line_char_end": line_char_end,
+                            "match_char_start": match_span[0],
+                            "match_char_end": match_span[1],
+                            "context_before": [value for value, _ in previous],
+                            "context_after": [],
+                        }
+                        if any(was_truncated for _, was_truncated in previous):
+                            item["context_truncated"] = True
+                        matches.append(item)
+                        if _is_memory_storage_path(path):
+                            raw_memory_match_count += 1
+                        if context_lines:
+                            item["_remaining"] = context_lines
+                            pending.append(item)
+                        if len(matches) >= max_results:
+                            limit_reached = True
+                            stop_reason = "max_results"
+                    previous.append((context_line, context_was_truncated))
+        except (OSError, UnicodeError, LookupError):
+            del matches[file_match_start:]
+            raw_memory_match_count = file_raw_memory_start
+            skipped_files += 1
+            continue
+        finally:
+            for item in pending:
+                item.pop("_remaining", None)
+        if limit_reached:
+            break
+
+    restricted_skipped += discovery_stats["restricted_skipped"]
+    coverage_complete = not stop_reason and not restricted_skipped and not skipped_files
+    result = _base_result(tool_id="file_grep", status="ok")
+    result.update({
+        "root": display_root,
+        "query": query,
+        "file_pattern": file_pattern,
+        "recursive": recursive,
+        "case_sensitive": case_sensitive,
+        "context_lines": context_lines,
+        "encoding": encoding,
+        "matches": matches,
+        "result_count": len(matches),
+        "max_results": max_results,
+        "coverage_complete": coverage_complete,
+        "has_more": bool(stop_reason),
+        "stop_reason": stop_reason,
+        "scanned_files": scanned_files,
+        "scanned_bytes": scanned_bytes,
+        "restricted_skipped": restricted_skipped,
+        "skipped_files": skipped_files,
+        "read_mode": "bounded",
+        "window_kind": "file_grep_bounded",
+        "evidence_refs": [f"file_grep:{display_root}:{query}"],
+    })
+    if display_root.startswith(PERSONA_READ_ALIAS):
+        result["host_root"] = str(root)
+    if raw_memory_match_count:
+        result["read_semantics"] = "raw_inspection"
+        result["raw_memory_match_count"] = raw_memory_match_count
+        result["memory_lifecycle_effects"] = []
+    if not matches:
+        result["reason"] = (
+            "search_no_results" if coverage_complete else "search_no_results_partial"
+        )
     return result
 
 
@@ -931,11 +1336,18 @@ def _apply_unified_diff(text, patch):
 
 
 def _execute_file_edit(request, allowed_roots=None, denied_roots=None, denied_files=None):
-    path = _resolve_request_path(request.get("path"), allowed_roots)
+    raw_path = request.get("path")
+    if _clean(raw_path).lower().startswith(PERSONA_READ_ALIAS):
+        return _base_result(
+            tool_id="file_edit", status="rejected", reason="persona_alias_read_only"
+        )
+    path = _resolve_request_path(raw_path, allowed_roots)
     if path is None:
         return _base_result(tool_id="file_edit", status="rejected", reason="missing_path")
 
-    denial = _permission_denial(path, allowed_roots, denied_roots, denied_files)
+    denial = _permission_denial(
+        path, allowed_roots, denied_roots, denied_files, access="write"
+    )
     if denial:
         result = _base_result(tool_id="file_edit", status="rejected", reason=denial)
         result["path"] = str(path)
@@ -1012,11 +1424,18 @@ def _execute_file_edit(request, allowed_roots=None, denied_roots=None, denied_fi
 
 
 def _execute_file_write(request, allowed_roots=None, denied_roots=None, denied_files=None):
-    path = _resolve_request_path(request.get("path"), allowed_roots)
+    raw_path = request.get("path")
+    if _clean(raw_path).lower().startswith(PERSONA_READ_ALIAS):
+        return _base_result(
+            tool_id="file_write", status="rejected", reason="persona_alias_read_only"
+        )
+    path = _resolve_request_path(raw_path, allowed_roots)
     if path is None:
         return _base_result(tool_id="file_write", status="rejected", reason="missing_path")
 
-    denial = _permission_denial(path, allowed_roots, denied_roots, denied_files)
+    denial = _permission_denial(
+        path, allowed_roots, denied_roots, denied_files, access="write"
+    )
     if denial:
         result = _base_result(tool_id="file_write", status="rejected", reason=denial)
         result["path"] = str(path)
@@ -1063,48 +1482,6 @@ def _execute_file_write(request, allowed_roots=None, denied_roots=None, denied_f
         "evidence_refs": [f"file_write:{path}"],
     })
     return result
-
-
-def _dangerous_command_reason(command):
-    lowered = (command or "").strip().lower()
-    normalized = lowered.replace("\\", "/")
-    credential_paths = {
-        str(path).lower().replace("\\", "/")
-        for path in (*DEFAULT_CREDENTIAL_ROOTS, *DEFAULT_CREDENTIAL_FILES)
-    }
-    credential_paths.update({
-        ".codex/auth.json",
-        ".config/gh/hosts.yml",
-        ".docker/config.json",
-        ".git-credentials",
-        ".netrc",
-        "_netrc",
-        ".npmrc",
-        ".pypirc",
-    })
-    if any(marker in normalized for marker in credential_paths):
-        return "credential_access"
-    checks = (
-        (r"\bgit\s+reset\s+--hard\b", "git_reset_hard"),
-        (r"\bgit\s+clean\b", "git_clean"),
-        (r"\bgit\s+checkout\s+--\b", "git_checkout_reset"),
-        (r"\b(remove-item|del|erase|rmdir|rd|rm)\b", "destructive_delete"),
-        (r"\b(move-item|move|mv|rename-item|ren)\b", "destructive_move"),
-        (r"\b(format|shutdown|restart-computer|stop-computer)\b", "system_destructive"),
-        (r"\b(start-process|start-job|nohup)\b|--daemon\b", "background_process"),
-        (r"\bgit\s+push\b|\bnpm\s+publish\b|\btwine\s+upload\b", "network_write"),
-        (r"\b(scp|rsync)\b", "network_write"),
-        (r"\b(curl|wget|invoke-webrequest|iwr)\b.*(--data|-d\s+|-x\s+post|-method\s+post|-t\s+)",
-         "network_write"),
-        (r"\b(secret|token|credential|credentials|password|api_key|apikey)\b|\.env\b",
-         "credential_access"),
-        (r"^\s*(set|env|printenv)\s*$|\benv:\*|\bgetenvironmentvariables\b",
-         "credential_access"),
-    )
-    for pattern, reason in checks:
-        if re.search(pattern, lowered):
-            return reason
-    return ""
 
 
 def _coerce_output_text(value):
@@ -1213,15 +1590,6 @@ def _resolve_shell_cwd(raw_cwd, allowed_roots):
     return _resolved_roots(allowed_roots)[0]
 
 
-def _is_windows_posix_python_heredoc(command):
-    if os.name != "nt":
-        return False
-    return bool(re.search(
-        r"(?im)(?:^|[\s;&|])(?:python(?:3(?:\.\d+)?)?|py)\s+-\s*<<",
-        command or "",
-    ))
-
-
 def _split_list_text(value):
     if value in (None, ""):
         return []
@@ -1238,13 +1606,30 @@ def _clean_list(values):
     return _split_list_text(values)
 
 
-def _validate_path_list(raw_value, allowed_roots, denied_roots, denied_files, field_name):
+def _validate_path_list(
+        raw_value,
+        allowed_roots,
+        denied_roots,
+        denied_files,
+        field_name,
+        *,
+        access="read"):
     paths = []
     for raw_path in _split_list_text(raw_value):
+        if (
+                access != "read"
+                and _clean(raw_path).lower().startswith(PERSONA_READ_ALIAS)):
+            return [], f"{field_name}_persona_alias_read_only"
         path = _resolve_request_path(raw_path, allowed_roots)
         if path is None:
             continue
-        denial = _permission_denial(path, allowed_roots, denied_roots, denied_files)
+        denial = _permission_denial(
+            path,
+            allowed_roots,
+            denied_roots,
+            denied_files,
+            access=access,
+        )
         if denial:
             return [], f"{field_name}_{denial}"
         if not path.exists():
@@ -1259,13 +1644,15 @@ def _execute_shell_command(
         request,
         allowed_roots=None,
         denied_roots=None,
-        denied_files=None,
-        allow_high_risk_commands=False):
-    cwd = _resolve_shell_cwd(request.get("cwd"), allowed_roots)
+        denied_files=None):
+    raw_cwd = request.get("cwd")
+    cwd = _resolve_shell_cwd(raw_cwd, allowed_roots)
     if cwd is None:
         return _base_result(tool_id="shell_command", status="rejected", reason="missing_cwd")
 
-    denial = _permission_denial(cwd, allowed_roots, denied_roots, denied_files)
+    denial = _permission_denial(
+        cwd, allowed_roots, denied_roots, denied_files, access="shell"
+    )
     if denial:
         result = _base_result(tool_id="shell_command", status="rejected", reason=denial)
         result["cwd"] = str(cwd)
@@ -1291,37 +1678,6 @@ def _execute_shell_command(
         result = _base_result(tool_id="shell_command", status="rejected", reason="missing_purpose")
         result["cwd"] = str(cwd)
         result["command"] = command
-        return result
-
-    if _is_windows_posix_python_heredoc(command):
-        result = _base_result(
-            tool_id="shell_command",
-            status="rejected",
-            reason="unsupported_posix_heredoc_on_windows",
-        )
-        result.update({
-            "cwd": str(cwd),
-            "command": command,
-            "purpose": purpose,
-            "risk_level": _clean(request.get("risk_level")) or "low",
-            "exit_code": "",
-            "stderr": WINDOWS_POSIX_HEREDOC_HINT,
-            "stderr_truncated": False,
-        })
-        return result
-
-    danger_reason = _dangerous_command_reason(command)
-    if danger_reason and not allow_high_risk_commands:
-        result = _base_result(
-            tool_id="shell_command",
-            status="rejected",
-            reason="high_risk_command_denied",
-        )
-        result.update({
-            "cwd": str(cwd),
-            "command": command,
-            "danger_reason": danger_reason,
-        })
         return result
 
     timeout_ms = _bounded_int(request.get("timeout_ms"), 10000, 500, 30000)
@@ -1419,6 +1775,7 @@ def _subagent_write_paths(request, task_goal, allowed_paths,
         denied_roots,
         denied_files,
         "write_scope",
+        access="write",
     )
     if denial:
         return task_mode, [], _subagent_dispatch_result(
@@ -1448,10 +1805,11 @@ def _build_subagent_dispatch_payload(request, allowed_roots, denied_roots, denie
         )
     allowed_paths, denial = _validate_path_list(
         request.get("allowed_paths") or request.get("paths") or request.get("scope"),
-        allowed_roots,
+        _file_read_allowed_roots(allowed_roots),
         denied_roots,
         denied_files,
         "allowed_paths",
+        access="read",
     )
     if denial:
         return None, None, _subagent_dispatch_result(
@@ -2634,8 +2992,7 @@ def execute_general_tool_call(
         denied_files=None,
         web_fetch_fn=None,
         web_search_fn=None,
-        subagent_dispatch_fn=None,
-        allow_high_risk_commands=False):
+        subagent_dispatch_fn=None):
     """Execute an enabled general tool call and return a general_tool_result."""
     request = request or {}
     tool_id = _clean(request.get("tool_id")) or "file_read"
@@ -2643,9 +3000,13 @@ def execute_general_tool_call(
         return attach_evidence_handle(
             _execute_file_read(request, allowed_roots, denied_roots, denied_files)
         )
-    if tool_id == "file_search":
+    if tool_id == "file_glob":
         return attach_evidence_handle(
-            _execute_file_search(request, allowed_roots, denied_roots, denied_files)
+            _execute_file_glob(request, allowed_roots, denied_roots, denied_files)
+        )
+    if tool_id == "file_grep":
+        return attach_evidence_handle(
+            _execute_file_grep(request, allowed_roots, denied_roots, denied_files)
         )
     if tool_id == "file_edit":
         return attach_evidence_handle(
@@ -2662,7 +3023,6 @@ def execute_general_tool_call(
                 allowed_roots,
                 denied_roots,
                 denied_files,
-                allow_high_risk_commands=allow_high_risk_commands,
             )
         )
     if tool_id == "web_fetch":
@@ -2799,7 +3159,10 @@ def format_general_tool_result(result):
             "path",
             "root",
             "pattern",
+            "file_pattern",
             "recursive",
+            "case_sensitive",
+            "context_lines",
             "cwd",
             "command",
             "task_goal",
@@ -2819,6 +3182,14 @@ def format_general_tool_result(result):
             "max_chars",
             "max_results",
             "has_more",
+            "coverage_complete",
+            "stop_reason",
+            "scanned_files",
+            "scanned_bytes",
+            "restricted_skipped",
+            "skipped_files",
+            "read_semantics",
+            "raw_memory_match_count",
             "purpose",
             "requested_start_line",
             "requested_end_line",
@@ -2885,12 +3256,19 @@ def format_general_tool_result(result):
     if result.get("matches"):
         lines.append("matches:")
         for index, item in enumerate(result.get("matches") or [], start=1):
-            lines.append(
-                f"{index}. name={item.get('name', '')}; "
-                f"path={item.get('path', '')}; "
-                f"is_file={item.get('is_file', '')}; "
-                f"is_dir={item.get('is_dir', '')}"
-            )
+            if result.get("tool_id") == "file_grep":
+                lines.append(
+                    f"{index}. path={item.get('path', '')}; "
+                    f"line_number={item.get('line_number', '')}; "
+                    f"line={item.get('line', '')}"
+                )
+            else:
+                lines.append(
+                    f"{index}. name={item.get('name', '')}; "
+                    f"path={item.get('path', '')}; "
+                    f"is_file={item.get('is_file', '')}; "
+                    f"is_dir={item.get('is_dir', '')}"
+                )
     content = result.get("content")
     if content:
         lines.append("content:")
@@ -2923,10 +3301,15 @@ def format_general_tool_material_entry(result):
     title = ""
     if tool_id == "file_read":
         title = str(result.get("path") or "").strip()
-    elif tool_id == "file_search":
-        title = "file_search root={} pattern={}".format(
+    elif tool_id == "file_glob":
+        title = "file_glob root={} pattern={}".format(
             result.get("root") or "",
             result.get("pattern") or "",
+        ).strip()
+    elif tool_id == "file_grep":
+        title = "file_grep root={} query={}".format(
+            result.get("root") or "",
+            result.get("query") or "",
         ).strip()
     elif tool_id == "web_fetch":
         title = str(
@@ -3022,7 +3405,8 @@ def _status_label(status):
 def _tool_name_label(tool_id):
     return {
         "file_read": "文件读取",
-        "file_search": "文件搜索",
+        "file_glob": "文件名搜索",
+        "file_grep": "文件正文搜索",
         "file_edit": "文件编辑",
         "file_write": "文件写入",
         "shell_command": "shell 命令",
@@ -3183,6 +3567,11 @@ def _format_general_tool_fact_body(result):
                 lines.append("读取结果：模型显式范围读取。")
             else:
                 lines.append("读取结果：全文。")
+            if result.get("read_semantics") == "raw_inspection":
+                lines.append(
+                    "本次读取原始记忆文件只算 raw_inspection，不触发召回、"
+                    "STM 重建、加热、续期、挂载或调用坐标更新。"
+                )
         else:
             verdict = "被拒绝" if status in {"denied", "rejected"} else "失败"
             lines.extend([
@@ -3195,13 +3584,13 @@ def _format_general_tool_fact_body(result):
             lines.append("这不能作为已读取证据。")
         return "\n".join(lines)
 
-    if tool_id == "file_search":
+    if tool_id == "file_glob":
         status_label = _status_label(status)
         root = str(result.get("root") or "未指定目录").strip()
         pattern = str(result.get("pattern") or "未指定模式").strip()
         lines = []
         if status == "ok":
-            lines.append("本轮已经完成文件搜索。")
+            lines.append("本轮已经完成文件名搜索。")
             lines.append(f"搜索目录：{root}。")
             lines.append(f"搜索模式：{pattern}。")
             lines.append(f"递归搜索：{bool(result.get('recursive'))}。")
@@ -3218,7 +3607,7 @@ def _format_general_tool_fact_body(result):
                 )
                 lines.append("这不代表文件在整台机器上不存在。")
                 return "\n".join(lines)
-            lines.append("文件搜索只返回候选路径，不代表文件正文已读。")
+            lines.append("文件名搜索只返回候选路径，不代表文件正文已读。")
             lines.append("如需正文，应继续调用 file_read 并使用候选中的精确 path。")
             return "\n".join(lines)
         lines.extend([
@@ -3229,6 +3618,42 @@ def _format_general_tool_fact_body(result):
         if reason:
             lines.append(f"失败原因：{reason}。")
         lines.append("这不能作为已经找到候选文件的证据。")
+        return "\n".join(lines)
+
+    if tool_id == "file_grep":
+        status_label = _status_label(status)
+        root = str(result.get("root") or "未指定路径").strip()
+        query = str(result.get("query") or "未指定文本").strip()
+        lines = []
+        if status == "ok":
+            lines.extend((
+                "本轮已经完成文件正文字面搜索。",
+                f"搜索根：{root}。",
+                f"查询文本：{query}。",
+                f"命中行数：{result.get('result_count', 0)}。",
+                f"扫描覆盖完整：{bool(result.get('coverage_complete'))}。",
+            ))
+            if result.get("stop_reason"):
+                lines.append(f"扫描停止原因：{result.get('stop_reason')}。")
+            if result.get("restricted_skipped") or result.get("skipped_files"):
+                lines.append("部分受限、二进制、超限或无法解码文件未被搜索。")
+            if not result.get("matches"):
+                lines.append("当前扫描范围没有命中正文。")
+                if not result.get("coverage_complete"):
+                    lines.append("覆盖不完整，因此不能据此声称目标在全部文件中不存在。")
+            else:
+                lines.append("命中正文已作为 material 返回；需要更完整上下文时再用 file_read 精确读取。")
+            if result.get("read_semantics") == "raw_inspection":
+                lines.append("命中原始记忆文件只算 raw_inspection，不触发召回、加热、续期、挂载或调用坐标更新。")
+            return "\n".join(lines)
+        lines.extend((
+            f"本轮尝试搜索文件正文：root={root}；query={query}。",
+            f"搜索结果：{status_label}。",
+        ))
+        reason = str(result.get("reason") or result.get("detail") or "").strip()
+        if reason:
+            lines.append(f"失败原因：{reason}。")
+        lines.append("这不能作为已经读取或找到正文的证据。")
         return "\n".join(lines)
 
     if tool_id == "web_fetch":

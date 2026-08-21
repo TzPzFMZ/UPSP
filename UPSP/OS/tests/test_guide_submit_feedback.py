@@ -80,7 +80,8 @@ def test_spec503_task_execution_feedback_renders_natural_state_without_duplicate
     assert "看板在 40_high_freq；本卡只管下一步行动" in feedback
     assert "真实工作优先；证据后登记" in feedback
     assert "file_write" in feedback
-    assert "shell_command" in feedback
+    assert "subagent_dispatch" in feedback
+    assert "shell_command" not in feedback
     assert "web_fetch" in feedback
     assert "任务验收 checkpoint" in feedback
     assert "已有真实证据后，再用 guide_submit 更新账本" not in feedback
@@ -422,7 +423,8 @@ def test_spec434_reaction_runner_task_feedback_shows_checklist_and_finish_exit(t
     assert "本卡只管下一步行动" in feedback
     assert "真实工作优先；证据后登记" in feedback
     assert "file_write" in feedback
-    assert "shell_command" in feedback
+    assert "subagent_dispatch" in feedback
+    assert "shell_command" not in feedback
     assert "工具调用走 native 通道" in feedback
     assert "正文只写简短进展" in feedback
     assert "任务验收 checkpoint" in feedback

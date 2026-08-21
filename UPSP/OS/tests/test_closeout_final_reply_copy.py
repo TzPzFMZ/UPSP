@@ -66,8 +66,9 @@ def test_spec634_dds_keeps_only_current_closeout_time_ladder():
     repo_root = Path(__file__).resolve().parents[3]
     dds = (repo_root / "UPSP_Base_DDS.md").read_text(encoding="utf-8")
 
-    assert "round.time_limit` 当前为 600 秒" in dds
-    assert "600 秒在场提醒、1200 秒收束警告、1800 秒自动存档并置位中继" in dds
+    assert "round.reminder_seconds" in dds
+    assert "round.warning_seconds" in dds
+    assert "round.auto_relay_seconds" in dds
     assert "提醒和警告不收窄工具面" in dds
     assert "默认 300 秒" not in dds
 
@@ -88,6 +89,23 @@ def test_spec559_task_acceptance_feedback_uses_task_delivery_reminder():
     assert "任务验收 checkpoint" in feedback
     assert CLOSEOUT_FINAL_REPLY_REMINDER in feedback
     assert TASK_DELIVERY_CLOSEOUT_REMINDER in feedback
+
+
+def test_spec754_pending_task_bootstrap_feedback_offers_real_exit():
+    from engines.reaction_task_acceptance import task_acceptance_feedback
+
+    feedback = task_acceptance_feedback({
+        "reason": "task_bootstrap_pending",
+        "blockers": ["task_bootstrap"],
+    })
+
+    assert "guide_id=task_bootstrap" in feedback
+    assert "item_id=build_initial_task_guide" in feedback
+    assert "option_id=not_a_task" in feedback
+    assert "填写 reason" in feedback
+    assert "option_id=submit_initial_guide" in feedback
+    assert "guide_id=<当前任务指南>" not in feedback
+    assert "option_id=update_task_status" not in feedback
 
 
 def test_spec559_reaction_popup_uses_generic_final_reply_reminder_only(tmp_path):

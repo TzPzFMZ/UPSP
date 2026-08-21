@@ -162,7 +162,8 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         assert receipts[1]["status"] == "invalid_tool_request"
         assert receipts[1]["reason"] == "retired_text_protocol_submission"
 
-    def test_reaction_loop_does_not_heat_boost_ltm_only_memory_mount(self, tmp_path, monkeypatch):
+    def test_reaction_loop_rejects_unresolved_memory_preselection_before_provider(
+            self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
         assembler = rt.assembler
         monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
@@ -172,14 +173,6 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
         monkeypatch.setattr(rt, "_existing_stm_memory_ids", lambda: set())
 
-        class CapturingHeat:
-            def __init__(self):
-                self.boosted = []
-
-            def recall_boost(self, mem_id, round_num=None):
-                self.boosted.append((mem_id, round_num))
-
-        rt.heat = CapturingHeat()
         rt.executor = ScriptedExecutor(
             {"response": "完成 [DONE]"},
         )
@@ -187,13 +180,16 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         result = rt._run_reaction_loop(
             rt.sm.load(),
             "interactive",
-            [{"type": "memory", "ids": "MEM-00162001", "source": "ltm_heat_index"}],
+            [{
+                "type": "memory",
+                "ids": "MEM-00162001",
+                "source": "ltm_heat_index",
+            }],
         )
 
-        assert result["_mounted_memories"] == []
-        assert result["_preselection_evidence"][0]["item_id"] == "MEM-00162001"
-        assert result["_preselection_evidence"][0]["item_type"] == "memory"
-        assert rt.heat.boosted == []
+        assert result["aborted"] is True
+        assert result["_required_context_failure"]["stage"] == "recall"
+        assert rt.executor.calls == []
 
     def test_runtime_uses_state_anchor_as_identity_truth(self, tmp_path):
         rt = self._make_runtime(tmp_path)
@@ -252,7 +248,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         )
         runner._round_audit_parsed = lambda *args, **kwargs: None
         runner._round_audit_settlement = lambda *args, **kwargs: None
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
 
         def fake_call(phase, system, messages, round_num, iteration=1, **kwargs):
             calls.append((iteration, list(messages)))
@@ -316,7 +312,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         )
         runner._round_audit_parsed = lambda *args, **kwargs: None
         runner._round_audit_settlement = lambda *args, **kwargs: None
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
 
         def fake_call(phase, system, messages, round_num, iteration=1, **kwargs):
             calls.append(iteration)
@@ -326,7 +322,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
                 "response": "",
                 "tool_call_envelopes": [self._native_tool_envelope(
                     "setup_finalize",
-                    {"security_verdict": "pass", "round_type_confirm": "interactive"},
+                    {"security_verdict": "pass"},
                     tool_family="substrate_tool",
                     tool_class="sync_tool",
                 )],
@@ -372,7 +368,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         runner.assembler.assemble_setup = assemble_setup
         runner._round_audit_parsed = lambda *args, **kwargs: None
         runner._round_audit_settlement = lambda *args, **kwargs: None
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
         calls = []
 
         def fake_call(phase, system, messages, round_num, iteration=1, **kwargs):
@@ -431,7 +427,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
             lambda round_num, phase, iteration, settlement:
             settlements.append((phase, iteration, settlement))
         )
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
 
         def fake_call(phase, system, messages, round_num, iteration=1, **kwargs):
             calls.append(iteration)
@@ -481,14 +477,13 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         )
         runner._round_audit_parsed = lambda *args, **kwargs: None
         runner._round_audit_settlement = lambda *args, **kwargs: None
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
         runner._call_llm_with_round_audit = lambda *args, **kwargs: {
             "response": "",
             "tool_call_envelopes": [self._native_tool_envelope(
                 "setup_finalize",
                 {
                     "security_verdict": "pass",
-                    "round_type_confirm": "relay",
                 },
                 tool_family="substrate_tool",
                 tool_class="sync_tool",
@@ -509,7 +504,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         assert handoff[0]["kind"] == "setup_fact"
         assert handoff[0]["handoff_target"] == "reaction"
         assert handoff[0]["interaction_source"] == "setup_finalize"
-        assert "起手确认轮型：中继轮" in handoff[0]["content"]
+        assert "本轮类型：中继轮" in handoff[0]["content"]
         assert "round_type_confirm=relay" not in handoff[0]["content"]
         assert "note" not in handoff[0]["content"]
 
@@ -537,14 +532,13 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         )
         runner._round_audit_parsed = lambda *args, **kwargs: None
         runner._round_audit_settlement = lambda *args, **kwargs: None
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
         runner._call_llm_with_round_audit = lambda *args, **kwargs: {
             "response": "",
             "tool_call_envelopes": [self._native_tool_envelope(
                 "setup_finalize",
                 {
                     "security_verdict": "pass",
-                    "round_type_confirm": "relay",
                 },
                 tool_family="substrate_tool",
                 tool_class="sync_tool",
@@ -566,8 +560,21 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         ]
         assert len(relay_handoffs) == 1
         assert relay_handoffs[0]["content"] == "下一轮继续从第 2284 行读取《共格主体论》。"
-        assert relay_handoffs[0]["round"] == 617
+        assert relay_handoffs[0]["round"] == 618
         assert relay_handoffs[0]["interaction_source"] == "relay_intent"
+
+        from assembly.context_helpers import render_corpus_entry_for_context
+
+        target_round = render_corpus_entry_for_context(
+            relay_handoffs[0], current_round=618)
+        later_round = render_corpus_entry_for_context(
+            relay_handoffs[0], current_round=619)
+        assert "【上轮交接任务】" in target_round["content"]
+        assert "【历史交接任务，来自第 618 轮】" in later_round["content"]
+
+        stored_intent = rt.sm.get("base.runtime.relay_intents", [])[0]
+        assert stored_intent["source_round"] == 617
+        assert stored_intent["handoff_projected_round"] == 618
 
     def test_spec273_relay_setup_inherits_recent_confirmed_identity_without_user_input(
             self, tmp_path):
@@ -594,14 +601,13 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         )
         runner._round_audit_parsed = lambda *args, **kwargs: None
         runner._round_audit_settlement = lambda *args, **kwargs: None
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
         runner._call_llm_with_round_audit = lambda *args, **kwargs: {
             "response": "",
             "tool_call_envelopes": [self._native_tool_envelope(
                 "setup_finalize",
                 {
                     "security_verdict": "pass",
-                    "round_type_confirm": "relay",
                 },
                 tool_family="substrate_tool",
                 tool_class="sync_tool",
@@ -656,14 +662,13 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         )
         runner._round_audit_parsed = lambda *args, **kwargs: None
         runner._round_audit_settlement = lambda *args, **kwargs: None
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
         runner._call_llm_with_round_audit = lambda *args, **kwargs: {
             "response": "",
             "tool_call_envelopes": [self._native_tool_envelope(
                 "setup_finalize",
                 {
                     "security_verdict": "pass",
-                    "round_type_confirm": "relay",
                 },
                 tool_family="substrate_tool",
                 tool_class="sync_tool",
@@ -712,7 +717,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
             lambda round_num, phase, iteration, settlement:
             settlements.append((phase, iteration, settlement))
         )
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
 
         def fake_call(phase, system, messages, round_num, iteration=1, **kwargs):
             if iteration == 1:
@@ -776,7 +781,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
             lambda round_num, phase, iteration, settlement:
             settlements.append((phase, iteration, settlement))
         )
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
 
         def fake_call(phase, system, messages, round_num, iteration=1, **kwargs):
             calls.append((iteration, list(messages)))
@@ -867,7 +872,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
             lambda round_num, phase, iteration, settlement:
             settlements.append((phase, iteration, settlement))
         )
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
 
         def fake_call(phase, system, messages, round_num, iteration=1, **kwargs):
             calls.append(iteration)
@@ -934,7 +939,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
             lambda round_num, phase, iteration, settlement:
             settlements.append((phase, iteration, settlement))
         )
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
 
         def fake_call(phase, system, messages, round_num, iteration=1, **kwargs):
             calls.append(iteration)
@@ -1005,7 +1010,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
             lambda round_num, phase, iteration, settlement:
             settlements.append((phase, iteration, settlement))
         )
-        runner._update_token_usage = lambda result: None
+        runner._update_token_usage = lambda result, **kwargs: None
 
         def fake_call(phase, system, messages, round_num, iteration=1, **kwargs):
             if iteration == 1:

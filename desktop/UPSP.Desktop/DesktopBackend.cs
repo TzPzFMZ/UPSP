@@ -17,7 +17,8 @@ internal sealed record RuntimeSnapshot(
     string Stage,
     string Outcome,
     string Settlement,
-    bool StopOutcomeSafe)
+    bool StopOutcomeSafe,
+    bool RestartRequested)
 {
     internal string DisplayText =>
         !Connected ? "后端已停止"
@@ -140,7 +141,7 @@ internal sealed class DesktopBackend : IDisposable
     {
         if (HasExited)
         {
-            return new(false, false, false, null, "", "", "", false);
+            return new(false, false, false, null, "", "", "", false, false);
         }
         using var response = await _http.GetAsync(new Uri(Origin, "api/runtime/status"));
         response.EnsureSuccessStatusCode();
@@ -176,7 +177,8 @@ internal sealed class DesktopBackend : IDisposable
             Text(root, "stage"),
             outcome,
             settlement,
-            stopSafe);
+            stopSafe,
+            Boolean(root, "restart_requested"));
     }
 
     internal async Task<bool> RequestStopAsync()
@@ -237,6 +239,22 @@ internal sealed class DesktopBackend : IDisposable
             TerminateStartedProcess();
             return HasExited;
         }
+    }
+
+    internal async Task RestartAsync()
+    {
+        if (!await ShutdownAsync())
+        {
+            throw new InvalidOperationException("本地后端未能安全关闭，无法切换位格或分身。");
+        }
+        _process?.Dispose();
+        _process = null;
+        _job?.Dispose();
+        _job = null;
+        while (_stderr.TryDequeue(out _))
+        {
+        }
+        await StartAsync();
     }
 
     private async Task<HttpResponseMessage> PostAsync(

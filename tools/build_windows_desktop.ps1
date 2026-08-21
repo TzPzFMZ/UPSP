@@ -11,6 +11,8 @@ $inputs = Get-Content -LiteralPath $inputsPath -Raw -Encoding UTF8 | ConvertFrom
 $productPath = Join-Path $repoRoot 'UPSP\product.json'
 $product = Get-Content -LiteralPath $productPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $productKeys = @($product.PSObject.Properties.Name | Sort-Object)
+$stableProductVersion = $product.version -match '^\d+\.\d+\.\d+$' -and $product.channel -eq 'stable'
+$alphaProductVersion = $product.version -match '^\d+\.\d+\.\d+-alpha\.\d+$' -and $product.channel -eq 'alpha'
 $expectedProductKeys = @(
     'author', 'build_number', 'channel', 'copyright', 'license', 'name',
     'releases_url', 'repository_url', 'schema_version', 'version',
@@ -18,10 +20,10 @@ $expectedProductKeys = @(
 ) | Sort-Object
 if ($product.schema_version -ne 'upsp_product_manifest.v1' -or
     (Compare-Object $productKeys $expectedProductKeys) -or
-    $product.version -notmatch '^\d+\.\d+\.\d+-[a-z]+(?:\.\d+)+$' -or
+    (-not $stableProductVersion -and -not $alphaProductVersion) -or
     $product.windows_file_version -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
-    $product.channel -ne 'alpha' -or
-    $product.build_number -isnot [int] -or $product.build_number -lt 1 -or
+    -not ($product.build_number -is [int] -or $product.build_number -is [long]) -or
+    $product.build_number -lt 1 -or
     -not ([string]$product.repository_url).StartsWith('https://') -or
     -not ([string]$product.releases_url).StartsWith('https://')) {
     throw 'product_manifest_invalid'

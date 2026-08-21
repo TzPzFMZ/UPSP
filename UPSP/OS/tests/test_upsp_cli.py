@@ -505,6 +505,39 @@ def test_spec430_send_sets_permission_level_for_live_call(monkeypatch):
     assert os.environ.get("UPSP_EXECUTION_PERMISSION_LEVEL") is None
 
 
+def test_spec735_send_passes_optional_final_response_budget(monkeypatch):
+    cli = _load_cli()
+    seen = {}
+
+    def run(kind, permission_level, *, message=None,
+            final_response_max_chars=None):
+        seen.update({
+            "kind": kind,
+            "permission_level": permission_level,
+            "message": message,
+            "final_response_max_chars": final_response_max_chars,
+        })
+        return {"status": "round_completed"}
+
+    monkeypatch.setattr(cli, "_run_resident_command", run)
+    code, stdout, _stderr = _run_cli(cli, [
+        "--json", "send", "--live", "--message", "query",
+        "--final-response-max-chars", "128",
+    ])
+
+    assert code == 0
+    assert json.loads(stdout)["ok"] is True
+    assert seen["final_response_max_chars"] == 128
+
+    code, stdout, _stderr = _run_cli(cli, [
+        "--json", "send", "--live", "--message", "query",
+        "--final-response-max-chars", "0",
+    ])
+    assert code != 0
+    assert json.loads(stdout)["error"]["code"] == (
+        "invalid_final_response_max_chars")
+
+
 def test_send_reads_utf8_message_file_for_live_call(tmp_path, monkeypatch):
     cli = _load_cli()
     seen = {}

@@ -232,12 +232,17 @@ class FakeExecutor:
 
 
 class FakeHeartbeat:
-    _paused = False
+    def __init__(self):
+        self._paused = False
+        self.pause_calls = 0
+        self.resume_calls = 0
 
     def pause(self):
+        self.pause_calls += 1
         self._paused = True
 
     def resume(self):
+        self.resume_calls += 1
         self._paused = False
 
 
@@ -276,6 +281,9 @@ class FakeRuntime:
         self.on_round_finished = None
         self._stopped = threading.Event()
         self.execution_permission_level = "unlimited"
+        self.final_response_max_chars = None
+        self.response_contract = {}
+        self.task_guidance_enabled = True
 
     def set_execution_permission_level(self, level):
         self.execution_permission_level = level
@@ -293,8 +301,13 @@ class FakeRuntime:
     def runtime_status(self):
         return self.control.snapshot(self.hb)
 
-    def submit_message(self, message, execution_permission_level="guarded"):
+    def submit_message(self, message, execution_permission_level="guarded",
+                       final_response_max_chars=None, response_contract=None,
+                       task_guidance_enabled=True):
         self.execution_permission_level = execution_permission_level
+        self.final_response_max_chars = final_response_max_chars
+        self.response_contract = dict(response_contract or {})
+        self.task_guidance_enabled = task_guidance_enabled
         number = self.control.establish_round("interactive", lambda: 1)
         if number is None:
             return False
@@ -303,6 +316,13 @@ class FakeRuntime:
             "response": f"reply:{message}",
             "_settlement": {"status": "settled"},
         }
+        if message == "blocked":
+            result.update({
+                "response": "本地阻断说明",
+                "_final_response_source": (
+                    "reaction.runtime_auto_blocked_final_reply"),
+                "_local_blocked_reason": "final_response_length_exhausted",
+            })
         self.on_round_finished(number, "interactive", result)
         self.control.finish_round(False)
         return True
@@ -332,6 +352,428 @@ def test_spec704_resident_service_owns_one_lock_and_reports_host(tmp_path):
         assert exc.value.host == {"address": "127.0.0.1", "port": 8770}
     finally:
         first.close()
+
+
+def test_spec743_periodic_memory_mutation_pauses_heartbeat_and_rechecks_idle(
+        tmp_path, monkeypatch):
+    runtime = FakeRuntime()
+    runtime.memory_store = object()
+    runtime.heat = object()
+    runtime.assembler = object()
+    runtime.cfg = object()
+    calls = []
+
+    class Processor:
+        def __init__(self, **kwargs):
+            calls.append(("init", kwargs))
+
+        def apply(self, action, mem_id):
+            assert runtime.hb._paused is True
+            calls.append(("apply", action, mem_id))
+            return {
+                "schema_version": "periodic_memory_mount_receipt.v2",
+                "tool_id": "periodic_memory_mount",
+                "status": "applied",
+                "action": action,
+                "mem_id": mem_id,
+            }
+
+    monkeypatch.setattr(
+        "logic.periodic_memory_mount.PeriodicMemoryMountProcessor", Processor)
+    resident = service(tmp_path / "runtime", runtime)
+    resident.start()
+    try:
+        result = resident.mutate_periodic_memory("mount", "MEM-74300001")
+        assert result["schema_version"] == "seed_gui_periodic_memory_result.v1"
+        assert result["submission_source"] == "seed_gui"
+        assert calls[-1] == ("apply", "mount", "MEM-74300001")
+        assert runtime.hb._paused is False
+        assert resident.status()["operation_in_flight"] is False
+
+        runtime.control.establish_round("interactive", lambda: 1)
+        with pytest.raises(RuntimeServiceError, match="round_in_flight"):
+            resident.mutate_periodic_memory("mount", "MEM-74300001")
+        runtime.control.finish_round(False)
+    finally:
+        resident.close()
+
+
+def test_spec743_periodic_mutation_reservation_blocks_late_round_start(
+        tmp_path, monkeypatch):
+    runtime = FakeRuntime()
+    runtime.memory_store = object()
+    runtime.heat = object()
+    runtime.assembler = object()
+    runtime.cfg = object()
+    processor_entered = threading.Event()
+    release_processor = threading.Event()
+    preparation_entered = threading.Event()
+    round_established = threading.Event()
+    outcomes = {}
+
+    class Processor:
+        def __init__(self, **_kwargs):
+            pass
+
+        def apply(self, action, mem_id):
+            processor_entered.set()
+            assert runtime.control.snapshot(runtime.hb)["round_in_flight"] is False
+            assert release_processor.wait(2)
+            return {
+                "schema_version": "periodic_memory_mount_receipt.v2",
+                "tool_id": "periodic_memory_mount",
+                "status": "applied",
+                "action": action,
+                "mem_id": mem_id,
+            }
+
+    monkeypatch.setattr(
+        "logic.periodic_memory_mount.PeriodicMemoryMountProcessor", Processor)
+    resident = service(tmp_path / "runtime", runtime)
+    resident.start()
+
+    def mutate():
+        try:
+            outcomes["mutation"] = resident.mutate_periodic_memory(
+                "mount", "MEM-74300001")
+        except Exception as exc:  # surfaced below
+            outcomes["mutation_error"] = exc
+
+    def start_round():
+        try:
+            outcomes["prepared"] = runtime.control.begin_round_preparation()
+            preparation_entered.set()
+            outcomes["round_num"] = runtime.control.establish_round(
+                "interactive", lambda: 743)
+            round_established.set()
+        except Exception as exc:  # surfaced below
+            outcomes["round_error"] = exc
+
+    mutation_thread = threading.Thread(target=mutate)
+    round_thread = threading.Thread(target=start_round)
+    try:
+        mutation_thread.start()
+        assert processor_entered.wait(2)
+        round_thread.start()
+        assert preparation_entered.wait(0.1) is False
+        assert round_established.is_set() is False
+        assert runtime.control.snapshot(runtime.hb)["round_in_flight"] is False
+
+        release_processor.set()
+        mutation_thread.join(timeout=2)
+        round_thread.join(timeout=2)
+
+        assert mutation_thread.is_alive() is False
+        assert round_thread.is_alive() is False
+        assert "mutation_error" not in outcomes
+        assert "round_error" not in outcomes
+        assert outcomes["prepared"] is True
+        assert outcomes["round_num"] == 743
+        assert outcomes["mutation"]["receipt"]["status"] == "applied"
+        runtime.control.finish_round(False)
+    finally:
+        release_processor.set()
+        mutation_thread.join(timeout=2)
+        round_thread.join(timeout=2)
+        resident.close()
+
+
+def test_spec743_round_preparation_rejects_periodic_mutation_without_heartbeat_side_effect(
+        tmp_path, monkeypatch):
+    runtime = FakeRuntime()
+    runtime.memory_store = object()
+    runtime.heat = object()
+    runtime.assembler = object()
+    runtime.cfg = object()
+    applied = []
+
+    class Processor:
+        def __init__(self, **_kwargs):
+            pass
+
+        def apply(self, *_args):
+            applied.append(True)
+
+    monkeypatch.setattr(
+        "logic.periodic_memory_mount.PeriodicMemoryMountProcessor", Processor)
+    resident = service(tmp_path / "runtime", runtime)
+    resident.start()
+    try:
+        assert runtime.control.begin_round_preparation() is True
+        with pytest.raises(RuntimeServiceError, match="round_in_flight"):
+            resident.mutate_periodic_memory("mount", "MEM-74300001")
+        assert applied == []
+        assert runtime.hb.pause_calls == 0
+        assert runtime.hb.resume_calls == 0
+        assert resident.status()["operation_in_flight"] is False
+    finally:
+        runtime.control.end_round_preparation()
+        resident.close()
+
+
+def test_spec743_periodic_mutation_failure_releases_idle_reservation(
+        tmp_path, monkeypatch):
+    runtime = FakeRuntime()
+    runtime.memory_store = object()
+    runtime.heat = object()
+    runtime.assembler = object()
+    runtime.cfg = object()
+
+    class Processor:
+        def __init__(self, **_kwargs):
+            pass
+
+        def apply(self, *_args):
+            raise RuntimeError("periodic failure")
+
+    monkeypatch.setattr(
+        "logic.periodic_memory_mount.PeriodicMemoryMountProcessor", Processor)
+    resident = service(tmp_path / "runtime", runtime)
+    resident.start()
+    try:
+        with pytest.raises(RuntimeError, match="periodic failure"):
+            resident.mutate_periodic_memory("mount", "MEM-74300001")
+        assert runtime.hb._paused is False
+        assert resident.status()["operation_in_flight"] is False
+        assert runtime.control.reserve_idle_mutation() is True
+        runtime.control.release_idle_mutation()
+    finally:
+        resident.close()
+
+
+def test_spec743_instance_switch_reserves_idle_runtime_until_cancelled(tmp_path):
+    runtime = FakeRuntime()
+    resident = service(tmp_path / "runtime", runtime)
+    preparation_started = threading.Event()
+    outcome = {}
+    resident.start()
+
+    def prepare_round():
+        outcome["prepared"] = runtime.control.begin_round_preparation()
+        preparation_started.set()
+
+    thread = threading.Thread(target=prepare_round)
+    try:
+        resident.prepare_instance_switch()
+        assert runtime.hb._paused is True
+        assert runtime.hb.pause_calls == 1
+        assert resident.status()["operation_in_flight"] is True
+
+        thread.start()
+        assert preparation_started.wait(0.1) is False
+        assert runtime.control.snapshot(runtime.hb)["stage"] == "idle"
+
+        resident.cancel_instance_switch()
+        assert preparation_started.wait(2)
+        thread.join(timeout=2)
+        assert thread.is_alive() is False
+        assert outcome == {"prepared": True}
+        assert runtime.hb._paused is False
+        assert runtime.hb.resume_calls == 1
+        assert resident.status()["operation_in_flight"] is False
+    finally:
+        resident.cancel_instance_switch()
+        runtime.control.end_round_preparation()
+        thread.join(timeout=2)
+        resident.close()
+
+
+def test_spec743_instance_switch_preserves_existing_heartbeat_pause(tmp_path):
+    runtime = FakeRuntime()
+    runtime.hb._paused = True
+    resident = service(tmp_path / "runtime", runtime)
+    resident.start()
+    try:
+        resident.prepare_instance_switch()
+        resident.cancel_instance_switch()
+
+        assert runtime.hb._paused is True
+        assert runtime.hb.pause_calls == 1
+        assert runtime.hb.resume_calls == 0
+        assert resident.status()["operation_in_flight"] is False
+    finally:
+        resident.cancel_instance_switch()
+        resident.close()
+
+
+def test_spec743_round_preparation_rejects_instance_switch_without_pause(tmp_path):
+    runtime = FakeRuntime()
+    resident = service(tmp_path / "runtime", runtime)
+    resident.start()
+    try:
+        assert runtime.control.begin_round_preparation() is True
+        with pytest.raises(RuntimeServiceError, match="round_in_flight"):
+            resident.prepare_instance_switch()
+
+        assert runtime.hb.pause_calls == 0
+        assert runtime.hb.resume_calls == 0
+        assert resident.status()["operation_in_flight"] is False
+    finally:
+        runtime.control.end_round_preparation()
+        resident.close()
+
+
+def test_spec743_shutdown_wakes_round_waiting_on_idle_mutation_reservation():
+    runtime = FakeRuntime()
+    finished = threading.Event()
+    outcome = {}
+    assert runtime.control.reserve_idle_mutation() is True
+
+    def prepare_round():
+        outcome["prepared"] = runtime.control.begin_round_preparation()
+        finished.set()
+
+    thread = threading.Thread(target=prepare_round)
+    thread.start()
+    try:
+        assert finished.wait(0.1) is False
+        runtime.control.request_shutdown(runtime)
+        assert finished.wait(2)
+        thread.join(timeout=2)
+        assert outcome == {"prepared": False}
+    finally:
+        runtime.control.release_idle_mutation()
+        thread.join(timeout=2)
+
+
+def test_spec732_global_lock_blocks_a_second_persona_instance(tmp_path):
+    lock_path = tmp_path / "runtime.lock"
+    first = ResidentRuntimeService(
+        runtime_dir=tmp_path / "PID-A" / "meta",
+        lock_path=lock_path,
+        active_pid="PID-A",
+        active_instance_id="meta",
+        persona_ready=lambda: True,
+        environment_factory=lambda: (object(), object()),
+        runtime_factory=lambda *_args: FakeRuntime(),
+    )
+    second = ResidentRuntimeService(
+        runtime_dir=tmp_path / "PID-B" / "meta",
+        lock_path=lock_path,
+        active_pid="PID-B",
+        active_instance_id="meta",
+        persona_ready=lambda: True,
+        environment_factory=lambda: (object(), object()),
+        runtime_factory=lambda *_args: FakeRuntime(),
+    )
+    first.start()
+    try:
+        with pytest.raises(RuntimeAlreadyRunning):
+            second.start()
+    finally:
+        first.close()
+
+
+def test_spec731_retention_runs_after_lock_and_before_runtime_factory(tmp_path):
+    order = []
+
+    def retain():
+        order.append("retention")
+        return {"status": "ok"}
+
+    def environment():
+        order.append("environment")
+        return object(), object()
+
+    resident = ResidentRuntimeService(
+        runtime_dir=tmp_path / "runtime",
+        active_pid="PID-731",
+        persona_ready=lambda: True,
+        environment_factory=environment,
+        runtime_factory=lambda *_args: FakeRuntime(),
+        retention_enforcer=retain,
+    )
+    resident.start()
+    try:
+        assert order == ["retention", "environment"]
+        assert resident.retention_receipt == {"status": "ok"}
+    finally:
+        resident.close()
+
+
+def test_spec735_ltm_reconcile_runs_before_environment_and_fail_closed(tmp_path):
+    order = []
+    lock_path = tmp_path / "runtime.lock"
+    resident = ResidentRuntimeService(
+        runtime_dir=tmp_path / "first",
+        lock_path=lock_path,
+        active_pid="PID-735",
+        persona_ready=lambda: True,
+        retention_enforcer=lambda: order.append("retention") or {"status": "ok"},
+        ltm_reconciler=lambda: order.append("ltm") or {"status": "ok"},
+        environment_factory=lambda: order.append("environment") or (object(), object()),
+        runtime_factory=lambda *_args: FakeRuntime(),
+    )
+    resident.start()
+    try:
+        assert order == ["retention", "ltm", "environment"]
+    finally:
+        resident.close()
+
+    failing = ResidentRuntimeService(
+        runtime_dir=tmp_path / "failing",
+        lock_path=lock_path,
+        active_pid="PID-735",
+        persona_ready=lambda: True,
+        ltm_reconciler=lambda: (_ for _ in ()).throw(ValueError("duplicate")),
+        environment_factory=lambda: pytest.fail("runtime must not start"),
+        runtime_factory=lambda *_args: FakeRuntime(),
+    )
+    with pytest.raises(RuntimeServiceError, match="ltm_projection_failed:duplicate"):
+        failing.start()
+
+    replacement = ResidentRuntimeService(
+        runtime_dir=tmp_path / "replacement",
+        lock_path=lock_path,
+        active_pid="PID-735",
+        persona_ready=lambda: True,
+        environment_factory=lambda: (object(), object()),
+        runtime_factory=lambda *_args: FakeRuntime(),
+    )
+    replacement.start()
+    replacement.close()
+
+
+def test_spec731_retention_failure_releases_lock_before_runtime_start(tmp_path):
+    def fail():
+        raise RuntimeServiceError("round_snapshot_delete_failed")
+
+    runtime_dir = tmp_path / "runtime"
+    failing = ResidentRuntimeService(
+        runtime_dir=runtime_dir,
+        active_pid="PID-731",
+        persona_ready=lambda: True,
+        environment_factory=lambda: pytest.fail("runtime must not start"),
+        retention_enforcer=fail,
+    )
+    with pytest.raises(RuntimeServiceError, match="round_snapshot_delete_failed"):
+        failing.start()
+
+    replacement = service(runtime_dir)
+    replacement.start()
+    replacement.close()
+
+
+def test_spec731_uninitialized_persona_defers_retention_until_ready(tmp_path):
+    ready = False
+    order = []
+
+    resident = ResidentRuntimeService(
+        runtime_dir=tmp_path / "runtime",
+        active_pid="PID-731",
+        persona_ready=lambda: ready,
+        environment_factory=lambda: (order.append("environment") or (object(), object())),
+        runtime_factory=lambda *_args: FakeRuntime(),
+        retention_enforcer=lambda: order.append("retention") or {"status": "ok"},
+    )
+    resident.start()
+    try:
+        assert order == []
+        ready = True
+        assert resident.start_if_ready() is True
+        assert order == ["retention", "environment"]
+    finally:
+        resident.close()
 
 
 def test_spec721_resident_restart_falls_back_to_guarded(tmp_path):
@@ -405,11 +847,12 @@ def test_spec704_startup_preserves_recovery_anchor_when_factory_fails(tmp_path):
     runtime_dir.mkdir()
     supervisor = runtime_dir / "supervisor.json"
     previous = {
-        "schema_version": "upsp_runtime_supervisor.v1",
+        "schema_version": "upsp_runtime_supervisor.v2",
         "state": "running",
         "process_id": 111,
         "session_id": "old-session",
         "active_pid": "PID-704",
+        "active_instance_id": "meta",
         "host": {"address": "127.0.0.1", "port": 8770},
         "current_round": 704,
         "round_type": "interactive",
@@ -443,11 +886,12 @@ def test_spec705_restart_restores_latch_after_unsettled_round(tmp_path):
     runtime_dir = tmp_path / "runtime"
     runtime_dir.mkdir()
     (runtime_dir / "supervisor.json").write_text(json.dumps({
-        "schema_version": "upsp_runtime_supervisor.v1",
+        "schema_version": "upsp_runtime_supervisor.v2",
         "state": "stopped",
         "process_id": 111,
         "session_id": "old-session",
         "active_pid": "PID-704",
+        "active_instance_id": "meta",
         "host": {"address": "127.0.0.1", "port": 8770},
         "current_round": None,
         "round_type": None,
@@ -481,8 +925,32 @@ def test_spec704_service_send_and_stop_receipts_are_resident(tmp_path):
         result = resident.submit_message("hello", "limited")
         assert result["status"] == "round_completed"
         assert result["final_response"] == "reply:hello"
+        assert result["classification"] == ""
+        assert result["final_response_source"] == ""
         assert "final_response" not in resident.status()["last_outcome"]
+
+        blocked = resident.submit_message("blocked", "limited")
+        assert blocked["classification"] == "runtime_blocked_closed"
+        assert blocked["reason"] == "final_response_length_exhausted"
+        assert blocked["final_response_source"] == (
+            "reaction.runtime_auto_blocked_final_reply")
         assert "hello" not in resident.supervisor_path.read_text(encoding="utf-8")
+
+        resident.submit_message(
+            "query", "limited", final_response_max_chars=128)
+        assert runtime.final_response_max_chars == 128
+
+        resident.submit_message(
+            "format", "limited", response_contract={
+                "language": "en",
+                "answer_scope": "conclusion_only",
+                "max_sentences": 1,
+            })
+        assert runtime.response_contract["max_sentences"] == 1
+
+        resident.submit_message(
+            "direct", "limited", task_guidance_enabled=False)
+        assert runtime.task_guidance_enabled is False
 
         runtime.control.establish_round("interactive", lambda: 2)
         runtime.control.set_stage("reaction")

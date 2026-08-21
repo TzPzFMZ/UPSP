@@ -13,8 +13,10 @@ from datetime import datetime, timezone
 
 from paths import AUDIT_DIR, STM_CONTEXT_DIR
 from data.prompt_cache_telemetry import extract_prompt_cache_telemetry
+from data.round_audit_codec import RoundAuditDecoder, RoundAuditEncoder
+from data.round_retention import enforce_round_retention
 
-SCHEMA_VERSION = "round_audit.v1"
+SCHEMA_VERSION = "round_audit.v2"
 
 
 def reaction_popup_snapshot_status(event):
@@ -80,14 +82,22 @@ class RoundSnapshotStore:
         self,
         context_root=None,
         retention_count=8,
+        retention_max_mib=256,
+        retention_enforcer=None,
         static_audit_dir=None,
         static_projection_enabled=True,
     ):
         self.context_root = context_root or STM_CONTEXT_DIR
-        self.retention_count = int(retention_count or 8)
+        self.retention_count = int(retention_count)
+        self.retention_max_mib = int(retention_max_mib)
+        self.retention_enforcer = retention_enforcer
         self.static_audit_dir = static_audit_dir or AUDIT_DIR
         self.static_projection_enabled = bool(static_projection_enabled)
-        self._append_lock = threading.Lock()
+        self._append_lock = threading.RLock()
+        self._event_indexes = {}
+        self._encoders = {}
+        self._latest_request_refs = {}
+        self.last_retention_receipt = None
 
     def _round_dir(self):
         return os.path.join(self.context_root, "round")
@@ -98,20 +108,29 @@ class RoundSnapshotStore:
     def _now(self):
         return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
-    def _event_count(self, path):
-        if not os.path.isfile(path):
-            return 0
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return sum(1 for line in f if line.strip())
-        except OSError:
-            return 0
+    def _last_event_index(self, round_num):
+        round_num = int(round_num)
+        if round_num in self._event_indexes:
+            return self._event_indexes[round_num]
+        last = 0
+        path = self._round_path(round_num)
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    event = json.loads(line)
+                    last = max(last, int(event.get("event_index") or 0))
+        self._event_indexes[round_num] = last
+        return last
 
     def _read_events_quiet(self, round_num):
         path = self._round_path(round_num)
         if not os.path.isfile(path):
             return []
         events = []
+        decoder = RoundAuditDecoder()
         try:
             with open(path, "r", encoding="utf-8") as f:
                 for line in f:
@@ -119,7 +138,7 @@ class RoundSnapshotStore:
                     if not line:
                         continue
                     try:
-                        events.append(json.loads(line))
+                        events.append(decoder.feed(json.loads(line)))
                     except json.JSONDecodeError:
                         continue
         except OSError:
@@ -132,7 +151,7 @@ class RoundSnapshotStore:
         os.makedirs(round_dir, exist_ok=True)
         path = self._round_path(round_num)
         with self._append_lock:
-            event_index = self._event_count(path) + 1
+            event_index = self._last_event_index(round_num) + 1
             event = {
                 "schema_version": SCHEMA_VERSION,
                 "round": round_num,
@@ -151,11 +170,25 @@ class RoundSnapshotStore:
                     f"R{round_num:06d}:{str(phase)}:{int(iteration)}")
             with open(path, "a", encoding="utf-8", newline="\n") as f:
                 f.write(json.dumps(
-                    event, ensure_ascii=False, sort_keys=True, default=str
+                    event,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
                 ) + "\n")
+            self._event_indexes[round_num] = event_index
         return event
 
     def start_round(self, round_num, round_type=None, input_snapshot=None):
+        if (
+            isinstance(self.last_retention_receipt, dict)
+            and self.last_retention_receipt.get("status") == "error"
+        ):
+            self.last_retention_receipt = (
+                self.retention_enforcer()
+                if callable(self.retention_enforcer)
+                else self.prune()
+            )
         round_dir = self._round_dir()
         os.makedirs(round_dir, exist_ok=True)
         path = self._round_path(round_num)
@@ -163,6 +196,13 @@ class RoundSnapshotStore:
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             pass
         os.replace(tmp, path)
+        self._event_indexes[int(round_num)] = 0
+        self._encoders[int(round_num)] = RoundAuditEncoder()
+        self._latest_request_refs = {
+            key: value
+            for key, value in self._latest_request_refs.items()
+            if key[0] != int(round_num)
+        }
         payload = {}
         if round_type:
             payload["round_type"] = round_type
@@ -171,42 +211,60 @@ class RoundSnapshotStore:
         self.append_event(round_num, "round_started", payload)
         return path
 
-    def record_step_input(self, round_num, phase, iteration=1, messages=None,
-                          system=None, rendered_md=None, manifest=None,
+    def record_step_input(self, round_num, phase, iteration=1, manifest=None,
                           provider_request_envelope=None, layers_snapshot=None,
                           error=None):
-        payload = {
-            "messages": self._sanitize_step_messages(messages),
-        }
+        payload = {}
         if isinstance(error, dict):
             payload.update(copy.deepcopy(error))
         elif error:
             payload["error"] = str(error)
-        if system is not None:
-            payload["system"] = system
-        if rendered_md is not None:
-            payload["step_md"] = rendered_md
         if manifest is not None:
             payload["manifest"] = manifest
-        if provider_request_envelope is not None:
-            payload["provider_request_envelope"] = (
-                self._sanitize_provider_request_envelope(
-                    provider_request_envelope,
-                    include_source_map=True))
-        if layers_snapshot is not None:
-            payload["layers_snapshot"] = self._sanitize_layers_snapshot(
-                layers_snapshot)
-        return self.append_event(
-            round_num,
-            "step_input_snapshot",
-            payload,
-            phase=phase,
-            iteration=iteration,
-        )
+        envelope = self._sanitize_provider_request_envelope(
+            provider_request_envelope,
+            include_source_map=True,
+        ) if provider_request_envelope is not None else {}
+        snapshot = self._sanitize_layers_snapshot(layers_snapshot)
+        round_num = int(round_num)
+        with self._append_lock:
+            event_index = self._last_event_index(round_num) + 1
+            event_id = f"R{round_num:06d}-{event_index:06d}"
+            encoder = self._encoders.setdefault(
+                round_num, RoundAuditEncoder()
+            ).clone()
+            if envelope and snapshot:
+                payload["audit_snapshot"] = encoder.encode(
+                    envelope,
+                    snapshot,
+                    phase=phase,
+                    event_id=event_id,
+                )
+            else:
+                if envelope:
+                    payload["provider_request_envelope"] = envelope
+                if snapshot:
+                    payload["layers_snapshot"] = snapshot
+            event = self.append_event(
+                round_num,
+                "step_input_snapshot",
+                payload,
+                phase=phase,
+                iteration=iteration,
+            )
+            self._encoders[round_num] = encoder
+        if envelope:
+            self._latest_request_refs[(round_num, str(phase), int(iteration))] = {
+                "request_snapshot_event_id": event["event_id"],
+                "wire_body_sha256": envelope.get("wire_body_sha256"),
+                "wire_body_bytes": envelope.get("wire_body_bytes"),
+            }
+        materialized = copy.deepcopy(event)
+        materialized["payload"]["provider_request_envelope"] = envelope
+        materialized["payload"]["layers_snapshot"] = snapshot
+        return materialized
 
-    def record_step_input_from_files(self, round_num, phase, iteration=1,
-                                     messages=None, system=None):
-        loaded_messages = list(messages or [])
+    def record_step_input_from_files(self, round_num, phase, iteration=1):
         provider_request_envelope = None
         error = None
         context_step = self._context_step_for_phase(phase)
@@ -216,7 +274,6 @@ class RoundSnapshotStore:
                 with open(step_json, "r", encoding="utf-8") as f:
                     step_data = json.load(f)
                 if isinstance(step_data, list):
-                    loaded_messages = []
                     error = {
                         "error": "legacy_step_json_rejected",
                         "reason": "active_step_json_must_be_provider_request_v1",
@@ -228,16 +285,7 @@ class RoundSnapshotStore:
                         and step_data.get("schema") == "provider_request.v1"):
                     provider_request_envelope = step_data
             except (OSError, json.JSONDecodeError):
-                if not loaded_messages:
-                    loaded_messages = []
-        rendered_md = None
-        step_md = os.path.join(self.context_root, context_step, "step.md")
-        if os.path.isfile(step_md):
-            try:
-                with open(step_md, "r", encoding="utf-8") as f:
-                    rendered_md = f.read()
-            except OSError:
-                rendered_md = None
+                provider_request_envelope = None
         manifest = None
         manifest_path = os.path.join(self.context_root, context_step, "manifest.json")
         if os.path.isfile(manifest_path):
@@ -251,9 +299,6 @@ class RoundSnapshotStore:
             round_num,
             phase,
             iteration=iteration,
-            messages=loaded_messages,
-            system=system,
-            rendered_md=rendered_md,
             manifest=manifest,
             provider_request_envelope=provider_request_envelope,
             layers_snapshot=layers_snapshot,
@@ -308,16 +353,16 @@ class RoundSnapshotStore:
             "raw_usage",
             "provider_response_meta",
             "request_contract_audit",
-            "provider_request_envelope",
             "error",
         ):
             if key in result:
                 value = result.get(key)
                 if key == "request_contract_audit":
                     value = self._sanitize_request_contract_audit(value)
-                elif key == "provider_request_envelope":
-                    value = self._sanitize_provider_request_envelope(value)
                 payload[key] = value
+        payload.update(self._request_reference(
+            round_num, phase, iteration, result
+        ))
         telemetry = result.get("prompt_cache_telemetry")
         if (
                 not isinstance(telemetry, dict)
@@ -354,10 +399,9 @@ class RoundSnapshotStore:
         if "request_contract_audit" in contract:
             payload["request_contract_audit"] = self._sanitize_request_contract_audit(
                 contract.get("request_contract_audit"))
-        if "provider_request_envelope" in contract:
-            payload["provider_request_envelope"] = (
-                self._sanitize_provider_request_envelope(
-                    contract.get("provider_request_envelope")))
+        payload.update(self._request_reference(
+            round_num, phase, iteration, contract
+        ))
         for key in (
                 "call_channel", "phase", "tier",
                 "logical_call_id", "route_slot"):
@@ -377,10 +421,9 @@ class RoundSnapshotStore:
         if "request_contract_audit" in contract:
             payload["request_contract_audit"] = self._sanitize_request_contract_audit(
                 contract.get("request_contract_audit"))
-        if "provider_request_envelope" in contract:
-            payload["provider_request_envelope"] = (
-                self._sanitize_provider_request_envelope(
-                    contract.get("provider_request_envelope")))
+        payload.update(self._request_reference(
+            round_num, phase, iteration, contract
+        ))
         for key in (
                 "call_channel", "phase", "tier",
                 "logical_call_id", "route_slot"):
@@ -393,6 +436,18 @@ class RoundSnapshotStore:
             phase=phase,
             iteration=iteration,
         )
+
+    def _request_reference(self, round_num, phase, iteration, source=None):
+        ref = copy.deepcopy(self._latest_request_refs.get(
+            (int(round_num), str(phase), int(iteration)),
+            {},
+        ))
+        source = source if isinstance(source, dict) else {}
+        envelope = source.get("provider_request_envelope")
+        if isinstance(envelope, dict):
+            ref.setdefault("wire_body_sha256", envelope.get("wire_body_sha256"))
+            ref.setdefault("wire_body_bytes", envelope.get("wire_body_bytes"))
+        return {key: value for key, value in ref.items() if value not in (None, "")}
 
     def record_llm_stream_event(self, round_num, phase, iteration, event_type, payload):
         event_type = str(event_type or "").strip()
@@ -448,9 +503,19 @@ class RoundSnapshotStore:
         cleaned, _redacted = RoundSnapshotStore._redact_value(
             copy.deepcopy(envelope))
         if include_source_map and isinstance(cleaned, dict):
-            cleaned["request_body"], _ = (
-                RoundSnapshotStore._redact_provider_request_body(
-                    copy.deepcopy(envelope.get("request_body"))))
+            wire_contract = all(key in envelope for key in (
+                "request_body_sha256",
+                "wire_body_encoding",
+                "wire_body_sha256",
+                "wire_body_bytes",
+                "request_body_source_map",
+            ))
+            if wire_contract:
+                cleaned["request_body"] = copy.deepcopy(envelope.get("request_body"))
+            else:
+                cleaned["request_body"], _ = (
+                    RoundSnapshotStore._redact_provider_request_body(
+                        copy.deepcopy(envelope.get("request_body"))))
         context_window = envelope.get("context_window_tokens")
         if (
                 isinstance(cleaned, dict)
@@ -501,41 +566,6 @@ class RoundSnapshotStore:
             data["arguments_json"] = RoundSnapshotStore._redact_secret_like_text(
                 arguments_json)
         return data
-
-    @staticmethod
-    def _sanitize_step_messages(messages):
-        sanitized = []
-        for message in messages or []:
-            if not isinstance(message, dict):
-                sanitized.append(message)
-                continue
-            data = copy.deepcopy(message)
-            if "native_tool_call_envelopes" in data:
-                data["native_tool_call_envelopes"] = (
-                    RoundSnapshotStore._sanitize_tool_call_envelopes(
-                        data.get("native_tool_call_envelopes")))
-            if "native_tool_outputs" in data:
-                data["native_tool_outputs"] = (
-                    RoundSnapshotStore._sanitize_native_tool_outputs(
-                        data.get("native_tool_outputs")))
-            sanitized.append(data)
-        return sanitized
-
-    @staticmethod
-    def _sanitize_native_tool_outputs(outputs):
-        sanitized = []
-        for output in outputs or []:
-            if not isinstance(output, dict):
-                sanitized.append(output)
-                continue
-            tool_id = str(output.get("tool_id") or "")
-            if tool_id in HIGH_RISK_NATIVE_TOOL_IDS:
-                cleaned, _redacted = RoundSnapshotStore._redact_high_risk_native_value(
-                    output)
-            else:
-                cleaned, _redacted = RoundSnapshotStore._redact_value(output)
-            sanitized.append(cleaned)
-        return sanitized
 
     @staticmethod
     def _redact_high_risk_native_value(value, key_name=""):
@@ -727,9 +757,16 @@ class RoundSnapshotStore:
             close_payload["final_response"] = final_response
         self.append_event(round_num, "round_closed", close_payload)
         try:
-            self.prune()
-        except Exception:
-            pass
+            self.last_retention_receipt = (
+                self.retention_enforcer()
+                if callable(self.retention_enforcer)
+                else self.prune()
+            )
+        except Exception as exc:
+            self.last_retention_receipt = {
+                "status": "error",
+                "error": str(exc),
+            }
         try:
             self._write_static_projection()
         except Exception:
@@ -748,12 +785,13 @@ class RoundSnapshotStore:
         if not os.path.isfile(path):
             raise FileNotFoundError(path)
         events = []
+        decoder = RoundAuditDecoder()
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
-                events.append(json.loads(line))
+                events.append(decoder.feed(json.loads(line)))
         return events
 
     def list_rounds(self):
@@ -782,17 +820,8 @@ class RoundSnapshotStore:
         return rounds
 
     def prune(self):
-        round_dir = self._round_dir()
-        if self.retention_count <= 0 or not os.path.isdir(round_dir):
-            return
-        snapshots = []
-        for name in os.listdir(round_dir):
-            match = re.match(r"^round_(\d+)\.jsonl$", name)
-            if match:
-                snapshots.append((int(match.group(1)), os.path.join(round_dir, name)))
-        snapshots.sort()
-        for _round_num, path in snapshots[:-self.retention_count]:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+        return enforce_round_retention(
+            self._round_dir(),
+            retention_count=self.retention_count,
+            max_mib=self.retention_max_mib,
+        )

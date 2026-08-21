@@ -27,10 +27,13 @@ READ_TOOL_PRIVATE_DIAGNOSTIC_FIELDS = frozenset({
     "window_safe_room_tokens",
     "window_batch_consumed_before_chars",
     "window_batch_remaining_after_chars",
+    "host_path",
+    "host_root",
 })
 READ_TOOL_BODY_FIELDS = {
     "file_read": frozenset({"content"}),
-    "file_search": frozenset({"matches"}),
+    "file_glob": frozenset({"matches"}),
+    "file_grep": frozenset({"matches"}),
     "web_fetch": frozenset({"content", "raw_html", "html", "body"}),
     "web_search": frozenset({"content", "results"}),
 }

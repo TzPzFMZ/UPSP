@@ -7,6 +7,7 @@ Phase 2 业务逻辑层测试 — 纯函数，全部测试
 """
 import sys
 import os
+import copy
 from pathlib import Path
 import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -22,12 +23,82 @@ def _dummy_heat_entry(weight=2):
     from schemas.memory import default_heat_entry
     from schemas.config import default_memory_config
     config = default_memory_config()["heat"]
-    return default_heat_entry(
+    entry = default_heat_entry(
         weight,
         initial_by_weight=config["initial_by_weight"],
         significant_threshold=config["zone_thresholds"]["significant"],
         uncertain_threshold=config["zone_thresholds"]["uncertain"],
     )
+    entry["last_heat_at"] = "2026-08-14T00:00:00+08:00"
+    return entry
+
+
+class _TransactionalMemoryStoreFake:
+    """Small in-memory stand-in for the Spec746 LTM-first write transaction."""
+
+    def _ensure_transaction_state(self):
+        if not hasattr(self, "_ltm"):
+            self._ltm = {}
+            self._stm_bodies = {}
+            self._stm_meta = {}
+            self._heat_reader = None
+
+    def render_entry(self, mem_id, title, **kwargs):
+        self._ensure_transaction_state()
+        if hasattr(self, "written"):
+            self.written.append(((mem_id,), dict(kwargs)))
+        self._render_kwargs = dict(kwargs)
+        semantic = kwargs.get("summary", "")
+        return f"# {mem_id} {title}\n\n{semantic}\n"
+
+    def snapshot_stm_files(self):
+        self._ensure_transaction_state()
+        return copy.deepcopy((self._stm_bodies, self._stm_meta))
+
+    def snapshot_ltm_files(self):
+        self._ensure_transaction_state()
+        return copy.deepcopy(self._ltm)
+
+    def restore_stm_files(self, snapshot):
+        self._stm_bodies, self._stm_meta = copy.deepcopy(snapshot)
+
+    def restore_ltm_files(self, snapshot):
+        self._ltm = copy.deepcopy(snapshot)
+
+    def store_ltm_entry(self, tier, mem_id, body, meta):
+        self._ensure_transaction_state()
+        self._ltm[mem_id] = {"tier": tier, "body": body, "meta": copy.deepcopy(meta)}
+
+    def replace_stm_body(self, mem_id, body):
+        self._ensure_transaction_state()
+        self._stm_bodies[mem_id] = body
+
+    def replace_stm_meta(self, mem_id, meta):
+        self._ensure_transaction_state()
+        self._stm_meta[mem_id] = copy.deepcopy(meta)
+        if hasattr(self, "meta"):
+            self.meta.append(((mem_id, copy.deepcopy(meta)), {}))
+
+    def rebuild_stm_index(self):
+        if hasattr(self, "index"):
+            self.index.append(((), dict(getattr(self, "_render_kwargs", {}))))
+
+    def rebuild_stm_keywords(self):
+        return None
+
+    def ltm_entry_state(self, mem_id, *, include_backup=True):
+        self._ensure_transaction_state()
+        return copy.deepcopy(self._ltm.get(mem_id))
+
+    def stm_entry_state(self, mem_id):
+        self._ensure_transaction_state()
+        meta = self._stm_meta.get(mem_id)
+        heat = _dummy_heat_entry(meta["weight"]) if meta else None
+        return {
+            "body": self._stm_bodies.get(mem_id),
+            "meta": copy.deepcopy(meta),
+            "heat": heat,
+        }
 
 
 # ============================================================
@@ -50,10 +121,11 @@ class TestMemID:
         assert validate_mem_id("MEM-00333-01") is False  # 旧格式
         assert validate_mem_id("INVALID") is False
 
-    def test_make_meta_template_21_fields(self):
+    def test_make_meta_template_24_fields(self):
         from logic.mem_id import make_meta_template
         meta = make_meta_template("MEM-TEST01", "测试标题", weight=5)
-        assert len(meta) == 21
+        assert len(meta) == 24
+        assert meta["stored_at"] == ""
         assert meta["id"] == "MEM-TEST01"
         assert meta["type"] == "F"
         assert meta["weight"] == 5
@@ -76,71 +148,6 @@ class TestMemID:
 # feeling_lookup 测试
 # ============================================================
 
-
-class TestEvolutionSet:
-    def test_summarize_pending_counts_actions_and_bridge_words(self):
-        from logic.evolution_set import summarize_pending
-
-        stats = summarize_pending(
-            tacit_records=[
-                {"item_id": "MEM-A", "action": "kept"},
-                {"item_id": "MEM-B", "action": "added"},
-                {"item_id": "MEM-C", "action": "kept"},
-            ],
-            connection_records=[
-                {"word_a": "记忆", "entry_a": "MEM-A", "word_b": "主体", "entry_b": "MEM-B"},
-                {"word_a": "主体", "entry_a": "MEM-B", "word_b": "连续性", "entry_b": "MEM-C"},
-            ],
-        )
-
-        assert stats["tacit_count"] == 3
-        assert stats["connection_count"] == 2
-        assert stats["tacit_actions"]["kept"] == 2
-        assert stats["top_connection_words"][0][0] == "主体"
-
-    def test_summarize_pending_expands_tacit_round_items(self):
-        from logic.evolution_set import summarize_pending
-
-        stats = summarize_pending(
-            tacit_records=[
-                {
-                    "round": 12,
-                    "items": [
-                        {"item_id": "MEM-A", "action": "kept"},
-                        {"item_id": "PRJ-1", "action": "dropped"},
-                        {"item_id": "SKL-2", "action": "added"},
-                    ],
-                }
-            ],
-            connection_records=[],
-        )
-
-        assert stats["tacit_count"] == 1
-        assert stats["tacit_actions"] == {"kept": 1, "dropped": 1, "added": 1}
-        assert stats["top_tacit_items"][0] == ("MEM-A", 1)
-
-    def test_extract_evolution_blocks_uses_only_marked_blocks(self):
-        from logic.evolution_set import extract_evolution_blocks
-
-        blocks = extract_evolution_blocks(
-            "无关前言\n<!-- EVOLUTION -->\n进化集正文\n<!-- /EVOLUTION -->\n无关后记"
-        )
-
-        assert blocks == ["进化集正文"]
-
-    def test_build_evolution_context_includes_counts_and_records(self):
-        from logic.evolution_set import build_evolution_context
-
-        context = build_evolution_context(
-            stats={"tacit_count": 1, "connection_count": 1, "tacit_actions": {"kept": 1}},
-            tacit_records=[{"item_id": "MEM-A", "action": "kept", "note": "沿用"}],
-            connection_records=[{"word_a": "记忆", "entry_a": "MEM-A", "word_b": "主体", "entry_b": "MEM-B"}],
-        )
-
-        assert "进化集整理任务" in context
-        assert "默契集 pending：1" in context
-        assert "<!-- EVOLUTION -->" in context
-        assert "MEM-A" in context
 
 class TestFeelingLookup:
     def test_lookup_interaction_word(self):
@@ -727,7 +734,7 @@ class TestSTMHeatCalculator:
     def test_check_upgrade(self):
         from data.stm_heat_calculator import STMHeatCalculator
         dc = STMHeatCalculator()
-        heat = {"MEM-01": {"AH_high": 6, "stored": False}}
+        heat = {"MEM-01": {"AH_high": 6}}
         meta = {}
         candidates = dc.check_upgrade(heat, meta)
         assert "MEM-01" in candidates
@@ -736,11 +743,16 @@ class TestSTMHeatCalculator:
         from data.stm_heat_calculator import STMHeatCalculator
         dc = STMHeatCalculator()
         heat = {
-            "MEM-01": {"degrade": True, "stored": False, "compression": False},
-            "MEM-02": {"degrade": True, "stored": True, "compression": True},
-            "MEM-03": {"degrade": True, "stored": False, "compression": True},
+            "MEM-01": {"degrade": True, "compression": False},
+            "MEM-02": {"degrade": True, "compression": True},
+            "MEM-03": {"degrade": True, "compression": True},
         }
-        to_delete, to_abstract, need_compress = dc.process_forgetting(heat)
+        meta = {
+            "MEM-01": {"stored_at": ""},
+            "MEM-02": {"stored_at": "2026-08-14T00:00:00+08:00"},
+            "MEM-03": {"stored_at": ""},
+        }
+        to_delete, to_abstract, need_compress = dc.process_forgetting(heat, meta)
         assert "MEM-02" in to_delete       # stored → 删STM副本
         assert "MEM-01" in to_abstract     # 无compression → 直接搬Abstract
         assert "MEM-03" in need_compress   # compression → 需LLM压缩
@@ -992,11 +1004,23 @@ class TestReactionParser:
         assert not forbidden_registry_columns.intersection(protocol_header)
         assert not forbidden_registry_columns.intersection(general_header)
 
+        from logic.native_tool_calls import export_provider_tool_schemas
+
+        exported = []
+        exported.extend(export_provider_tool_schemas(
+            provider="openai_responses", include_standard_tools=False,
+            include_step_terminal_tools=["setup_finalize", "cleanup_finalize"],
+        ))
+        exported.extend(export_provider_tool_schemas(
+            provider="openai_responses", include_protocol_writes=True,
+            include_step_terminal_tools=["reaction_finalize"],
+            execution_permission_level="unlimited",
+        ))
         registered_protocol_tools = {
-            tool_id: meta
-            for tool_id, meta in protocol_tools.TOOL_DEFINITIONS.items()
-            if meta.get("tool_family") == "protocol_tool"
-            and meta.get("status") != "disabled"
+            item["name"]: protocol_tools.tool_metadata_for(item["name"])
+            for item in exported
+            if protocol_tools.tool_metadata_for(item["name"]).get("tool_family")
+            != "general_tool"
         }
         enabled_general_tools = {
             tool_id
@@ -1012,6 +1036,7 @@ class TestReactionParser:
 
         assert set(protocol_rows) == set(registered_protocol_tools)
         assert set(general_rows) - {"general_tool_result"} == enabled_general_tools
+        assert "unlimited" in " ".join(general_rows["shell_command"].values())
         assert not substrate_tools.intersection(protocol_rows)
         assert not substrate_tools.intersection(general_rows)
         for tool_id, meta in registered_protocol_tools.items():
@@ -1232,7 +1257,7 @@ class TestMemoryWriteProtocol:
     def test_spec219_memory_write_allows_multiple_declarations_in_order(self, monkeypatch):
         from logic import memory_write as mw
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def __init__(self):
                 self.written = []
                 self.meta = []
@@ -1315,13 +1340,13 @@ class TestMemoryWriteProtocol:
             "多条写入4",
         ]
         assert len(memory_store.written) == 4
-        assert len(memory_index.stm_keywords) == 4
+        assert len(memory_store.index) == 4
         assert len(memory_heat.entries) == 4
 
     def test_spec219_memory_write_mixed_batch_keeps_valid_declarations(self, monkeypatch):
         from logic import memory_write as mw
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def __init__(self):
                 self.written = []
                 self.meta = []
@@ -1419,13 +1444,13 @@ class TestMemoryWriteProtocol:
             "MEM-041100AB",
         ]
         assert len(memory_store.written) == 2
-        assert len(memory_index.stm_keywords) == 2
+        assert len(memory_store.index) == 2
         assert len(memory_heat.entries) == 2
 
     def test_apply_memory_write_declaration_rejects_missing_keywords(self, monkeypatch):
         from logic import memory_write as mw
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def __init__(self):
                 self.written = []
 
@@ -1492,7 +1517,7 @@ class TestMemoryWriteProtocol:
     def test_apply_memory_write_declaration_limits_keywords_by_memory_type(self, monkeypatch):
         from logic import memory_write as mw
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def __init__(self):
                 self.written = []
                 self.meta = []
@@ -1556,20 +1581,19 @@ class TestMemoryWriteProtocol:
         assert memory_store.written[0][1]["current_overview"] == ""
         assert "abstract" not in memory_store.written[0][1]
         assert memory_store.meta[0][0][1]["tags"] == ["一", "二", "三", "四"]
-        assert len(memory_store.meta[0][0][1]) == 21
+        assert len(memory_store.meta[0][0][1]) == 24
         assert memory_store.meta[0][0][1]["dream"] is False
         assert memory_store.meta[0][0][1]["current_overview"] == ""
         retired = {"abstract", "locked", "source_rounds", "mode", "merged_from"}
         assert retired.isdisjoint(memory_store.meta[0][0][1])
-        assert memory_index.stm_keywords == [
-            (("MEM-041000AA", ["一", "二", "三", "四"]), {})
-        ]
+        assert memory_store.ltm_entry_state("MEM-041000AA")["meta"]["tags"] == [
+            "一", "二", "三", "四"]
 
     def test_spec224_memory_write_body_too_long_stops_all_side_writes(
             self, monkeypatch):
         from logic import memory_write as mw
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def __init__(self):
                 self.meta = []
                 self.index = []
@@ -1630,17 +1654,17 @@ class TestMemoryWriteProtocol:
         assert receipts[0]["over_by"] == 1
         assert receipts[0]["target_chars"] == 120
         assert receipts[0]["reduce_by"] == 9
-        assert receipts[0]["next_action"] == "compress_body_or_adjust_weight"
+        assert receipts[0]["next_action"] == "use_memory_write_rewrite_guide"
         assert "weight_options" not in receipts[0]
         assert "actual=129, max=128" in receipts[0]["retry_instruction"]
-        assert "调整 weight" in receipts[0]["retry_instruction"]
-        assert "不要只因字数升权" in receipts[0]["retry_instruction"]
+        assert "即时重写指南" in receipts[0]["retry_instruction"]
+        assert "不要直接重试 memory_write" in receipts[0]["retry_instruction"]
         assert memory_store.meta == []
         assert memory_store.index == []
         assert memory_index.stm_keywords == []
         assert memory_heat.entries == []
 
-    def test_spec269_body_too_long_requests_compress_or_adjust_weight(self):
+    def test_spec759_body_too_long_requests_immediate_rewrite_guide(self):
         from logic import memory_write as mw
 
         receipt = mw._receipt(
@@ -1651,14 +1675,14 @@ class TestMemoryWriteProtocol:
 
         assert "recommended_weight" not in receipt
         assert "actual=176, max=128" in receipt["retry_instruction"]
-        assert "调整 weight" in receipt["retry_instruction"]
-        assert "不要只因字数升权" in receipt["retry_instruction"]
+        assert "即时重写指南" in receipt["retry_instruction"]
+        assert "不要直接重试 memory_write" in receipt["retry_instruction"]
         assert "优先升级" not in receipt["retry_instruction"]
 
     def test_apply_memory_write_declaration_writes_entry_and_receipt(self, monkeypatch):
         from logic import memory_write as mw
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def __init__(self):
                 self.written = []
                 self.meta = []
@@ -1735,6 +1759,10 @@ class TestMemoryWriteProtocol:
             "interaction_feelings": ["专注", "宁静"],
             "relationship_feelings": [{"subject": "TzPz", "word": "可靠"}],
             "reason": "",
+            "ltm_layer": "LTM/Summary",
+            "stm_present": True,
+            "stored_at": "",
+            "admission_status": "pending",
         }]
         assert memory_store.written[0][0][0] == "MEM-041000AA"
         assert memory_store.written[0][1]["tags"] == ["善后", "记忆写入", "关键词边界"]
@@ -1747,15 +1775,14 @@ class TestMemoryWriteProtocol:
         assert "annotation" not in memory_store.index[0][1]
         assert memory_store.index[0][1]["dream"] is False
         assert memory_store.index[0][1]["current_overview"] == ""
-        assert memory_index.stm_keywords == [
-            (("MEM-041000AA", ["善后", "记忆写入", "关键词边界"]), {})
-        ]
+        assert memory_store.ltm_entry_state("MEM-041000AA")["meta"]["tags"] == [
+            "善后", "记忆写入", "关键词边界"]
         assert memory_heat.entries[0][0][0] == "MEM-041000AA"
 
     def test_memory_write_rejects_when_presence_unconfirmed(self, monkeypatch):
         from logic import memory_write as mw
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def write_entry(self, *args, **kwargs):
                 raise AssertionError("unconfirmed identity must not write")
 
@@ -1786,7 +1813,7 @@ class TestMemoryWriteProtocol:
     def test_memory_write_fills_unknown_subject_from_confirmed_presence(self, monkeypatch):
         from logic import memory_write as mw
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def __init__(self):
                 self.written = []
                 self.meta = []
@@ -1839,7 +1866,7 @@ class TestMemoryWriteProtocol:
     def test_memory_write_rejects_subject_outside_relation_domain(self, monkeypatch):
         from logic import memory_write as mw
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def write_entry(self, *args, **kwargs):
                 raise AssertionError("unknown relation subject must not write")
 
@@ -1883,7 +1910,7 @@ class TestMemoryAnnotationProtocol:
     def test_apply_memory_annotation_sets_and_clears_annotation(self):
         from logic.memory_annotation import apply_memory_annotation_declarations
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def __init__(self):
                 self.meta = {
                     "MEM-041000AA": {
@@ -1935,7 +1962,7 @@ class TestMemoryAnnotationProtocol:
     def test_apply_memory_annotation_rejects_invalid_refs_and_length(self):
         from logic.memory_annotation import apply_memory_annotation_declarations
 
-        class DummyMemoryStore:
+        class DummyMemoryStore(_TransactionalMemoryStoreFake):
             def __init__(self):
                 self.meta = {
                     "MEM-041000AA": {
@@ -1988,143 +2015,70 @@ class TestMemoryAnnotationProtocol:
 
 
 class TestMemoryRecallCompletionProtocol:
-    def test_memory_recall_tool_metadata_and_gate(self):
+    def test_memory_recall_tool_and_legacy_alias_are_retired(self):
         from logic.protocol_tools import (
             tool_metadata_for,
             normalize_tool_id,
         )
 
-        assert normalize_tool_id("memory_recall_completion_request") == "memory_recall_complete"
-        metadata = tool_metadata_for("memory_recall_completion_request")
-        assert metadata["tool_family"] == "protocol_tool"
-        assert metadata["tool_class"] == "sync_tool"
-        assert metadata["domain"] == "memory"
-        assert metadata["risk"] == "high"
+        assert normalize_tool_id("memory_recall_completion_request") == (
+            "memory_recall_completion_request"
+        )
+        assert tool_metadata_for("memory_recall_completion_request") == {}
 
-    def test_build_recall_completion_evidence_reads_current_overview_and_containers(self):
-        from logic.memory_recall_complete import build_recall_completion_evidence
+    def test_reconsolidation_tracker_uses_creation_coordinate_not_container_notes(self):
+        from logic.memory_reconsolidation import MemoryReconsolidationTracker
 
-        class DummyMemoryStore:
-            def get_meta(self, mem_id):
-                return {
-                    "id": mem_id,
-                    "title": "旧标题",
-                    "linked_containers": ["DC-12"],
-                    "recalled": False,
-                }
-
-            def read_entry(self, mem_id):
-                return "## MEM-041000AA\n**标题**：旧标题\n正文：压缩正文\n注释：旧判断已订正，参见 DC-12"
-
-            def read_index(self):
-                return ["| MEM-041000AA | [A] | 2 | 旧标题 | TzPz | 00041 | 旧判断已订正，参见 DC-12 |"]
-
-        class DummyContainerStore:
-            def read_recent_notes(self, container_id, limit=3):
-                return [f"{container_id}: 订正链笔记"]
-
-        evidence = build_recall_completion_evidence(
-            "MEM-041000AA",
-            {
-                "memory_store": DummyMemoryStore(),
-                "container_store": DummyContainerStore(),
+        tracker = MemoryReconsolidationTracker(49)
+        item = tracker.register({
+            "source": "ltm",
+            "ltm": {"tier": "Abstract"},
+            "body": "**梗概**：旧事实",
+            "meta": {
+                "id": "MEM-041000AA",
+                "title": "旧标题",
+                "weight": 4,
+                "stored_at": "2026-08-01T00:00:00+08:00",
+                "access": "public",
+                "tags": ["旧事实"],
+                "created_instance_id": "meta",
+                "created_round": 41,
             },
+        })
+
+        assert item["created_instance_id"] == "meta"
+        assert item["created_round"] == 41
+        assert "linked_containers" not in item
+
+    def test_reconsolidation_guide_rejects_missing_results(self):
+        from logic.memory_reconsolidation import (
+            MemoryReconsolidationTracker,
+            apply_memory_reconsolidation_guide,
         )
 
-        assert evidence["index_line"].startswith("| MEM-041000AA")
-        assert "annotation" not in evidence
-        assert evidence["current_overview"] == "旧判断已订正，参见 DC-12"
-        assert evidence["linked_containers"] == ["DC-12"]
-        assert evidence["related_container_notes"] == ["DC-12: 订正链笔记"]
-
-    def test_apply_memory_recall_completion_rewrites_body_meta_and_title(self):
-        from logic.memory_recall_complete import apply_memory_recall_completion_requests
-
-        class DummyMemoryStore:
-            def __init__(self):
-                self.meta = {
-                    "id": "MEM-041000AA",
-                    "title": "旧标题",
-                    "linked_containers": ["DC-12"],
-                    "recalled": False,
-                }
-                self.writes = []
-
-            def get_meta(self, mem_id):
-                return dict(self.meta)
-
-            def set_meta(self, mem_id, entry):
-                self.meta = dict(entry)
-
-            def read_entry(self, mem_id):
-                return "## MEM-041000AA\n**标题**：旧标题\n正文：压缩正文\n注释：旧判断已订正，参见 DC-12"
-
-            def read_index(self):
-                return ["| MEM-041000AA | [A] | 2 | 旧标题 | TzPz | 00041 | 旧判断已订正，参见 DC-12 |"]
-
-            def update_entry_title_and_body(self, mem_id, title, body):
-                self.writes.append((mem_id, title, body))
-
-        store = DummyMemoryStore()
-        receipts = apply_memory_recall_completion_requests(
-            [{
-                "mem_id": "MEM-041000AA",
-                "completed_body": "基于证据包重写后的完整正文",
-                "reason": "压缩正文不足以支撑判断",
-            }],
-            {"memory_store": store},
-            round_num=49,
+        tracker = MemoryReconsolidationTracker(49)
+        receipt = apply_memory_reconsolidation_guide(
+            {
+                "guide_id": tracker.guide_id,
+                "item_id": "memory_reconsolidation_due",
+                "option_id": "submit_memory_reconsolidations",
+                "fields": {},
+            },
+            {"memory_reconsolidation_tracker": tracker},
         )
 
-        assert receipts[0]["status"] == "applied"
-        assert store.meta["recalled"] is True
-        assert store.meta["last_recalled_round"] == 49
-        assert store.meta["title"] == "旧标题[召回补全内容]"
-        assert store.writes == [(
-            "MEM-041000AA",
-            "旧标题[召回补全内容]",
-            "基于证据包重写后的完整正文",
-        )]
+        assert receipt["status"] == "rejected"
+        assert receipt["reason"] == "memory_reconsolidation_context_unavailable"
 
-        receipts = apply_memory_recall_completion_requests(
-            [{
-                "mem_id": "MEM-041000AA",
-                "completed_body": "第二次补全文本",
-            }],
-            {"memory_store": store},
-            round_num=50,
-        )
+    def test_reconsolidation_title_marker_is_idempotent(self):
+        from logic.memory_reconsolidation import MemoryReconsolidationProcessor
 
-        assert receipts[0]["status"] == "applied"
-        assert store.meta["title"] == "旧标题[召回补全内容]"
-
-    def test_apply_memory_recall_completion_fails_without_body_or_evidence(self):
-        from logic.memory_recall_complete import apply_memory_recall_completion_requests
-
-        class DummyMemoryStore:
-            def __init__(self):
-                self.meta = {"id": "MEM-041000AA", "title": "旧标题", "linked_containers": []}
-                self.writes = []
-
-            def get_meta(self, mem_id):
-                return dict(self.meta)
-
-            def read_entry(self, mem_id):
-                return ""
-
-            def read_index(self):
-                return []
-
-            def update_entry_title_and_body(self, mem_id, title, body):
-                self.writes.append((mem_id, title, body))
-
-        store = DummyMemoryStore()
-        receipts = apply_memory_recall_completion_requests(
-            [{"mem_id": "MEM-041000AA", "completed_body": ""}],
-            {"memory_store": store},
-            round_num=49,
-        )
-
-        assert receipts[0]["status"] == "error"
-        assert receipts[0]["reason"] == "missing_completed_body"
-        assert store.writes == []
+        assert MemoryReconsolidationProcessor._completed_title({
+            "title": "旧标题"
+        }) == "旧标题[回忆重整]"
+        assert MemoryReconsolidationProcessor._completed_title({
+            "title": "旧标题[回忆重整]"
+        }) == "旧标题[回忆重整]"
+        assert MemoryReconsolidationProcessor._completed_title({
+            "title": "旧标题[召回补全内容]"
+        }) == "旧标题[召回补全内容]"

@@ -38,6 +38,7 @@ backup/
 # 本地临时审计与 understand-anything 图谱产物
 .tmp/
 .understand-anything/
+debug.log
 
 # Superpowers/brainstorming 本地草稿缓存
 .superpowers/
@@ -47,3 +48,8 @@ backup/
 
 # onboarding 沙箱本机护栏
 .upsp-onboarding-sandbox
+
+# LoCoMo benchmark upstream cache, private working roots and run evidence
+benchmarks/locomo/.cache/
+benchmarks/locomo/runs/
+.locomo-runtime/

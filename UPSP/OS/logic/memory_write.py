@@ -1,6 +1,11 @@
 """反应步 memory_write 协议工具落盘管线。"""
 import re
 
+from data.memory_store import (
+    MEMORY_MUTATION_LOCK,
+    _body_limit_for_weight,
+    memory_target_tier,
+)
 from logic.feeling_lookup import FeelingWordTable
 from logic.mem_id import generate_mem_id, make_meta_template
 
@@ -191,7 +196,7 @@ def _normalize_feelings(declaration, relation_store):
 
 
 def _receipt(status, declaration, mem_id=None, keywords=None, reason="",
-             subject_context=None):
+             subject_context=None, lifecycle=None):
     receipt = {
         "tool_id": "memory_write",
         "tool_family": "protocol_tool",
@@ -209,6 +214,8 @@ def _receipt(status, declaration, mem_id=None, keywords=None, reason="",
         receipt.update(subject_context or {})
     if str(reason or "").startswith("memory_body_too_long:"):
         receipt.update(_body_too_long_feedback(reason))
+    if isinstance(lifecycle, dict):
+        receipt.update(lifecycle)
     interaction_feelings = declaration.get("interaction_feelings") or []
     relationship_feelings = declaration.get("relationship_feelings") or []
     feeling_rejections = declaration.get("feeling_rejections") or []
@@ -225,11 +232,11 @@ def _body_too_long_feedback(reason):
     match = re.search(r"max=(\d+);actual=(\d+)", str(reason or ""))
     if not match:
         return {
-            "next_action": "compress_body_or_adjust_weight",
+            "next_action": "use_memory_write_rewrite_guide",
             "retry_instruction": (
                 "memory_write.body 超出当前权重上限。"
-                "请压缩正文或调整 weight 后重新调用 memory_write。"
-                "不要只因字数升权。"
+                "Runtime 将在下一 Reaction Frame 提供即时重写指南；"
+                "其他字段已经冻结，不要直接重试 memory_write。"
             ),
         }
     max_chars = int(match.group(1))
@@ -243,12 +250,12 @@ def _body_too_long_feedback(reason):
         "over_by": over_by,
         "target_chars": target_chars,
         "reduce_by": reduce_by,
-        "next_action": "compress_body_or_adjust_weight",
+        "next_action": "use_memory_write_rewrite_guide",
         "retry_instruction": (
             "memory_write.body 超出当前权重上限："
             f"actual={actual_chars}, max={max_chars}。"
-            "请压缩正文或调整 weight 后重新调用 memory_write。"
-            "不要只因字数升权。"
+            "Runtime 将在下一 Reaction Frame 提供即时重写指南；"
+            "其他字段已经冻结，不要直接重试 memory_write。"
         ),
     }
     return result
@@ -261,9 +268,7 @@ def apply_memory_write_declarations(declarations, state, round_num, data_modules
         return receipts
 
     memory_store = data_modules["memory_store"]
-    memory_index = data_modules["memory_index"]
     memory_heat = data_modules["memory_heat"]
-    container_store = data_modules.get("container_store")
     relation_store = data_modules.get("relation_store")
 
     for declaration in declarations:
@@ -316,10 +321,27 @@ def apply_memory_write_declarations(declarations, state, round_num, data_modules
         if "dream" in declaration:
             receipts.append(_receipt("error", normalized, keywords=keywords, reason="unsupported_field_dream"))
             continue
+        body_limit = _body_limit_for_weight(weight)
+        if len(body.strip()) > body_limit:
+            receipts.append(_receipt(
+                "error", normalized, keywords=keywords,
+                reason=(
+                    f"memory_body_too_long:max={body_limit};"
+                    f"actual={len(body.strip())}"
+                ),
+            ))
+            continue
 
         try:
             mem_id = generate_mem_id()
-            memory_store.write_entry(
+            meta = make_meta_template(mem_id, title=title, weight=weight,
+                                      subject=subject)
+            meta["tags"] = keywords
+            meta["created_round"] = round_num
+            meta["last_recalled_round"] = round_num
+            meta["linked_containers"] = linked
+            meta["stored_at"] = ""
+            body_block = memory_store.render_entry(
                 mem_id,
                 title,
                 summary=body,
@@ -332,33 +354,63 @@ def apply_memory_write_declarations(declarations, state, round_num, data_modules
                 round_num=round_num,
                 dream=False,
                 current_overview="",
-            )
-
-            meta = make_meta_template(mem_id, title=title, weight=weight,
-                                      subject=subject)
-            meta["tags"] = keywords
-            meta["created_round"] = round_num
-            meta["last_recalled_round"] = round_num
-            meta["linked_containers"] = linked
-            memory_store.set_meta(mem_id, meta)
-            memory_store.append_index(
-                mem_id, meta.get("type", "memory"), weight, title,
-                subject=subject, round_num=round_num,
-                dream=False, current_overview="")
-            memory_heat.set_entry(mem_id, memory_heat.new_entry(weight=weight))
-            if keywords:
-                memory_index.add_stm_keywords(mem_id, keywords)
-
-            for container_id in linked:
-                if container_store is None:
-                    continue
+                created_at=meta["created_at"],
+                stored_at="",
+            ).strip()
+            tier = memory_target_tier(weight)
+            fault_hook = data_modules.get("memory_write_fault_hook")
+            with MEMORY_MUTATION_LOCK:
+                stm_snapshot = memory_store.snapshot_stm_files()
+                ltm_snapshot = memory_store.snapshot_ltm_files()
                 try:
-                    container_store.append_entry(container_id, mem_id, title,
-                                                 file_name="open.md")
-                except Exception:
-                    pass
+                    memory_store.store_ltm_entry(tier, mem_id, body_block, meta)
+                    if callable(fault_hook):
+                        fault_hook("after_ltm")
+                    memory_store.replace_stm_body(mem_id, body_block)
+                    if callable(fault_hook):
+                        fault_hook("after_stm_body")
+                    memory_store.replace_stm_meta(mem_id, meta)
+                    memory_store.rebuild_stm_index()
+                    memory_store.rebuild_stm_keywords()
+                    if callable(fault_hook):
+                        fault_hook("after_stm_projections")
+                    heat_entry = memory_heat.new_entry(weight=weight)
+                    memory_heat.set_entry(mem_id, heat_entry)
+                    if callable(fault_hook):
+                        fault_hook("after_heat")
+                    ltm = memory_store.ltm_entry_state(
+                        mem_id, include_backup=False)
+                    stm = memory_store.stm_entry_state(mem_id)
+                    if (
+                        not ltm or ltm.get("tier") != tier
+                        or ltm.get("meta", {}).get("stored_at") != ""
+                        or stm.get("body") != body_block
+                        or stm.get("meta", {}).get("stored_at") != ""
+                        or stm.get("heat") != heat_entry
+                    ):
+                        raise ValueError("memory_write_transaction_unverified")
+                    if callable(fault_hook):
+                        fault_hook("after_verify")
+                except Exception as exc:
+                    try:
+                        memory_store.restore_stm_files(stm_snapshot)
+                        memory_store.restore_ltm_files(ltm_snapshot)
+                    except Exception as restore_exc:
+                        raise RuntimeError(
+                            "memory_write_rollback_failed:"
+                            f"{type(restore_exc).__name__}"
+                        ) from exc
+                    raise
 
-            receipts.append(_receipt("applied", normalized, mem_id=mem_id, keywords=keywords))
+            receipts.append(_receipt(
+                "applied", normalized, mem_id=mem_id, keywords=keywords,
+                lifecycle={
+                    "ltm_layer": f"LTM/{tier}",
+                    "stm_present": True,
+                    "stored_at": "",
+                    "admission_status": "pending",
+                },
+            ))
         except Exception as exc:
             receipts.append(_receipt("error", normalized, keywords=keywords, reason=str(exc)))
 

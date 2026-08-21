@@ -21,6 +21,7 @@ READ_SETTLEMENT_STATUSES = {
 }
 CLOSEOUT_DECISIONS = {"finish", "continue", "blocked"}
 PENDING_STATUSES = {"none", "resolved", "deferred", "blocked"}
+TERMINAL_BLOCKED_OBLIGATION_TYPES = {"periodic_memory_mount_blocked"}
 
 
 def _text(value):
@@ -85,15 +86,34 @@ def _make_obligation(
 class ReactionObligationTracker:
     """Tracks Spec202 obligations within one reaction loop only."""
 
-    def __init__(self):
+    def __init__(self, memory_reconsolidation_tracker=None,
+                 memory_write_rewrite_tracker=None, context_store=None):
         self.pending = []
+        self.memory_reconsolidation_tracker = memory_reconsolidation_tracker
+        self.memory_write_rewrite_tracker = memory_write_rewrite_tracker
+        self.context_store = context_store
         self.memory_write_seen = False
         self.applied_memory_ids = []
         self.unfinished_file_reads = []
         self.blocked_finalize_events = []
 
     def pending_types(self):
-        return [item["obligation_type"] for item in self.pending]
+        result = [item["obligation_type"] for item in self.pending]
+        if self._cache_compaction_pending():
+            result.append("cache_compaction_pending")
+        if self._reconsolidation_pending():
+            result.append("memory_reconsolidation_pending")
+        if self._memory_write_rewrite_pending():
+            result.append("memory_write_rewrite_pending")
+        return result
+
+    def add_periodic_mount_blocked(self, mem_id, reason=""):
+        self._add_obligation(_make_obligation(
+            "periodic_memory_mount_blocked",
+            [mem_id],
+            reason=reason,
+            skippable=False,
+        ))
 
     def observe_receipts(self, receipts):
         for receipt in receipts or []:
@@ -119,6 +139,8 @@ class ReactionObligationTracker:
                 self._observe_memory_link_update(receipt)
             elif tool_id == "relation_card_write":
                 self._close_type("relation_card_pending")
+            elif tool_id == "guide_submit":
+                self._observe_guide_submit(receipt)
 
     def observe_general_tool_results(self, results):
         for result in results or []:
@@ -159,6 +181,19 @@ class ReactionObligationTracker:
         form = closeout_form if isinstance(closeout_form, dict) else {}
         reasons = []
         corrections = []
+        effective_pending = self._effective_pending()
+        terminal_blocked_pending = [
+            item for item in effective_pending
+            if item.get("obligation_type") in TERMINAL_BLOCKED_OBLIGATION_TYPES
+        ]
+        actionable_unskippable = [
+            item for item in effective_pending
+            if (
+                not item.get("skippable", True)
+                and item.get("obligation_type")
+                not in TERMINAL_BLOCKED_OBLIGATION_TYPES
+            )
+        ]
 
         decision = _text(form.get("closeout_decision")).lower()
         handoff_text = _text(form.get("handoff_text"))
@@ -178,7 +213,17 @@ class ReactionObligationTracker:
             reasons.append(f"read_status_invalid:{read_status_model}")
         if pending_status_model and pending_status_model not in PENDING_STATUSES:
             reasons.append(f"pending_status_invalid:{pending_status_model}")
-        if decision == "continue" and not handoff_text:
+        runtime_terminal_blocked = bool(
+            terminal_blocked_pending and not actionable_unskippable
+        )
+        if runtime_terminal_blocked:
+            if decision != "blocked":
+                corrections.append(
+                    f"closeout_decision_corrected:{decision or '<missing>'}->blocked"
+                )
+            decision = "blocked"
+            handoff_text = ""
+        elif decision == "continue" and not handoff_text:
             reasons.append("closeout_continue_requires_handoff_text")
 
         memory_refs = list(self.applied_memory_ids)
@@ -211,16 +256,14 @@ class ReactionObligationTracker:
         else:
             read_status = "not_applicable"
 
-        unskippable_pending = [
-            item for item in self.pending
-            if not item.get("skippable", True)
-        ]
-        if unskippable_pending:
+        if actionable_unskippable:
             pending_resolution_result = "blocked"
-            for obligation in unskippable_pending:
+            for obligation in actionable_unskippable:
                 refs = ",".join(obligation.get("target_refs") or [])
                 reasons.append(f"{obligation['obligation_type']}_unresolved:{refs}")
-        elif self.pending:
+        elif terminal_blocked_pending:
+            pending_resolution_result = "blocked"
+        elif effective_pending:
             pending_resolution_result = "open"
         else:
             pending_resolution_result = "clear"
@@ -248,7 +291,7 @@ class ReactionObligationTracker:
             "model_pending_status": pending_status_model,
             "pending_status": pending_status,
             "pending_reason": "",
-            "pending_obligations": deepcopy(self.pending),
+            "pending_obligations": deepcopy(effective_pending),
             "pending_resolution_result": pending_resolution_result,
             "relay_receipt": relay_receipt,
             "corrections": corrections,
@@ -266,6 +309,13 @@ class ReactionObligationTracker:
             return ""
         has_unskippable = any(
             not obligation.get("skippable", True)
+            and obligation.get("obligation_type")
+            not in TERMINAL_BLOCKED_OBLIGATION_TYPES
+            for obligation in self.pending
+        )
+        has_terminal_blocked = any(
+            obligation.get("obligation_type")
+            in TERMINAL_BLOCKED_OBLIGATION_TYPES
             for obligation in self.pending
         )
         memory_route_count = sum(
@@ -279,15 +329,26 @@ class ReactionObligationTracker:
             lines.append(
                 "本轮还有必须收束的记忆/容器引导；请处理不可跳过项后再结束反应步。"
             )
+        elif has_terminal_blocked:
+            lines.append(
+                "本轮存在只能由用户侧解除的 Runtime 阻塞；无需重试，"
+                "请直接说明阻塞，Runtime 将按 blocked 闭合本轮。"
+            )
+        elif memory_route_count:
+            lines.append(
+                "本轮还有可延期的记忆路由引导；必须分别检查 DC、EC、PRJ、FUT。"
+                "只有逐项确认均不满足永固触发条件，才可自然语言回复；"
+                "Runtime 会把未处理项记为 deferred/open。"
+            )
         else:
             lines.append(
-                "本轮还有可延期的记忆/容器引导；可以处理，也可以直接自然语言回复用户，"
+                "本轮还有可延期的记忆/容器引导；请逐项按下方说明核验，"
                 "Runtime 会把未处理项记为 deferred/open。"
             )
         if memory_route_count >= MEMORY_ROUTE_SOFT_PROMPT_LIMIT:
             lines.append(
                 f"同轮已有 {memory_route_count} 条未路由记忆：停止新增 memory_write；"
-                "优先只处理已有 pending，或直接自然语言回复收束。"
+                "优先只处理已有 pending；分别检查四类触发条件，均不满足时才自然语言回复收束。"
             )
         for obligation in self.pending:
             refs = "、".join(obligation.get("target_refs") or [])
@@ -315,6 +376,11 @@ class ReactionObligationTracker:
                 line += "。"
             elif otype == "relation_card_pending":
                 line = "- 当前交互对象在关系域里不存在：若需要记住对方，请创建新的关系卡；若不需要，请说明理由。"
+            elif otype == "periodic_memory_mount_blocked":
+                line = (
+                    f"- 记忆 {refs} 已完成回忆重整，但自动定期挂载失败；"
+                    "本轮按可审计阻塞收束，等待用户取消请求或调整容量后重试。"
+                )
             else:
                 continue
             lines.append(line)
@@ -325,14 +391,22 @@ class ReactionObligationTracker:
             "memory_write_seen": self.memory_write_seen,
             "applied_memory_ids": list(self.applied_memory_ids),
             "unfinished_file_reads": deepcopy(self.unfinished_file_reads),
-            "pending_obligations": deepcopy(self.pending),
+            "pending_obligations": deepcopy(self._effective_pending()),
+            "memory_reconsolidation": (
+                self.memory_reconsolidation_tracker.audit_state()
+                if self.memory_reconsolidation_tracker is not None else {}
+            ),
+            "memory_write_rewrite": (
+                self.memory_write_rewrite_tracker.audit_state()
+                if self.memory_write_rewrite_tracker is not None else {}
+            ),
             "blocked_finalize_events": deepcopy(self.blocked_finalize_events),
         }
 
     def record_blocked_finalize(self, validation):
         event = {
             "reasons": list((validation or {}).get("reasons") or []),
-            "pending_obligations": deepcopy(self.pending),
+            "pending_obligations": deepcopy(self._effective_pending()),
         }
         self.blocked_finalize_events.append(event)
         return event
@@ -355,6 +429,78 @@ class ReactionObligationTracker:
             [mem_id],
             reason="memory_write applied; decide DC/EC/PRJ route",
         ))
+
+    def _observe_reconsolidation(self, receipt):
+        if _text(receipt.get("action")) != "memory_reconsolidation_settled":
+            return
+        for backend in receipt.get("backend_receipts") or []:
+            if not isinstance(backend, dict):
+                continue
+            if _text(backend.get("periodic_mount_outcome")) != "mount_blocked":
+                continue
+            self.add_periodic_mount_blocked(
+                _text(backend.get("mem_id")),
+                _text(backend.get("periodic_mount_reason")),
+            )
+
+    def _observe_guide_submit(self, receipt):
+        self._observe_reconsolidation(receipt)
+        if _text(receipt.get("action")) != "memory_write_rewrites_settled":
+            return
+        for backend in receipt.get("backend_receipts") or []:
+            if not isinstance(backend, dict):
+                continue
+            if _tool_id(backend) == "memory_write" and _status(backend) == "applied":
+                self._observe_memory_write(backend)
+
+    def _reconsolidation_pending(self):
+        tracker = self.memory_reconsolidation_tracker
+        return bool(
+            tracker is not None
+            and callable(getattr(tracker, "has_pending", None))
+            and tracker.has_pending()
+        )
+
+    def _memory_write_rewrite_pending(self):
+        tracker = self.memory_write_rewrite_tracker
+        return bool(
+            tracker is not None
+            and callable(getattr(tracker, "has_pending", None))
+            and tracker.has_pending()
+        )
+
+    def _effective_pending(self):
+        result = deepcopy(self.pending)
+        if self._cache_compaction_pending():
+            debt = self.context_store.load_cache_compaction_debt()
+            result.append(_make_obligation(
+                "cache_compaction_pending",
+                [str(debt.get("compaction_id") or "")],
+                reason="lately pressure requires progressive semantic compaction",
+                skippable=False,
+            ))
+        if self._reconsolidation_pending():
+            result.append(_make_obligation(
+                "memory_reconsolidation_pending",
+                self.memory_reconsolidation_tracker.pending_ids(),
+                reason="real recall requires semantic reconsolidation",
+                skippable=False,
+            ))
+        if self._memory_write_rewrite_pending():
+            result.append(_make_obligation(
+                "memory_write_rewrite_pending",
+                self.memory_write_rewrite_tracker.pending_ids(),
+                reason="oversized memory body requires rewrite or not_written",
+                skippable=False,
+            ))
+        return result
+
+    def _cache_compaction_pending(self):
+        loader = getattr(self.context_store, "load_cache_compaction_debt", None)
+        if not callable(loader):
+            return False
+        debt = loader()
+        return bool(debt.get("schema_version") == "cache_compaction_debt.v3")
 
     def _observe_container_focus(self, receipt):
         action = _text(receipt.get("action")).lower()
@@ -450,7 +596,7 @@ class ReactionObligationTracker:
             "若有预测性判断，写入 FUT 启动二段跳。"
             "需要挂接时用 memory_container_create 挂接创建；"
             "已有合适容器时先 container_focus.open，下一迭代看到焦点投影后用 memory_container_write 挂接写入；"
-            "无合适容器或不值得本轮挂接时，可以直接自然语言回复收束，"
+            "分别检查 DC、EC、PRJ、FUT 后，只有确实均不满足永固触发条件才可自然语言回复收束；"
             "Runtime 会把该项记为 deferred/open。"
         )
 

@@ -29,8 +29,9 @@ INTERACTION_ANCHOR_SOURCES = frozenset({
     "self_declaration", "relation_card_created",
 })
 
-# 全局文件锁
-_LOCK = threading.Lock()
+# 生产 Runtime 共享同一个 StateStore；可重入锁把跨线程的
+# load -> mutation -> save 包成一个临界区，并允许 mutate 内调用 save。
+_LOCK = threading.RLock()
 
 
 class StateStore:
@@ -164,6 +165,50 @@ class StateStore:
                         pass
                 raise
 
+    def migrate_memory_compression_flags(self):
+        """Replace the two retired pending flags with the shared-ledger flag."""
+        if not os.path.isfile(self.path):
+            raise ReadError(self.path, message=f"状态真源不存在: {self.path}")
+        try:
+            with open(self.path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (json.JSONDecodeError, OSError) as exc:
+            raise ReadError(self.path, cause=exc)
+        try:
+            flags = data["base"]["heartbeat_flags"]
+        except (KeyError, TypeError) as exc:
+            raise ReadError(self.path, cause=exc)
+        if not isinstance(flags, dict):
+            raise ReadError(self.path, cause=ValueError("heartbeat_flags invalid"))
+        changed = False
+        for retired in (
+                "stm_degrade_pending", "evolution_pending",
+                "cache_compaction_due"):
+            if retired in flags:
+                if not isinstance(flags[retired], bool):
+                    raise ReadError(
+                        self.path,
+                        cause=ValueError(f"retired flag invalid: {retired}"),
+                    )
+                del flags[retired]
+                changed = True
+        if "memory_compression_due" not in flags:
+            flags["memory_compression_due"] = False
+            changed = True
+        if changed:
+            self.save(data)
+        else:
+            self._validate(data)
+        return {"status": "migrated" if changed else "noop", "changed": changed}
+
+    def mutate(self, updater):
+        """在一个临界区内读取、修改并保存完整状态。"""
+        with _LOCK:
+            data = self.load()
+            updater(data)
+            self.save(data)
+            return deepcopy(data)
+
     def set(self, dotpath, value):
         """按点号路径写入单个字段（白名单校验）"""
         if dotpath not in FIELDS:
@@ -172,23 +217,7 @@ class StateStore:
 
     def _set_internal(self, dotpath, value):
         """内部写入 escape hatch：仅 engines/ 层必要时使用，不走白名单校验"""
-        data = self.load()
-        keys = dotpath.split(".")
-        cur = data
-        for k in keys[:-1]:
-            if k not in cur or not isinstance(cur[k], dict):
-                cur[k] = {}
-            cur = cur[k]
-        cur[keys[-1]] = value
-        self.save(data)
-
-    def update_many(self, updates):
-        """批量更新多个字段（一次读写，字段白名单校验）"""
-        for dotpath in updates:
-            if dotpath not in FIELDS:
-                raise ValueError(f"未知 state 字段: {dotpath}")
-        data = self.load()
-        for dotpath, value in updates.items():
+        def apply(data):
             keys = dotpath.split(".")
             cur = data
             for k in keys[:-1]:
@@ -196,7 +225,26 @@ class StateStore:
                     cur[k] = {}
                 cur = cur[k]
             cur[keys[-1]] = value
-        self.save(data)
+
+        self.mutate(apply)
+
+    def update_many(self, updates):
+        """批量更新多个字段（一次读写，字段白名单校验）"""
+        for dotpath in updates:
+            if dotpath not in FIELDS:
+                raise ValueError(f"未知 state 字段: {dotpath}")
+
+        def apply(data):
+            for dotpath, value in updates.items():
+                keys = dotpath.split(".")
+                cur = data
+                for k in keys[:-1]:
+                    if k not in cur or not isinstance(cur[k], dict):
+                        cur[k] = {}
+                    cur = cur[k]
+                cur[keys[-1]] = value
+
+        self.mutate(apply)
 
     # ==============================================================
     # 便捷方法
@@ -224,15 +272,15 @@ class StateStore:
         return self.get("base.meta.total_round", 0)
 
     def increment_round(self):
-        from datetime import datetime
         now = local_now().isoformat()
-        data = self.load()
-        meta = data["base"]["meta"]
-        meta["total_round"] = meta.get("total_round", 0) + 1
-        meta["daily_round"] = meta.get("daily_round", 0) + 1
-        meta["last_update"] = now
-        self.save(data)
-        return meta["total_round"]
+
+        def apply(data):
+            meta = data["base"]["meta"]
+            meta["total_round"] = meta.get("total_round", 0) + 1
+            meta["daily_round"] = meta.get("daily_round", 0) + 1
+            meta["last_update"] = now
+
+        return self.mutate(apply)["base"]["meta"]["total_round"]
 
     def init_if_missing(self):
         """显式测试辅助；正式活动 state 只能由 PersonaInitializer 创建。"""
@@ -253,13 +301,15 @@ class StateStore:
     def update_token_usage(self, current_tokens, window_size, usage_ratio,
                            input_tokens, output_tokens):
         """更新 token 用量（engines/executor 调用）"""
-        self.update_many({
+        updates = {
             "base.token_usage.current_tokens": current_tokens,
             "base.token_usage.window_size": window_size,
             "base.token_usage.usage_ratio": usage_ratio,
             "base.token_usage.last_round_input": input_tokens,
-            "base.token_usage.last_round_output": output_tokens,
-        })
+        }
+        if output_tokens is not None:
+            updates["base.token_usage.last_round_output"] = output_tokens
+        self.update_many(updates)
 
     def confirm_identity(self):
         """标记身份已确认"""

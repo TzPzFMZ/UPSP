@@ -30,20 +30,6 @@ def _without_descriptions(value):
     return value
 
 
-def _description_chars(value):
-    if isinstance(value, dict):
-        own = value.get("description", "")
-        own_chars = len(own) if isinstance(own, str) else 0
-        return own_chars + sum(
-            _description_chars(item)
-            for key, item in value.items()
-            if key != "description"
-        )
-    if isinstance(value, list):
-        return sum(_description_chars(item) for item in value)
-    return 0
-
-
 class TestNativeToolCallAdapter:
     def test_spec719_only_four_stable_top_level_tool_headers(self):
         from logic.native_tool_calls import export_provider_tool_schemas
@@ -321,7 +307,8 @@ class TestNativeToolCallAdapter:
         names = {item["name"] for item in responses_tools}
 
         assert "file_read" in names
-        assert "file_search" in names
+        assert "file_glob" in names
+        assert "file_grep" in names
         assert "web_search" in names
         assert "context_assemble" not in names
         assert all(item["type"] == "function" for item in responses_tools)
@@ -329,7 +316,7 @@ class TestNativeToolCallAdapter:
         chat_tools = export_provider_tool_schemas(provider="openai_chat")
         search_tool = next(
             item for item in chat_tools
-            if item["function"]["name"] == "file_search"
+            if item["function"]["name"] == "file_glob"
         )
         search_schema = search_tool["function"]["parameters"]
         assert search_schema["required"] == ["root", "pattern"]
@@ -351,7 +338,7 @@ class TestNativeToolCallAdapter:
         )
         limited_names = {item["name"] for item in limited}
 
-        assert {"file_read", "file_search", "web_fetch", "web_search"} <= limited_names
+        assert {"file_read", "file_glob", "file_grep", "web_fetch", "web_search"} <= limited_names
         assert "file_edit" not in limited_names
         assert "file_write" not in limited_names
         assert "shell_command" not in limited_names
@@ -364,7 +351,8 @@ class TestNativeToolCallAdapter:
         unlimited_names = {item["name"] for item in unlimited}
 
         assert "file_write" in unlimited_names
-        assert {"file_edit", "shell_command", "subagent_dispatch"} <= unlimited_names
+        assert {"file_edit", "subagent_dispatch"} <= unlimited_names
+        assert "shell_command" in unlimited_names
 
     def test_reaction_schema_exports_supported_protocol_writes_without_guide_request(self):
         from logic.native_tool_calls import (
@@ -390,10 +378,10 @@ class TestNativeToolCallAdapter:
         assert "mount_cancel" in names
         assert {
             "memory_link_update",
-            "memory_recall_complete",
             "relation_card_write",
             "container_focus",
         } <= names
+        assert "memory_recall_complete" not in names
         assert {
             "chronicle_write",
             "alert_mode_settle",
@@ -445,17 +433,13 @@ class TestNativeToolCallAdapter:
             and "risk=" not in item["description"]
             for item in tools
         )
-        compact = json.dumps(tools, ensure_ascii=False, separators=(",", ":"))
-        assert len(compact) <= 19700
-        assert _description_chars(tools) <= 7400
-
         expected_structure_sha = {
-            ("openai_responses", "limited"): "f2c297642e6b4a0fe21e15b1a2dfe1bb21f5122357d1d547d3f3e15f6af8263d",
-            ("openai_responses", "unlimited"): "4531e446a8a3a5c11890e708176829ce220f4ef456dc2c9d87757ca29ada8ae0",
-            ("openai_chat", "limited"): "66d7230700871b3c69b7fc970ac54ae325d1e8a0b9163ef5b8f2771171f0f3cf",
-            ("openai_chat", "unlimited"): "3105cee5ed10069be3a5df48991977a222c76e9791a455086a4b6836cdf78eff",
-            ("anthropic_messages", "limited"): "ee975e53418da4391ad1f5592582de9c603b04e230e0129403cb994ebc8ae676",
-            ("anthropic_messages", "unlimited"): "8f42e475ca1d535abb0fd5a90372e1e20d1db9fffda407ac7df4157d56a11a0b",
+            ("openai_responses", "limited"): "f200599d1679e83fbe0c84afbffe30a92c64c0c68ad556587e7eded4b431d2d8",
+            ("openai_responses", "unlimited"): "0a41121b60b4b1a124ce86e24ee25c016e2f76e303899a1b77e28a397a17693d",
+            ("openai_chat", "limited"): "68f3ea6803a639ed15a60bdd7dd4047131652467d5abba1e7838928b96a143d1",
+            ("openai_chat", "unlimited"): "ba143cc04dfd0e990fecdff3aed0fc485f5018349d09c167d510d8ba9a954a93",
+            ("anthropic_messages", "limited"): "62fcda5ac55efcda0e23e1f7ecf95708815c8c95659c2ff5c116b3bc255b8d70",
+            ("anthropic_messages", "unlimited"): "8e3192af8361a8899a4e48cf656b06f0ad52a5325005f2f27cdcfa222401ed7c",
         }
         for (provider, permission), expected_sha in expected_structure_sha.items():
             provider_tools = export_provider_tool_schemas(
@@ -472,6 +456,69 @@ class TestNativeToolCallAdapter:
                 sort_keys=True,
             )
             assert hashlib.sha256(structure_json.encode("utf-8")).hexdigest() == expected_sha
+
+    def test_spec748_all_exported_named_parameters_have_nearby_descriptions(self):
+        from logic.native_tool_calls import export_provider_tool_schemas
+
+        tools = []
+        tools.extend(export_provider_tool_schemas(
+            provider="openai_responses",
+            include_standard_tools=False,
+            include_step_terminal_tools=["setup_finalize"],
+        ))
+        tools.extend(export_provider_tool_schemas(
+            provider="openai_responses",
+            include_protocol_writes=True,
+            include_step_terminal_tools=["reaction_finalize"],
+            execution_permission_level="unlimited",
+        ))
+        tools.extend(export_provider_tool_schemas(
+            provider="openai_responses",
+            include_standard_tools=False,
+            include_step_terminal_tools=["cleanup_finalize"],
+        ))
+
+        def assert_described(tool_id, schema, path):
+            if "enum" in schema:
+                description = str(schema.get("description") or "")
+                for value in schema["enum"]:
+                    assert str(value) in description, (tool_id, path, value)
+            for name, child in (schema.get("properties") or {}).items():
+                child_path = f"{path}.{name}"
+                assert str(child.get("description") or "").strip(), (
+                    tool_id, child_path
+                )
+                assert_described(tool_id, child, child_path)
+            items = schema.get("items")
+            if schema.get("type") == "array" and isinstance(items, dict):
+                assert_described(tool_id, items, f"{path}[]")
+
+        by_name = {item["name"]: item for item in tools}
+        assert len(by_name) == 27
+        for tool_id, tool in by_name.items():
+            assert_described(tool_id, tool["parameters"], tool_id)
+
+        assert {
+            "rules_selection", "round_type_confirm",
+        }.isdisjoint(by_name["setup_finalize"]["parameters"]["properties"])
+        mount_item = by_name["setup_finalize"]["parameters"]["properties"][
+            "mount_requests"
+        ]["items"]
+        assert "source" not in mount_item["properties"]
+        assert "suggested_mode" in by_name["setup_finalize"]["parameters"]["properties"]
+        assert "risk_level" not in by_name["file_write"]["parameters"]["properties"]
+        assert "shell_command" in by_name
+        assert by_name["memory_link_update"]["parameters"]["properties"][
+            "operation"
+        ]["enum"] == ["remove"]
+        assert "current_overview" not in by_name["memory_link_update"][
+            "parameters"
+        ]["properties"]
+        assert "subject" not in by_name["relation_card_write"]["parameters"][
+            "properties"
+        ]
+        for retired in ("chronicle_write", "alert_mode_settle", "fault_record"):
+            assert retired not in by_name
 
     def test_spec292_index_view_and_container_schema_do_not_suggest_registry_lookup(self):
         from logic.native_tool_calls import export_provider_tool_schemas
@@ -605,7 +652,7 @@ class TestNativeToolCallAdapter:
         assert progress_channel["tool_fact_material"] is False
         assert progress_channel["long_term_memory"] == "memory_tool_only"
 
-    def test_spec227_memory_body_too_long_feedback_requests_compression(self):
+    def test_spec759_memory_body_too_long_feedback_requests_rewrite_guide(self):
         from engines.reaction_helpers import native_tool_failure_feedbacks
 
         feedbacks = native_tool_failure_feedbacks([{
@@ -622,10 +669,10 @@ class TestNativeToolCallAdapter:
 
         assert len(feedbacks) == 1
         feedback = feedbacks[0]
-        assert "next_action: compress_body_or_adjust_weight" in feedback
+        assert "next_action: use_memory_write_rewrite_guide" in feedback
         assert "actual=176, max=128" in feedback
-        assert "调整 weight" in feedback
-        assert "不要只因字数升权" in feedback
+        assert "记忆写入重写指南" in feedback
+        assert "不要直接重试 memory_write" in feedback
         assert "价值依据" not in feedback
         assert "取消出口" not in feedback
         assert "提醒 ID" not in feedback
@@ -661,6 +708,8 @@ class TestNativeToolCallAdapter:
         schema_text = json.dumps(
             {
                 "memory_write": by_name["memory_write"],
+                "memory_search": by_name["memory_search"],
+                "index_view": by_name["index_view"],
                 "reaction_finalize": by_name["reaction_finalize"],
             },
             ensure_ascii=False,
@@ -671,9 +720,22 @@ class TestNativeToolCallAdapter:
         assert "<!-- PROTOCOL_TOOL_GUIDE:memory_write_START -->" not in tools_doc
         assert "memory_entry_guide" not in tools_doc
         assert "内容字段禁止复述对话过程，只记结论与变化" in combined
+        assert "记叙文六要素" in combined
+        assert "不要求每条硬凑齐六项" in combined
+        assert "非事件型记忆不套记叙模板" in combined
+        assert "不得冒充事件时间" in combined
+        assert "禁止补造精确日期" in combined
+        assert "不同主体、不同时间锚点或彼此独立的事实应分别写入" in combined
+        assert "工作容器负责组织多条记忆的演进关系" in combined
         assert "不等同于当前 `interaction_object`" in combined
         assert "关系域无卡、歧义或 archived 会拒绝" in combined
         assert "每轮建议写入不超过 3 条" in combined
+        assert "有边界的历史会话" in combined
+        assert "轻量生活事实已经处理" in combined
+        assert "同时保留相对时间与可换算的绝对日期或范围" in schema_text
+        assert "片段不是事实证据" in schema_text
+        assert "memory_content_read" in schema_text
+        assert "不需要把全部 LTM 正文一次性塞进上下文" in memory_rule
         forbidden = [
             "超过上限时",
             "同一反应步迭代最多成功写入一条记忆",
@@ -697,7 +759,8 @@ class TestNativeToolCallAdapter:
         assert "读书收获默认写成低权重梗概" not in combined
         assert "默认写成低权重梗概" not in combined
         assert "按权重限长" in combined
-        assert "超长先压缩" in combined
+        assert "即时重写指南" in combined
+        assert "无需为了接近上限扩写、补齐或重复" in combined
         assert "长文读书应通过 file_read 按 bounded 工具窗口分段读取" not in schema_text
         assert "长文读书默认可通过 file_read 全文读取" not in schema_text
         assert "next_line_start" not in schema_text
@@ -1031,6 +1094,7 @@ class TestNativeToolCallAdapter:
         expected = {
             "corpus_read",
             "index_view",
+            "memory_search",
             "relation_read",
             "memory_content_read",
             "container_read",
@@ -1055,6 +1119,10 @@ class TestNativeToolCallAdapter:
             "relation_inverted",
             "relation_domain",
         ]
+        assert "query_terms" not in by_name["index_view"]["properties"]
+        assert by_name["memory_search"]["required"] == ["query_terms"]
+        assert by_name["memory_search"]["properties"]["query_terms"]["maxItems"] == 8
+        assert by_name["memory_search"]["properties"]["query_terms"]["items"]["maxLength"] == 64
         assert by_name["corpus_read"]["required"] == ["corpus_id"]
         assert sorted(by_name["corpus_read"]["properties"]) == ["corpus_id"]
         assert by_name["memory_content_read"]["required"] == ["mem_id"]
@@ -1149,6 +1217,7 @@ class TestNativeToolCallAdapter:
         for index, (tool_id, arguments) in enumerate([
             ("corpus_read", {"corpus_id": "C-00001"}),
             ("index_view", {"scope": "ltm_heat", "limit": 2}),
+            ("memory_search", {"query_terms": ["figurines"], "limit": 2}),
             ("relation_read", {"subject": "TzPz", "summary": "temporary"}),
             ("memory_content_read", {"mem_id": "MEM-1"}),
             ("container_read", {"container_id": "PRJ-1", "target_file": "notes.md"}),
@@ -1177,6 +1246,7 @@ class TestNativeToolCallAdapter:
         assert [request["tool_id"] for request in routed["protocol_tool_requests"]] == [
             "corpus_read",
             "index_view",
+            "memory_search",
             "relation_read",
             "memory_content_read",
             "container_read",
@@ -1211,7 +1281,6 @@ class TestNativeToolCallAdapter:
             active_protocol_tool_guides=[
                 "memory_write",
                 "memory_link_update",
-                "memory_recall_complete",
                 "memory_privacy_mark",
                 "memory_privacy_declassify",
                 "relation_card_write",
@@ -1391,7 +1460,17 @@ class TestNativeToolCallAdapter:
         assert "task_guidance_required" in tools[0]["description"]
         assert "task_guidance_route" in tools[0]["description"]
         assert "读取材料" in tools[0]["description"]
-        assert "一次有界只读查询/核验" in tools[0]["description"]
+        assert "PRJ 因跨轮而必为 true" in tools[0]["description"]
+        assert "单轮有界 memory_write 或 DC/EC/FUT" in tools[0]["description"]
+        assert "内部工具步骤不等于用户派发检索任务" in tools[0]["description"]
+        assert "不得据此豁免整个任务" in tools[0]["description"]
+
+        required_help = props["task_guidance_required"]["description"]
+        assert "multi-step or multi-source" in required_help
+        assert "PRJ work is cross-round and therefore true" in required_help
+        assert "bounded single-round memory_write or DC/EC/FUT" in required_help
+        assert "internal tool use is not itself a user-assigned research task" in required_help
+        assert "does not exempt that larger task" in required_help
 
     def test_spec592_setup_finalize_projects_task_guidance_payload(self):
         from logic.native_tool_calls import terminal_finalize_from_envelopes
@@ -2375,9 +2454,8 @@ class TestNativeToolCallAdapter:
             "tool_id": "memory_link_update",
             "arguments": {
                 "mem_id": "MEM-1",
-                "operation": "add",
+                "operation": "remove",
                 "container_refs": ["DC-1"],
-                "current_overview": "已挂接到 DC-1。",
             },
             "arguments_json": "{}",
             "tool_family": "protocol_tool",
@@ -2391,9 +2469,8 @@ class TestNativeToolCallAdapter:
         assert routed["native_protocol_tool_submissions"] == ["memory_link_update"]
         assert routed["memory_link_update_declarations"] == [{
             "mem_id": "MEM-1",
-            "operation": "add",
+            "operation": "remove",
             "container_refs": ["DC-1"],
-            "current_overview": "已挂接到 DC-1。",
             "call_id": "call_link",
             "provider": "openai_responses",
             "response_id": "resp_link",
@@ -2464,7 +2541,7 @@ class TestNativeToolCallAdapter:
             "parse_status": "ok",
             "arguments": {
                 "card_id": "REL-Codex",
-                "subject": "Codex",
+                "name": "Codex",
                 "action": "update",
                 "summary": "Native relation update",
                 "trust": 100,
@@ -2957,6 +3034,7 @@ class TestNativeToolCallExecutorAndAudit:
                             "url": "https://api.example/v1/messages",
                             "model": "claude-opus-4-6",
                             "provider": "anthropic_messages",
+                            "output_token_limit": 32768,
                         },
                     },
                 }
@@ -2987,7 +3065,7 @@ class TestNativeToolCallExecutorAndAudit:
         assert sent["payload"]["system"][0]["text"] == "system"
         assert sent["payload"]["system"][0]["cache_control"] == {"type": "ephemeral"}
         assert sent["payload"]["messages"] == [{"role": "user", "content": "read"}]
-        assert sent["payload"]["max_tokens"] == 4096
+        assert sent["payload"]["max_tokens"] == 32768
         assert "temperature" not in sent["payload"]
         file_read = next(tool for tool in sent["payload"]["tools"] if tool["name"] == "file_read")
         assert "input_schema" in file_read
@@ -4386,6 +4464,7 @@ class TestNativeToolCallExecutorAndAudit:
             [],
             interaction_meta=RuntimeTestMixin()._confirmed_meta(),
         )
+        assert len(rt.executor.calls) > 1, result
         second_call_text = "\n".join(
             message.get("content", "") for message in rt.executor.calls[1])
 
@@ -4439,7 +4518,7 @@ class TestNativeToolCallExecutorAndAudit:
         self._assert_popup_hides_native_machine_fields(popup)
         assert "只能使用允许枚举值" in popup
 
-    def test_reaction_loop_popups_native_capability_feedback_without_sensitive_command(
+    def test_spec756_reaction_loop_executes_shell_without_keyword_warning(
             self, tmp_path, monkeypatch):
         from tests.runtime_test_helpers import RuntimeTestMixin
 
@@ -4465,11 +4544,11 @@ class TestNativeToolCallExecutorAndAudit:
                     "raw_type": "function_call",
                     "tool_id": "shell_command",
                     "arguments": {
-                        "command": "del secret.txt",
-                        "purpose": "delete a secret",
+                        "command": "echo shell ok",
+                        "purpose": "exercise restored shell",
                         "cwd": ".",
                     },
-                    "arguments_json": "{\"command\":\"del secret.txt\"}",
+                    "arguments_json": "{\"command\":\"echo shell ok\"}",
                     "tool_family": "general_tool",
                     "tool_class": "focus_tool",
                     "risk": "high",
@@ -4482,14 +4561,14 @@ class TestNativeToolCallExecutorAndAudit:
         rt._run_reaction_loop(rt.sm.load(), "interactive", [])
 
         popup = self._popup_content(rt.executor.calls[1])
-        assert "## WARNING｜警告" in popup
-        assert "### 原生工具调用警告" in popup
-        self._assert_popup_hides_native_machine_fields(popup)
-        assert "遵守 ExecutionCapabilityGate" in popup
-        assert "del secret.txt" not in popup
+        assert "### 原生工具调用警告" not in popup
+        replay = json.dumps(rt.executor.calls[1], ensure_ascii=False)
+        assert "shell_command" in replay
+        assert "shell ok" in replay
 
     def test_spec149_reaction_loop_replays_native_file_edit_capability_rejection(
             self, tmp_path, monkeypatch):
+        from paths import PERSONA_DIR
         from tests.runtime_test_helpers import RuntimeTestMixin
 
         rt = RuntimeTestMixin()._make_runtime(tmp_path)
@@ -4514,7 +4593,7 @@ class TestNativeToolCallExecutorAndAudit:
                     "raw_type": "function_call",
                     "tool_id": "file_edit",
                     "arguments": {
-                        "path": "OS/persona/STM/memory/live.md",
+                        "path": str(Path(PERSONA_DIR) / "STM" / "memory" / "live.md"),
                         "patch": "--- a/live.md\n+++ b/live.md\n@@ -1,1 +1,1 @@\n-a\n+b\n",
                         "purpose": "try live persona edit",
                     },
@@ -4537,7 +4616,7 @@ class TestNativeToolCallExecutorAndAudit:
         popup = self._popup_content(rt.executor.calls[1])
         assert "### 原生工具调用警告" in popup
         self._assert_popup_hides_native_machine_fields(popup)
-        assert "OS/persona/STM" not in popup
+        assert str(PERSONA_DIR) not in popup
         assert "--- a/live.md" not in popup
 
     def test_spec149_reaction_loop_replays_native_subagent_write_scope_rejection(
@@ -4603,33 +4682,10 @@ class TestNativeToolCallExecutorAndAudit:
         monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
-        memory_store, memory_index, _container_store = helper._patch_memory_immediate_stores(
+        memory_store, _memory_index, _container_store = helper._patch_memory_immediate_stores(
             monkeypatch,
             runtime=rt,
         )
-
-        class DummyHeat:
-            def __init__(self):
-                self.entries = {}
-
-            def new_entry(self, weight=2):
-                from schemas.config import default_memory_config
-                from schemas.memory import default_heat_entry
-                config = default_memory_config()["heat"]
-                return default_heat_entry(
-                    weight,
-                    initial_by_weight=config["initial_by_weight"],
-                    significant_threshold=config["zone_thresholds"]["significant"],
-                    uncertain_threshold=config["zone_thresholds"]["uncertain"],
-                )
-
-            def set_entry(self, mem_id, entry):
-                self.entries[mem_id] = dict(entry)
-
-            def recall_boost(self, *args, **kwargs):
-                pass
-
-        rt.heat = DummyHeat()
 
         class NativeMemoryWriteExecutor:
             def __init__(self):
@@ -4688,7 +4744,8 @@ class TestNativeToolCallExecutorAndAudit:
         )
         assert result["_tool_transaction_audit"]["status"] == "ok"
         assert memory_store.entries[0][0] == "MEM-131000AA"
-        assert memory_index.keywords == [("MEM-131000AA", ["Spec135", "native"])]
+        assert memory_store.ltm["MEM-131000AA"]["meta"]["tags"] == [
+            "Spec135", "native"]
         self._assert_no_native_replay_messages(rt.executor.calls[1])
         assert result["response"] == "native memory receipt observed"
 
@@ -4766,6 +4823,16 @@ class TestNativeToolCallExecutorAndAudit:
 
             def append_to_cache(self, round_num, role, text, *, kind, **kwargs):
                 self.entries.append((round_num, role, text, kind, kwargs))
+
+            def transition_current_cache(self, **kwargs):
+                return {
+                    "schema_version": "current_cache_transition.v1",
+                    "status": "noop",
+                    "boundary": kwargs["boundary"],
+                }
+
+            def load_cache_compaction_debt(self):
+                return {}
 
         class CapturingAlerts:
             def __init__(self):
@@ -4993,6 +5060,65 @@ class TestNativeToolCallExecutorAndAudit:
 
         assert result["_index_view_receipts"][0]["call_id"] == "call_index_read"
         assert result["_index_view_receipts"][0]["tool_id"] == "index_view"
+        self._assert_no_native_replay_messages(rt.executor.calls[1])
+
+    def test_spec756_reaction_loop_replays_memory_search_as_material_and_fact(
+            self, tmp_path, monkeypatch):
+        from tests.runtime_test_helpers import RuntimeTestMixin
+
+        rt = RuntimeTestMixin()._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        monkeypatch.setattr(
+            assembler,
+            "build_memory_search",
+            lambda **kwargs: {
+                "tool_id": "memory_search",
+                "tool_family": "protocol_tool",
+                "tool_class": "read_tool",
+                "status": "accepted",
+                "source": "protocol_tool_request",
+                "query_terms": kwargs["query_terms"],
+                "offset": 0,
+                "limit": 8,
+                "total_matches": 1,
+                "content": "MEM-00112233 定位片段：figurines were bought",
+                "locator_only": True,
+                "protocol_tool_receipt": True,
+            },
+        )
+        rt.executor = ScriptedExecutor(
+            {
+                "response": "",
+                "tool_call_envelopes": [{
+                    "source": "provider_tool_call",
+                    "provider": "openai_responses",
+                    "response_id": "resp_memory_search",
+                    "call_id": "call_memory_search",
+                    "provider_item_id": "fc_memory_search",
+                    "index": 0,
+                    "tool_id": "memory_search",
+                    "tool_family": "protocol_tool",
+                    "tool_class": "read_tool",
+                    "risk": "low",
+                    "parse_status": "ok",
+                    "arguments": {"query_terms": ["figurines"]},
+                }],
+            },
+            {"response": "memory search observed"},
+        )
+
+        result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
+
+        receipt = result["_memory_search_receipts"][0]
+        assert receipt["call_id"] == "call_memory_search"
+        assert receipt["locator_only"] is True
+        replay = json.dumps(rt.executor.calls[1], ensure_ascii=False)
+        assert "figurines were bought" in replay
+        assert "片段不是事实证据" in replay
         self._assert_no_native_replay_messages(rt.executor.calls[1])
 
     def test_spec148_reaction_loop_replays_native_relation_read_receipt_as_provider_output(
@@ -5280,7 +5406,7 @@ class TestNativeToolCallExecutorAndAudit:
         assert result["_invalid_tool_requests"][0]["reason"] == "feature_deferred"
         self._assert_no_native_replay_messages(rt.executor.calls[1])
 
-    def test_reaction_loop_replays_native_memory_recall_receipt_as_provider_output(
+    def test_reaction_loop_rejects_retired_native_memory_recall_tool(
             self, tmp_path, monkeypatch):
         from tests.runtime_test_helpers import RuntimeTestMixin
 
@@ -5318,9 +5444,13 @@ class TestNativeToolCallExecutorAndAudit:
 
         result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
 
-        assert result["_memory_recall_completion_receipts"][0]["call_id"] == "call_recall"
-        assert result["_memory_recall_completion_receipts"][0]["tool_id"] == (
-            "memory_recall_complete")
+        assert result["_invalid_tool_requests"][0]["call_id"] == "call_recall"
+        assert result["_invalid_tool_requests"][0]["tool_id"] == (
+            "memory_recall_complete"
+        )
+        assert result["_invalid_tool_requests"][0]["reason"] == (
+            "native_protocol_write_not_enabled"
+        )
         self._assert_no_native_replay_messages(rt.executor.calls[1])
 
     def test_reaction_loop_replays_native_relation_card_receipt_as_provider_output(

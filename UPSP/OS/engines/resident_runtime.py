@@ -12,7 +12,13 @@ from constants import local_now
 from data.atomic_write import atomic_write_json
 from engines.heartbeat import round_decision_from_heartbeat_flags
 from logic.relay_intent_pool import settle_open_relay_intents
-from paths import ACTIVE_PID, PERSONA_DIR, UPSP_LOCAL_STATE_ROOT
+from paths import (
+    ACTIVE_INSTANCE_ID,
+    ACTIVE_PID,
+    PERSONA_DIR,
+    SHARED_PERSONA_DIR,
+    UPSP_LOCAL_STATE_ROOT,
+)
 
 try:
     import msvcrt
@@ -20,7 +26,7 @@ except ImportError:  # pragma: no cover - Windows product only
     msvcrt = None
 
 
-SUPERVISOR_SCHEMA = "upsp_runtime_supervisor.v1"
+SUPERVISOR_SCHEMA = "upsp_runtime_supervisor.v2"
 
 
 class RuntimeServiceError(RuntimeError):
@@ -75,50 +81,77 @@ class _InstanceLock:
 
 class ResidentRuntimeService:
     def __init__(
-            self, *, runtime_dir=None, active_pid=ACTIVE_PID,
+            self, *, runtime_dir=None, lock_path=None, active_pid=ACTIVE_PID,
+            active_instance_id=ACTIVE_INSTANCE_ID,
             persona_ready=None, environment_factory=None, runtime_factory=None,
-            default_permission_level=None):
+            default_permission_level=None, retention_enforcer=None,
+            ltm_reconciler=None):
         self.active_pid = str(active_pid)
+        self.active_instance_id = str(active_instance_id)
+        default_runtime_root = Path(UPSP_LOCAL_STATE_ROOT) / "runtime"
         self.runtime_dir = Path(
             runtime_dir
-            or Path(UPSP_LOCAL_STATE_ROOT) / "runtime" / self.active_pid
+            or default_runtime_root / self.active_pid / self.active_instance_id
         )
         self.supervisor_path = self.runtime_dir / "supervisor.json"
-        self.instance_lock = _InstanceLock(self.runtime_dir / "runtime.lock")
+        self.legacy_supervisor_path = (
+            default_runtime_root / self.active_pid / "supervisor.json"
+            if runtime_dir is None and self.active_instance_id == "meta"
+            else None
+        )
+        self.instance_lock = _InstanceLock(
+            lock_path
+            or (default_runtime_root / "runtime.lock" if runtime_dir is None
+                else self.runtime_dir / "runtime.lock")
+        )
         self.persona_ready = persona_ready or (
             lambda: (
-                (Path(PERSONA_DIR) / "core.md").is_file()
+                (Path(SHARED_PERSONA_DIR) / "core.md").is_file()
                 and (Path(PERSONA_DIR) / "state.json").is_file()
             )
         )
         self.environment_factory = environment_factory
         self.runtime_factory = runtime_factory
+        self._uses_default_runtime = (
+            environment_factory is None and runtime_factory is None)
         self.default_permission_level = default_permission_level
+        self.retention_enforcer = retention_enforcer or (
+            lambda: {"status": "not_configured"}
+        )
+        self.retention_receipt = None
+        self.ltm_reconciler = ltm_reconciler
+        self.ltm_reconciliation_receipt = None
         self.runtime = None
         self.runtime_thread = None
         self.session_id = uuid.uuid4().hex
         self.host = {"address": "127.0.0.1", "port": 0}
         self._lock = threading.Lock()
+        self._retention_lock = threading.Lock()
         self._supervisor_lock = threading.Lock()
         self._operation = None
         self._started = False
         self._closed = False
         self._previous_supervisor = None
         self._recovering = False
+        self._instance_switch = None
         self.supervisor_state = "new"
         self.last_outcome = {}
 
     def start(self, *, host_address="127.0.0.1", port=0):
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
-        previous = self._read_supervisor()
-        recovery_pending = self._recovery_round(previous) is not None
         if not self.instance_lock.acquire():
+            previous = self._read_supervisor()
             host = (previous or {}).get("host") or {}
             raise RuntimeAlreadyRunning(host)
         try:
+            self._migrate_legacy_supervisor()
+            previous = self._read_supervisor()
+            recovery_pending = self._recovery_round(previous) is not None
             self._previous_supervisor = previous
             self.host = {"address": str(host_address), "port": int(port)}
             self._started = True
+            if self.persona_ready():
+                self.enforce_round_retention()
             if not recovery_pending:
                 self._write_supervisor("initializing")
             ready = self.start_if_ready()
@@ -132,12 +165,38 @@ class ResidentRuntimeService:
             raise
         return self.status()
 
+    def enforce_round_retention(self):
+        with self._retention_lock:
+            try:
+                self.retention_receipt = self.retention_enforcer()
+            except Exception as exc:
+                raise RuntimeServiceError(
+                    f"round_retention_failed:{exc}"
+                ) from exc
+            return dict(self.retention_receipt or {})
+
     def start_if_ready(self):
         with self._lock:
             if self.runtime is not None:
                 return True
             if not self.persona_ready():
                 return False
+            if self.retention_receipt is None:
+                self.enforce_round_retention()
+            if self.ltm_reconciliation_receipt is None:
+                try:
+                    if self.ltm_reconciler is not None:
+                        self.ltm_reconciliation_receipt = self.ltm_reconciler()
+                    elif self._uses_default_runtime:
+                        from data.memory_store import MemoryStore
+                        self.ltm_reconciliation_receipt = (
+                            MemoryStore().reconcile_ltm_projections())
+                    else:
+                        self.ltm_reconciliation_receipt = {
+                            "status": "not_configured"}
+                except Exception as exc:
+                    raise RuntimeServiceError(
+                        f"ltm_projection_failed:{exc}") from exc
             if self.environment_factory is None or self.runtime_factory is None:
                 from main import build_runtime, init_environment
                 self.environment_factory = self.environment_factory or init_environment
@@ -162,7 +221,7 @@ class ResidentRuntimeService:
                 self._recovering = False
             self.runtime_thread = threading.Thread(
                 target=self._run_runtime,
-                name=f"upsp-runtime-{self.active_pid}",
+                name=f"upsp-runtime-{self.active_pid}-{self.active_instance_id}",
                 daemon=True,
             )
             set_permission = getattr(
@@ -196,12 +255,23 @@ class ResidentRuntimeService:
             if self._closed:
                 self.instance_lock.release()
 
-    def submit_message(self, message, permission_level, *, timeout=None):
+    def submit_message(self, message, permission_level, *, timeout=None,
+                       final_response_max_chars=None, response_contract=None,
+                       task_guidance_enabled=True):
         runtime = self._require_runtime()
         operation = self._begin_operation("send", permission_level)
         try:
+            kwargs = {}
+            if final_response_max_chars is not None:
+                kwargs["final_response_max_chars"] = final_response_max_chars
+            if response_contract:
+                kwargs["response_contract"] = response_contract
+            if not task_guidance_enabled:
+                kwargs["task_guidance_enabled"] = False
             if not runtime.submit_message(
-                    message, execution_permission_level=permission_level):
+                    message,
+                    execution_permission_level=permission_level,
+                    **kwargs):
                 raise RuntimeServiceError("round_in_flight")
             if not operation["event"].wait(timeout):
                 raise RuntimeServiceError("runtime_wait_timeout")
@@ -284,6 +354,105 @@ class ResidentRuntimeService:
         except ValueError as exc:
             raise RuntimeServiceError(str(exc)) from exc
 
+    def mutate_periodic_memory(self, action, mem_id):
+        """Apply one GUI-only periodic mount while Runtime is provably idle."""
+        runtime = self._require_runtime()
+        operation = self._begin_operation("periodic_memory", "local")
+        heartbeat = runtime.hb
+        was_paused = bool(getattr(heartbeat, "_paused", False))
+        reserved = False
+        heartbeat_paused = False
+        try:
+            if not runtime.control.reserve_idle_mutation():
+                raise RuntimeServiceError("round_in_flight")
+            reserved = True
+            heartbeat.pause()
+            heartbeat_paused = True
+            status = runtime.runtime_status()
+            if (
+                status.get("round_in_flight")
+                or status.get("pending_tool_approval")
+                or str(status.get("stage") or "idle") != "idle"
+            ):
+                raise RuntimeServiceError("round_in_flight")
+            from logic.periodic_memory_mount import PeriodicMemoryMountProcessor
+
+            receipt = PeriodicMemoryMountProcessor(
+                memory_store=runtime.memory_store,
+                heat=runtime.heat,
+                assembler=runtime.assembler,
+                config_store=runtime.cfg,
+                instance_id=self.active_instance_id,
+            ).apply(action, mem_id)
+            return {
+                "schema_version": "seed_gui_periodic_memory_result.v1",
+                "submission_source": "seed_gui",
+                "receipt": receipt,
+            }
+        finally:
+            if reserved:
+                runtime.control.release_idle_mutation()
+            if heartbeat_paused and not was_paused:
+                try:
+                    heartbeat.resume(run_tick=False)
+                except TypeError:  # compatibility with injected test doubles
+                    heartbeat.resume()
+            self._end_operation(operation)
+
+    def prepare_instance_switch(self):
+        """Reserve an idle Runtime until the desktop restarts or mutation fails."""
+        operation = self._begin_operation("instance_switch", "local")
+        runtime = self.runtime
+        switch = {
+            "operation": operation,
+            "runtime": runtime,
+            "reserved": False,
+            "heartbeat_paused": False,
+            "was_paused": bool(runtime and getattr(runtime.hb, "_paused", False)),
+        }
+        try:
+            if runtime is not None:
+                if not runtime.control.reserve_idle_mutation():
+                    raise RuntimeServiceError("round_in_flight")
+                switch["reserved"] = True
+                runtime.hb.pause()
+                switch["heartbeat_paused"] = True
+                status = runtime.runtime_status()
+                if (
+                    status.get("round_in_flight")
+                    or status.get("pending_tool_approval")
+                    or str(status.get("stage") or "idle") != "idle"
+                ):
+                    raise RuntimeServiceError("round_in_flight")
+            with self._lock:
+                self._instance_switch = switch
+        except Exception:
+            if switch["reserved"]:
+                runtime.control.release_idle_mutation()
+            if switch["heartbeat_paused"] and not switch["was_paused"]:
+                try:
+                    runtime.hb.resume(run_tick=False)
+                except TypeError:  # compatibility with injected test doubles
+                    runtime.hb.resume()
+            self._end_operation(operation)
+            raise
+
+    def cancel_instance_switch(self):
+        with self._lock:
+            switch = self._instance_switch
+            self._instance_switch = None
+        if switch is None:
+            return
+        runtime = switch["runtime"]
+        if switch["reserved"]:
+            runtime.control.release_idle_mutation()
+        if switch["heartbeat_paused"] and not switch["was_paused"]:
+            try:
+                runtime.hb.resume(run_tick=False)
+            except TypeError:  # compatibility with injected test doubles
+                runtime.hb.resume()
+        self._end_operation(switch["operation"])
+
     def status(self):
         runtime_status = (
             self.runtime.runtime_status()
@@ -305,6 +474,8 @@ class ResidentRuntimeService:
             "session_id": self.session_id,
             "process_id": os.getpid(),
             "supervisor_schema": SUPERVISOR_SCHEMA,
+            "active_pid": self.active_pid,
+            "active_instance_id": self.active_instance_id,
             "supervisor_state": self.supervisor_state,
             "supervisor_path": str(self.supervisor_path),
             "host": dict(self.host),
@@ -432,6 +603,15 @@ class ResidentRuntimeService:
     def _on_round_finished(self, round_num, round_type, result):
         stopped = bool((result or {}).get("_user_stop_requested"))
         settlement = (result or {}).get("_settlement") or {}
+        final_response_source = str(
+            (result or {}).get("_final_response_source") or "")
+        blocked_reason = str(
+            (result or {}).get("_local_blocked_reason") or "")
+        runtime_blocked = bool(
+            blocked_reason
+            or final_response_source
+            == "reaction.runtime_auto_blocked_final_reply"
+        )
         payload = {
             "status": (
                 "round_stopped" if stopped
@@ -440,6 +620,16 @@ class ResidentRuntimeService:
             "round_num": int(round_num) if round_num is not None else None,
             "round_type": str(round_type or ""),
             "final_response": str((result or {}).get("response") or ""),
+            "final_response_source": final_response_source,
+            "classification": (
+                "runtime_blocked_closed" if runtime_blocked else ""
+            ),
+            "reason": (
+                blocked_reason
+                or ("runtime_auto_blocked_final_reply" if runtime_blocked else "")
+            ),
+            "response_contract": dict(
+                (result or {}).get("_response_contract") or {}),
             "settlement_status": str(settlement.get("status") or ""),
             "degraded_reasons": list(settlement.get("degraded_reasons") or []),
             "fatal_reasons": list(settlement.get("fatal_reasons") or []),
@@ -558,6 +748,7 @@ class ResidentRuntimeService:
                 and isinstance(payload.get("session_id"), str)
                 and bool(payload.get("session_id"))
                 and payload.get("active_pid") == self.active_pid
+                and payload.get("active_instance_id") == self.active_instance_id
                 and isinstance(host, dict)
                 and host.get("address") == "127.0.0.1"
                 and isinstance(host.get("port"), int)
@@ -593,6 +784,7 @@ class ResidentRuntimeService:
                 "process_id": os.getpid(),
                 "session_id": self.session_id,
                 "active_pid": self.active_pid,
+                "active_instance_id": self.active_instance_id,
                 "host": dict(self.host),
                 "current_round": (
                     current_round
@@ -616,6 +808,21 @@ class ResidentRuntimeService:
                 payload,
                 trailing_newline=True,
             )
+
+    def _migrate_legacy_supervisor(self):
+        path = self.legacy_supervisor_path
+        if path is None or self.supervisor_path.exists() or not path.is_file():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeSupervisorCorrupt("runtime_supervisor_corrupt") from exc
+        if not isinstance(payload, dict) or payload.get("active_pid") != self.active_pid:
+            raise RuntimeSupervisorCorrupt("runtime_supervisor_corrupt")
+        payload["schema_version"] = SUPERVISOR_SCHEMA
+        payload["active_instance_id"] = self.active_instance_id
+        atomic_write_json(self.supervisor_path, payload, trailing_newline=True)
+        path.unlink()
 
     def _stop_receipt(self, result):
         return {

@@ -1,6 +1,8 @@
 import os
 import sys
 
+import pytest
+
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TESTS_DIR)
 sys.path.insert(0, os.path.join(TESTS_DIR, ".."))
@@ -9,6 +11,19 @@ from runtime_test_helpers import RuntimeTestMixin
 
 
 class TestRuntimeRoundType(RuntimeTestMixin):
+    def test_round_context_carries_frozen_context_window(self):
+        from engines.round_context import RoundContext
+
+        context = RoundContext(
+            1,
+            "interactive",
+            {},
+            {},
+            context_window_tokens=1_000_000,
+        )
+
+        assert context.context_window_tokens == 1_000_000
+
     def test_determine_round_type_interactive(self, tmp_path):
         rt = self._make_runtime(tmp_path)
         flags = {"user_message_waiting": True}
@@ -29,11 +44,11 @@ class TestRuntimeRoundType(RuntimeTestMixin):
         flags = {"fatigue_expired": True}
         assert rt._determine_round_type(flags) is None
 
-    def test_determine_round_type_autonomous_when_evolution_pending(self, tmp_path, monkeypatch):
+    def test_retired_evolution_flag_does_not_trigger_a_round(self, tmp_path):
         rt = self._make_runtime(tmp_path)
         flags = {"evolution_pending": True}
 
-        assert rt._determine_round_type(flags, rt.sm.load()) == "autonomous"
+        assert rt._determine_round_type(flags, rt.sm.load()) is None
 
     def test_determine_round_type_standby(self, tmp_path):
         rt = self._make_runtime(tmp_path)
@@ -78,9 +93,9 @@ class TestRuntimeRoundType(RuntimeTestMixin):
 
         assert rt._determine_round_type({"api_degraded": True}) == "rhythm"
         assert rt._determine_round_type({"process_down": True}) is None
-        assert rt._determine_round_type({"token_usage_warning": True}) == "rhythm"
+        assert rt._determine_round_type({"token_usage_warning": True}) is None
         assert rt._determine_round_type({"context_pressure": True}) == "rhythm"
-        assert rt._determine_round_type({"cache_compaction_due": True}) == "rhythm"
+        assert rt._determine_round_type({"cache_compaction_due": True}) is None
         assert rt._determine_round_type({"shelve_timer_expired": True}) == "standby"
         assert rt._determine_round_type({"identity_timeout": True}) is None
 
@@ -112,7 +127,7 @@ class TestRuntimeRoundType(RuntimeTestMixin):
 
         assert ReactionLoopRunner._emergency_tool_attempt_count(
             ["fault_record", "fault_record", "reaction_finalize"],
-            [{"tool_id": "shell_command"}, {"tool_id": "file_search"}],
+            [{"tool_id": "shell_command"}, {"tool_id": "file_glob"}],
         ) == 4
 
     def test_spec352_alert_settled_requires_applied_receipt(self):
@@ -210,7 +225,321 @@ class TestRuntimeRoundType(RuntimeTestMixin):
 
         token = rt.sm.load()["base"]["token_usage"]
         assert token["window_size"] == 1000
-        assert token["usage_ratio"] == 0.8
+        assert token["current_tokens"] == 600
+        assert token["usage_ratio"] == 0.6
+
+    def test_update_token_usage_prefers_frame_frozen_window(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+
+        class TokenConfig:
+            @staticmethod
+            def get_context_window_for_endpoint(_endpoint):
+                return 4000
+
+            @staticmethod
+            def get_token_params():
+                return {"warning_ratio": 0.9}
+
+        rt.cfg = TokenConfig()
+        rt._update_token_usage({
+            "endpoint": "primary",
+            "tokens_input": 1800,
+            "tokens_output": 1,
+            "provider_request_envelope": {"context_window_tokens": 2000},
+        })
+
+        assert rt.sm.get("base.token_usage.window_size") == 2000
+        assert rt.services.cache_pressure_observation["usage_ratio"] == 0.9
+
+    def test_update_token_usage_preserves_frame_frozen_unknown_window(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+
+        class TokenConfig:
+            @staticmethod
+            def get_context_window_for_endpoint(_endpoint):
+                return 4000
+
+        rt.cfg = TokenConfig()
+        rt._update_token_usage({
+            "endpoint": "primary",
+            "tokens_input": 3600,
+            "tokens_output": 1,
+            "provider_request_envelope": {"context_window_tokens": None},
+        })
+
+        assert rt.services.cache_pressure_observation == {
+            "kind": "unknown_window_fallback",
+            "endpoint": "primary",
+            "input_tokens": 3600,
+            "context_window": None,
+            "usage_ratio": None,
+        }
+
+    def test_invalid_runtime_watermark_cannot_create_pressure(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+
+        class TokenConfig:
+            @staticmethod
+            def get_context_window_for_endpoint(_endpoint):
+                return 1000
+
+            @staticmethod
+            def get_token_params():
+                return {"warning_ratio": float("nan")}
+
+        rt.cfg = TokenConfig()
+        rt._update_token_usage({
+            "endpoint": "primary",
+            "tokens_input": 1000,
+            "tokens_output": 1,
+        })
+
+        assert rt.services.cache_pressure_observation == {}
+
+    def test_cleanup_clears_applied_compaction_debt_after_flag(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+        with pytest.raises(ValueError, match="cache_compaction_due"):
+            rt.sm.set_flag("cache_compaction_due", True)
+        assert rt._determine_round_type({"cache_compaction_due": True}) is None
+
+    def test_token_pressure_uses_full_input_and_is_sticky(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+
+        class TokenConfig:
+            @staticmethod
+            def get_context_window_for_endpoint(endpoint):
+                assert endpoint == "backup-profile"
+                return 100000
+
+            @staticmethod
+            def get_token_params():
+                return {"warning_ratio": 0.9}
+
+        rt.cfg = TokenConfig()
+        rt._update_token_usage({
+            "endpoint": "backup-profile",
+            "tokens_input": 89999,
+            "tokens_output": 500,
+        })
+        assert rt.services.cache_pressure_observation == {}
+        rt._update_token_usage({
+            "endpoint": "backup-profile",
+            "tokens_input": 90000,
+            "tokens_output": 500,
+        })
+        rt._update_token_usage({
+            "endpoint": "backup-profile",
+            "tokens_input": 100,
+            "tokens_output": 1,
+        })
+
+        assert rt.services.cache_pressure_observation == {
+            "kind": "token_ratio",
+            "endpoint": "backup-profile",
+            "input_tokens": 90000,
+            "context_window": 100000,
+            "round_context_window_tokens": 100000,
+            "usage_ratio": 0.9,
+            "threshold": 0.9,
+        }
+
+    def test_token_pressure_survives_state_projection_failure(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+
+        class TokenConfig:
+            @staticmethod
+            def get_context_window_for_endpoint(_endpoint):
+                return 1000
+
+            @staticmethod
+            def get_token_params():
+                return {"warning_ratio": 0.9}
+
+        rt.cfg = TokenConfig()
+        monkeypatch.setattr(
+            rt.sm,
+            "update_token_usage",
+            lambda **_kwargs: (_ for _ in ()).throw(OSError("state busy")),
+        )
+
+        rt._update_token_usage(
+            {"endpoint": "primary", "tokens_input": 900, "tokens_output": 1},
+            round_num=742,
+            phase="reaction",
+            iteration=3,
+        )
+
+        assert rt.services.cache_pressure_observation == {
+            "kind": "token_ratio",
+            "endpoint": "primary",
+            "input_tokens": 900,
+            "context_window": 1000,
+            "round_context_window_tokens": 1000,
+            "usage_ratio": 0.9,
+            "threshold": 0.9,
+            "frame_id": "R000742:reaction:3",
+        }
+
+    def test_token_pressure_normalizes_anthropic_cached_input(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+
+        class TokenConfig:
+            @staticmethod
+            def get_context_window_for_endpoint(_endpoint):
+                return 1000
+
+            @staticmethod
+            def get_token_params():
+                return {"warning_ratio": 0.9}
+
+        rt.cfg = TokenConfig()
+        rt._update_token_usage({
+            "endpoint": "anthropic-profile",
+            "raw_usage": {
+                "input_tokens": 100,
+                "cache_creation_input_tokens": 300,
+                "cache_read_input_tokens": 500,
+            },
+            "tokens_input": 100,
+            "tokens_output": 20,
+        })
+
+        assert rt.sm.get("base.token_usage.current_tokens") == 900
+        assert rt.services.cache_pressure_observation["usage_ratio"] == 0.9
+
+    def test_invalid_usage_does_not_overwrite_last_real_sample(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+
+        class TokenConfig:
+            @staticmethod
+            def get_context_window_for_endpoint(_endpoint):
+                return 1000
+
+            @staticmethod
+            def get_token_params():
+                return {"warning_ratio": 0.9}
+
+        rt.cfg = TokenConfig()
+        rt._update_token_usage({
+            "endpoint": "primary",
+            "tokens_input": 400,
+            "tokens_output": 10,
+        })
+        before = dict(rt.sm.load()["base"]["token_usage"])
+        rt._update_token_usage({
+            "endpoint": "primary",
+            "tokens_input": True,
+            "tokens_output": 0,
+        })
+
+        assert rt.sm.load()["base"]["token_usage"] == before
+        assert rt.services.cache_pressure_observation == {}
+
+    def test_unknown_window_records_character_fallback_without_fake_zero(
+            self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+
+        class TokenConfig:
+            @staticmethod
+            def get_context_window_for_endpoint(_endpoint):
+                return None
+
+        rt.cfg = TokenConfig()
+        before = dict(rt.sm.load()["base"]["token_usage"])
+        rt._update_token_usage({
+            "endpoint": "unknown-profile",
+            "tokens_input": 900,
+            "tokens_output": 5,
+        })
+
+        assert rt.sm.load()["base"]["token_usage"] == before
+        assert rt.services.cache_pressure_observation == {
+            "kind": "unknown_window_fallback",
+            "endpoint": "unknown-profile",
+            "input_tokens": 900,
+            "context_window": None,
+            "usage_ratio": None,
+        }
+
+    def test_context_too_long_records_unmeasured_pressure(self, tmp_path,
+                                                          monkeypatch):
+        import pytest
+        from errors import APIBridgeError
+
+        rt = self._make_runtime(tmp_path)
+
+        def fail(*_args, **_kwargs):
+            raise APIBridgeError(
+                "backup-profile",
+                "HTTP 413: context_length_exceeded",
+                status_code=413,
+            )
+
+        monkeypatch.setattr(rt.audit, "call_llm", fail)
+        with pytest.raises(APIBridgeError):
+            rt.setup_runner._call_llm_with_round_audit(
+                "setup", "system", [], 1)
+
+        assert rt.services.cache_pressure_observation == {
+            "kind": "context_too_long",
+            "frame_id": "R000001:setup:1",
+            "endpoint": "backup-profile",
+            "input_tokens": None,
+            "context_window": None,
+            "usage_ratio": None,
+        }
+
+    def test_local_context_window_validation_error_is_not_cache_pressure(
+            self, tmp_path, monkeypatch):
+        import pytest
+
+        rt = self._make_runtime(tmp_path)
+
+        def fail(*_args, **_kwargs):
+            raise ValueError("invalid model context window detection")
+
+        monkeypatch.setattr(rt.audit, "call_llm", fail)
+        with pytest.raises(ValueError):
+            rt.setup_runner._call_llm_with_round_audit(
+                "setup", "system", [], 1)
+
+        assert rt.services.cache_pressure_observation == {}
+
+    def test_open_compaction_debt_absorbs_setup_and_reaction_pressure(
+            self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+
+        class TokenConfig:
+            @staticmethod
+            def get_context_window_for_endpoint(_endpoint):
+                return 1000
+
+            @staticmethod
+            def get_token_params():
+                return {"warning_ratio": 0.9}
+
+        rt.cfg = TokenConfig()
+        rt.ctx_store._write_json_atomic(
+            rt.ctx_store.cache_compaction_debt_path(),
+            {
+                "schema_version": "cache_compaction_debt.v2",
+                "status": "open",
+                "phase": "staging",
+                "compaction_plan": {"shards": [{"shard_id": "shard_01"}]},
+            },
+        )
+
+        rt._update_token_usage(
+            {"endpoint": "primary", "tokens_input": 950, "tokens_output": 1},
+            round_num=742, phase="setup", iteration=1,
+        )
+        rt._update_token_usage(
+            {"endpoint": "primary", "tokens_input": 950, "tokens_output": 1},
+            round_num=742, phase="reaction", iteration=1,
+        )
+
+        assert rt.services.cache_pressure_observation == {}
 
     def test_next_round_type_does_not_bypass_heartbeat(self, tmp_path):
         rt = self._make_runtime(tmp_path)
@@ -250,36 +579,41 @@ class TestRuntimeRoundType(RuntimeTestMixin):
         assert [item["kind"] for item in decision["guide_queue"]] == [
             "emergency",
             "context_pressure",
-            "cache_compaction",
             "main_axis_rhythm",
             "calendar_day",
             "calendar_week",
             "interaction",
         ]
         assert decision["guide_queue"][0]["flags"] == ["api_degraded"]
-        assert decision["guide_queue"][1]["flags"] == [
-            "token_usage_warning",
-            "context_pressure",
-        ]
+        assert decision["guide_queue"][1]["flags"] == ["context_pressure"]
         assert decision["deferred_items"] == [
             {"kind": "relay", "flags": ["continue_requested"]}
         ]
 
-    def test_spec471_rhythm_agenda_advances_one_calendar_item_at_a_time(self):
+    def test_spec767_active_memory_cycle_recovers_before_new_calendar_day(self):
         from logic.rhythm_guidance import current_guide
 
         flags = {
             "calendar_day_due": True,
+            "memory_compression_due": True,
             "calendar_week_due": True,
             "calendar_month_due": True,
             "user_message_waiting": True,
         }
 
-        day = current_guide(flags)
+        memory = current_guide(flags)
+        assert memory["kind"] == "memory_compression_rhythm_guide"
+        assert memory["items"] == [{
+            "flag": "memory_compression_due",
+            "title": "记忆语义压缩",
+        }]
+
+        day = current_guide(flags, completed_flags={"memory_compression_due"})
         assert day["kind"] == "calendar_rhythm_guide"
         assert day["items"] == [{"flag": "calendar_day_due", "title": "日志"}]
 
-        week = current_guide(flags, completed_flags={"calendar_day_due"})
+        week = current_guide(flags, completed_flags={
+            "calendar_day_due", "memory_compression_due"})
         assert week["kind"] == "calendar_rhythm_guide"
         assert week["items"] == [{"flag": "calendar_week_due", "title": "周志"}]
 
@@ -287,11 +621,24 @@ class TestRuntimeRoundType(RuntimeTestMixin):
             flags,
             completed_flags={
                 "calendar_day_due",
+                "memory_compression_due",
                 "calendar_week_due",
                 "calendar_month_due",
             },
         )
         assert interaction["kind"] == "interactive_guide"
+
+    def test_spec767_normal_daily_cycle_still_writes_log_before_compression(self):
+        from logic.rhythm_guidance import current_guide
+
+        flags = {"calendar_day_due": True}
+        day = current_guide(flags)
+        assert day["kind"] == "calendar_rhythm_guide"
+        assert day["items"] == [{"flag": "calendar_day_due", "title": "日志"}]
+
+        flags["memory_compression_due"] = True
+        memory = current_guide(flags, completed_flags={"calendar_day_due"})
+        assert memory["kind"] == "memory_compression_rhythm_guide"
 
     def test_spec448_coalesced_calendar_then_interaction_guides_are_same_round(self):
         from logic.rhythm_guidance import current_guide

@@ -40,7 +40,7 @@ messages 末位区域：当前缓存 now（交互、资料、工具、内部交�
 
 ## 三、窗口控制
 
-当前窗口控制不走旧式模块裁剪顺序。脚本按频率层装配、定期层限额、lately 字符窗口、高频层按需、now 字符窗口与 STATUSBAR 硬上限控制上下文；POPUP 仍位于 provider messages 绝对末位，STATUSBAR 紧贴 POPUP 之前。LLM API payload 的上下文正文只来自 `step.json.request_body`；`step.md` 与 `layers/*.md` 只是由 `layers/*.json` / `step.json` 派生的审计渲染，不得作为 `system_prompt` 再次发送。`STM/context/round/round_{N}.jsonl` 只记录轮审计事件流，不进入上下文装配、语料缓存或 Corpus。LocalAppData 审计缓存中的 `round-index.js` 与 `round-data/round_{N}.js` 只是由 JSONL 生成的静态查看投影，同样不进入上下文装配。
+当前窗口控制不走旧式模块裁剪顺序。脚本按频率层装配、定期层限额、lately 近期履带、高频层按需、完整逐帧 now 包与 STATUSBAR 硬上限控制上下文；POPUP 仍位于 provider messages 绝对末位，STATUSBAR 紧贴 POPUP 之前。LLM API payload 的上下文正文只来自 `step.json.request_body`；`step.md` 与 `layers/*.md` 只是由 `layers/*.json` / `step.json` 派生的审计渲染，不得作为 `system_prompt` 再次发送。`STM/context/round/round_{N}.jsonl` 只记录轮审计事件流，不进入上下文装配、语料缓存或 Corpus。LocalAppData 审计缓存中的 `round-index.js` 与 `round-data/round_{N}.js` 只是由 JSONL 生成的静态查看投影，同样不进入上下文装配。
 
 过期标记以频率层为单位：永固层、定期层可置过期，高频层、lately、now、statusbar 每轮/每步由脚本直接重算或推进，POPUP 通过 `popup_active` 表示当前是否有当步注意力事件。新节律周期、位格初始化或重连、安全事件等级≥3 时强制全量重拼。
 
@@ -54,27 +54,35 @@ POPUP 事件按指南、提醒、警告三层渲染。指南只讲当前车道�
 
 ## 四、三步装配差异
 
-三步在频率层和内容标签两个维度上有明确差异。起手步 CONTENT 为空（预连接不需要正文），反应步 CONTENT 已填充（操作正文），善后步 CONTENT 只挂索引不挂正文（归档只需索引）。EXPLORER 在起手步和善后步全展开，反应步按焦点收窄。三步 RULES 全文相同；步骤差异来自工具头、Runtime 事实和 POPUP。三步 POPUP 均可承载本步 guide，其中善后步只提示当前真实善后义务，并在 lately 水位删除后提醒最近缓存压缩动作。
+三步在频率层和内容标签两个维度上有明确差异。起手步 CONTENT 为空（预连接不需要正文），反应步 CONTENT 已填充（操作正文），善后步 CONTENT 只挂索引不挂正文（归档只需索引）。EXPLORER 在起手步和善后步全展开，反应步按焦点收窄。三步 RULES 全文相同；步骤差异来自工具头、Runtime 事实和 POPUP。三步 POPUP 均可承载本步 guide，其中善后步只提示当前真实善后义务；最近缓存达到实际窗口压力线后，由 Runtime 在善后安全点创建独立压缩债务和维护 guide。
 
 ---
 
 ## 五、缓存通道参数
 
-语料层主源走 `now_cache.jsonl` 与 `lately_cache.jsonl` 两段字符窗口。A 轨语料按 `Corpus + now→lately`、B 轨正式 material 按 `now→lately` 滚动；默认 `now.budget_chars=65536`、`now.trim_chars=16384`，触顶后最早完整 A/B 块立即滚入 `lately_cache.jsonl`。`runtime_call_request` 固定占位每次调用可见，但不写 cache、不参与水位。C 轨只服务带明确目标步骤的单次调用，调用完成即清除。只读工具的执行事实写 A 轨 `kind=tool_fact`，读到的正文、候选列表和索引展开内容只写 B 轨 `kind=material` 或既有 CONTENT 挂载，`tool_fact.ref.tool_result` 不得隐藏正文副本。当前读写声明仍以本轮真实工具结果、processor receipt 或 round audit 为准。
+语料层主源走 `now_cache.jsonl` 逐帧待消费包与 `lately_cache.jsonl` 近期履带。Setup ingress 与 `setup_fact` 留在 now，首个 Reaction 完整消费；此后每个成功返回的 Reaction／Cleanup Frame 将调用前的 A/B 条目按原序迁入 lately，并由该 Frame 的助手进展、工具／协议事实、material 和故障事实形成下一包。provider 传输失败不推进；成功空输出或格式纠正仍消费上一包。A 轨同时进入 Corpus 并在迁移时镜像 raw，B 轨正式 material 只进 lately。C 轨只服务带明确目标步骤的单次调用，调用完成即清除。Round closeout 排空残余 A/B 并清除 C；`now` 不设字符预算或裁剪量。lately 只按成功输入 Token 达三步共同逻辑窗口 90% 形成整理压力；共同窗口未知时在 provider 前阻断，不猜测字符兜底。`runtime_call_request` 固定占位每次调用可见，但不写 cache、不参与迁移。只读工具的执行事实写 A 轨 `kind=tool_fact`，读到的正文、候选列表和索引展开内容只写 B 轨 `kind=material` 或既有 CONTENT 挂载，`tool_fact.ref.tool_result` 不得隐藏正文副本。当前读写声明仍以本轮真实工具结果、processor receipt 或 round audit 为准。
 
-模型可见语料头按语料类型单独渲染，不再使用通用结构字段头，也不为 `lately` / `now` 额外注入独立层头概述。交互、助手回复、资料、工具事实、上轮交接任务、最小承诺、故障记录和缓存摘要分别用中文说明当前轮/历史轮/压缩来源、证据效力和最低必要说明；条数、字符数、当前可见轮次和来源轮次聚合等审计字段留在 `manifest.json`、`step.md`、`layers/*.md` 和 round audit，不迁入 STATUSBAR。轮结束工具事实不再降解显示为“历史工具事实摘要”，最近缓存水位触发的语义压缩显示为“最近缓存压缩摘要”。工具事实正文使用自然语言描述，例如“已读取文件……读取范围……继续读取请调用 file_read(path=..., line_start=N)”。最小承诺只渲染为一行中文边界。
+模型可见语料头按语料类型单独渲染，不再使用通用结构字段头，也不为 `lately` / `now` 额外注入独立层头概述。交互、助手回复、资料、工具事实、上轮交接任务、最小承诺、故障记录和缓存摘要分别用中文说明当前轮/历史轮/压缩来源、证据效力和最低必要说明；条数、字符数、当前可见轮次和来源轮次聚合等审计字段留在 `manifest.json`、`step.md`、`layers/*.md` 和 round audit，不迁入 STATUSBAR。轮结束工具事实不再降解显示为“历史工具事实摘要”，最近缓存窗口压力触发的语义压缩显示为“最近缓存压缩摘要”。工具事实正文使用自然语言描述，例如“已读取文件……读取范围……继续读取请调用 file_read(path=..., line_start=N)”。最小承诺只渲染为一行中文边界。
 
-`lately_cache.jsonl` 默认 `budget_chars=262144`、`trim_chars=65536`、`compact_ratio=0.618`，触顶后删除最旧完整块；三步读取同一 lately 字符窗口，不再按起手/反应/善后取 8/32/8 轮。只有本轮发生 `lately_trimmed=true` 时，cleanup 才在 POPUP 提醒最近缓存压缩；删后幸存段仍在 lately 层，真实 source ids 留在 Runtime pending metadata，压缩结果写回缓存摘要语料块。eligible 历史证明型 A 轨语料被 lately 接纳时同步镜像进 `STM/buffer/raw_log.jsonl`，不随 lately FIFO 回删；主轴节律轮再把当前 raw_log 成对归档到 `LTM/Corpus/public/rhythms/`，同名 `.md` 只是派生阅读副本。material、压缩摘要和轮结束历史工具摘要不写入 raw_log 或 Corpus。交互语料块在结构化引用中携带交互对象、身份状态和来源；反应步遇到身份未知时追加身份确认提醒，高影响动作必须先确认或询问，不允许靠 STATUSBAR 全量关系 fallback 猜对象。quarantine_buffer.json 为 FIFO 32 条滚动删除，存安全粗筛标记的可疑输入。
+`lately_cache.jsonl` 的压力以本 Round Setup/Reaction/Cleanup 三个主模型窗口的最小正整数为共同逻辑窗口；任一主窗口未知时在 provider 前阻断。成功调用的完整输入 Token 达到该窗口 90% 才登记压力，输出 Token 不参与。Cleanup 完成本轮最终缓存落账后只冻结 `cache_compaction_debt.v3`，不删除原文、不置 heartbeat，也不主动开启新轮。下一次自然轮照常完成 Setup，首个 Reaction Frame 才显示最高优先级即时压缩指南。Runtime 按用户输入划分交互段，保护最近可配置 16 次用户输入原文；确定性投影后的材料每帧最多 65536 字符与 32 片，每片摘要最多源字符的 12.5%，整周期目标为冻结 lately 的 25%。达到目标或处理完当前可压缩组后才原子改写，建债后追加的尾部原样保留；受保护原文使目标不可达时按 protected-floor 闭合并提示降低保护数。历史证明型 A 轨仍镜像进 raw_log 并由主轴节律归档 Corpus；压缩材料与摘要不进入 raw/Corpus。
 
-资料输入、图像说明、文件正文、网页正文、搜索候选和索引展开等外部/只读资料作为 B 轨 `kind=material` 进入 now，水位触发即滚入 `lately_cache.jsonl`，同轮在 now+lately 中连续可见并按 lately 完整块 FIFO 自然淘汰；material 不写入 Corpus，也不参加 `cache_compact` 摘要。善后本轮材料包同为 `kind=material`，但走 C 轨，必须带 `transient_scope=cleanup_round` 与 `transient_target_step=cleanup`，cleanup 调用完成后清除，不压成历史摘要。工具执行状态、范围、游标、失败原因等短事实写成 A 轨 `kind=tool_fact`，按 Round 写入 Corpus，并允许水位后进入 lately；只读正文和候选内容不得拼进 `tool_fact` 或藏在嵌套 ref。当前 Seed 只处理文字代理、摘要、caption、OCR 或路径引用；图片 ingress、provider image block、媒体转换与记忆媒体生命周期整体 deferred。`reaction_finalize.handoff_text` 产生的跨轮继续正文同轮只登记到 `state.base.runtime.relay_intents[]`，不写 cache；下一轮 relay setup 才投影成 A 轨 `kind=relay_handoff` / `role=user` 语料块，标题必须声明“上轮交接任务，不是用户原始输入”。`kind=handoff` 与模型可见 `internal_handoff` 当前退役。心跳触发事实如需进入正式调用，使用具名 `kind=setup_fact`；节律任务本身由 GUIDE / POPUP / 当前内容窗口表达并随 GUIDE 生命周期撤换。反应步不再给本轮善后步留下自然语言交接，善后输入来自 cleanup C 轨临时材料、结构化回执和 Runtime pending metadata。
+v3 新写摘要区分两种模型可见语义：首次用户交互前、没有用户输入锚点的历史前缀生成 `kind=cache_summary`，显示为“最近缓存压缩摘要”；具有用户交互锚点或承接既有 `interaction_summary` 的组无论是否仍受保护都生成 `kind=interaction_summary`，显示为“历史交互摘要”。后者表示一次历史用户输入及其后续内容的压缩，绝不是当前输入或当前指令。摘要 `loc.round/step/iter` 记录实际完成写回的 Reaction Frame，原始内容发生轮次必须读取 `source_round_start/source_round_end`；同时保留压缩周期、组 ID、源块 ID 与源正文 SHA 以供核验。
 
-最小承诺与故障记账也是语料块：善后脚本把纯边界标记写成 `kind=minimum_commitment`；故障由脚本异常捕获或反应步 `fault_record` 协议工具写成 `kind=fault_note`，同时保留 `alerts.md` 告警索引。最近缓存压缩没有 kind 白名单、当前轮保护或最小承诺特保；若内容必须不可压缩，应进入记忆条目、工作容器、剪贴板或审计快照，而不是要求缓存保真。
+资料输入、图像说明、文件正文、网页正文、搜索候选和索引展开等外部/只读资料作为 B 轨 `kind=material` 进入下一 Frame 的 now；该 Frame 成功返回后按完整块迁入 `lately_cache.jsonl`。material 不写 raw、Corpus；成为历史交互段的一部分后可进入 v3 语义压缩，无法由来源 SHA 证明可去重时必须按原文投影，不得由代码猜测事实。善后本轮材料包同为 `kind=material`，但走 C 轨，必须带 `transient_scope=cleanup_round` 与 `transient_target_step=cleanup`，cleanup 调用完成后清除，不压成历史摘要。工具执行状态、范围、游标、失败原因等短事实写成 A 轨 `kind=tool_fact`，按 Round 写入 Corpus，并在下一成功 Frame 消费时进入 lately 与 raw；只读正文和候选内容不得拼进 `tool_fact` 或藏在嵌套 ref。当前 Seed 只处理文字代理、摘要、caption、OCR 或路径引用；图片 ingress、provider image block、媒体转换与记忆媒体生命周期整体 deferred。`reaction_finalize.handoff_text` 产生的跨轮继续正文同轮只登记到 `state.base.runtime.relay_intents[]`，不写 cache；下一轮 relay setup 才投影成 A 轨 `kind=relay_handoff` / `role=user` 语料块，标题必须声明“上轮交接任务，不是用户原始输入”。`kind=handoff` 与模型可见 `internal_handoff` 当前退役。心跳触发事实如需进入正式调用，使用具名 `kind=setup_fact`；节律任务本身由 GUIDE / POPUP / 当前内容窗口表达并随 GUIDE 生命周期撤换。反应步不再给本轮善后步留下自然语言交接，善后输入来自 cleanup C 轨临时材料、结构化回执和 Runtime pending metadata。
+
+最小承诺与故障记账也是语料块：善后脚本把纯边界标记写成 `kind=minimum_commitment`；故障由 Runtime 脚本异常捕获或当前 guide 经 `guide_submit` 结算后写成 `kind=fault_note`，同时保留 `alerts.md` 告警索引。`fault_record` 已退役出 provider-native 工具头。最近缓存压缩按交互段处理已经进入 lately 的 B 轨 `material`，并保护最近 16 个交互轮内的用户原始输入；其他 eligible 块（包括最小承诺）没有额外特保。若内容必须长期不可压缩，应进入记忆条目、工作容器、剪贴板或审计快照，而不是要求缓存保真。
 
 ---
 
 ## 六、定期层注册
 
 内容窗口位于高频层 CONTENT，由三路组成：`focus` / 工作台焦点、`resident_list` / 常驻清单、`instant_list` / 即时清单。常驻清单只读挂接记忆条目正文、工作容器正文和关系卡正文；即时清单承接起手步挂载、本轮新写入、三重命中和临时材料。取消三路挂载使用 `mount_cancel`，只移除挂载项，不删除源正文。`periodic_mounts.json` 是定期记忆投影文件，不迁入三路内容窗口状态；旧“五类挂载”口径已经退役。当前没有场景 RULES 自动追加，只读容器与外部内容归高频层参考窗口，不再塞进定期层机器源。
+
+当前定期层只接受 GUI 人工挂载的公共活跃记忆。分身本地 `periodic_mounts.v3` 记录稳定追加顺序和等待重整请求，PID 共享 `periodic_pin_owners.v2` 记录各分身所有者、`periodic/preexisting` 钉选来源及对齐核验；挂载持续到该分身显式取消，没有 32 轮 TTL。错位条目只在后续自然进入 Reaction 的轮次通过即时回忆重整指南恢复形态，GUI 本身不调用 provider。模型节律轮自动挂载、定期层挂载指南和 Registry `periodic` 规则均未启用。
+
+装配器必须从已核验的 `LTM/Memory/Pinned` 真源实时生成 ID、标题和正文投影，剥离最近调用坐标、挂接备注与容器链接等易变字段。正文或静态元数据变化时，下一次装配同步刷新。挂载账本损坏、条目缺失或不在 Pinned 时，`20_periodic` 必须 required-context failure，不得静默装配为空。人工挂载总投影上限读取当前配置，默认 65536 字符；新挂载超过上限时整笔事务拒绝，不允许只完成 Pinned 搬层。既存挂载因配置下调或回忆重整正文增长而超限时，后续装配失败闭合，真实正文不回滚；提高配置上限或取消挂载即可恢复。
+
+人工定期挂载不是 recall：不进入 `resident_list/instant_list`，不加热、不改调用坐标、不置 `recalled`。STM-only 条目挂载后形成同 ID 的“STM 衰减中 + LTM/Pinned”双驻留，但不因此取得 STM 召回身份。
 
 与 `container_registry.json` 的区分：前者只管定期记忆投影，后者管 9 容器元数据（持续有效）。技能不进入当前定期层；`LTM/Skills/registry.json` 只是真实技能容器的定位、挂接与 focus 真源。
 

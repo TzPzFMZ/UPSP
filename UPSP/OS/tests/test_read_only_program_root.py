@@ -154,7 +154,6 @@ class MockExecutor:
                     "tool_id": "setup_finalize",
                     "arguments": {
                         "security_verdict": "pass",
-                        "round_type_confirm": "interactive",
                     },
                     "parse_status": "ok",
                     "index": 0,
@@ -186,6 +185,7 @@ class MockExecutor:
 
 os_main.APIExecutor = MockExecutor
 state_store, config_store = os_main.init_environment()
+config_store.get_round_context_window_tokens = lambda: 1_000_000
 result = os_main.send_message_once(
     state_store,
     config_store,
@@ -254,8 +254,8 @@ print("SPEC703_RESULT=" + json.dumps(
         assert (local_root / "config" / "interface.json").is_file()
         assert (local_root / "config" / "models.json").is_file()
         assert (data_root / "active_instance.json").is_file()
-        assert list(data_root.glob("personas/*/OS/persona/core.md"))
-        assert list(data_root.glob("personas/*/OS/config/model_routing.json"))
+        assert list(data_root.glob("personas/*/meta/persona/core.md"))
+        assert list(data_root.glob("personas/*/meta/config/model_routing.json"))
     finally:
         _restore_writable(install_root)
 

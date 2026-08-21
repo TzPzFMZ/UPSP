@@ -13,9 +13,13 @@ import initialization.windows_data as windows_data
 from initialization.windows_data import (
     ACTIVE_INSTANCE_SCHEMA,
     DATA_ROOT_ENV,
+    INSTANCE_MANIFEST_FILENAME,
+    INSTANCE_MANIFEST_SCHEMA,
     KNOWN_FOLDER_DOCUMENTS,
     KNOWN_FOLDER_LOCAL_APP_DATA,
+    LEGACY_ACTIVE_INSTANCE_SCHEMA,
     LOCAL_STATE_ROOT_ENV,
+    META_INSTANCE_ID,
     DataRootError,
     ensure_active_instance,
     load_active_instance,
@@ -116,7 +120,85 @@ def test_fresh_root_allocates_one_stable_draft_os(tmp_path):
     assert json.loads(first.manifest_path.read_text(encoding="utf-8")) == {
         "schema_version": ACTIVE_INSTANCE_SCHEMA,
         "pid": first.pid,
+        "instance_id": META_INSTANCE_ID,
     }
+    assert json.loads(
+        (first.instance_root / INSTANCE_MANIFEST_FILENAME).read_text(encoding="utf-8")
+    ) == {
+        "schema_version": INSTANCE_MANIFEST_SCHEMA,
+        "pid": first.pid,
+        "instance_id": META_INSTANCE_ID,
+        "kind": "meta",
+    }
+
+
+def test_legacy_os_layout_migrates_once_to_meta(tmp_path):
+    environment = _roots(tmp_path)
+    layout = ensure_active_instance(PROGRAM_ROOT, environ=environment)
+    legacy_root = layout.pid_root / "OS"
+    os.replace(layout.meta_root, legacy_root)
+    layout.manifest_path.write_text(
+        json.dumps({
+            "schema_version": LEGACY_ACTIVE_INSTANCE_SCHEMA,
+            "pid": layout.pid,
+        }),
+        encoding="utf-8",
+    )
+
+    migrated = ensure_active_instance(PROGRAM_ROOT, environ=environment)
+    repeated = ensure_active_instance(PROGRAM_ROOT, environ=environment)
+
+    assert migrated.instance_id == repeated.instance_id == META_INSTANCE_ID
+    assert migrated.meta_root.is_dir()
+    assert not legacy_root.exists()
+    assert json.loads(migrated.manifest_path.read_text(encoding="utf-8")) == {
+        "schema_version": ACTIVE_INSTANCE_SCHEMA,
+        "pid": layout.pid,
+        "instance_id": META_INSTANCE_ID,
+    }
+
+
+def test_legacy_os_and_meta_conflict_fails_closed(tmp_path):
+    environment = _roots(tmp_path)
+    layout = ensure_active_instance(PROGRAM_ROOT, environ=environment)
+    shutil.copytree(layout.meta_root, layout.pid_root / "OS")
+    layout.manifest_path.write_text(
+        json.dumps({
+            "schema_version": LEGACY_ACTIVE_INSTANCE_SCHEMA,
+            "pid": layout.pid,
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DataRootError, match="active_instance_legacy_migration_conflict"):
+        ensure_active_instance(PROGRAM_ROOT, environ=environment)
+
+    assert layout.meta_root.is_dir()
+    assert (layout.pid_root / "OS").is_dir()
+
+
+def test_legacy_migration_writes_v2_active_manifest_after_validation(
+    tmp_path, monkeypatch
+):
+    environment = _roots(tmp_path)
+    layout = ensure_active_instance(PROGRAM_ROOT, environ=environment)
+    os.replace(layout.meta_root, layout.pid_root / "OS")
+    legacy = {
+        "schema_version": LEGACY_ACTIVE_INSTANCE_SCHEMA,
+        "pid": layout.pid,
+    }
+    layout.manifest_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    def fail_validation(_layout):
+        raise DataRootError("validation_failed")
+
+    monkeypatch.setattr(windows_data, "_validate_layout", fail_validation)
+
+    with pytest.raises(DataRootError, match="validation_failed"):
+        ensure_active_instance(PROGRAM_ROOT, environ=environment)
+
+    assert json.loads(layout.manifest_path.read_text(encoding="utf-8")) == legacy
+    assert (layout.pid_root / "meta").is_dir()
 
 
 def test_read_only_load_never_creates_missing_active_instance(tmp_path):
@@ -272,6 +354,7 @@ def test_atomic_directory_replace_failure_leaves_no_partial_root(tmp_path, monke
 
 def test_runtime_path_projection_separates_program_data_and_local_state():
     from paths import (
+        ACTIVE_INSTANCE_ID,
         ACTIVE_PID,
         AUDIT_DIR,
         CONFIG_DIR,
@@ -290,11 +373,13 @@ def test_runtime_path_projection_separates_program_data_and_local_state():
     local_root = Path(UPSP_LOCAL_STATE_ROOT).resolve()
 
     assert Path(PROGRAM_OS_ROOT).resolve() == program / "OS"
-    assert active_os == data_root / "personas" / ACTIVE_PID / "OS"
+    assert active_os == data_root / "personas" / ACTIVE_PID / ACTIVE_INSTANCE_ID
     assert Path(PERSONA_DIR).resolve() == active_os / "persona"
     assert Path(CONFIG_DIR).resolve() == active_os / "config"
     assert Path(GLOBAL_CONFIG_DIR).resolve() == local_root / "config"
-    assert Path(AUDIT_DIR).resolve() == local_root / "cache" / "audit" / ACTIVE_PID
+    assert Path(AUDIT_DIR).resolve() == (
+        local_root / "cache" / "audit" / ACTIVE_PID / ACTIVE_INSTANCE_ID
+    )
     assert not active_os.is_relative_to(program)
     assert not local_root.is_relative_to(program)
 

@@ -15,6 +15,7 @@ if str(PROGRAM_OS_ROOT) not in sys.path:
     sys.path.insert(0, str(PROGRAM_OS_ROOT))
 
 from paths import STM_CTX_ROUND_DIR  # noqa: E402
+from data.round_audit_codec import read_round_audit_file  # noqa: E402
 
 
 LEGACY_TEXT_REQUEST_MARKERS = (
@@ -57,17 +58,7 @@ def _unique(values: list[str]) -> list[str]:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as f:
-        for line_num, line in enumerate(f, start=1):
-            text = line.strip()
-            if not text:
-                continue
-            try:
-                events.append(json.loads(text))
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"invalid JSONL at line {line_num}: {exc}") from exc
-    return events
+    return read_round_audit_file(path)
 
 
 def _round_num_from_path(path: Path) -> int | None:
@@ -412,6 +403,7 @@ def inspect_round_file(
     round_closed_status = ""
     final_response = ""
     final_response_source = ""
+    verified_continue_handoff = False
     dogfood_label_texts: list[str] = []
     memory_settlements: list[dict[str, Any]] = []
     read_settlements: list[dict[str, Any]] = []
@@ -496,6 +488,22 @@ def inspect_round_file(
             round_closed_status = str(payload.get("status") or "")
             final_response = str(payload.get("final_response") or "").strip()
             final_response_source = str(payload.get("final_response_source") or "").strip()
+            if final_response_source == "reaction.continue_handoff":
+                verified_continue_handoff = True
+        elif event_type == "heartbeat_rearm":
+            status = str(payload.get("status") or "").strip()
+            flags = {str(flag) for flag in payload.get("set_flags") or []}
+            if "continue_requested" in flags:
+                if status == "continue_requested_rearmed":
+                    relay_intent = payload.get("relay_intent")
+                    verified_continue_handoff = verified_continue_handoff or bool(
+                        isinstance(relay_intent, dict)
+                        and str(relay_intent.get("status") or "").strip() == "open"
+                    )
+                elif status == "continue_requested_rearmed_from_open_relay_intents":
+                    verified_continue_handoff = verified_continue_handoff or bool(
+                        payload.get("open_relay_intent_ids")
+                    )
 
         native_outputs.extend(_collect_native_outputs(payload))
         tool_results.extend(_collect_tool_results(payload))
@@ -603,7 +611,7 @@ def inspect_round_file(
         issues.append(f"missing_required_provider:{required_provider}")
     if require_round_closed and round_closed_status != "closed":
         issues.append(f"round_not_closed:{round_closed_status or 'missing'}")
-    if require_final_response and not final_response:
+    if require_final_response and not final_response and not verified_continue_handoff:
         issues.append("final_response_empty")
     runtime_audit_status = runtime_statuses[-1] if runtime_statuses else ""
     if require_runtime_audit_ok and runtime_audit_status != "ok":
@@ -670,6 +678,7 @@ def inspect_round_file(
         "round_closed_status": round_closed_status,
         "final_response": final_response,
         "final_response_source": final_response_source,
+        "verified_continue_handoff": verified_continue_handoff,
         "memory_settlements": _dedupe_dicts(memory_settlements),
         "read_settlements": _dedupe_dicts(read_settlements),
         "settlement_ledgers": _dedupe_dicts(settlement_ledgers),

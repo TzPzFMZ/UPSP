@@ -335,9 +335,11 @@ def settle_state(state_store, relation_store, round_store, round_num,
                 observed_at=plan.get("observed_at"),
             ))
 
-        after_state = state_store.load()
-        _apply_state_slice(after_state, plan["state"]["after"])
-        state_store.save(after_state)
+        state_store.mutate(
+            lambda after_state: _apply_state_slice(
+                after_state, plan["state"]["after"]
+            )
+        )
     except Exception as exc:
         _raise_settlement_error(
             round_store,
@@ -508,14 +510,17 @@ def settle_due_state(state_store, relation_store, *, journal_path=None,
                         observed_at=plan.get("observed_at"),
                     )
                 )
-            after_state = state_store.load()
-            _apply_state_slice(after_state, plan["state"]["after"])
-            state_store.save(after_state)
+            state_store.mutate(
+                lambda after_state: _apply_state_slice(
+                    after_state, plan["state"]["after"]
+                )
+            )
         else:
-            recovered_state = state_store.load()
-            recovered_state.setdefault("base", {}).setdefault(
-                "heartbeat_flags", {})["feeling_settle_due"] = False
-            state_store.save(recovered_state)
+            def clear_due(recovered_state):
+                recovered_state.setdefault("base", {}).setdefault(
+                    "heartbeat_flags", {})["feeling_settle_due"] = False
+
+            state_store.mutate(clear_due)
     except Exception as exc:
         raise _local_error(
             settlement_id, exc, relation_receipts) from exc

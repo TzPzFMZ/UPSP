@@ -31,19 +31,31 @@ if str(PROGRAM_OS_ROOT) not in sys.path:
 if str(UPSP_ROOT) not in sys.path:
     sys.path.insert(0, str(UPSP_ROOT))
 
-from initialization.windows_data import ensure_active_instance  # noqa: E402
+from initialization.windows_data import (  # noqa: E402
+    DataRootError,
+    ensure_active_instance,
+)
 
-ensure_active_instance(UPSP_ROOT)
+ACTIVE_LAYOUT = ensure_active_instance(UPSP_ROOT)
 
 from serve_round_live import RoundLiveHandler, default_round_dir  # noqa: E402
 from initialization.bootstrap_service import BootstrapService  # noqa: E402
+from initialization.instance_service import (  # noqa: E402
+    InstanceService,
+    InstanceServiceError,
+)
 from initialization.persona_initializer import PersonaInitializationError  # noqa: E402
 from assembly.statusbar import StatusBarBuilder  # noqa: E402
 from data.container_store import ContainerStore  # noqa: E402
 from data.config_store import API_CONFIG_OVERRIDE_ENV, ConfigStore  # noqa: E402
 from data.memory_store import MemoryStore, project_memory_body  # noqa: E402
+from data.periodic_mount_store import PeriodicMountStore  # noqa: E402
+from data.periodic_pin_owner_store import PeriodicPinOwnerStore  # noqa: E402
 from data.relation_store import AXIS_NAMES, RelationStore  # noqa: E402
 from data.request_prefix_diff import build_request_prefix_diff  # noqa: E402
+from data.round_retention import (  # noqa: E402
+    enforce_active_round_retention,
+)
 from data.state_store import StateStore  # noqa: E402
 from data.workbench import WorkbenchStore  # noqa: E402
 from engines.resident_runtime import (  # noqa: E402
@@ -54,8 +66,15 @@ from engines.resident_runtime import (  # noqa: E402
 )
 from engines.tool_approval import ToolApprovalConflict  # noqa: E402
 from logic.container_focus import apply_container_focus_declarations  # noqa: E402
+from logic.periodic_memory_mount import PeriodicMemoryMountError  # noqa: E402
 from errors import APIBridgeError, ReadError, WriteError  # noqa: E402
-from paths import DOCS_DIR, PERSONA_DIR, RULES_DIR  # noqa: E402
+from paths import (  # noqa: E402
+    ACTIVE_INSTANCE_ID,
+    DOCS_DIR,
+    PERSONA_DIR,
+    RULES_DIR,
+    SHARED_PERSONA_DIR,
+)
 from schemas.state import FIELDS as STATE_FIELDS  # noqa: E402
 
 GUI_ROOT = REPO_ROOT / "UPSP" / "gui"
@@ -75,7 +94,7 @@ DESKTOP_CONTROL_HEADER = "X-UPSP-Desktop-Control"
 DESKTOP_TOKEN_RE = re.compile(r"^[0-9a-f]{64}$")
 DESKTOP_SESSION_RE = re.compile(r"^[0-9a-f]{32}$")
 PERSONA_ROOT = Path(PERSONA_DIR)
-PERSONA_CORE_MD = PERSONA_ROOT / "core.md"
+PERSONA_CORE_MD = Path(SHARED_PERSONA_DIR) / "core.md"
 RULES_ROOT = Path(RULES_DIR)
 DOCS_ROOT = Path(DOCS_DIR)
 TASK_DONE_STATUSES = {
@@ -115,9 +134,13 @@ def _load_product_manifest() -> dict:
         or not isinstance(value.get("author"), dict)
         or set(value["author"]) != {"zh-CN", "en-US"}
         or not all(isinstance(item, str) and item for item in value["author"].values())
-        or re.fullmatch(r"\d+\.\d+\.\d+-[a-z]+(?:\.\d+)+", value["version"]) is None
+        or not (
+            value["channel"] == "stable"
+            and re.fullmatch(r"\d+\.\d+\.\d+", value["version"])
+            or value["channel"] == "alpha"
+            and re.fullmatch(r"\d+\.\d+\.\d+-alpha\.\d+", value["version"])
+        )
         or re.fullmatch(r"\d+\.\d+\.\d+\.\d+", value["windows_file_version"]) is None
-        or value["channel"] != "alpha"
         or not value["repository_url"].startswith("https://")
         or not value["releases_url"].startswith("https://")
     ):
@@ -204,29 +227,27 @@ def _setting(path, kind, minimum=None, maximum=None, choices=()):
 
 SETTINGS_FIELDS = {
     "system": {
+        "response_anchor.prompt": _setting("response_anchor.prompt", "string", maximum=512),
         "heartbeat.interval": _setting("heartbeat.interval", "int", 1, 3600),
-        "round.time_limit": _setting("round.time_limit", "int", 60, 86400),
+        "round.reminder_seconds": _setting("round.reminder_seconds", "int", 60, 86400),
+        "round.warning_seconds": _setting("round.warning_seconds", "int", 60, 172800),
+        "round.auto_relay_seconds": _setting("round.auto_relay_seconds", "int", 60, 259200),
         "rhythm.period": _setting("rhythm.period", "int", 1, 100000),
         "standby.idle_threshold_min": _setting("standby.idle_threshold_min", "int", 1, 10080),
-        "token_usage.warning_ratio": _setting("token_usage.warning_ratio", "float", 0.01, 1.0),
-        "audit.round_snapshot_retention": _setting("audit.round_snapshot_retention", "int", 1, 4096),
+        "audit.round_snapshot_retention": _setting("audit.round_snapshot_retention", "int", 1, 64),
+        "audit.round_snapshot_max_mib": _setting("audit.round_snapshot_max_mib", "int", 1, 4096),
         "audit.state_backup_retention": _setting("audit.state_backup_retention", "int", 1, 4096),
-        "autonomous_trigger.tacit_pending_threshold": _setting("autonomous_trigger.tacit_pending_threshold", "int", 1, 1000000),
-        "autonomous_trigger.connection_pending_threshold": _setting("autonomous_trigger.connection_pending_threshold", "int", 1, 1000000),
         "general_tools.file_read_window_chars": _setting("general_tools.file_read_window_chars", "int", 1, 16777216),
         "general_tools.web_fetch_window_chars": _setting("general_tools.web_fetch_window_chars", "int", 1, 16777216),
         "general_tools.web_search_window_results": _setting("general_tools.web_search_window_results", "int", 1, 1000),
     },
-    "now": {
-        "budget_chars": _setting("budget_chars", "int", 1, 16777216),
-        "trim_chars": _setting("trim_chars", "int", 1, 16777216),
-    },
+    "now": {},
     "lately": {
-        "budget_chars": _setting("budget_chars", "int", 1, 16777216),
-        "trim_chars": _setting("trim_chars", "int", 1, 16777216),
-        "compact_ratio": _setting("compact_ratio", "float", 0.0, 1.0),
-        "compact_shard_chars": _setting("compact_shard_chars", "int", 1, 16777216),
-        "compact_shard_ratio": _setting("compact_shard_ratio", "float", 0.0, 1.0),
+        "pressure_ratio": _setting("pressure_ratio", "float", 0.50, 0.99),
+        "protected_interaction_count": _setting("protected_interaction_count", "int", 0, 128),
+        "semantic_summary_ratio": _setting("semantic_summary_ratio", "float", 0.01, 0.50),
+        "cycle_target_ratio": _setting("cycle_target_ratio", "float", 0.05, 0.80),
+        "batch_source_chars": _setting("batch_source_chars", "int", 1024, 262144),
     },
     "periodic": {
         "limits.periodic_memory_items_chars": _setting("limits.periodic_memory_items_chars", "int", 1, 16777216),
@@ -268,7 +289,61 @@ class SettingsService:
 
     def __init__(self, config_store=None):
         self.configs = config_store or ConfigStore(use_api_environment=False)
-        self.configs.init_all()
+        self._persona_config_failure = None
+        self.configs.init_global()
+        try:
+            self.configs.init_persona()
+        except (ReadError, WriteError, OSError, ValueError) as exc:
+            self._persona_config_failure = self._safe_persona_failure(exc)
+
+    @staticmethod
+    def _safe_persona_failure(exc: Exception) -> dict:
+        current = exc
+        reasons = []
+        while current is not None and len(reasons) < 6:
+            reasons.append(str(current))
+            current = getattr(current, "cause", None)
+        joined = " ".join(reasons).lower()
+        if "unknown autonomous_trigger shape" in joined:
+            reason = "unknown_autonomous_trigger_shape"
+        elif "unknown system config version" in joined:
+            reason = "unknown_system_config_version"
+        elif "filenotfound" in joined or isinstance(getattr(exc, "cause", None), FileNotFoundError):
+            reason = "config_missing"
+        elif "json" in joined or "decode" in joined:
+            reason = "config_unreadable"
+        else:
+            reason = "config_invalid"
+        config = str(getattr(exc, "config_name", "active_persona"))
+        context_names = {"permanent", "periodic", "high_freq", "now", "lately", "popup"}
+        root_names = {"system", "memory", "media", "relation", "model_routing"}
+        if config in context_names:
+            relative_path = f"config/context/{config}.json"
+        elif config in root_names:
+            relative_path = f"config/{config}.json"
+        else:
+            config = "active_persona"
+            relative_path = "config"
+        return {
+            "code": "persona_config_migration_failed",
+            "config": config,
+            "path": relative_path,
+            "reason": reason,
+        }
+
+    @property
+    def persona_config_ready(self) -> bool:
+        return self._persona_config_failure is None
+
+    def persona_config_status(self) -> dict:
+        return {
+            "ready": self.persona_config_ready,
+            "error": deepcopy(self._persona_config_failure),
+        }
+
+    def require_persona_config_ready(self) -> None:
+        if not self.persona_config_ready:
+            raise SettingsValidationError("persona_config_migration_failed")
 
     @staticmethod
     def _get(config: dict, path: tuple[str, ...]):
@@ -324,9 +399,12 @@ class SettingsService:
 
     @staticmethod
     def _validate_document(file_id: str, config: dict) -> None:
-        if file_id in {"now", "lately"}:
-            if config.get("trim_chars") > config.get("budget_chars"):
-                raise SettingsValidationError(f"settings_{file_id}_trim_exceeds_budget")
+        if file_id == "lately":
+            if not (
+                    float(config["semantic_summary_ratio"])
+                    < float(config["cycle_target_ratio"])
+                    < float(config["pressure_ratio"])):
+                raise SettingsValidationError("settings_lately_ratio_order_invalid")
         if file_id == "memory":
             heat = config["heat"]
             thresholds = heat["zone_thresholds"]
@@ -583,6 +661,7 @@ class SettingsService:
         }
 
     def update(self, file_id: object, changes: object, revision: object) -> None:
+        self.require_persona_config_ready()
         if not isinstance(revision, str):
             raise SettingsValidationError("settings_update_invalid")
         if not isinstance(changes, dict) or not changes:
@@ -671,6 +750,7 @@ class SettingsService:
             raise SettingsValidationError("model_catalog_values_invalid")
         allowed = {
             "alias", "model", "connection_id", "context_window",
+            "output_token_limit",
             "detected_context_window", "context_window_source",
             "reasoning_supported", "reasoning_default", "streaming_enabled",
             "streaming_include_usage", "request_overrides",
@@ -689,6 +769,11 @@ class SettingsService:
             if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100000000:
                 raise SettingsValidationError("model_context_window_invalid")
             result["context_window"] = value
+        if "output_token_limit" in values:
+            value = values["output_token_limit"]
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 1000000:
+                raise SettingsValidationError("model_output_token_limit_invalid")
+            result["output_token_limit"] = value
         if "detected_context_window" in values:
             value = values["detected_context_window"]
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100000000:
@@ -727,6 +812,7 @@ class SettingsService:
                 raise SettingsValidationError("model_request_overrides_invalid")
             result["request_overrides"] = deepcopy(values["request_overrides"])
         result["prompt_cache"] = {"profile": "automatic_tiered"}
+        result.setdefault("output_token_limit", 0)
         result.setdefault("request_overrides", {})
         if "detected_context_window" not in result:
             result["detected_context_window"] = 0
@@ -738,6 +824,7 @@ class SettingsService:
         return result
 
     def update_model_catalog(self, entity, action, item_id, values, revision):
+        self.require_persona_config_ready()
         if entity not in {"connection", "model"} or action not in {"create", "update", "delete"}:
             raise SettingsValidationError("model_catalog_update_invalid")
         if not isinstance(revision, str) or revision != self.configs.revision("models"):
@@ -836,6 +923,7 @@ class SettingsService:
         return key
 
     def update_key(self, connection_id: object, action: object, key: object, revision: object) -> None:
+        self.require_persona_config_ready()
         if not isinstance(connection_id, str) or action not in {"set", "delete"}:
             raise SettingsValidationError("provider_key_update_invalid")
         if not isinstance(revision, str):
@@ -1101,12 +1189,18 @@ class DepositionReader:
         container_store=None,
         relation_store=None,
         workbench_store=None,
+        periodic_mount_store=None,
+        periodic_owner_store=None,
+        active_instance_id=ACTIVE_INSTANCE_ID,
         focus_processor=apply_container_focus_declarations,
     ):
         self.memory_store = memory_store or MemoryStore()
         self.container_store = container_store or ContainerStore()
         self.relation_store = relation_store or RelationStore()
         self.workbench_store = workbench_store or WorkbenchStore()
+        self.periodic_mount_store = periodic_mount_store or PeriodicMountStore()
+        self.periodic_owner_store = periodic_owner_store or PeriodicPinOwnerStore()
+        self.active_instance_id = str(active_instance_id or "meta")
         self.focus_processor = focus_processor
 
     @staticmethod
@@ -1114,6 +1208,13 @@ class DepositionReader:
         return {
             "id": _text(raw.get("id")),
             "memory_layer": _text(raw.get("memory_layer")),
+            "memory_layers": _string_list(raw.get("memory_layers")),
+            "stm_present": bool(raw.get("stm_present")),
+            "ltm_layer": _text(raw.get("ltm_layer")),
+            "periodic_mounted": bool(raw.get("periodic_mounted")),
+            "periodic_pin_owned": bool(raw.get("periodic_pin_owned")),
+            "periodic_mount_status": _text(raw.get("periodic_mount_status")),
+            "periodic_mount_reason": _text(raw.get("periodic_mount_reason")),
             "title": _text(raw.get("title")),
             "type": _text(raw.get("type")),
             "weight": raw.get("weight"),
@@ -1126,8 +1227,14 @@ class DepositionReader:
             "tags": _string_list(raw.get("tags")),
             "linked_containers": _string_list(raw.get("linked_containers")),
             "created_round": raw.get("created_round"),
+            "created_instance_id": _text(raw.get("created_instance_id")),
             "last_recalled_round": raw.get("last_recalled_round"),
+            "last_recalled_instance_id": _text(
+                raw.get("last_recalled_instance_id")
+            ),
             "created_at": _text(raw.get("created_at")),
+            "stored_at": _text(raw.get("stored_at")),
+            "admission_status": _text(raw.get("admission_status")),
             "last_recalled_at": _text(raw.get("last_recalled_at")),
         }
 
@@ -1169,9 +1276,40 @@ class DepositionReader:
 
     def index(self) -> dict:
         focus = self.focus_projection()
+        mount_doc = self.periodic_mount_store.load()
+        mounted_ids = {
+            _text(item.get("id"))
+            for item in mount_doc.get("periodic_memory_items", [])
+            if isinstance(item, dict) and _text(item.get("id"))
+        }
+        pending_by_id = {
+            _text(item.get("id")): item
+            for item in mount_doc.get("pending_memory_items", [])
+            if isinstance(item, dict) and _text(item.get("id"))
+        }
+        owner_entries = self.periodic_owner_store.load().get("entries", {})
+        raw_memories = self.memory_store.list_public_entries()
+        for raw in raw_memories:
+            if not isinstance(raw, dict):
+                continue
+            mem_id = _text(raw.get("id"))
+            owner = owner_entries.get(mem_id)
+            raw["periodic_mounted"] = mem_id in mounted_ids
+            pending = pending_by_id.get(mem_id)
+            raw["periodic_mount_status"] = (
+                "mounted" if mem_id in mounted_ids
+                else _text((pending or {}).get("status")) or "unmounted"
+            )
+            raw["periodic_mount_reason"] = _text((pending or {}).get("reason"))
+            raw["periodic_pin_owned"] = bool(
+                mem_id in mounted_ids
+                and isinstance(owner, dict)
+                and owner.get("pin_source") == "periodic"
+                and self.active_instance_id in owner.get("owners", [])
+            )
         memories = [
             self._memory_summary(item)
-            for item in self.memory_store.list_public_entries()
+            for item in raw_memories
             if isinstance(item, dict)
             and str(item.get("access") or "public").strip().lower() == "public"
         ]
@@ -1494,6 +1632,7 @@ class SeedGuiHandler(RoundLiveHandler):
     persona_reader = None
     settings_service = None
     bootstrap_service = None
+    instance_service = None
     runtime_service = None
     desktop_control_token = None
     desktop_session_id = None
@@ -1564,7 +1703,9 @@ class SeedGuiHandler(RoundLiveHandler):
             except OSError:
                 pass
 
-    def _json_object(self, required_keys: set[str]) -> dict | None:
+    def _json_object(
+            self, required_keys: set[str], optional_keys: set[str] | None = None
+    ) -> dict | None:
         if self.headers.get_content_type() != "application/json":
             self._error(400, "invalid_content_type")
             return None
@@ -1585,7 +1726,13 @@ class SeedGuiHandler(RoundLiveHandler):
         except (UnicodeDecodeError, json.JSONDecodeError):
             self._error(400, "invalid_json")
             return None
-        if not isinstance(payload, dict) or set(payload) != required_keys:
+        keys = set(payload) if isinstance(payload, dict) else set()
+        allowed_keys = required_keys | (optional_keys or set())
+        if (
+            not isinstance(payload, dict)
+            or not required_keys.issubset(keys)
+            or not keys.issubset(allowed_keys)
+        ):
             self._error(400, "invalid_request")
             return None
         return payload
@@ -1629,6 +1776,7 @@ class SeedGuiHandler(RoundLiveHandler):
             "relay_in_flight": (
                 service["relay_in_flight"] or self.relay_lock.locked()),
             "mutation_in_flight": self.mutation_lock.locked(),
+            "restart_requested": self.server.restart_requested.is_set(),
             "cli": {
                 "ok": True,
                 "command": "status",
@@ -1640,8 +1788,11 @@ class SeedGuiHandler(RoundLiveHandler):
     def _require_initialized_persona(self) -> bool:
         try:
             ready = self.bootstrap_service.initializer.status()["ready"]
-        except (OSError, ValueError):
+        except (ReadError, OSError, ValueError):
             self._error(503, "bootstrap_status_failed")
+            return False
+        if ready and not self.settings_service.persona_config_ready:
+            self._error(409, "persona_config_migration_failed")
             return False
         if ready:
             return True
@@ -1655,8 +1806,11 @@ class SeedGuiHandler(RoundLiveHandler):
             return "relay_in_flight"
         return "mutation_in_flight"
 
-    def _permission_payload(self) -> tuple[str, bool] | None:
-        payload = self._json_object({"permission_level", "unlimited_confirmed"})
+    def _permission_payload(
+            self, optional_keys: set[str] | None = None
+    ) -> tuple[str, bool, dict] | None:
+        payload = self._json_object(
+            {"permission_level", "unlimited_confirmed"}, optional_keys)
         if payload is None:
             return None
         permission = payload.get("permission_level")
@@ -1667,7 +1821,7 @@ class SeedGuiHandler(RoundLiveHandler):
         if permission == "unlimited" and confirmed is not True:
             self._error(403, "unlimited_confirmation_required")
             return None
-        return permission, confirmed
+        return permission, confirmed, payload
 
     def _deposition_detail(self, kind: str) -> None:
         query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
@@ -1828,6 +1982,15 @@ class SeedGuiHandler(RoundLiveHandler):
                 return
             self._send_json(200, payload)
             return
+        if path == "/api/personas":
+            if urlparse(self.path).query:
+                self._error(400, "invalid_persona_catalog_request")
+                return
+            try:
+                self._send_json(200, self.instance_service.list_all())
+            except (InstanceServiceError, OSError, ValueError):
+                self._error(503, "persona_catalog_failed")
+            return
         if path == "/api/context/request-prefix-diff":
             self._context_request_prefix_diff()
             return
@@ -1862,7 +2025,16 @@ class SeedGuiHandler(RoundLiveHandler):
                 return
             self._desktop_shutdown()
             return
+        if self.server.restart_requested.is_set():
+            self._discard_bounded_request_body()
+            self._error(409, "backend_restart_pending")
+            return
         if path not in {
+            "/api/personas",
+            "/api/instances",
+            "/api/instances/activate",
+            "/api/instances/archive",
+            "/api/instances/restore",
             "/api/bootstrap/provider-test",
             "/api/bootstrap/persona",
             "/api/runtime/send",
@@ -1872,6 +2044,7 @@ class SeedGuiHandler(RoundLiveHandler):
             "/api/runtime/relay",
             "/api/runtime/tick",
             "/api/container/focus",
+            "/api/deposition/memory/periodic",
             "/api/settings",
             "/api/settings/model-catalog",
             "/api/settings/model-context-window/resolve",
@@ -1889,11 +2062,34 @@ class SeedGuiHandler(RoundLiveHandler):
         if path == "/api/bootstrap/persona":
             self._bootstrap_persona()
             return
+        if path in {
+            "/api/settings",
+            "/api/settings/model-catalog",
+            "/api/settings/model-context-window/resolve",
+            "/api/settings/provider-key",
+        } and not self.settings_service.persona_config_ready:
+            self._discard_bounded_request_body()
+            self._error(409, "persona_config_migration_failed")
+            return
+        if (
+            path in {
+                "/api/instances",
+                "/api/instances/archive",
+                "/api/instances/restore",
+            }
+            and not self.settings_service.persona_config_ready
+        ):
+            self._discard_bounded_request_body()
+            self._error(409, "persona_config_migration_failed")
+            return
         if path == "/api/settings":
             self._settings_update()
             return
         if path == "/api/settings/model-catalog":
             self._model_catalog_update()
+            return
+        if path.startswith("/api/instances") or path == "/api/personas":
+            self._instance_mutation(path)
             return
         if path == "/api/settings/model-context-window/resolve":
             self._model_context_window_resolve()
@@ -1910,22 +2106,28 @@ class SeedGuiHandler(RoundLiveHandler):
         if path == "/api/runtime/execution-permission":
             self._runtime_execution_permission()
             return
-        if not self.bootstrap_service.initializer.status()["ready"]:
+        if not self._require_initialized_persona():
             self._discard_bounded_request_body()
-            self._error(409, "persona_initialization_required")
             return
         if path == "/api/container/focus":
             self._container_focus()
             return
+        if path == "/api/deposition/memory/periodic":
+            self._periodic_memory()
+            return
         if path in {"/api/runtime/relay", "/api/runtime/tick"}:
             self._runtime_pending(path.rsplit("/", 1)[-1])
             return
-        payload = self._json_object({"message", "permission_level", "unlimited_confirmed"})
+        payload = self._json_object(
+            {"message", "permission_level", "unlimited_confirmed"},
+            {"final_response_max_chars"},
+        )
         if payload is None:
             return
         message = payload.get("message")
         permission = payload.get("permission_level")
         confirmed = payload.get("unlimited_confirmed")
+        final_response_max_chars = payload.get("final_response_max_chars")
         if not isinstance(message, str) or not message.strip():
             self._error(400, "message_required")
             return
@@ -1934,6 +2136,13 @@ class SeedGuiHandler(RoundLiveHandler):
             return
         if permission == "unlimited" and confirmed is not True:
             self._error(403, "unlimited_confirmation_required")
+            return
+        if final_response_max_chars is not None and (
+            isinstance(final_response_max_chars, bool)
+            or not isinstance(final_response_max_chars, int)
+            or final_response_max_chars <= 0
+        ):
+            self._error(400, "invalid_final_response_max_chars")
             return
         try:
             model_ready = self.settings_service.projection()["persona"]["setup_model_ready"]
@@ -1955,10 +2164,12 @@ class SeedGuiHandler(RoundLiveHandler):
         response_error = ("runtime_send_failed", "")
         try:
             try:
-                result = self.runtime_service.submit_message(
-                    message,
-                    permission,
+                kwargs = (
+                    {"final_response_max_chars": final_response_max_chars}
+                    if final_response_max_chars is not None else {}
                 )
+                result = self.runtime_service.submit_message(
+                    message, permission, **kwargs)
             except RuntimeServiceError as exc:
                 code = str(exc)
                 if code == "round_in_flight":
@@ -2017,33 +2228,129 @@ class SeedGuiHandler(RoundLiveHandler):
         if not self.mutation_lock.acquire(blocking=False):
             self._error(409, self._mutation_conflict_code())
             return
+        response_status = 200
+        response_payload = None
+        response_error = None
         try:
-            receipt = self.bootstrap_service.create_persona(
+            response_payload = self.bootstrap_service.create_persona(
                 payload.get("mode"),
                 payload.get("preset_id"),
                 payload.get("profile"),
                 payload.get("test_token"),
                 payload.get("skip_model_setup", False),
             )
+            try:
+                if not self.runtime_service.start_if_ready():
+                    raise RuntimeError("runtime_persona_not_ready_after_create")
+            except Exception as exc:
+                response_status = 503
+                response_error = ("runtime_start_failed", str(exc))
         except PersonaInitializationError as exc:
             code = str(exc)
-            status = 409 if code in {
+            response_status = 409 if code in {
                 "persona_initialization_in_flight",
                 "persona_already_exists",
                 "persona_directory_incomplete",
                 "provider_test_required",
             } else 400
-            self._error(status, code)
-            return
+            response_error = (code, "")
         except (ReadError, WriteError, OSError) as exc:
-            self._error(503, "persona_initialization_failed", str(exc))
-            return
+            response_status = 503
+            response_error = ("persona_initialization_failed", str(exc))
         finally:
             self.mutation_lock.release()
+        if response_error is not None:
+            self._error(response_status, *response_error)
+        else:
+            self._send_json(response_status, response_payload)
+
+    def _instance_mutation(self, path: str) -> None:
+        required = {
+            "/api/personas": {"mode", "preset_id", "profile"},
+            "/api/instances": {"mode", "label", "source_instance_id"},
+            "/api/instances/activate": {"pid", "instance_id"},
+            "/api/instances/archive": {"instance_id"},
+            "/api/instances/restore": {"instance_id"},
+        }[path]
+        payload = self._json_object(required)
+        if payload is None:
+            return
+        if path != "/api/instances/restore" and not self.desktop_control_token:
+            self._error(409, "instance_restart_host_required")
+            return
+        if not self.mutation_lock.acquire(blocking=False):
+            self._error(409, self._mutation_conflict_code())
+            return
+        paused = False
+        error_response = None
         try:
-            self.runtime_service.start_if_ready()
+            if path != "/api/instances/restore":
+                self.runtime_service.prepare_instance_switch()
+                paused = True
+            if path == "/api/personas":
+                setup = self.bootstrap_service.status().get("setup_primary")
+                stamp = (
+                    {
+                        "profile_id": setup["profile_id"],
+                        "model_alias": setup["model_alias"],
+                        "model": setup["model"],
+                        "context_window": setup.get("context_window", 0),
+                    }
+                    if isinstance(setup, dict)
+                    else dict(BootstrapService.UNBOUND_MODEL_STAMP)
+                )
+                receipt = self.instance_service.create_persona(
+                    mode=payload.get("mode"),
+                    preset_id=payload.get("preset_id"),
+                    profile=payload.get("profile"),
+                    model_stamp=stamp,
+                )
+            elif path == "/api/instances":
+                receipt = self.instance_service.create_branch(
+                    mode=payload.get("mode"),
+                    label=payload.get("label"),
+                    source_instance_id=payload.get("source_instance_id"),
+                )
+            elif path == "/api/instances/activate":
+                receipt = self.instance_service.activate(
+                    payload.get("pid"), payload.get("instance_id")
+                )
+            elif path == "/api/instances/archive":
+                receipt = self.instance_service.archive(payload.get("instance_id"))
+            else:
+                receipt = self.instance_service.restore(payload.get("instance_id"))
+            if receipt.get("restart_required"):
+                self.server.restart_requested.set()
+            elif paused:
+                self.runtime_service.cancel_instance_switch()
+                paused = False
+        except (
+            DataRootError, InstanceServiceError,
+            PersonaInitializationError, ValueError,
+        ) as exc:
+            if paused:
+                self.runtime_service.cancel_instance_switch()
+            error_response = (409, str(exc), "")
+        except (OSError, ReadError, WriteError) as exc:
+            if paused:
+                self.runtime_service.cancel_instance_switch()
+            error_response = (503, "instance_mutation_failed", str(exc))
+        except RuntimeServiceError as exc:
+            if paused:
+                self.runtime_service.cancel_instance_switch()
+            error_response = (409, str(exc), "")
         except Exception as exc:
-            self._error(503, "runtime_start_failed", str(exc))
+            if paused:
+                self.runtime_service.cancel_instance_switch()
+            error_response = (
+                503,
+                "instance_mutation_failed",
+                f"{type(exc).__name__}:{exc}",
+            )
+        finally:
+            self.mutation_lock.release()
+        if error_response is not None:
+            self._error(*error_response)
             return
         self._send_json(200, receipt)
 
@@ -2109,7 +2416,7 @@ class SeedGuiHandler(RoundLiveHandler):
         permission_payload = self._permission_payload()
         if permission_payload is None:
             return
-        permission, _confirmed = permission_payload
+        permission, _confirmed, _payload = permission_payload
         try:
             receipt = self.runtime_service.update_execution_permission(permission)
         except RuntimeServiceError as exc:
@@ -2124,7 +2431,7 @@ class SeedGuiHandler(RoundLiveHandler):
         permission_payload = self._permission_payload()
         if permission_payload is None:
             return
-        permission, _confirmed = permission_payload
+        permission, _confirmed, _payload = permission_payload
         if not self.mutation_lock.acquire(blocking=False):
             self._error(409, self._mutation_conflict_code())
             return
@@ -2137,10 +2444,7 @@ class SeedGuiHandler(RoundLiveHandler):
         response_error = ("runtime_relay_failed", "")
         try:
             try:
-                result = self.runtime_service.submit_pending(
-                    kind,
-                    permission,
-                )
+                result = self.runtime_service.submit_pending(kind, permission)
             except RuntimeServiceError as exc:
                 code = str(exc)
                 if code == f"{kind}_not_pending":
@@ -2230,6 +2534,47 @@ class SeedGuiHandler(RoundLiveHandler):
         else:
             self._error(response_status, response_error)
 
+    def _periodic_memory(self) -> None:
+        payload = self._json_object({"action", "mem_id"})
+        if payload is None:
+            return
+        action = payload.get("action")
+        mem_id = payload.get("mem_id")
+        if action not in {"mount", "unmount"}:
+            self._error(400, "invalid_periodic_memory_action")
+            return
+        if not isinstance(mem_id, str) or not re.fullmatch(
+                r"MEM-[0-9A-F]{8}", mem_id):
+            self._error(400, "invalid_periodic_memory_id")
+            return
+        if not self.mutation_lock.acquire(blocking=False):
+            self._error(409, self._mutation_conflict_code())
+            return
+        result = None
+        error = None
+        try:
+            result = self.runtime_service.mutate_periodic_memory(action, mem_id)
+        except PeriodicMemoryMountError as exc:
+            error = (exc.http_status, exc.reason, "")
+        except RuntimeServiceError as exc:
+            code = str(exc)
+            status = 409 if code in {
+                "round_in_flight", "persona_initialization_required",
+            } else 503
+            error = (
+                status,
+                code if status == 409 else "periodic_memory_runtime_failed",
+                "" if status == 409 else code,
+            )
+        except (ReadError, WriteError, OSError, ValueError, RuntimeError) as exc:
+            error = (503, "periodic_memory_mutation_failed", str(exc))
+        finally:
+            self.mutation_lock.release()
+        if error is not None:
+            self._error(*error)
+        else:
+            self._send_json(200, result)
+
     def _settings_update(self) -> None:
         payload = self._json_object({"revision", "file", "changes"})
         if payload is None:
@@ -2246,6 +2591,12 @@ class SeedGuiHandler(RoundLiveHandler):
                 payload.get("changes"),
                 payload.get("revision"),
             )
+            if payload.get("file") == "system":
+                enforce_retention = getattr(
+                    self.runtime_service, "enforce_round_retention", None
+                )
+                if callable(enforce_retention):
+                    enforce_retention()
             response_payload = self.settings_service.projection()
         except SettingsConflictError:
             response_status = 409
@@ -2258,6 +2609,9 @@ class SeedGuiHandler(RoundLiveHandler):
             response_error = ("settings_read_failed", "")
         except WriteError:
             response_status = 503
+        except RuntimeServiceError as exc:
+            response_status = 503
+            response_error = ("round_retention_failed", str(exc))
         finally:
             self.mutation_lock.release()
         if response_status == 200:
@@ -2371,6 +2725,7 @@ class SeedGuiServer(ThreadingHTTPServer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.desktop_shutdown_requested = threading.Event()
+        self.restart_requested = threading.Event()
 
     def request_desktop_shutdown(self):
         if self.desktop_shutdown_requested.is_set():
@@ -2388,6 +2743,14 @@ class SeedGuiServer(ThreadingHTTPServer):
         super().server_close()
 
 
+def _prepare_startup_persona_state(state_store=None) -> dict:
+    """Migrate only the known state shape while preserving GUI recovery."""
+    try:
+        return (state_store or StateStore()).migrate_memory_compression_flags()
+    except (ReadError, WriteError, OSError, ValueError):
+        return {"status": "unavailable", "changed": False}
+
+
 def make_server(
     port: int,
     round_dir: Path = default_round_dir(),
@@ -2397,12 +2760,16 @@ def make_server(
     persona_reader=None,
     settings_service=None,
     bootstrap_service=None,
+    instance_service=None,
     runtime_service=None,
     desktop_control_token=None,
     desktop_session_id=None,
 ) -> ThreadingHTTPServer:
+    if bootstrap_service is None:
+        _prepare_startup_persona_state()
     resolved_settings = settings_service or SettingsService()
     resolved_bootstrap = bootstrap_service or BootstrapService(resolved_settings)
+    resolved_instances = instance_service or InstanceService(ACTIVE_LAYOUT)
     handler = type(
         "ConfiguredSeedGuiHandler",
         (SeedGuiHandler,),
@@ -2418,6 +2785,7 @@ def make_server(
             "persona_reader": persona_reader or PersonaProjectionReader(),
             "settings_service": resolved_settings,
             "bootstrap_service": resolved_bootstrap,
+            "instance_service": resolved_instances,
             "desktop_control_token": desktop_control_token,
             "desktop_session_id": desktop_session_id,
         },
@@ -2425,9 +2793,10 @@ def make_server(
     server = SeedGuiServer(("127.0.0.1", port), handler)
     service = runtime_service or ResidentRuntimeService(
         persona_ready=lambda: bool(
-            resolved_bootstrap.initializer.status().get("ready")
+            resolved_bootstrap.status()["persona"].get("ready")
         ),
         default_permission_level="guarded",
+        retention_enforcer=enforce_active_round_retention,
     )
     handler.runtime_service = service
     server.runtime_service = service

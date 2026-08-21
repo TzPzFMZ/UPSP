@@ -1,6 +1,17 @@
 """Runtime-owned causal settlement for one serial Seed Round."""
 from engines.round_context import FrameRef
 from engines.organ_runtime import organ_runtime_context
+from logic.interaction_meta import cache_interaction_meta
+from logic.runtime_channels import closeout_final_response_source
+
+
+def _is_verified_cache_closeout(receipt):
+    return (
+        isinstance(receipt, dict)
+        and receipt.get("schema_version") == "current_cache_transition.v1"
+        and receipt.get("boundary") == "round_closeout"
+        and receipt.get("status") in {"applied", "noop", "recovered"}
+    )
 
 
 def settle_round(runtime, context, result):
@@ -89,7 +100,62 @@ def settle_round(runtime, context, result):
         ) or {}
     except Exception as exc:
         outcome = {"status": "unsettled", "fatal_reasons": [str(exc)]}
-    runtime._record_cache_compaction_rhythm_if_needed(context.round_num)
+    closeout_receipt = (
+        result.get("_current_cache_closeout")
+        if isinstance(result, dict) else None
+    )
+    cache_closeout_verified = _is_verified_cache_closeout(closeout_receipt)
+    if not cache_closeout_verified:
+        try:
+            runtime.ctx_store.save_round_to_cache(
+                context.round_num,
+                user_input=(
+                    context.user_input_text
+                    if context.trigger and context.trigger.messages else ""
+                ),
+                response=(result.get("response", "") if isinstance(result, dict) else ""),
+                **cache_interaction_meta(context.interaction_meta),
+            )
+            closeout_receipt = runtime.ctx_store.transition_current_cache(
+                boundary="round_closeout",
+                consumer_frame_id=f"R{int(context.round_num):06d}:closeout",
+                expire_call_transients=True,
+            )
+            if isinstance(result, dict):
+                result["_current_cache_closeout"] = closeout_receipt
+            cache_closeout_verified = _is_verified_cache_closeout(
+                closeout_receipt)
+            if not cache_closeout_verified:
+                raise ValueError("current_cache_closeout_receipt_invalid")
+            try:
+                store.append_event(
+                    context.round_num,
+                    "current_cache_transition",
+                    closeout_receipt,
+                    phase="cleanup",
+                )
+            except Exception as exc:
+                audit_failures.append(
+                    f"round_audit:current_cache_transition:{type(exc).__name__}")
+        except Exception as exc:
+            fatal_reasons = list(outcome.get("fatal_reasons") or [])
+            fatal_reasons.append(
+                f"current_cache_closeout:{type(exc).__name__}:{exc}")
+            outcome["fatal_reasons"] = fatal_reasons
+            outcome["status"] = "unsettled"
+    if cache_closeout_verified:
+        compaction_receipt = runtime._record_cache_compaction_rhythm_if_needed(
+            context.round_num
+        )
+        if compaction_receipt.get("status") == "error":
+            fatal_reasons = list(outcome.get("fatal_reasons") or [])
+            fatal_reasons.append(
+                "cache_compaction_rhythm:" + str(
+                    compaction_receipt.get("reason") or "unknown"
+                )
+            )
+            outcome["fatal_reasons"] = fatal_reasons
+            outcome["status"] = "unsettled"
     status = str(outcome.get("status") or "settled")
     if status not in {"settled", "degraded", "unsettled"}:
         outcome = {
@@ -132,14 +198,10 @@ def settle_round(runtime, context, result):
     try:
         store.close_round(
             context.round_num,
-            final_response_source=str(
-                result.get("_final_response_source")
-                or (
-                    "runtime.user_stop"
-                    if result.get("_user_stop_requested")
-                    and not result.get("response")
-                    else "reaction.final_reply_text"
-                )),
+            final_response_source=closeout_final_response_source(
+                result,
+                user_stop=bool(result.get("_user_stop_requested")),
+            ),
             final_response=result.get("response", ""),
         )
     except Exception as exc:

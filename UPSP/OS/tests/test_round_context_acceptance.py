@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import pytest
 from UPSP.OS.tests.native_tool_test_helpers import _load_module_from_path
 
 
@@ -117,51 +118,18 @@ def test_spec470_lists_guide_scenario_dogfood_matrix():
 
     scenarios = acceptance.available_scenarios()
 
-    assert "guide_system_matrix" in scenarios
-    matrix = scenarios["guide_system_matrix"]
-    assert matrix["kind"] == "scenario_dogfood_matrix"
-    assert matrix["provider_required"] is False
-    assert set(matrix["covers_specs"]) >= {
-        "Spec461",
-        "Spec462",
-        "Spec463",
-        "Spec464",
-        "Spec465",
-        "Spec466",
-        "Spec468",
-        "Spec469",
-        "Spec471",
-        "Spec472",
-        "Spec473",
-    }
+    assert "guide_system_matrix" not in scenarios
 
 
 def test_spec470_guide_system_matrix_fake_acceptance(tmp_path):
     acceptance = _load_module("round_context_acceptance_spec470_matrix", ACCEPTANCE_PATH)
 
-    report = acceptance.run_acceptance(
-        scenario="guide_system_matrix",
-        mode="fake",
-        output_dir=tmp_path / "matrix",
-    )
-
-    assert report["schema_version"] == "round_context_acceptance.v1"
-    assert report["scenario"] == "guide_system_matrix"
-    assert report["summary"]["failed_checks"] == []
-    scenario_results = report["diagnostics"]["scenario_results"]
-    assert set(scenario_results) >= {
-        "guide_foreground_priority",
-        "choice_only_settlement",
-        "work_pending_input",
-        "tool_header_stability",
-        "cache_compaction_target_closeout",
-        "emergency_stale_auto_close",
-        "emergency_active_keep",
-        "rhythm_agenda_full_progression",
-        "same_round_rhythm_materialize",
-    }
-    assert all(result["passed"] is True for result in scenario_results.values())
-    assert report["checks"]["guide_system_matrix_passed"]["passed"] is True
+    with pytest.raises(ValueError, match="unknown_acceptance_scenario"):
+        acceptance.run_acceptance(
+            scenario="guide_system_matrix",
+            mode="fake",
+            output_dir=tmp_path / "matrix",
+        )
 
 
 def test_spec470_cli_acceptance_run_guide_matrix_is_json(tmp_path):
@@ -179,14 +147,8 @@ def test_spec470_cli_acceptance_run_guide_matrix_is_json(tmp_path):
         str(tmp_path / "matrix"),
     ])
 
-    assert code == 0, stderr
-    payload = json.loads(stdout)
-    assert payload["ok"] is True
-    assert payload["data"]["summary"]["failed_checks"] == []
-    assert (
-        payload["data"]["checks"]["guide_system_matrix_passed"]["passed"]
-        is True
-    )
+    assert code != 0
+    assert "guide_system_matrix" in (stdout + stderr)
 
 
 def test_spark_report_import_attaches_observation(tmp_path):
