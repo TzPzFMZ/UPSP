@@ -99,7 +99,7 @@
     {
       "file": "tools.md",
       "path": "protocol/base/tools.md",
-      "usage": "工具注册表短索引与查表参考（POPUP guide 来源另见 popup.guide）",
+      "usage": "工具姿态、证据、权限与回执纪律（活动工具清单只认 01_tool_header；POPUP guide 来源另见 popup.guide）",
       "description": "协议工具、通用工具与基座工具注册表"
     },
     {
@@ -134,9 +134,9 @@
         "file": "tools.md",
         "path": "protocol/base/tools.md",
         "tier": "guide",
-        "usage": "协议工具与通用工具短索引和边界说明；字段纪律以 provider-native schema 为准",
+        "usage": "工具姿态与边界说明；活动清单和字段纪律以 provider-native 01_tool_header 为准",
         "source_mode": "template",
-        "description": "工具短索引与边界说明"
+        "description": "工具姿态与边界说明"
       },
       {
         "file": "popup.md",

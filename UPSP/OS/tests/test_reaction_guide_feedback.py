@@ -68,7 +68,12 @@ def test_spec571_task_bootstrap_feedback_hides_retired_escape_options(tmp_path):
     assert "option_id=submit_initial_guide" in feedback
     assert "option_id=blocked_by_missing_access" not in feedback
     assert "option_id=need_more_sources" not in feedback
-    assert "先读材料：路径/URL/文件名只是入口" in feedback
+    assert "初始清单是可修订工作计划" in feedback
+    assert "source_refs=计划来源坐标" in feedback
+    assert "不要求在未知信息下假装一次写对" not in feedback
+    assert "不要在未知信息下假装已经读过材料" in feedback
+    assert "source_refs 只是计划准备读取或核验的稳定坐标，不是读取成功证据" in feedback
+    assert "后续结构变化用 revise_task_plan" in feedback
     assert "不要把用户原始目标改写成更小的阶段性目标" in feedback
     assert "只完成部分内容" in feedback
     assert "reaction_finalize(handoff_text)" in feedback
@@ -80,6 +85,7 @@ def test_spec571_task_bootstrap_feedback_hides_retired_escape_options(tmp_path):
     assert "任务清单创建要求" not in feedback
     assert "req_id / requirement_id" not in feedback
     assert "blocked_by_missing_access" not in feedback
+    assert "source_refs 必须命中此前成功读取证据" not in feedback
 
 
 def test_spec563_task_execution_delegates_to_existing_renderer():

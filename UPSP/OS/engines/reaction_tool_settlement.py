@@ -4,6 +4,7 @@ import json
 
 from assembly.context_helpers import active_corpus_ids_from_messages
 from assembly.context_indexes import normalize_index_view_page, normalize_ltm_query_terms
+from data.action_recovery_store import ActionRecoveryEffectError
 from engines.reaction_helpers import (
     attach_native_trace_to_receipts,
     merge_mount_requests,
@@ -20,11 +21,9 @@ from engines.reaction_protocol_tool_execution import (
 )
 from engines.product_committer import RuntimeProductCommitter
 from logic.container_read import apply_container_read_requests
-from logic.container_focus import apply_container_focus_declarations
 from logic.file_read_window import runtime_file_read_context
 from logic.guide_submit import apply_guide_submit
 from logic.sandbox_grant import load_sandbox_grant
-from logic.memory_annotation import apply_memory_annotation_declarations
 from logic.memory_content_read import apply_memory_content_read_requests
 from logic.mount_cancel import apply_mount_cancel_requests
 from logic.memory_privacy import (
@@ -39,6 +38,11 @@ from logic.relay_intent_pool import settle_relay_intent
 
 
 PROTOCOL_READ_SUCCESS_STATUSES = {"accepted", "ok", "success", "applied", "guide_loaded"}
+STATEFUL_PROTOCOL_READS = {
+    "memory_content_read",
+    "container_read",
+    "relation_read",
+}
 PROTOCOL_READ_SIGNATURE_FIELDS = {
     "corpus_read": (
         "tool_id",
@@ -124,8 +128,6 @@ def _duplicate_read_receipt(tool_id, request, prior, pending_signature=""):
     satisfied = prior_status in PROTOCOL_READ_SUCCESS_STATUSES
     receipt = {
         "tool_id": tool_id,
-        "tool_family": "protocol_tool",
-        "tool_class": "read_tool",
         "status": "rejected",
         "source": "protocol_tool_request",
         "reason": (
@@ -226,7 +228,8 @@ class ReactionToolSettlementDispatcher:
             all_protocol_tool_receipts=all_protocol_tool_receipts,
         )
 
-    def _filter_duplicate_protocol_reads(self, tool_id, requests, prior_receipts):
+    def _filter_duplicate_protocol_reads(
+            self, tool_id, requests, prior_receipts, *, mount_ids=()):
         prior_by_signature = {}
         for receipt in prior_receipts or []:
             if not isinstance(receipt, dict):
@@ -247,6 +250,19 @@ class ReactionToolSettlementDispatcher:
                 continue
             signature = _read_signature(tool_id, request)
             prior = prior_by_signature.get(signature)
+            if (
+                prior
+                and tool_id in STATEFUL_PROTOCOL_READS
+                and str(prior.get("status") or "").strip()
+                in PROTOCOL_READ_SUCCESS_STATUSES
+                and not self._stateful_read_still_satisfied(
+                    tool_id,
+                    request,
+                    prior,
+                    mount_ids=mount_ids,
+                )
+            ):
+                prior = None
             if prior:
                 duplicate_receipts.append(_duplicate_read_receipt(tool_id, request, prior))
                 duplicate_requests.append(request)
@@ -268,6 +284,109 @@ class ReactionToolSettlementDispatcher:
             current_seen[signature] = request
             executable.append(request)
         return executable, duplicate_receipts, duplicate_requests
+
+    @staticmethod
+    def _mount_present(mount_ids, item_type, item_id, target_file=""):
+        clean_target = str(target_file or "").strip()
+        for item in mount_ids or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").strip() != item_type:
+                continue
+            if clean_target and str(item.get("target_file") or "").strip() != clean_target:
+                continue
+            ids = {
+                value.strip()
+                for value in str(item.get("ids") or "").split(",")
+                if value.strip()
+            }
+            if item_id in ids:
+                return True
+        return False
+
+    def _resident_present(self, item_type, item_id, target_file=""):
+        try:
+            return self.runner.resident_store.contains(
+                item_type=item_type,
+                item_id=item_id,
+                target_file=target_file,
+            )
+        except Exception:
+            return False
+
+    def _relation_summary_resident(self, card_id):
+        try:
+            for card in self.runner.relation_store.load_registry().get("cards", []):
+                if str(card.get("id") or "").strip() == card_id:
+                    return bool(card.get("summary_resident"))
+        except Exception:
+            return False
+        return False
+
+    def _stateful_read_still_satisfied(
+            self, tool_id, request, prior, *, mount_ids=()):
+        """Only reuse a stateful read while its requested mount state still holds."""
+        if tool_id == "memory_content_read":
+            mem_id = str(prior.get("mem_id") or request.get("mem_id") or "").strip()
+            mode = str(
+                prior.get("mount_mode") or request.get("mount_mode") or "temporary"
+            ).strip().lower()
+            resident = self._resident_present("memory", mem_id)
+            mounted = self._mount_present(mount_ids, "memory", mem_id)
+            if mode == "resident":
+                return resident
+            if mode == "none":
+                return not resident and not mounted
+            return mounted
+
+        if tool_id == "container_read":
+            container_id = str(
+                prior.get("container_id") or request.get("container_id") or ""
+            ).strip()
+            target_file = str(
+                prior.get("target_file") or request.get("target_file") or ""
+            ).strip()
+            return self._resident_present(
+                "container", container_id, target_file=target_file)
+
+        if tool_id == "relation_read":
+            card_id = str(
+                prior.get("card_id") or request.get("card_id") or ""
+            ).strip()
+            body_mode = str(prior.get("body_mode") or "none").strip().lower()
+            summary_mode = str(
+                prior.get("summary_mode") or "temporary"
+            ).strip().lower()
+
+            if body_mode == "resident":
+                body_satisfied = self._resident_present("relation", card_id)
+            elif body_mode == "temporary":
+                body_satisfied = self._mount_present(
+                    mount_ids, "relation", card_id)
+            elif "body" in request:
+                body_satisfied = (
+                    not self._resident_present("relation", card_id)
+                    and not self._mount_present(mount_ids, "relation", card_id)
+                )
+            else:
+                body_satisfied = True
+
+            if summary_mode == "resident":
+                summary_satisfied = self._relation_summary_resident(card_id)
+            elif summary_mode == "temporary":
+                summary_satisfied = self._mount_present(
+                    mount_ids, "relation_summary", card_id)
+            elif "summary" in request:
+                summary_satisfied = (
+                    not self._relation_summary_resident(card_id)
+                    and not self._mount_present(
+                        mount_ids, "relation_summary", card_id)
+                )
+            else:
+                summary_satisfied = True
+            return body_satisfied and summary_satisfied
+
+        return False
 
     def _attach_protocol_read_signatures(self, tool_id, receipts, requests):
         for receipt, request in zip(receipts or [], requests or []):
@@ -312,57 +431,6 @@ class ReactionToolSettlementDispatcher:
         self._resolve_pending_duplicate_read_receipts(duplicate_receipts, receipts)
         return list(receipts or []) + list(duplicate_receipts or [])
 
-    def _container_focus_open_duplicate_receipt(self, request, prior):
-        return {
-            "tool_id": "container_focus",
-            "tool_family": "protocol_tool",
-            "tool_class": "focus_tool",
-            "source": "provider_native_container_focus",
-            "protocol_tool_receipt": True,
-            "status": "rejected",
-            "reason": "duplicate_container_focus_satisfied",
-            "previous_status": str(prior.get("status") or ""),
-            "duplicate_of_call_id": prior.get("call_id") or "",
-            "action": str(request.get("action") or "").lower(),
-            "container_id": request.get("container_id") or prior.get("container_id") or "",
-            "container_type": prior.get("container_type") or "",
-            "target_file": request.get("target_file") or "",
-        }
-
-    def _filter_duplicate_container_focus_opens(self, requests, prior_receipts):
-        successful_opens = {}
-        for receipt in prior_receipts or []:
-            if not isinstance(receipt, dict):
-                continue
-            if receipt.get("tool_id") != "container_focus":
-                continue
-            if receipt.get("status") != "applied":
-                continue
-            if str(receipt.get("action") or "").lower() != "open":
-                continue
-            container_id = str(receipt.get("container_id") or "").strip()
-            if container_id:
-                successful_opens.setdefault(container_id, receipt)
-
-        executable = []
-        duplicate_receipts = []
-        duplicate_requests = []
-        for request in requests or []:
-            if not isinstance(request, dict):
-                executable.append(request)
-                continue
-            action = str(request.get("action") or "").lower()
-            container_id = str(request.get("container_id") or "").strip()
-            prior = successful_opens.get(container_id)
-            if action == "open" and container_id and prior:
-                duplicate_receipts.append(
-                    self._container_focus_open_duplicate_receipt(request, prior)
-                )
-                duplicate_requests.append(request)
-                continue
-            executable.append(request)
-        return executable, duplicate_receipts, duplicate_requests
-
     def handle_general_tool_results(
         self,
         *,
@@ -385,6 +453,9 @@ class ReactionToolSettlementDispatcher:
             "execution_permission_level": getattr(
                 runner, "execution_permission_level", "guarded"),
         })
+        recovery_results = getattr(runner, "_current_action_recovery_results", None)
+        if isinstance(recovery_results, list):
+            runtime_context["action_recovery_results"] = list(recovery_results)
         iter_general_tool_results = runner.general_tool_dispatcher.handle_requests(
             iter_general_tool_requests,
             active_general_tool_guides,
@@ -394,12 +465,25 @@ class ReactionToolSettlementDispatcher:
         all_general_tool_results.extend(iter_general_tool_results)
         iter_native_feedbacks.extend(
             native_tool_failure_feedbacks(iter_general_tool_results))
-        runner._write_general_tool_results(
-            iter_general_tool_results,
-            round_num,
-            iteration,
-            interaction_meta or {},
-        )
+        action_store = runner.action_recovery_store
+        action_results = [
+            item for item in iter_general_tool_results
+            if isinstance(item, dict) and item.get("action_id")
+        ]
+        try:
+            runner._write_general_tool_results(
+                iter_general_tool_results,
+                round_num,
+                iteration,
+                interaction_meta or {},
+            )
+            if action_results:
+                action_store.record_results(action_results)
+        except Exception as exc:
+            if action_results:
+                raise ActionRecoveryEffectError(
+                    "action_recovery_result_record_failed") from exc
+            raise
         return iter_general_tool_results
 
     def handle_tool_summaries(
@@ -619,7 +703,6 @@ class ReactionToolSettlementDispatcher:
         *,
         iter_accepted_tools,
         iter_guide_submit_requests,
-        current_general_tool_requests=None,
         prior_general_tool_results=None,
         accumulated_messages,
         iter_native_tool_call_envelopes,
@@ -634,7 +717,6 @@ class ReactionToolSettlementDispatcher:
         ):
             return []
         evidence_context = {
-            "current_general_tool_requests": list(current_general_tool_requests or []),
             "prior_general_tool_results": list(prior_general_tool_results or []),
             "prior_protocol_tool_receipts": list(all_protocol_tool_receipts or []),
             "active_corpus_ids": active_corpus_ids_from_messages(accumulated_messages),
@@ -643,10 +725,14 @@ class ReactionToolSettlementDispatcher:
             "current_reaction_iteration": current_reaction_iteration,
             "state_store": runner.sm,
             "context_store": runner.ctx_store,
+            "action_recovery_receipt": getattr(
+                runner, "_current_action_recovery_receipt", None),
             "memory_store": getattr(runner, "memory_store", None),
+            "assembler": getattr(runner, "assembler", None),
             "alert_store": runner.alert_store,
             "chronicle_store": getattr(runner, "chronicle_store", None),
-            "chronicle_focus": getattr(runner, "chronicle_focus", None),
+            "chronicle_write_scope": getattr(
+                runner, "chronicle_write_scope", None),
             "workbench_store": runner.workbench,
             "interaction_meta": getattr(runner, "_current_interaction_meta", {}),
             "memory_reconsolidation_tracker": getattr(
@@ -737,7 +823,7 @@ class ReactionToolSettlementDispatcher:
         active_protocol_tool_guides,
         iter_memory_container_write_declarations,
         interaction_meta,
-        visible_focus_id,
+        visible_container_targets,
         accumulated_messages,
         iter_native_tool_call_envelopes,
         all_memory_container_write_receipts,
@@ -755,7 +841,7 @@ class ReactionToolSettlementDispatcher:
             iter_memory_container_write_declarations,
             round_num=runner.sm.get_total_round(),
             interaction_meta=interaction_meta,
-            visible_focus_id=visible_focus_id,
+            visible_container_targets=visible_container_targets,
             pending_memory_ids=pending_memory_ids,
         )
         return self._record_receipts(
@@ -907,10 +993,15 @@ class ReactionToolSettlementDispatcher:
             "relation_read",
             iter_relation_read_requests,
             all_relation_read_receipts,
+            mount_ids=mount_ids,
         )
-        receipts, relation_mounts = apply_relation_read_requests(
+        receipts, relation_mounts, relation_unmounts = apply_relation_read_requests(
             executable_requests,
-            {"relation_store": runner.relation_store},
+            {
+                "relation_store": runner.relation_store,
+                "assembler": runner.assembler,
+                "resident_store": runner.resident_store,
+            },
         )
         receipts = self._finalize_protocol_read_receipts(
             "relation_read",
@@ -926,69 +1017,11 @@ class ReactionToolSettlementDispatcher:
             specific_receipts=all_relation_read_receipts,
             all_protocol_tool_receipts=all_protocol_tool_receipts,
         )
-        return merge_mount_requests(mount_ids, relation_mounts)
-
-    def handle_container_focus(
-        self,
-        *,
-        iter_accepted_tools,
-        active_protocol_tool_guides,
-        iter_container_focus_declarations,
-        iter_native_tool_call_envelopes,
-        accumulated_messages,
-        all_container_focus_receipts,
-        all_protocol_tool_receipts,
-        all_created_containers,
-    ):
-        runner = self.runner
-        if not (
-            "container_focus" in iter_accepted_tools
-            and iter_container_focus_declarations
-        ):
-            return []
-
-        (
-            executable_declarations,
-            duplicate_receipts,
-            duplicate_declarations,
-        ) = self._filter_duplicate_container_focus_opens(
-            iter_container_focus_declarations,
-            all_container_focus_receipts,
-        )
-        container_focus_receipts = apply_container_focus_declarations(
-            executable_declarations,
-            {
-                "container_store": runner.container_store,
-                "workbench_store": runner.workbench,
-            },
-            round_num=runner.sm.get_total_round(),
-        )
-        container_focus_receipts = list(container_focus_receipts or []) + list(
-            duplicate_receipts or []
-        )
-        traced_declarations = list(executable_declarations or []) + list(
-            duplicate_declarations or []
-        )
-        attach_native_trace_to_receipts(
-            container_focus_receipts,
-            traced_declarations,
-        )
-        all_container_focus_receipts.extend(container_focus_receipts)
-        all_protocol_tool_receipts.extend(container_focus_receipts)
-        all_created_containers.extend([
-            receipt.get("container_id")
-            for receipt in container_focus_receipts
-            if (
-                receipt.get("status") == "applied"
-                and receipt.get("action") == "create"
-                and receipt.get("container_id")
-            )
-        ])
-        settle_receipts_for_next_iteration(
-            accumulated_messages,
-            container_focus_receipts,
-        )
-        return container_focus_receipts
+        updated = merge_mount_requests(mount_ids, relation_mounts)
+        if relation_unmounts:
+            from engines.reaction_helpers import remove_mount_requests
+            updated = remove_mount_requests(updated, relation_unmounts)
+        return updated
 
     def handle_memory_content_read(
         self,
@@ -1018,6 +1051,7 @@ class ReactionToolSettlementDispatcher:
             "memory_content_read",
             iter_memory_content_read_requests,
             all_memory_content_read_receipts,
+            mount_ids=mount_ids,
         )
         memory_recall = getattr(runner, "memory_recall", None)
         if not (
@@ -1032,6 +1066,8 @@ class ReactionToolSettlementDispatcher:
                 "memory_store": runner.memory_store,
                 "relation_store": runner.relation_store,
                 "memory_recall": memory_recall,
+                "assembler": runner.assembler,
+                "resident_store": runner.resident_store,
             },
             round_num=round_num,
             memory_heat_boosted_ids=boosted_memory_ids,
@@ -1093,10 +1129,15 @@ class ReactionToolSettlementDispatcher:
             "container_read",
             iter_container_read_requests,
             all_container_read_receipts,
+            mount_ids=mount_ids,
         )
         receipts, container_mounts = apply_container_read_requests(
             executable_requests,
-            {"container_store": runner.container_store},
+            {
+                "container_store": runner.container_store,
+                "assembler": runner.assembler,
+                "resident_store": runner.resident_store,
+            },
         )
         receipts = self._finalize_protocol_read_receipts(
             "container_read",
@@ -1137,9 +1178,8 @@ class ReactionToolSettlementDispatcher:
         receipts, updated_mount_ids = apply_mount_cancel_requests(
             iter_mount_cancel_requests,
             {
-                "workbench_store": runner.workbench,
-                "container_store": runner.container_store,
-                "relation_store": runner.relation_store,
+                "assembler": runner.assembler,
+                "resident_store": runner.resident_store,
             },
             mount_ids=mount_ids,
         )
@@ -1228,41 +1268,6 @@ class ReactionToolSettlementDispatcher:
             all_protocol_tool_receipts=all_protocol_tool_receipts,
         )
 
-    def handle_memory_annotation_update(
-        self,
-        *,
-        iter_accepted_tools,
-        active_protocol_tool_guides,
-        iter_memory_annotation_declarations,
-        interaction_meta,
-        accumulated_messages,
-        iter_native_tool_call_envelopes,
-        all_memory_annotation_receipts,
-        all_protocol_tool_receipts,
-    ):
-        runner = self.runner
-        if not (
-            "memory_annotation_update" in iter_accepted_tools
-            and iter_memory_annotation_declarations
-        ):
-            return []
-        receipts = apply_memory_annotation_declarations(
-            iter_memory_annotation_declarations,
-            {
-                "memory_store": runner.memory_store,
-                "relation_store": runner.relation_store,
-            },
-            state=runner._build_protocol_processor_state(interaction_meta),
-        )
-        return self._record_receipts(
-            receipts=receipts,
-            declarations=iter_memory_annotation_declarations,
-            accumulated_messages=accumulated_messages,
-            iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
-            specific_receipts=all_memory_annotation_receipts,
-            all_protocol_tool_receipts=all_protocol_tool_receipts,
-        )
-
     def handle_fault_record(
         self,
         *,
@@ -1318,7 +1323,8 @@ class ReactionToolSettlementDispatcher:
             iter_chronicle_write_declarations,
             round_num=runner.sm.get_total_round(),
             chronicle_store=getattr(runner, "chronicle_store", None),
-            chronicle_focus=getattr(runner, "chronicle_focus", None),
+            chronicle_write_scope=getattr(
+                runner, "chronicle_write_scope", None),
         )
         return self._record_receipts(
             receipts=receipts,

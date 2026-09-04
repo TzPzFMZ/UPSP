@@ -50,7 +50,7 @@
       "layer": "全文常驻",
       "scope": "cross_step",
       "load": "full",
-      "description": "关系行为契约——四分类+六轴+焦点+关系卡边界"
+      "description": "关系行为契约——四分类+六轴+关系在场投影+关系卡边界"
     },
     {
       "file": "containers.md",
@@ -58,7 +58,7 @@
       "layer": "全文常驻",
       "scope": "cross_step",
       "load": "full",
-      "description": "工作容器操作契约——持久关系建链+焦点工具+记忆挂接边界"
+      "description": "工作容器操作契约——持久关系建链+常驻正文+记忆挂接边界"
     },
     {
       "file": "workbench.md",
@@ -66,7 +66,7 @@
       "layer": "全文常驻",
       "scope": "cross_step",
       "load": "full",
-      "description": "工作台焦点契约——WB桌面状态+焦点机制+容器焦点边界"
+      "description": "工作台任务契约——WB任务状态+证据物流+常驻正文边界"
     }
   ],
   "passive_read": [

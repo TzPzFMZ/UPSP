@@ -275,7 +275,7 @@ def _is_step_terminal_tool(tool_id: str) -> bool:
 def _is_step_runtime_tool(tool_id: str) -> bool:
     meta = _tool_metadata(tool_id)
     return bool(
-        meta.get("tool_family") == "substrate_tool"
+        meta.get("execution_route") == "substrate"
         and meta.get("native_only")
         and meta.get("step_runtime")
     )
@@ -576,18 +576,14 @@ def inspect_round_file(
         raw_count_seen and raw_tool_call_count != reaction_envelope_count
     )
     tool_classes: dict[str, str] = {}
-    tool_families: dict[str, str] = {}
     read_only_tool_ids: list[str] = []
     non_read_only_tool_ids: list[str] = []
     step_terminal_tool_ids: list[str] = []
     for tool_id in tool_ids:
         meta = _tool_metadata(tool_id)
         tool_class = str(meta.get("tool_class") or "")
-        tool_family = str(meta.get("tool_family") or "")
         if tool_class:
             tool_classes[tool_id] = tool_class
-        if tool_family:
-            tool_families[tool_id] = tool_family
         if _is_step_terminal_tool(tool_id):
             step_terminal_tool_ids.append(tool_id)
             continue
@@ -670,7 +666,6 @@ def inspect_round_file(
         "read_only_tool_ids": read_only_tool_ids,
         "non_read_only_tool_ids": non_read_only_tool_ids,
         "tool_classes": tool_classes,
-        "tool_families": tool_families,
         "parse_statuses": parse_statuses,
         "raw_tool_call_count": raw_tool_call_count,
         "raw_tool_call_count_mismatch": raw_mismatch,

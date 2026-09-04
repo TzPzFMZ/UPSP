@@ -34,6 +34,7 @@ def periodic_layout(tmp_path, monkeypatch):
     from data.memory_store import MemoryStore
     from data.periodic_mount_store import PeriodicMountStore
     from data.periodic_pin_owner_store import PeriodicPinOwnerStore
+    from data.resident_list_store import ResidentListStore
     from data.state_store import StateStore
 
     ltm_root = tmp_path / "LTM" / "Memory"
@@ -108,7 +109,15 @@ def periodic_layout(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "ACTIVE_INSTANCE_ID", "meta")
     state_store = StateStore(str(tmp_path / "local" / "state.json"))
     state_store.init_if_missing()
-    assembler = ContextAssembler(state_store=state_store, config_store=_Config())
+    resident_store = ResidentListStore(str(
+        tmp_path / "local" / "STM" / "context" / "resident_list.json"
+    ))
+    resident_store.reconcile()
+    assembler = ContextAssembler(
+        state_store=state_store,
+        config_store=_Config(),
+        resident_store=resident_store,
+    )
     env = {
         "tmp": tmp_path,
         "ltm": ltm,
@@ -116,6 +125,7 @@ def periodic_layout(tmp_path, monkeypatch):
         "store": MemoryStore(),
         "heat": _Heat(stm_paths["heat"]),
         "assembler": assembler,
+        "resident_store": resident_store,
         "mount_path": mount_path,
         "owner_path": owner_path,
         "mount_store": PeriodicMountStore(str(mount_path), now_fn=lambda: "2026-08-13T10:00:00+08:00"),
@@ -559,6 +569,35 @@ def test_spec743_each_transaction_stage_rolls_back(periodic_layout, stage):
     }
     assert after == before
     assert env["assembler"]._layer_cache[("setup", "periodic")] == "OLD"
+
+
+def test_spec781_periodic_admission_preflights_resident_projection(
+        periodic_layout, monkeypatch):
+    env = periodic_layout
+    mem_id = "MEM-74300015"
+    _add_stm(env, mem_id)
+    before = {
+        path.relative_to(env["tmp"]): path.read_bytes()
+        for path in env["tmp"].rglob("*") if path.is_file()
+    }
+
+    def reject_resident_update(*_args, **_kwargs):
+        raise ValueError("resident_list_char_limit_exceeded:max=65536;actual=65537")
+
+    monkeypatch.setattr(
+        env["assembler"],
+        "preflight_resident_source_update",
+        reject_resident_update,
+    )
+
+    with pytest.raises(ValueError, match="resident_list_char_limit_exceeded"):
+        _processor(env).apply("mount", mem_id)
+
+    after = {
+        path.relative_to(env["tmp"]): path.read_bytes()
+        for path in env["tmp"].rglob("*") if path.is_file()
+    }
+    assert after == before
 
 
 @pytest.mark.parametrize(

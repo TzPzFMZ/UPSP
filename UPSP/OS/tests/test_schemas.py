@@ -148,7 +148,7 @@ class TestContainerSchema:
         meta = default_container_meta("DC-001", "DC", "测试辩证链")
         ok, errors = validate_container_meta(meta)
         assert ok, errors
-        assert meta["focus"] is False
+        assert "focus" not in meta
         assert meta["status"] == "ongoing"
         assert "watched" not in meta
 
@@ -229,7 +229,7 @@ class TestRelationSchema:
             "REL-Codex", "Codex", "them", "relation/them/REL-Codex.md"
         )
         assert entry["summary_resident"] is False
-        assert entry["body_resident"] is False
+        assert "body_resident" not in entry
         assert "watched" not in entry
 
         card = default_relation_card("REL-TzPz", "TzPz", "human")

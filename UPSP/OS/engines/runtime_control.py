@@ -130,14 +130,16 @@ class RuntimeControl:
         except Exception:
             pass
         callback = getattr(runtime, "on_round_finished", None)
+        released_callback = getattr(runtime, "on_round_released", None)
+        result = {
+            "status": "runtime_failed",
+            "response": "",
+            "error": f"{type(exc).__name__}: {exc}",
+            "_settlement": {"status": "unsettled"},
+        }
         try:
             if callable(callback):
-                callback(round_num, round_type, {
-                    "status": "runtime_failed",
-                    "response": "",
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "_settlement": {"status": "unsettled"},
-                })
+                callback(round_num, round_type, result)
         finally:
             with self.lock:
                 self.round_in_flight = False
@@ -146,6 +148,8 @@ class RuntimeControl:
                 self.stage = "idle"
             self._notify()
             self.latch_until_explicit(runtime)
+            if callable(released_callback):
+                released_callback(round_num, round_type, result)
 
     def release_stop_latch(self, executor):
         with self.lock:

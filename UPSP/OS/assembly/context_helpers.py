@@ -798,24 +798,6 @@ def slice_entries(entries, offset, limit):
     return list(entries or [])[start:start + size]
 
 
-def load_protocol_tool_index():
-    """读取协议工具短索引；读取失败时保持原有空字符串兜底。"""
-    try:
-        from logic.protocol_tools import load_protocol_tool_index as load_index
-        return load_index()
-    except Exception:
-        return ""
-
-
-def load_general_tool_index():
-    """读取通用工具短索引；读取失败时保持原有空字符串兜底。"""
-    try:
-        from logic.protocol_tools import load_general_tool_index as load_index
-        return load_index()
-    except Exception:
-        return ""
-
-
 MEMORY_SETTLEMENT_REMINDER_MESSAGE = """本轮若出现会影响以后判断、行动、协作、关系或自我理解的真实非噪音主体更新，请主动考虑 `memory_write`，不要等待用户要求。
 资料正文由 material/最近缓存承载；`dialogue_progress` 只用于用户可见进展，不是私有笔记或记忆替代。
 只沉淀稳定变化和可复用判断，不抄资料、不写工具流水；轻量变化可使用 `weight=1/2`。
@@ -877,8 +859,8 @@ def build_reaction_step_guide_popup(step):
 
 ## 工具三轴
 - 只读工具：file_read、file_glob、file_grep、memory_content_read、container_read、relation_read。
-- 同步工具：memory_write、memory_link_update、relation_card_write。
-- 焦点工具：container_focus；同一反应迭代谨慎保持单焦点。
+- 同步工具：memory_write、memory_link_update、relation_card_write、memory_container_create、memory_container_write。
+- 行动工具：file_edit、file_write、shell_command、subagent_dispatch。
 
 ## 四容器自觉
 - DC 辩证链：理解推进/判断修正，新 MEM 订正旧 MEM。
@@ -952,15 +934,14 @@ def build_protocol_tool_guide(tool_id):
     properties = sorted((schema.get("properties") or {}).keys())
     label = {
         "memory_link_update": "记忆关联历史修复工具",
-        "memory_container_create": "挂接创建焦点工具",
-        "memory_container_write": "挂接写入焦点工具",
-        "container_focus": "焦点卫生工具",
+        "memory_container_create": "容器创建同步工具",
+        "memory_container_write": "容器续写同步工具",
         "relation_read": "关系材料读取工具",
         "container_read": "容器材料读取工具",
     }.get(normalized, "provider-native 协议工具")
     lines = [
         f"{label}；直接调用 provider-native `{normalized}`，不请求完整 guide。",
-        f"family={metadata.get('tool_family', '')}; class={metadata.get('tool_class', '')}; risk={metadata.get('risk', '')}。",
+        f"class={metadata.get('tool_class', '')}; risk={metadata.get('risk', '')}。",
     ]
     if properties:
         lines.append("参数：" + ", ".join(properties))
@@ -1003,15 +984,16 @@ def build_general_tool_guide(tool_id):
     }.get(normalized, "provider-native 通用工具")
     lines = [
         f"{label}；直接调用 provider-native `{normalized}`，不请求完整 guide。",
-        f"family={metadata.get('tool_family', '')}; class={metadata.get('tool_class', '')}; risk={metadata.get('risk', '')}。",
+        f"class={metadata.get('tool_class', '')}; risk={metadata.get('risk', '')}。",
     ]
     if properties:
         lines.append("参数：" + ", ".join(properties))
     if normalized == "shell_command":
-        lines.append(
-            "Windows 下当前按 cmd.exe 语义执行；优先用 `dir`、`type`、`python -m pytest`；"
-            "PowerShell cmdlet 需显式 `powershell -NoProfile -Command ...`。"
-        )
+        from logic.shell_backend import shell_model_contract
+        contract = shell_model_contract()
+        if not contract["available"]:
+            return ""
+        lines.append(contract["description"])
     if normalized == "file_glob":
         lines.append(
             "只搜索候选路径，不读取正文；默认不递归，只有显式 recursive=true 才搜索子目录。"
@@ -1041,15 +1023,6 @@ def build_native_tool_feedback_popup(step, native_tool_feedbacks=None):
         str(item).strip()
         for item in native_tool_feedbacks or []
         if str(item or "").strip()
-    )
-
-
-def hide_empty_memory_annotation(content):
-    """去掉空注释行，避免挂载记忆时把 null/None 注解暴露给模型。"""
-    return re.sub(
-        r"(?m)^注释：(?:null|None|none|\s*)\s*$\n?",
-        "",
-        str(content or ""),
     )
 
 

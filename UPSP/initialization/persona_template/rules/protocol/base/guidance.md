@@ -18,8 +18,8 @@
 | `reconnect.md` | `protocol/base/reconnect.md` | 失败、降级、续传、恢复证据与不得伪造连续的边界。 |
 | `memory.md` | `protocol/base/memory.md` | 记忆行为、记忆写入、回执、挂接与不得直写真源边界。 |
 | `relation.md` | `protocol/base/relation.md` | 关系卡、四分类、六轴、关系读写与关系证据边界。 |
-| `containers.md` | `protocol/base/containers.md` | 工作容器、容器焦点、容器读写会话与记忆挂接边界。 |
-| `workbench.md` | `protocol/base/workbench.md` | WB 桌面状态、焦点机制、任务现场与容器焦点纪律。 |
+| `containers.md` | `protocol/base/containers.md` | 工作容器、常驻正文、Frame 可见写权与记忆挂接边界。 |
+| `workbench.md` | `protocol/base/workbench.md` | WB 任务状态、任务现场、证据物流与常驻正文边界。 |
 
 ## §GDE-02 被动只读 rules 总则
 
@@ -87,7 +87,7 @@
 
 路径：`protocol/base/tools.md`
 
-`tools.md` 管工具行为契约、工具家族、工具姿态、provider-native 调用边界和旧接口退役。它区分 `protocol_tool`、`general_tool`、`substrate_tool`，也区分 `read_tool`、`sync_tool`、`focus_tool`。它说明哪些工具能由 reaction LLM 直接通过 provider-native tool call 调用，哪些只是 Runtime 基座动作，哪些只产生 `general_tool_result`，哪些必须以 processor receipt 作为真实执行事实。
+`tools.md` 管工具行为契约、工具姿态、provider-native 调用边界和旧接口退役。模型只区分 `read_tool`、`sync_tool`、`action_tool`；Runtime 以隐藏 `execution_route` 分派内部处理器、宿主执行和基座动作。它说明哪些工具能由 reaction LLM 直接调用，哪些只产生 `general_tool_result`，哪些必须以 processor receipt 作为真实执行事实。
 
 当任务涉及工具权限、工具 schema、原生 tool_calls、旧 markdown fallback、`file_read`、`container_read`、退役工具边界、`reaction_finalize` 双段收束、`setup_security_gate` 或是否需要新增协议工具时，必须读取全文。摘要不能替代 provider-native schema 与 processor receipt，也不能授权高风险工具。
 

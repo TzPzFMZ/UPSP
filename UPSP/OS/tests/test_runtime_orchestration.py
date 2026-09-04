@@ -15,13 +15,15 @@ class FakeHeartbeat:
     def __init__(self):
         self.paused = 0
         self.resumed = 0
+        self.resume_run_ticks = []
         self.messages = []
 
     def pause(self):
         self.paused += 1
 
-    def resume(self):
+    def resume(self, run_tick=True):
         self.resumed += 1
+        self.resume_run_ticks.append(bool(run_tick))
 
     def enqueue_message(self, message):
         self.messages.append(message)
@@ -69,6 +71,20 @@ class FakeCleanupPipeline:
         return dict(self.outcome)
 
 
+class InMemoryHeat:
+    def __init__(self):
+        self.entries = {}
+
+    def load_heat(self):
+        return {"entries": dict(self.entries)}
+
+    def tick_decay(self, round_num=None):
+        return False
+
+    def check_upgrade(self):
+        return []
+
+
 def _runtime(tmp_path, **runtime_kwargs):
     sm = StateStore(str(tmp_path / "state.json"))
     sm.init_if_missing()
@@ -89,6 +105,7 @@ def _runtime(tmp_path, **runtime_kwargs):
         ctx_store=ctx_store,
         assembler=assembler,
         config_store=ConfigStoreStub(),
+        heat=InMemoryHeat(),
         **runtime_kwargs,
     )
 
@@ -104,7 +121,7 @@ def _setup_result(**overrides):
         },
         "user_input_text": "hello",
         "setup_messages": [{"role": "user", "content": "setup"}],
-        "internal_handoff": [],
+        "setup_facts": [],
     }
     data.update(overrides)
     return SetupResult(**data)
@@ -152,7 +169,7 @@ def test_runtime_orchestrates_setup_reaction_cleanup_in_order(tmp_path):
             "mount_requests": [{"type": "memory", "ids": "MEM-TEST0001"}],
             "security_verdict": "pass",
         },
-        internal_handoff=[{"role": "user", "content": "from setup"}],
+        setup_facts=[{"role": "user", "content": "from setup"}],
     ))
     reaction = FakeReactionRunner({"response": "done"})
     cleanup = FakeCleanupPipeline()
@@ -164,6 +181,7 @@ def test_runtime_orchestrates_setup_reaction_cleanup_in_order(tmp_path):
 
     assert rt.hb.paused == 1
     assert rt.hb.resumed == 1
+    assert rt.hb.resume_run_ticks == [False]
     assert setup.calls[0].round_type == "interactive"
     assert setup.calls[0].topology_version == rt.organ_runtime.topology_version
     assert reaction.calls[0][0].round_num == setup.calls[0].round_num
@@ -210,19 +228,22 @@ def test_spec743_runtime_waits_for_reserved_idle_mutation_before_pre_setup(
         thread.join(timeout=2)
 
 
-def test_spec704_round_finished_callback_runs_before_admission_reopens(tmp_path):
+def test_spec778_host_ledger_precedes_admission_and_operation_release_follows_idle(
+        tmp_path):
     rt = _runtime(tmp_path)
     rt.setup_runner = FakeSetupRunner(_setup_result())
     rt.reaction_loop_runner = FakeReactionRunner({"response": "done"})
     rt.cleanup_pipeline = FakeCleanupPipeline()
     observed = []
-    rt.on_round_finished = lambda *_args: observed.append(
-        rt.runtime_status()["round_in_flight"])
+    rt.on_round_finished = lambda *_args: observed.append((
+        "ledger", rt.runtime_status()["round_in_flight"]))
+    rt.on_round_released = lambda *_args: observed.append((
+        "released", rt.runtime_status()["round_in_flight"]))
 
     rt._run_one_round(
         "interactive", rt.sm.load(), {"user_message_waiting": True})
 
-    assert observed == [True]
+    assert observed == [("ledger", True), ("released", False)]
     assert rt.runtime_status()["round_in_flight"] is False
 
 
@@ -676,6 +697,29 @@ def test_missing_setup_result_never_enters_reaction(tmp_path):
 
     assert reaction.calls == []
     assert cleanup.calls[0][1]["_failed_phase"] == "setup"
+
+
+def test_spec776_setup_cache_failure_never_enters_reaction(tmp_path):
+    rt = _runtime(tmp_path)
+
+    class FailingContext:
+        @staticmethod
+        def append_to_cache(*args, **kwargs):
+            raise OSError("disk unavailable")
+
+    rt.setup_runner.ctx_store = FailingContext()
+    reaction = FakeReactionRunner()
+    cleanup = FakeCleanupPipeline()
+    rt.reaction_loop_runner = reaction
+    rt.cleanup_pipeline = cleanup
+
+    rt._run_one_round(
+        "interactive", rt.sm.load(), {"user_message_waiting": True})
+
+    assert reaction.calls == []
+    assert cleanup.calls[0][1]["_failed_phase"] == "setup"
+    assert cleanup.calls[0][1]["_setup_cache_write_failed"] is True
+    assert rt.sm.get("base.meta.last_error") == "心跳交接写入失败"
 
 
 def test_round_lifecycle_closes_only_after_cleanup_settlement(tmp_path):

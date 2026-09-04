@@ -345,6 +345,15 @@ def render_guide(debt, discipline):
         "",
         "本批分片：" + "、".join(item["shard_id"] for item in batch),
         "遗漏分片表示尚未处理；replace 可提交空正文，keep 必须说明原因。",
+        (
+            '精确形状：fields={"results":[{"shard_id":"'
+            f'{batch[0]["shard_id"]}","action":"replace",'
+            '"semantic_content":"压缩后的语义正文","reason":""}]}。'
+        ),
+        (
+            '选择 keep 时仍使用同一四个字段，令 semantic_content=""，'
+            "并填写非空 reason。"
+        ),
     ]
     return "\n".join(line for line in lines if line is not None)
 

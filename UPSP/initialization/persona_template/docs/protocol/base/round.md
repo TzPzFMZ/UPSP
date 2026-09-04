@@ -134,11 +134,11 @@ Tier 4：待命
 
 ### 三步工具通道
 
-| 步 | 焦点工具 | 同步工具 | 只读装配 | 总特征 |
+| 步 | 读工具 | 同步工具 | 行动工具 | 总特征 |
 |----|----------|----------|----------|--------|
-| 起手步 | ✗ | ✗ | ✓ | 纯读 |
-| 反应步 | ✓（WB焦点，每迭代最多1） | ✓（N个，批量声明） | ✓ | 生成+工具调度 |
-| 善后步 | ✗ | ✓（两线 substrate 工具输入） | ✓ | 收束+归档 |
+| 起手步 | ✗（只消费预装配上下文） | ✗ | ✗ | 纯读入口判定 |
+| 反应步 | ✓ | ✓（多个合法事务可同 Frame 分别结算） | ✓（按权限导出） | 生成+工具调度 |
+| 善后步 | ✗（只消费固定输入） | ✗（固定收束接口不作为反应工具） | ✗ | 收束+归档 |
 
 ---
 
@@ -181,7 +181,7 @@ Tier 4：待命
 
 `runtime.next_round` 已退役。轮类型只由 heartbeat flags 判定，任何待续、节律、待命或自主唤醒都必须先形成对应事实源或明确置位 heartbeat flag。
 
-心跳触发后的脚本说明写成 `kind=setup_fact`，供本轮起手/反应链路阅读；它与 Setup ingress 一并留在 now，首个成功 Reaction 返回后进入 lately/Corpus。反应步 `reaction_finalize.handoff_text` 触发的跨轮继续正文登记到 `state.base.runtime.relay_intents[]` 供调度追踪；下一轮 relay setup 再写成 `kind=relay_handoff` / `role=user` 语料块，标题必须声明“上轮交接任务”，不得伪装成用户原始输入。运行期任务条、GUIDE、POPUP 和焦点投影不是 pending，也不是缓存履带；如果某段说明需要长期保留，必须由反应步协议工具写成记忆条目、故障记录或合适的工作容器内容，不能把最小承诺当长期语义载体。
+心跳触发后的脚本说明写成 `kind=setup_fact`，供本轮起手/反应链路阅读；它与 Setup ingress 一并留在 now，首个成功 Reaction 返回后进入 lately/Corpus。反应步 `reaction_finalize.handoff_text` 触发的跨轮继续正文登记到 `state.base.runtime.relay_intents[]` 供调度追踪；下一轮 relay setup 再写成 `kind=relay_handoff` / `role=user` 语料块，标题必须声明“上轮交接任务”，不得伪装成用户原始输入。运行期任务条、GUIDE、POPUP、常驻引用投影和单帧材料不是 pending，也不是缓存履带；如果某段说明需要长期保留，必须由反应步协议工具写成记忆条目、故障记录或合适的工作容器内容，不能把最小承诺当长期语义载体。
 
 ```json
 {

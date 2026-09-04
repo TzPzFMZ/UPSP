@@ -79,7 +79,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -196,7 +195,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
             start_line = int(request.get("line_start") or 1)
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -417,7 +415,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
             start_line = int(request.get("line_start") or 1)
             result = {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -506,7 +503,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -600,7 +596,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -702,7 +697,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -828,7 +822,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -931,19 +924,16 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
         expected_invalid = [
             {
                 "tool_id": "cache_compact",
-                "tool_family": "substrate_tool",
-                "reason": "unsupported_tool_family",
+                "reason": "unsupported_execution_route",
             },
             {
                 "tool_id": "not_a_real_tool",
-                "tool_family": None,
                 "reason": "unknown_tool_id",
             },
         ]
         assert [
             {
                 "tool_id": item.get("tool_id"),
-                "tool_family": item.get("tool_family"),
                 "reason": item.get("reason"),
             }
             for item in result["_invalid_tool_requests"]
@@ -959,7 +949,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
         assert [
             {
                 "tool_id": item.get("tool_id"),
-                "tool_family": item.get("tool_family"),
                 "reason": item.get("reason"),
             }
             for item in reaction_settlement["invalid_tool_requests"]
@@ -1110,7 +1099,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -1213,7 +1201,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
             if request["tool_id"] == "web_fetch":
                 return {
                     "tool_id": "web_fetch",
-                    "tool_family": "general_tool",
                     "tool_class": "read_tool",
                     "status": "ok",
                     "source": "general_tool_call",
@@ -1229,7 +1216,6 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
                 }
             return {
                 "tool_id": "web_search",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",

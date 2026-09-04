@@ -1,5 +1,6 @@
 """Readonly task board projection for high-frequency context."""
 
+import json
 import os
 
 from logic.evidence_refs import (
@@ -43,7 +44,13 @@ def render_active_task_board(workbench_store, recent_context_entries=None):
 
     lines = [
         "## 当前任务清单状态",
-        *task_board_instruction_lines(task_id),
+        *task_board_instruction_lines(
+            task_id,
+            item_ids=[item.get("item_id") for item in items],
+            acceptance_ids=[
+                item.get("acceptance_id") for item in acceptance
+            ],
+        ),
         f"- 任务ID：{task_id}",
     ]
     if title:
@@ -154,18 +161,28 @@ def render_task_execution_action_guide(guide, workbench_store):
         f"任务执行指南｜行动卡：{guide_id}",
         "看板在 40_high_freq；本卡只管下一步行动。",
         "真实工作优先；证据后登记：缺产物用 file_write/file_edit，缺隔离执行或验证用 subagent_dispatch，缺来源正文用 file_read/file_grep/web_fetch/web_search。",
+        "工具结果若真正改变来源、任务拆分、验收或风险，可用 guide_submit 的 task_progress/revise_task_plan 修订计划；提交需要替换的完整目标片段和外层 reason。不要每次调用后机械修订，也不要用它登记完成状态。",
         TASK_ORIGINAL_GOAL_NON_SHRINK_REMINDER,
         "工具调用走 native 通道；正文只写简短进展，不承载 DSML/JSON/完整参数。",
     ]
     if pending_inputs:
-        pending_ids = ", ".join(
+        pending_id_values = [
             _text(item.get("pending_input_id") or "pending_input")
             for item in pending_inputs
-        )
+        ]
+        pending_ids = ", ".join(pending_id_values)
+        pending_example = json.dumps({
+            "pending_inputs": [{
+                "pending_input_id": pending_id_values[0],
+                "status": "integrated",
+                "summary": "已整合该输入",
+            }]
+        }, ensure_ascii=False, separators=(",", ":"))
         lines.extend([
             "当前有待整合输入：先处理用户追加内容，再继续普通进度更新。",
             f"当前待整合ID：{pending_ids}",
-            '填写形态：fields.pending_inputs=[{"pending_input_id":"input_01","status":"integrated","summary":"已整合该输入"}]',
+            "待整合 ID 也是不透明标识，必须逐字复制，不得改变连字符或下划线。",
+            "填写形态：fields=" + pending_example,
             "整合入口：guide_submit",
             f"- guide_id={guide_id}",
             "- item_id=task_progress",

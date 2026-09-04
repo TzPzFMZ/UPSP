@@ -55,6 +55,14 @@ const results = await Promise.all([
       },
     }],
   }),
+  build({
+    ...common,
+    entryPoints: [resolve(guiRoot, "src", "showcase", "conversation-components.ts")],
+    outfile: resolve(guiRoot, "showcase", "conversation-components.js"),
+    format: "iife",
+    supported: { "template-literal": false },
+    banner: { js: "/* Generated from src/showcase/conversation-components.ts. Do not edit directly. */" },
+  }),
 ]);
 
 const generated = new Map();

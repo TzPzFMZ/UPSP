@@ -20,8 +20,7 @@ def _fake_result(request):
     tool_id = str(request.get("tool_id") or "")
     return {
         "tool_id": tool_id,
-        "tool_family": "general_tool",
-        "tool_class": "focus_tool",
+        "tool_class": "action_tool",
         "status": "ok",
         "source": "general_tool_call",
         "backend_type": "fake",

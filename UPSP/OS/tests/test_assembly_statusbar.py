@@ -131,7 +131,7 @@ class TestStatusBar:
             "identity_status": "known",
             "interaction_source": "instance_selection",
         }
-        monkeypatch.setattr(assembler, "_relation_focus_max_slots", lambda: 1)
+        monkeypatch.setattr(assembler, "_relation_context_max_slots", lambda: 1)
 
         text = assembler._build_statusbar_with_relations(
             self._state(), "interactive", current_input_text="讨论其他")

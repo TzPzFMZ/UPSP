@@ -31,7 +31,7 @@ _ASSISTANT_TEXT_TOOL_PAYLOAD_RE = re.compile(
     r"reaction_loop_done|to_next_reaction_iter|to_next_setup|"
     r"to_next_reaction|tool_request|protocol_tool_submission|"
     r"protocol_tool_request|general_tool_request|relation_card_declaration|"
-    r"memory_write_declaration|memory_annotation_declaration|"
+    r"memory_write_declaration|"
     r"memory_link_update|memory_privacy_mark|"
     r"memory_privacy_declassify|fault_record|退出信号|对外回复|轮内回复|"
     r"反应循环结束|工具唤醒入口|工具请求|工具唤醒)\s*[:：]"
@@ -68,6 +68,8 @@ def collect_mount_preselection(mount_ids, existing_stm_memory_ids):
     existing_stm_memory_ids = set(existing_stm_memory_ids or [])
     for mr in mount_ids or []:
         if not isinstance(mr, dict):
+            continue
+        if str(mr.get("source") or "").strip() == "resident_list":
             continue
         mount_type = str(mr.get("type") or "").strip()
         raw_ids = str(mr.get("ids") or "")
@@ -108,7 +110,6 @@ def _invalid_request_from_envelope(envelope, reason):
     item = {}
     for key in (
             "tool_id",
-            "tool_family",
             "tool_class",
             "risk",
             "source",
@@ -128,8 +129,6 @@ def _invalid_request_from_envelope(envelope, reason):
 def _empty_reaction_output_invalid():
     return {
         "tool_id": "reaction",
-        "tool_family": "message_channel",
-        "tool_class": "runtime_guard",
         "status": "rejected",
         "source": "empty_provider_response",
         "call_id": "empty_reaction_output",
@@ -172,8 +171,6 @@ def parse_reaction_iteration_result(iter_result, active_protocol_tool_guides):
         if assistant_text_has_tool_payload(clean_response_text):
             terminal_invalids.append({
                 "tool_id": "assistant_text",
-                "tool_family": "message_channel",
-                "tool_class": "runtime_guard",
                 "status": "rejected",
                 "source": "assistant_text",
                 "call_id": "assistant_text_tool_payload",

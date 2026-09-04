@@ -134,5 +134,5 @@ def render_target_popup(target):
         "  message: |\n"
         "    本轮存在上一轮留下的中继执行目标。\n"
         f"    第一动作：调用 provider-native `file_read`，path={target['path']}，line_start={target['next_start_line']}。\n"
-        "    未完成该目标前，不要把旧 CONTENT / WB focus / 旧记忆当成本轮新执行结果，也不要再次请求继续中继。"
+        "    未完成该目标前，不要把旧 CONTENT / 常驻正文 / 旧记忆当成本轮新执行结果，也不要再次请求继续中继。"
     )

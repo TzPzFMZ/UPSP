@@ -1150,6 +1150,7 @@ class TestAPIExecutor:
             self, tmp_path):
         from assembly.context import ContextAssembler
         from data.context_store import ContextStore
+        from data.resident_list_store import ResidentListStore
         import json
 
         native_replay = {
@@ -1195,6 +1196,8 @@ class TestAPIExecutor:
         assembler = ContextAssembler(
             context_dir=str(context_dir),
             context_store=ctx,
+            resident_store=ResidentListStore(
+                str(tmp_path / "resident_list.json")),
         )
 
         assembler.assemble_reaction(
@@ -1212,8 +1215,8 @@ class TestAPIExecutor:
             (context_dir / "reaction" / "layers" / "50_now.json").read_text(
                 encoding="utf-8")
         )
-        from data.round_live_viewer import build_live_state
-        live_state = build_live_state([{
+        from data.round_live_viewer import build_live_detail, build_live_state
+        live_events = [{
             "event_index": 1,
             "event_type": "step_input_snapshot",
             "round": 7,
@@ -1226,9 +1229,15 @@ class TestAPIExecutor:
                     "layers": [now_layer],
                 }
             },
-        }])
+        }]
+        live_state = build_live_state(live_events)
+        live_frame = build_live_detail(
+            live_events,
+            kind="frame",
+            ref=live_state["frame_catalog"][0]["frame_id"],
+        )["payload"]
         live_now = next(
-            pane for pane in live_state["context_panes"]
+            pane for pane in live_frame["context_panes"]
             if pane["id"] == "50_now"
         )["content_md"]
 
@@ -1623,6 +1632,41 @@ class TestAPIExecutor:
 
         assert services.cfg is runtime_config
         assert services.assembler.config_store is explicit_config
+
+    def test_spec781_runtime_services_uses_one_resident_store(
+            self, tmp_path):
+        from assembly.context import ContextAssembler
+        from data.resident_list_store import ResidentListStore
+        from engines.runtime_services import RuntimeServices
+
+        runtime_config = self._PayloadTruthConfig("openai_chat")
+        resident = ResidentListStore(str(tmp_path / "resident.json"))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=resident,
+        )
+
+        services = RuntimeServices.create(
+            assembler=assembler,
+            config_store=runtime_config,
+            connectivity_store=NoopConnectivity(),
+        )
+
+        assert services.resident_store is resident
+        assert services.assembler.resident_store is resident
+        assert services.assembler.memory_store is services.memory_store
+        assert services.assembler.container_store is services.container_store
+        assert services.assembler.relation_store is services.relation_store
+
+        with pytest.raises(ValueError, match="resident_store_injection_conflict"):
+            RuntimeServices.create(
+                assembler=assembler,
+                resident_store=ResidentListStore(
+                    str(tmp_path / "different-resident.json")
+                ),
+                config_store=runtime_config,
+                connectivity_store=NoopConnectivity(),
+            )
 
     def test_spec423_round_audit_started_uses_actual_fallback_envelope(
             self, tmp_path, monkeypatch):

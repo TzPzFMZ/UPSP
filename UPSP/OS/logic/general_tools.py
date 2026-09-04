@@ -18,6 +18,12 @@ from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from constants import local_now
+from data.action_recovery_store import (
+    ActionRecoveryEffectError,
+    ActionRecoveryError,
+)
+from data.atomic_write import durable_write_bytes
+from errors import WriteError
 from paths import (
     PROGRAM_UPSP_ROOT,
     UPSP_DATA_ROOT,
@@ -35,6 +41,7 @@ from logic.evidence_refs import (
 )
 from logic.file_read_window import RUNTIME_CONTEXT_KEY, plan_file_read_window
 from logic.protocol_tools import tool_metadata_for
+from logic.shell_backend import resolve_shell_backend
 from utils.read_tool_material import read_tool_material_content
 
 
@@ -410,7 +417,6 @@ def _base_result(tool_id="file_read", status="rejected", reason=""):
     meta = tool_metadata_for(tool_id)
     result = {
         "tool_id": tool_id,
-        "tool_family": meta.get("tool_family", "general_tool"),
         "tool_class": meta.get("tool_class", "read_tool"),
         "status": status,
         "source": "general_tool_call",
@@ -456,6 +462,14 @@ def _contains_private_access(value):
 def _private_read_denial(path):
     path = Path(path)
     lowered_name = path.name.casefold()
+    lowered_parts = [part.casefold() for part in path.parts]
+    journal_internal = any(
+        lowered_parts[index:index + 4]
+        == ["persona", "stm", "context", "action_recovery_pending.json"]
+        for index in range(max(0, len(lowered_parts) - 3))
+    )
+    if journal_internal:
+        return "runtime_internal_denied"
     if lowered_name.endswith(".private.md"):
         return "private_persona_denied"
     if not (
@@ -1335,7 +1349,62 @@ def _apply_unified_diff(text, patch):
     return result, added, removed
 
 
-def _execute_file_edit(request, allowed_roots=None, denied_roots=None, denied_files=None):
+def _prepare_file_action(
+        action_recovery, *, tool_id, target_path, before_bytes, candidate_bytes):
+    context = action_recovery if isinstance(action_recovery, dict) else {}
+    store = context.get("store")
+    if store is None:
+        try:
+            durable_write_bytes(target_path, candidate_bytes)
+            return "", ""
+        except (OSError, WriteError) as exc:
+            return "", str(exc)
+    action_id = ""
+    try:
+        action_id = store.prepare_file(
+            tool_id=tool_id,
+            request_sha256=context.get("request_sha256") or "",
+            runtime_context=context.get("runtime_context") or {},
+            call_id=context.get("call_id") or "",
+            target_path=str(target_path),
+            before_bytes=before_bytes,
+            candidate_bytes=candidate_bytes,
+        )
+        store.commit_file(action_id, target_path, before_bytes, candidate_bytes)
+        return action_id, ""
+    except ActionRecoveryEffectError:
+        raise
+    except (ActionRecoveryError, OSError, WriteError) as exc:
+        return action_id or getattr(exc, "action_id", ""), str(exc)
+
+
+def _prepare_opaque_action(action_recovery, *, tool_id, target):
+    context = action_recovery if isinstance(action_recovery, dict) else {}
+    store = context.get("store")
+    if store is None:
+        return "", ""
+    try:
+        action_id = store.prepare_opaque(
+            tool_id=tool_id,
+            request_sha256=context.get("request_sha256") or "",
+            runtime_context=context.get("runtime_context") or {},
+            call_id=context.get("call_id") or "",
+            target=target,
+        )
+        return action_id, ""
+    except (ActionRecoveryError, OSError, WriteError) as exc:
+        return getattr(exc, "action_id", ""), str(exc)
+
+
+def _with_action_id(result, action_id):
+    if action_id:
+        result["action_id"] = action_id
+    return result
+
+
+def _execute_file_edit(
+        request, allowed_roots=None, denied_roots=None, denied_files=None,
+        action_recovery=None):
     raw_path = request.get("path")
     if _clean(raw_path).lower().startswith(PERSONA_READ_ALIAS):
         return _base_result(
@@ -1385,7 +1454,10 @@ def _execute_file_edit(request, allowed_roots=None, denied_roots=None, denied_fi
 
     encoding = _clean(request.get("encoding")) or "utf-8"
     try:
-        original = _read_text_file(path, encoding)
+        original_bytes = path.read_bytes()
+        if b"\x00" in original_bytes[:4096]:
+            raise UnicodeError("binary_nul_detected")
+        original = original_bytes.decode(encoding).replace("\r\n", "\n")
     except (OSError, UnicodeError) as exc:
         result = _base_result(tool_id="file_edit", status="rejected", reason="text_read_failed")
         result["path"] = str(path)
@@ -1399,13 +1471,18 @@ def _execute_file_edit(request, allowed_roots=None, denied_roots=None, denied_fi
         result["path"] = str(path)
         return result
 
-    try:
-        path.write_text(updated, encoding=encoding, newline="\n")
-    except OSError as exc:
-        result = _base_result(tool_id="file_edit", status="failed", reason="write_failed")
-        result["path"] = str(path)
-        result["detail"] = str(exc)
-        return result
+    action_id, action_error = _prepare_file_action(
+        action_recovery,
+        tool_id="file_edit",
+        target_path=path,
+        before_bytes=original_bytes,
+        candidate_bytes=updated.encode(encoding),
+    )
+    if action_error:
+        result = _base_result(
+            tool_id="file_edit", status="failed", reason="write_failed")
+        result.update({"path": str(path), "detail": action_error})
+        return _with_action_id(result, action_id)
 
     result = _base_result(tool_id="file_edit", status="ok")
     result.update({
@@ -1420,10 +1497,12 @@ def _execute_file_edit(request, allowed_roots=None, denied_roots=None, denied_fi
         "encoding": encoding,
         "evidence_refs": [f"file_edit:{path}"],
     })
-    return result
+    return _with_action_id(result, action_id)
 
 
-def _execute_file_write(request, allowed_roots=None, denied_roots=None, denied_files=None):
+def _execute_file_write(
+        request, allowed_roots=None, denied_roots=None, denied_files=None,
+        action_recovery=None):
     raw_path = request.get("path")
     if _clean(raw_path).lower().startswith(PERSONA_READ_ALIAS):
         return _base_result(
@@ -1461,13 +1540,26 @@ def _execute_file_write(request, allowed_roots=None, denied_roots=None, denied_f
     encoding = _clean(request.get("encoding")) or "utf-8"
     existed = path.exists()
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding=encoding, newline="\n")
+        before_bytes = path.read_bytes() if existed else None
+        candidate_bytes = content.encode(encoding)
     except (OSError, UnicodeError) as exc:
         result = _base_result(tool_id="file_write", status="failed", reason="write_failed")
         result["path"] = str(path)
         result["detail"] = str(exc)
         return result
+
+    action_id, action_error = _prepare_file_action(
+        action_recovery,
+        tool_id="file_write",
+        target_path=path,
+        before_bytes=before_bytes,
+        candidate_bytes=candidate_bytes,
+    )
+    if action_error:
+        result = _base_result(
+            tool_id="file_write", status="failed", reason="write_failed")
+        result.update({"path": str(path), "detail": action_error})
+        return _with_action_id(result, action_id)
 
     result = _base_result(tool_id="file_write", status="ok")
     result.update({
@@ -1481,7 +1573,7 @@ def _execute_file_write(request, allowed_roots=None, denied_roots=None, denied_f
         "encoding": encoding,
         "evidence_refs": [f"file_write:{path}"],
     })
-    return result
+    return _with_action_id(result, action_id)
 
 
 def _coerce_output_text(value):
@@ -1644,48 +1736,80 @@ def _execute_shell_command(
         request,
         allowed_roots=None,
         denied_roots=None,
-        denied_files=None):
+        denied_files=None,
+        action_recovery=None):
+    backend = resolve_shell_backend()
+
+    def shell_result(status="rejected", reason=""):
+        result = _base_result(
+            tool_id="shell_command",
+            status=status,
+            reason=reason,
+        )
+        result["shell_backend"] = backend.backend_id
+        result["shell_dialect"] = backend.dialect
+        return result
+
+    if not backend.available:
+        return shell_result(reason=backend.reason)
+
     raw_cwd = request.get("cwd")
     cwd = _resolve_shell_cwd(raw_cwd, allowed_roots)
     if cwd is None:
-        return _base_result(tool_id="shell_command", status="rejected", reason="missing_cwd")
+        return shell_result(reason="missing_cwd")
 
     denial = _permission_denial(
         cwd, allowed_roots, denied_roots, denied_files, access="shell"
     )
     if denial:
-        result = _base_result(tool_id="shell_command", status="rejected", reason=denial)
+        result = shell_result(reason=denial)
         result["cwd"] = str(cwd)
         return result
 
     if not cwd.exists():
-        result = _base_result(tool_id="shell_command", status="rejected", reason="cwd_not_found")
+        result = shell_result(reason="cwd_not_found")
         result["cwd"] = str(cwd)
         return result
     if not cwd.is_dir():
-        result = _base_result(tool_id="shell_command", status="rejected", reason="cwd_not_directory")
+        result = shell_result(reason="cwd_not_directory")
         result["cwd"] = str(cwd)
         return result
 
     command = str(request.get("command") or "").strip()
     if not command:
-        result = _base_result(tool_id="shell_command", status="rejected", reason="missing_command")
+        result = shell_result(reason="missing_command")
         result["cwd"] = str(cwd)
         return result
 
     purpose = _clean(request.get("purpose") or request.get("reason"))
     if not purpose:
-        result = _base_result(tool_id="shell_command", status="rejected", reason="missing_purpose")
+        result = shell_result(reason="missing_purpose")
         result["cwd"] = str(cwd)
         result["command"] = command
         return result
+    if "\r" in command or "\n" in command:
+        result = shell_result(reason="shell_multiline_unsupported")
+        result.update({"cwd": str(cwd), "command": command, "purpose": purpose})
+        return result
 
     timeout_ms = _bounded_int(request.get("timeout_ms"), 10000, 500, 30000)
+    action_id, action_error = _prepare_opaque_action(
+        action_recovery,
+        tool_id="shell_command",
+        target=(f"shell:{purpose[:160]}#" + str(
+            (action_recovery or {}).get("request_sha256") or "")[:12]),
+    )
+    if action_error:
+        result = shell_result(
+            status="failed", reason="action_recovery_prepare_failed")
+        result["detail"] = action_error
+        return _with_action_id(result, action_id)
     try:
         completed = subprocess.run(
-            command,
+            backend.build_command_line(command),
+            executable=backend.executable,
             cwd=str(cwd),
-            shell=True,
+            shell=False,
             capture_output=True,
             timeout=timeout_ms / 1000,
             check=False,
@@ -1693,11 +1817,7 @@ def _execute_shell_command(
     except subprocess.TimeoutExpired as exc:
         stdout, stdout_truncated, stdout_meta = _decode_and_truncate_shell_stream(exc.stdout, "stdout")
         stderr, stderr_truncated, stderr_meta = _decode_and_truncate_shell_stream(exc.stderr, "stderr")
-        result = _base_result(
-            tool_id="shell_command",
-            status="timeout",
-            reason="command_timeout",
-        )
+        result = shell_result(status="timeout", reason="command_timeout")
         result.update({
             "cwd": str(cwd),
             "command": command,
@@ -1711,16 +1831,20 @@ def _execute_shell_command(
         })
         result.update(stdout_meta)
         result.update(stderr_meta)
-        return result
+        return _with_action_id(result, action_id)
     except OSError as exc:
-        result = _base_result(tool_id="shell_command", status="failed", reason="command_failed")
-        result.update({"cwd": str(cwd), "command": command, "detail": str(exc)})
-        return result
+        result = shell_result(status="failed", reason="command_failed")
+        result.update({
+            "cwd": str(cwd),
+            "command": command,
+            "detail": type(exc).__name__,
+        })
+        return _with_action_id(result, action_id)
 
     stdout, stdout_truncated, stdout_meta = _decode_and_truncate_shell_stream(completed.stdout, "stdout")
     stderr, stderr_truncated, stderr_meta = _decode_and_truncate_shell_stream(completed.stderr, "stderr")
     status = "ok" if completed.returncode == 0 else "failed"
-    result = _base_result(tool_id="shell_command", status=status)
+    result = shell_result(status=status)
     result.update({
         "cwd": str(cwd),
         "command": command,
@@ -1738,7 +1862,7 @@ def _execute_shell_command(
     result.update(stderr_meta)
     if status != "ok":
         result["reason"] = "nonzero_exit"
-    return result
+    return _with_action_id(result, action_id)
 
 
 def _subagent_dispatch_result(status="rejected", reason="", task_goal="", **extra):
@@ -1905,7 +2029,8 @@ def _execute_subagent_dispatch(
         allowed_roots=None,
         denied_roots=None,
         denied_files=None,
-        subagent_dispatch_fn=None):
+        subagent_dispatch_fn=None,
+        action_recovery=None):
     payload, timeout_ms, rejection = _build_subagent_dispatch_payload(
         request,
         allowed_roots,
@@ -1914,14 +2039,29 @@ def _execute_subagent_dispatch(
     )
     if rejection:
         return rejection
+    action_id, action_error = _prepare_opaque_action(
+        action_recovery,
+        tool_id="subagent_dispatch",
+        target=payload["task_goal"],
+    )
+    if action_error:
+        return _with_action_id(_subagent_dispatch_result(
+            status="failed",
+            reason="action_recovery_prepare_failed",
+            task_goal=payload["task_goal"],
+            detail=action_error,
+        ), action_id)
     backend_result, failure = _call_subagent_backend(
         payload,
         timeout_ms,
         subagent_dispatch_fn,
     )
     if failure:
-        return failure
-    return _subagent_backend_report(payload, timeout_ms, backend_result)
+        return _with_action_id(failure, action_id)
+    return _with_action_id(
+        _subagent_backend_report(payload, timeout_ms, backend_result),
+        action_id,
+    )
 
 
 class _VisibleTextExtractor(HTMLParser):
@@ -2992,7 +3132,8 @@ def execute_general_tool_call(
         denied_files=None,
         web_fetch_fn=None,
         web_search_fn=None,
-        subagent_dispatch_fn=None):
+        subagent_dispatch_fn=None,
+        action_recovery=None):
     """Execute an enabled general tool call and return a general_tool_result."""
     request = request or {}
     tool_id = _clean(request.get("tool_id")) or "file_read"
@@ -3010,11 +3151,17 @@ def execute_general_tool_call(
         )
     if tool_id == "file_edit":
         return attach_evidence_handle(
-            _execute_file_edit(request, allowed_roots, denied_roots, denied_files)
+            _execute_file_edit(
+                request, allowed_roots, denied_roots, denied_files,
+                action_recovery=action_recovery,
+            )
         )
     if tool_id == "file_write":
         return attach_evidence_handle(
-            _execute_file_write(request, allowed_roots, denied_roots, denied_files)
+            _execute_file_write(
+                request, allowed_roots, denied_roots, denied_files,
+                action_recovery=action_recovery,
+            )
         )
     if tool_id == "shell_command":
         return attach_evidence_handle(
@@ -3023,6 +3170,7 @@ def execute_general_tool_call(
                 allowed_roots,
                 denied_roots,
                 denied_files,
+                action_recovery=action_recovery,
             )
         )
     if tool_id == "web_fetch":
@@ -3043,6 +3191,7 @@ def execute_general_tool_call(
                 denied_roots,
                 denied_files,
                 subagent_dispatch_fn=subagent_dispatch_fn,
+                action_recovery=action_recovery,
             )
         )
     return attach_evidence_handle(
@@ -3145,7 +3294,6 @@ def format_general_tool_result(result):
     lines = [
         "[general_tool_result]",
         f"tool_id={result.get('tool_id', '')}",
-        f"tool_family={result.get('tool_family', '')}",
         f"tool_class={result.get('tool_class', '')}",
         f"status={result.get('status', '')}",
         f"source={result.get('source', '')}",
@@ -3809,11 +3957,18 @@ def _format_general_tool_fact_body(result):
         exit_code = result.get("exit_code")
         lines = [
             f"本轮 shell 命令执行{status_label}。",
+            (
+                "Shell 后端："
+                f"{result.get('shell_backend') or '不可用'} / "
+                f"{result.get('shell_dialect') or '未验收方言'}。"
+            ),
             f"工作目录：{result.get('cwd') or '未记录'}。",
             f"命令：{result.get('command') or '未记录'}。",
             f"退出码：{exit_code if exit_code not in (None, '') else '未记录'}。",
             f"结果摘要：{summary}。",
         ]
+        if result.get("reason"):
+            lines.append(f"失败原因：{result.get('reason')}。")
         lines.extend(_evidence_handle_fact_lines(result))
         lines.extend(_shell_command_evidence_fact_lines(result))
         stdout_excerpt = _visible_stream_excerpt(

@@ -17,6 +17,39 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             TOOL_DEFINITIONS["shell_command"], "status", "enabled"
         )
 
+    def test_action_recovery_material_is_consumed_only_after_provider_return(
+            self, tmp_path, monkeypatch):
+        import pytest
+
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        store = rt.action_recovery_store
+        store.prepare_opaque(
+            tool_id="shell_command", request_sha256="a" * 64,
+            runtime_context={"round_num": 12, "iteration": 3,
+                             "frame_id": "R000012:reaction:3"},
+            call_id="call-shell", target="shell")
+        store.classify_interrupted(12)
+
+        def provider_offline(_executor):
+            raise OSError("provider offline")
+
+        rt.executor = ScriptedExecutor(provider_offline)
+        with pytest.raises(OSError, match="provider offline"):
+            rt._run_reaction_loop(rt.sm.load(), "interactive", [])
+        failed_text = "\n".join(
+            message.get("content", "") for message in rt.executor.calls[0])
+        assert "ACT-R000012-F000003-A001" in failed_text
+        assert store.pending_items()
+
+        rt.executor = ScriptedExecutor({
+            "response": "已核对中断事实，继续。", "tool_call_envelopes": []})
+        rt._run_reaction_loop(rt.sm.load(), "interactive", [])
+        assert store.pending_items() == []
+
     def test_spec428_duplicate_general_tool_fact_has_actionable_short_fields(self):
         from logic.general_tools import format_general_tool_fact
 
@@ -76,8 +109,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "file_edit",
-                "tool_family": "general_tool",
-                "tool_class": "focus_tool",
+                "tool_class": "action_tool",
                 "status": "ok",
                 "source": "general_tool_call",
                 "backend_type": "python",
@@ -102,7 +134,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                         "patch": patch,
                     },
                     call_id="call_file_edit",
-                    tool_class="focus_tool",
+                    tool_class="action_tool",
                     risk="high",
                 )],
             },
@@ -161,8 +193,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "shell_command",
-                "tool_family": "general_tool",
-                "tool_class": "focus_tool",
+                "tool_class": "action_tool",
                 "status": "ok",
                 "source": "general_tool_call",
                 "backend_type": "python",
@@ -189,7 +220,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                         "timeout_ms": 3000,
                     },
                     call_id="call_shell",
-                    tool_class="focus_tool",
+                    tool_class="action_tool",
                     risk="medium",
                 )],
             },
@@ -247,7 +278,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                                 "timeout_ms": 3000,
                             },
                             call_id=f"call_shell_repeat_{len(self.calls)}",
-                            tool_class="focus_tool",
+                            tool_class="action_tool",
                             risk="medium",
                         )],
                     }
@@ -259,8 +290,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             executed.append(dict(request))
             return {
                 "tool_id": "shell_command",
-                "tool_family": "general_tool",
-                "tool_class": "focus_tool",
+                "tool_class": "action_tool",
                 "status": "ok",
                 "source": "general_tool_call",
                 "backend_type": "python",
@@ -351,7 +381,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                                 "patch": patch,
                             },
                             call_id=f"call_file_edit_retry_{reaction_count}",
-                            tool_class="focus_tool",
+                            tool_class="action_tool",
                             risk="high",
                         )],
                     }
@@ -363,8 +393,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             executed.append(dict(request))
             return {
                 "tool_id": "file_edit",
-                "tool_family": "general_tool",
-                "tool_class": "focus_tool",
+                "tool_class": "action_tool",
                 "status": "rejected",
                 "source": "general_tool_call",
                 "backend_type": "python",
@@ -441,7 +470,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                             "timeout_ms": 3000,
                         },
                         call_id="call_shell_first",
-                        tool_class="focus_tool",
+                        tool_class="action_tool",
                         risk="medium",
                     )]
                     return {"response": "", "tool_call_envelopes": envelopes}
@@ -456,7 +485,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                                 "timeout_ms": 3000,
                             },
                             call_id=f"call_shell_dup_{index}",
-                            tool_class="focus_tool",
+                            tool_class="action_tool",
                             risk="medium",
                         )
                         for index in (1, 2)
@@ -470,8 +499,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             executed.append(dict(request))
             return {
                 "tool_id": "shell_command",
-                "tool_family": "general_tool",
-                "tool_class": "focus_tool",
+                "tool_class": "action_tool",
                 "status": "ok",
                 "source": "general_tool_call",
                 "backend_type": "python",
@@ -533,7 +561,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                     "timeout_ms": 3000,
                 },
                 call_id=call_id,
-                tool_class="focus_tool",
+                tool_class="action_tool",
                 risk="medium",
             )
 
@@ -563,8 +591,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             executed.append(dict(request))
             return {
                 "tool_id": "shell_command",
-                "tool_family": "general_tool",
-                "tool_class": "focus_tool",
+                "tool_class": "action_tool",
                 "status": "ok",
                 "source": "general_tool_call",
                 "backend_type": "python",
@@ -626,7 +653,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                     "timeout_ms": 3000,
                 },
                 call_id=call_id,
-                tool_class="focus_tool",
+                tool_class="action_tool",
                 risk="medium",
             )
 
@@ -656,8 +683,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             executed.append(dict(request))
             return {
                 "tool_id": "shell_command",
-                "tool_family": "general_tool",
-                "tool_class": "focus_tool",
+                "tool_class": "action_tool",
                 "status": "ok",
                 "source": "general_tool_call",
                 "backend_type": "python",
@@ -732,7 +758,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                                 "timeout_ms": 3000,
                             },
                             call_id=f"call_shell_fail_{reaction_count}",
-                            tool_class="focus_tool",
+                            tool_class="action_tool",
                             risk="medium",
                         )],
                     }
@@ -744,8 +770,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
             executed.append(dict(request))
             return {
                 "tool_id": "shell_command",
-                "tool_family": "general_tool",
-                "tool_class": "focus_tool",
+                "tool_class": "action_tool",
                 "status": "failed",
                 "source": "general_tool_call",
                 "backend_type": "python",
@@ -812,8 +837,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "subagent_dispatch",
-                "tool_family": "general_tool",
-                "tool_class": "focus_tool",
+                "tool_class": "action_tool",
                 "status": "ok",
                 "source": "general_tool_call",
                 "backend_type": "python",
@@ -844,7 +868,7 @@ class TestRuntimeReactionGeneralToolsWrite(RuntimeTestMixin):
                         "reason": "parallel review",
                     },
                     call_id="call_subagent",
-                    tool_class="focus_tool",
+                    tool_class="action_tool",
                     risk="medium",
                 )],
             },

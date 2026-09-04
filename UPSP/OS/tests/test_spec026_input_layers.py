@@ -21,7 +21,8 @@ class TestInputLayerAssembly:
             }
         }
 
-    def test_three_source_entries_are_merged_into_now_layer(self, tmp_path, monkeypatch):
+    def test_interaction_and_material_inputs_use_now_without_legacy_layers(
+            self, tmp_path, monkeypatch):
         from assembly import context as ctx
 
         monkeypatch.setattr(ctx, "CORE_MD", str(tmp_path / "core.md"))
@@ -43,10 +44,6 @@ class TestInputLayerAssembly:
                 "content": "资料输入哨兵：Runtime 短提醒。",
                 "interaction_source": "runtime_retry_notice",
             }],
-            internal_handoff=[{
-                "role": "user",
-                "content": "内部交接哨兵：起手步交给反应步。",
-            }],
         )
 
         combined = "\n".join(m.get("content", "") for m in messages)
@@ -56,7 +53,6 @@ class TestInputLayerAssembly:
         assert "<!-- 资料输入层 -->" not in combined
         assert "<!-- 内部交接层 -->" not in combined
         assert any("资料输入哨兵" in m.get("content", "") for m in messages)
-        assert not any("内部交接哨兵" in m.get("content", "") for m in messages)
 
         contents = [m.get("content", "") for m in messages]
         assert not any("<!-- 当前缓存 now -->" in c for c in contents)

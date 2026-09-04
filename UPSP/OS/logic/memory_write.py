@@ -199,8 +199,6 @@ def _receipt(status, declaration, mem_id=None, keywords=None, reason="",
              subject_context=None, lifecycle=None):
     receipt = {
         "tool_id": "memory_write",
-        "tool_family": "protocol_tool",
-        "tool_class": "sync_tool",
         "status": status,
         "source": "memory_write_declaration",
         "mem_id": mem_id,

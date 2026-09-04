@@ -2,8 +2,10 @@
 
 import json
 import re
+from copy import deepcopy
 
 from assembly.context_helpers import normalize_active_corpus_id
+from assembly.context_mounts import project_relation_content
 from data.memory_index import MemoryIndex
 from data.relation_store import RelationStore
 from logic.cleanup_processor import _apply_declared_relation_card
@@ -32,8 +34,6 @@ def apply_corpus_read_requests(assembler, requests):
         if not isinstance(request, dict) or not corpus_id:
             receipts.append({
                 "tool_id": "corpus_read",
-                "tool_family": "protocol_tool",
-                "tool_class": "read_tool",
                 "status": "rejected",
                 "source": "protocol_tool_request",
                 "reason": "missing_corpus_id",
@@ -44,8 +44,6 @@ def apply_corpus_read_requests(assembler, requests):
         if not isinstance(target, dict):
             receipts.append({
                 "tool_id": "corpus_read",
-                "tool_family": "protocol_tool",
-                "tool_class": "read_tool",
                 "status": "rejected",
                 "source": "protocol_tool_request",
                 "reason": "corpus_id_not_active",
@@ -57,8 +55,6 @@ def apply_corpus_read_requests(assembler, requests):
         if target_kind != "dialogue_progress":
             receipts.append({
                 "tool_id": "corpus_read",
-                "tool_family": "protocol_tool",
-                "tool_class": "read_tool",
                 "status": "rejected",
                 "source": "protocol_tool_request",
                 "reason": "corpus_kind_not_expandable",
@@ -71,8 +67,6 @@ def apply_corpus_read_requests(assembler, requests):
         if not entry_key:
             receipts.append({
                 "tool_id": "corpus_read",
-                "tool_family": "protocol_tool",
-                "tool_class": "read_tool",
                 "status": "rejected",
                 "source": "protocol_tool_request",
                 "reason": "corpus_entry_key_missing",
@@ -83,8 +77,6 @@ def apply_corpus_read_requests(assembler, requests):
         pending_keys.add(entry_key)
         receipts.append({
             "tool_id": "corpus_read",
-            "tool_family": "protocol_tool",
-            "tool_class": "read_tool",
             "status": "accepted",
             "source": "protocol_tool_request",
             "corpus_id": corpus_id,
@@ -109,8 +101,6 @@ def apply_index_view_requests(
         if not isinstance(request, dict):
             receipts.append({
                 "tool_id": "index_view",
-                "tool_family": "protocol_tool",
-                "tool_class": "read_tool",
                 "status": "rejected",
                 "source": "protocol_tool_request",
                 "reason": "invalid_request",
@@ -132,8 +122,6 @@ def apply_index_view_requests(
         except Exception as exc:
             receipt = {
                 "tool_id": "index_view",
-                "tool_family": "protocol_tool",
-                "tool_class": "read_tool",
                 "status": "rejected",
                 "source": "protocol_tool_request",
                 "reason": str(exc) or "index_view_failed",
@@ -149,8 +137,6 @@ def apply_memory_search_requests(assembler, requests):
         if not isinstance(request, dict):
             receipts.append({
                 "tool_id": "memory_search",
-                "tool_family": "protocol_tool",
-                "tool_class": "read_tool",
                 "status": "rejected",
                 "source": "protocol_tool_request",
                 "reason": "invalid_request",
@@ -176,6 +162,7 @@ def apply_relation_card_declarations(
     relation_store_factory=RelationStore,
     relation_index_factory=MemoryIndex,
     apply_declared_relation_card=_apply_declared_relation_card,
+    assembler=None,
 ):
     declarations = declarations or []
     if not declarations:
@@ -183,8 +170,6 @@ def apply_relation_card_declarations(
     guard = guard or {}
     base_receipt = {
         "tool_id": "relation_card_write",
-        "tool_family": "protocol_tool",
-        "tool_class": "sync_tool",
         "source": "relation_card_declaration",
     }
     if guard.get("single_declaration", True) and len(declarations) > 1:
@@ -213,8 +198,6 @@ def apply_relation_card_declarations(
     for declaration in declarations or []:
         receipt = {
             "tool_id": "relation_card_write",
-            "tool_family": "protocol_tool",
-            "tool_class": "sync_tool",
             "status": "rejected",
             "source": "relation_card_declaration",
         }
@@ -269,6 +252,21 @@ def apply_relation_card_declarations(
             receipts.append(receipt)
             continue
         try:
+            if existing_card and assembler is not None:
+                note = str(declaration.get("note") or "").strip()[:512]
+                if note:
+                    current_card = relation_store.read_card(card_id)
+                    if not isinstance(current_card, dict):
+                        raise ValueError("relation_card_missing")
+                    prospective_card = deepcopy(current_card)
+                    prospective_card.setdefault("notes", []).append({
+                        "date": "",
+                        "content": note,
+                    })
+                    assembler.preflight_resident_source_update(
+                        {"item_type": "relation", "item_id": card_id},
+                        project_relation_content(prospective_card, card_id),
+                    )
             card_id = apply_declared_relation_card(
                 declaration,
                 direct_object,
@@ -445,23 +443,6 @@ def model_visible_error_hint(result):
         "validation", "state_conflict", "permission_security",
         "transient_external", "unknown_internal",
     }
-    if reason == "focus_tool_iteration_conflict":
-        return {
-            "kind": "validation",
-            "retry": "next_frame",
-            "attempted": {
-                "tool_id": str(result.get("tool_id") or "").strip(),
-            },
-            "current": {
-                "accepted_focus_tool": str(
-                    result.get("accepted_focus_tool") or ""
-                ).strip(),
-            },
-            "expected": {"max_focus_tools_per_iteration": 1},
-            "next_action": (
-                "本帧已有焦点工具被接受；等待其回执，下一帧只提交一个焦点工具。"
-            ),
-        }
     if existing:
         kind = str(existing.get("kind") or "unknown_internal")
         if kind not in valid_kinds:
@@ -489,7 +470,7 @@ def model_visible_error_hint(result):
         "guide_not_active", "pending_interaction_first",
         "relay_task_guidance_not_pending_input", "task_guidance_already_active",
         "duplicate_tool_result_satisfied", "duplicate_protocol_read_satisfied",
-        "duplicate_container_focus_satisfied", "already_closed", "stale_state",
+        "already_closed", "stale_state",
         "source_changed",
     }
     transient_reasons = {
@@ -555,7 +536,6 @@ def _safe_error_hint_value(value):
         "url", "find_text", "char_start", "next_char_start",
         "source_content_sha256", "expected_source_content_sha256",
         "source_bytes_incomplete", "backend_ids", "next_state",
-        "accepted_focus_tool", "max_focus_tools_per_iteration",
     }
     if isinstance(value, dict):
         return {str(key): _safe_error_hint_value(child) for key, child in value.items()

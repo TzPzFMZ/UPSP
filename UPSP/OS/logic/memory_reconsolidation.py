@@ -15,6 +15,7 @@ from data.memory_store import (
     _normalise_meta_entry,
     _read_memory_overlay,
     memory_target_tier,
+    project_memory_body,
     replace_memory_semantic_payload,
 )
 
@@ -188,10 +189,16 @@ class MemoryReconsolidationTracker:
                     created=created, **item
                 )
             )
+        example_id = self.pending_ids()[0]
         lines.extend([
             "",
             "使用 guide_submit 的 fields.results 覆盖全部当前 ID；"
             "每项只填写 mem_id、semantic_content、final_keywords。",
+            (
+                '精确形状：fields={"results":[{"mem_id":"'
+                f'{example_id}","semantic_content":"重整后的纯语义正文",'
+                '"final_keywords":["关键词1"]}]}。'
+            ),
         ])
         return "\n".join(lines)
 
@@ -269,6 +276,20 @@ class MemoryReconsolidationProcessor:
                     current["weight"],
                     tier=target_tier,
                 )
+                if self.assembler is not None:
+                    prospective_meta = dict(updated_shared)
+                    overlay = _read_memory_overlay()["entries"].get(mem_id, {})
+                    prospective_meta.update({
+                        key: overlay.get(
+                            key, [] if key == "linked_containers" else ""
+                        )
+                        for key in MEMORY_OVERLAY_FIELDS
+                    })
+                    prospective_meta = _normalise_meta_entry(prospective_meta)
+                    self.assembler.preflight_resident_source_update(
+                        {"item_type": "memory", "item_id": mem_id},
+                        project_memory_body(target_body, prospective_meta),
+                    )
 
                 self._fault("before_write")
                 self.memory_store.store_ltm_entry(
@@ -510,43 +531,22 @@ def apply_memory_reconsolidation_guide(arguments, evidence_context):
     processor = context.get("memory_reconsolidation_processor")
     periodic = context.get("periodic_mount_processor")
     if not isinstance(tracker, MemoryReconsolidationTracker) or processor is None:
-        return {
-            "status": "rejected",
-            "reason": "memory_reconsolidation_context_unavailable",
-            "backend_receipts": [],
-        }
+        return _guide_result(
+            "memory_reconsolidation_context_unavailable",
+            tracker if isinstance(tracker, MemoryReconsolidationTracker) else None,
+        )
     if str(arguments.get("guide_id") or "").strip() != tracker.guide_id:
-        return {
-            "status": "rejected",
-            "reason": "memory_reconsolidation_guide_not_active",
-            "backend_receipts": [],
-        }
+        return _guide_result("memory_reconsolidation_guide_not_active", tracker)
     if str(arguments.get("item_id") or "").strip() != GUIDE_ITEM_ID:
-        return {
-            "status": "rejected",
-            "reason": "memory_reconsolidation_item_invalid",
-            "backend_receipts": [],
-        }
+        return _guide_result("memory_reconsolidation_item_invalid", tracker)
     if str(arguments.get("option_id") or "").strip() != GUIDE_OPTION_ID:
-        return {
-            "status": "rejected",
-            "reason": "memory_reconsolidation_option_invalid",
-            "backend_receipts": [],
-        }
+        return _guide_result("memory_reconsolidation_option_invalid", tracker)
     fields = arguments.get("fields")
     if not isinstance(fields, dict) or set(fields) != {"results"}:
-        return {
-            "status": "rejected",
-            "reason": "memory_reconsolidation_fields_invalid",
-            "backend_receipts": [],
-        }
+        return _guide_result("memory_reconsolidation_fields_invalid", tracker)
     results = fields.get("results") if isinstance(fields, dict) else None
     if not isinstance(results, list):
-        return {
-            "status": "rejected",
-            "reason": "memory_reconsolidation_results_invalid",
-            "backend_receipts": [],
-        }
+        return _guide_result("memory_reconsolidation_results_invalid", tracker)
 
     pending_ids = tracker.pending_ids()
     submitted = {}
@@ -650,4 +650,18 @@ def apply_memory_reconsolidation_guide(arguments, evidence_context):
         "backend_receipts": backend_receipts,
         "completed_ids": completed_ids,
         "remaining_ids": remaining_ids,
+    }
+
+
+def _guide_result(reason, tracker=None):
+    return {
+        "status": "rejected",
+        "reason": reason,
+        "backend_receipts": [],
+        "completed_ids": [],
+        "remaining_ids": (
+            tracker.pending_ids()
+            if isinstance(tracker, MemoryReconsolidationTracker)
+            else []
+        ),
     }

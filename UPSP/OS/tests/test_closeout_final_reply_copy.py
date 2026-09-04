@@ -184,7 +184,6 @@ class TestSpec559CloseoutFinalReplyCopy(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "write_tool",
                 "status": "ok",
                 "source": "general_tool_call",

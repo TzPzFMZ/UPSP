@@ -1,9 +1,14 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
-from data.round_live_viewer import build_live_state, events_after
+from data.round_live_viewer import (
+    build_live_detail,
+    build_live_state as build_light_live_state,
+    events_after,
+)
 from data.round_audit_viewer import latest_event_index
 
 
@@ -37,6 +42,51 @@ LAYER_KEYS = [
 ]
 
 
+def build_live_state(events, *, live_context_root=None, use_live_layers=False):
+    """Legacy full projection used only by pre-Spec773 focused assertions."""
+    source_events = deepcopy(events)
+    events = deepcopy(source_events)
+    if not any(event.get("event_type") == "round_started" for event in events):
+        events.insert(0, _event(0, "round_started", {
+            "dialogue_projection_schema": "round_dialogue_timeline.v1",
+            "input_snapshot": {"trigger": {"messages": []}},
+        }))
+    for event in events:
+        if event.get("event_type") == "round_started":
+            event.setdefault("payload", {}).setdefault(
+                "dialogue_projection_schema", "round_dialogue_timeline.v1")
+    light = build_light_live_state(events)
+    frames = []
+    for entry in light.get("frame_catalog") or []:
+        frames.append(build_live_detail(
+            source_events,
+            kind="frame",
+            ref=entry["frame_id"],
+            live_context_root=live_context_root,
+            use_live_layers=use_live_layers,
+        )["payload"])
+    latest = frames[-1] if frames else {}
+    timeline = deepcopy(light.get("dialogue_timeline"))
+    if timeline:
+        timeline["nodes"] = [
+            build_live_detail(
+                events, kind="timeline_node", ref=node["detail_ref"])["payload"]
+            if node.get("type") == "tool" and node.get("detail_ref")
+            else node
+            for node in timeline.get("nodes") or []
+        ]
+    return {
+        **light,
+        "schema_version": "round_live_state.v2",
+        "call_frames": frames,
+        "context_panes": latest.get("context_panes") or [],
+        "conversation": build_live_detail(
+            source_events, kind="legacy_conversation")["payload"]["conversation"],
+        "manifest": latest.get("manifest") or {},
+        "dialogue_timeline": timeline,
+    }
+
+
 def _layers_snapshot(projections=None, **contents):
     projections = projections or {}
     layers = []
@@ -68,6 +118,75 @@ def _layers_manifest(snapshot):
         {key: layer[key] for key in ("layer_key", "chars")}
         for layer in snapshot["layers"]
     ]}
+
+
+def test_spec773_live_state_is_lightweight_and_details_are_explicit():
+    events = [
+        _event(1, "round_started", {
+            "dialogue_projection_schema": "round_dialogue_timeline.v1",
+            "input_snapshot": {"trigger": {"messages": [{"role": "user", "content": "你好"}]}},
+        }),
+        _event(2, "step_input_snapshot", {
+            "layers_snapshot": _layers_snapshot(**{"50_now": "large context truth"}),
+            "manifest": _layers_manifest(_layers_snapshot()),
+        }, phase="reaction"),
+        _event(3, "llm_output_parsed", {
+            "message_envelopes": [{"channel": "assistant_text", "text": "进展"}],
+        }, phase="reaction"),
+    ]
+
+    state = build_light_live_state(events)
+
+    assert state["schema_version"] == "round_live_state.v3"
+    assert state["display_mode"] == "timeline"
+    assert state["frame_catalog"][0]["frame_id"]
+    assert "call_frames" not in state
+    assert "context_panes" not in state
+    assert "conversation" not in state
+    assert "large context truth" not in json.dumps(state, ensure_ascii=False)
+
+    frame = build_live_detail(
+        events,
+        kind="frame",
+        ref=state["frame_catalog"][0]["frame_id"],
+    )
+    assert frame["schema_version"] == "round_live_detail.v1"
+    assert any(
+        pane["id"] == "50_now" and pane["content_raw"] == "large context truth"
+        for pane in frame["payload"]["context_panes"]
+    )
+
+
+def test_spec773_old_round_selects_legacy_cards_without_guessing_timeline():
+    events = [_event(1, "round_started", {"input_snapshot": {"trigger": {"messages": []}}})]
+
+    state = build_light_live_state(events)
+
+    assert state["display_mode"] == "legacy"
+    assert state["dialogue_timeline"] is None
+    assert build_live_detail(events, kind="legacy_conversation")["kind"] == "legacy_conversation"
+
+
+def test_spec773_ledger_is_a_directory_and_event_body_is_loaded_separately():
+    events = [
+        _event(1, "round_started", {
+            "dialogue_projection_schema": "round_dialogue_timeline.v1",
+            "input_snapshot": {"trigger": {"messages": []}},
+        }),
+        _event(2, "tool_result", {
+            "tool_id": "file_read",
+            "status": "applied",
+            "result": "large tool result",
+        }, phase="reaction"),
+    ]
+
+    ledger = build_live_detail(events, kind="ledger")["payload"]["items"]
+    event = build_live_detail(events, kind="event", ref="2")["payload"]
+
+    assert ledger[1]["detail_ref"] == "2"
+    assert "large tool result" not in json.dumps(ledger, ensure_ascii=False)
+    assert event["event"]["payload"]["result"] == "large tool result"
+    assert isinstance(event["cards"], list)
 
 
 def test_spec735_rejected_final_candidate_is_audit_only_in_live_projection():
@@ -166,6 +285,492 @@ def test_spec735_rejected_final_candidate_is_audit_only_in_live_projection():
         event.get("event_type") != "final_response_candidate_rejected"
         for event in incremental["events"]
     )
+
+
+def test_spec771_dialogue_timeline_preserves_three_stage_event_order_and_stable_nodes():
+    events = [
+        _event(1, "round_started", {
+            "input_snapshot": {"trigger": {"messages": [{"role": "user", "content": "请查证。"}]}},
+        }),
+        _event(2, "llm_stream_delta", {
+            "stream_id": "setup-1",
+            "stream_segments": [{
+                "segment_id": "seg-0001", "channel": "reasoning", "provider_block": {"choice_index": 0}, "delta": "起手判断",
+            }],
+        }, phase="setup", iteration=1),
+        _event(3, "llm_stream_done", {"stream_id": "setup-1"}, phase="setup", iteration=1),
+        _event(4, "llm_stream_delta", {
+            "stream_id": "reaction-1",
+            "stream_segments": [{
+                "segment_id": "seg-0001", "channel": "content", "provider_block": {"choice_index": 0}, "delta": "我先读取。",
+            }],
+        }, phase="reaction", iteration=1),
+        _event(5, "llm_output_raw", {
+            "tool_call_envelopes": [{"tool_id": "file_read", "call_id": "call-1", "arguments": {"path": "a.md"}}],
+        }, phase="reaction", iteration=1),
+        _event(6, "step_settlement", {
+            "settlement_scope": "frame",
+            "general_tool_results": [{"tool_id": "file_read", "call_id": "call-1", "status": "ok", "summary": "done"}],
+        }, phase="reaction", iteration=1),
+        _event(7, "llm_output_parsed", {
+            "message_envelopes": [{"channel": "assistant_text", "text": "我先读取。"}],
+        }, phase="reaction", iteration=1),
+        _event(8, "llm_output_parsed", {
+            "message_envelopes": [{"channel": "final_reply.text", "text": "结论。"}],
+        }, phase="final_reply", iteration=2),
+        _event(9, "llm_stream_delta", {
+            "stream_id": "cleanup-1",
+            "stream_segments": [{
+                "segment_id": "seg-0001", "channel": "reasoning", "provider_block": {"block_index": 0}, "delta": "善后复核",
+            }],
+        }, phase="cleanup", iteration=1),
+        _event(10, "llm_stream_done", {"stream_id": "cleanup-1"}, phase="cleanup", iteration=1),
+        _event(11, "round_closed", {"status": "closed", "final_response": "结论。"}),
+    ]
+
+    partial = build_live_state(events[:6])["dialogue_timeline"]
+    state = build_live_state(events)
+    timeline = state["dialogue_timeline"]
+    nodes = timeline["nodes"]
+
+    assert timeline["schema_version"] == "round_dialogue_timeline.v1"
+    assert [node["type"] for node in nodes] == [
+        "user", "reasoning", "progress", "tool", "final", "reasoning",
+    ]
+    assert [node["phase"] for node in nodes[1:]] == [
+        "setup", "reaction", "reaction", "final_reply", "cleanup",
+    ]
+    tool = next(node for node in nodes if node["type"] == "tool")
+    assert tool["call_id"] == "call-1"
+    assert tool["status"] == "success"
+    assert tool["result"]["summary"] == "done"
+    assert partial["order"] == timeline["order"][:len(partial["order"])]
+    assert state["dialogue_activity"]["terminal"] is True
+    assert state["dialogue_activity"]["activity"] == "completed"
+
+
+def test_spec771_pending_or_rejected_final_hides_candidate_but_keeps_real_reasoning():
+    candidate = "这段候选最终回复尚未被采用。"
+    events = [
+        _event(1, "round_started", {
+            "input_snapshot": {"trigger": {"final_response_max_chars": 20}},
+        }),
+        _event(2, "llm_stream_delta", {
+            "stream_id": "stream-guarded",
+            "stream_segments": [
+                {"segment_id": "seg-0001", "channel": "reasoning", "delta": "先核验边界。"},
+                {"segment_id": "seg-0002", "channel": "content", "delta": candidate},
+            ],
+        }, phase="reaction", iteration=1),
+        _event(3, "llm_output_parsed", {
+            "natural_final_reply_candidate": candidate,
+            "message_envelopes": [{
+                "channel": "assistant_text",
+                "text": candidate,
+                "terminal_text_candidate": True,
+                "terminal_decision": "finish",
+            }],
+        }, phase="reaction", iteration=1),
+    ]
+
+    pending = build_live_state(events)["dialogue_timeline"]["nodes"]
+    assert [node["type"] for node in pending] == ["reasoning"]
+    assert pending[0]["content_raw"] == "先核验边界。"
+
+    rejected = build_live_state(events + [
+        _event(4, "final_response_candidate_rejected", {
+            "candidate": candidate,
+            "status": "response_too_long",
+        }, phase="reaction", iteration=1),
+    ])["dialogue_timeline"]["nodes"]
+    assert rejected[0]["type"] == "reasoning"
+    assert all(candidate not in str(node.get("content_raw") or "") for node in rejected)
+    assert any(node["status"] == "not_adopted" for node in rejected)
+
+
+def test_spec771_terminal_round_never_leaves_stream_or_tool_visibly_running():
+    events = [
+        _event(1, "round_started", {
+            "input_snapshot": {"trigger": {"messages": [{"role": "user", "content": "继续。"}]}},
+        }),
+        _event(2, "llm_stream_delta", {
+            "stream_id": "partial",
+            "stream_segments": [{"segment_id": "seg-0001", "channel": "content", "delta": "半截"}],
+        }, phase="reaction", iteration=1),
+        _event(3, "llm_output_raw", {
+            "tool_call_envelopes": [{"tool_id": "file_read", "call_id": "lost-result", "arguments": {}}],
+        }, phase="reaction", iteration=1),
+        _event(4, "round_unsettled", {"fatal_reasons": ["provider_stream_interrupted"]}),
+    ]
+
+    nodes = build_live_state(events)["dialogue_timeline"]["nodes"]
+    assert next(node for node in nodes if node["type"] == "progress")["status"] == "interrupted"
+    assert next(node for node in nodes if node["type"] == "tool")["status"] == "unmatched_result"
+
+
+def test_spec771_tool_approval_updates_the_existing_tool_node():
+    events = [
+        _event(1, "llm_output_raw", {
+            "tool_call_envelopes": [{"tool_id": "shell_command", "call_id": "call-guarded", "arguments": {"command": "dir"}}],
+        }, phase="reaction", iteration=1),
+        _event(2, "general_tool_approval_requested", {
+            "approval_id": "approval-1", "tool_id": "shell_command", "call_id": "call-guarded",
+        }, phase="reaction", iteration=1),
+        _event(3, "general_tool_approval_resolved", {
+            "approval_id": "approval-1", "tool_id": "shell_command", "call_id": "call-guarded", "decision": "skip",
+        }, phase="reaction", iteration=1),
+    ]
+
+    nodes = build_live_state(events)["dialogue_timeline"]["nodes"]
+    assert len(nodes) == 1
+    assert nodes[0]["type"] == "tool"
+    assert nodes[0]["approval_id"] == "approval-1"
+    assert nodes[0]["status"] == "skipped"
+
+
+def test_spec771_stream_tool_boundary_keeps_true_order_and_frame_result_updates_it():
+    events = [
+        _event(1, "llm_stream_delta", {
+            "stream_id": "reaction-1",
+            "stream_segments": [
+                {"segment_id": "seg-0001", "sequence": 1, "channel": "content", "delta": "调用前。"},
+                {"segment_id": "seg-0003", "sequence": 3, "channel": "content", "delta": "调用后。"},
+            ],
+            "stream_tool_boundaries": [{
+                "boundary_id": "tool-0002", "sequence": 2,
+                "tool_id": "file_read", "call_id": "call-cross-frame",
+                "provider_block": {"tool_call_index": 0},
+            }],
+        }, phase="reaction", iteration=1),
+        _event(2, "llm_output_raw", {
+            "tool_call_envelopes": [{
+                "tool_id": "file_read", "call_id": "call-cross-frame",
+                "arguments": {"path": "a.md"},
+            }],
+        }, phase="reaction", iteration=1),
+        _event(3, "step_settlement", {
+            "settlement_scope": "frame",
+            "frame_id": "R000614:reaction:1",
+            "general_tool_results": [{
+                "tool_id": "file_read", "call_id": "call-cross-frame",
+                "status": "ok", "summary": "frame-one-result",
+            }],
+        }, phase="reaction", iteration=1),
+        _event(4, "llm_stream_delta", {
+            "stream_id": "reaction-2",
+            "stream_segments": [{
+                "segment_id": "seg-0001", "sequence": 1,
+                "channel": "content", "delta": "第二帧。",
+            }],
+        }, phase="reaction", iteration=2),
+        _event(5, "step_settlement", {
+            "general_tool_results": [{
+                "tool_id": "file_read", "call_id": "call-cross-frame",
+                "status": "ok", "summary": "frame-one-result",
+            }],
+        }, phase="reaction", iteration=2),
+    ]
+
+    nodes = build_live_state(events)["dialogue_timeline"]["nodes"]
+    assert [node["type"] for node in nodes] == [
+        "progress", "tool", "progress", "progress",
+    ]
+    tools = [node for node in nodes if node["type"] == "tool"]
+    assert len(tools) == 1
+    assert tools[0]["status"] == "success"
+    assert tools[0]["arguments"] == {"path": "a.md"}
+    assert tools[0]["result"]["summary"] == "frame-one-result"
+
+
+def test_spec772_reasoning_echo_is_not_projected_as_progress():
+    reasoning = "只属于provider reasoning的文本"
+    events = [
+        _event(1, "llm_stream_delta", {
+            "stream_id": "reasoning-only",
+            "stream_segments": [{
+                "segment_id": "seg-0001",
+                "sequence": 1,
+                "channel": "reasoning",
+                "delta": reasoning,
+            }],
+        }, phase="reaction", iteration=2),
+        _event(2, "llm_stream_done", {
+            "stream_id": "reasoning-only",
+            "stream_segments": [],
+            "content_chars": 0,
+            "reasoning_chars": len(reasoning),
+        }, phase="reaction", iteration=2),
+        _event(3, "llm_output_raw", {
+            "response": reasoning,
+            "tool_call_envelopes": [{
+                "tool_id": "guide_submit",
+                "call_id": "call-guide",
+                "arguments": {},
+            }],
+        }, phase="reaction", iteration=2),
+        _event(4, "llm_output_parsed", {
+            "assistant_progress": reasoning,
+            "assistant_reply": "",
+            "message_envelopes": [{
+                "channel": "assistant_text",
+                "block_kind": "dialogue_progress",
+                "text": reasoning,
+            }],
+        }, phase="reaction", iteration=2),
+        _event(5, "step_settlement", {
+            "settlement_scope": "frame",
+            "protocol_tool_receipts": [
+                {"tool_id": "guide_submit", "status": "submission_received"},
+                {
+                    "tool_id": "guide_submit",
+                    "call_id": "call-guide",
+                    "status": "applied",
+                },
+            ],
+        }, phase="reaction", iteration=2),
+    ]
+
+    nodes = build_live_state(events)["dialogue_timeline"]["nodes"]
+    assert [node["type"] for node in nodes] == ["reasoning", "tool"]
+    assert nodes[0]["content_raw"] == reasoning
+    assert nodes[1]["status"] == "success"
+
+
+@pytest.mark.parametrize(("receipt_status", "expected_status"), [
+    ("accepted", "success"),
+    ("applied", "success"),
+    ("guide_loaded", "success"),
+    ("rejected", "failed"),
+])
+def test_spec774_guide_receipt_status_mapping(
+        receipt_status, expected_status):
+    events = [
+        _event(1, "llm_output_raw", {
+            "tool_call_envelopes": [{
+                "tool_id": "guide_submit",
+                "call_id": "call-guide-status",
+                "arguments": {},
+            }],
+        }, phase="reaction", iteration=1),
+        _event(2, "step_settlement", {
+            "settlement_scope": "frame",
+            "protocol_tool_receipts": [
+                {"tool_id": "guide_submit", "status": "submission_received"},
+                {
+                    "tool_id": "guide_submit",
+                    "call_id": "call-guide-status",
+                    "status": receipt_status,
+                },
+            ],
+        }, phase="reaction", iteration=1),
+    ]
+
+    tools = [
+        node for node in build_live_state(events)["dialogue_timeline"]["nodes"]
+        if node["type"] == "tool"
+    ]
+    assert len(tools) == 1
+    assert tools[0]["status"] == expected_status
+
+
+def test_spec772_real_content_equal_to_reasoning_is_not_suppressed():
+    text = "相同文本也可能由content明确输出"
+    nodes = build_live_state([
+        _event(1, "llm_stream_delta", {
+            "stream_id": "mixed",
+            "stream_segments": [
+                {"segment_id": "seg-0001", "channel": "reasoning", "delta": text},
+                {"segment_id": "seg-0002", "channel": "content", "delta": text},
+            ],
+        }, phase="reaction", iteration=1),
+        _event(2, "llm_stream_done", {
+            "stream_id": "mixed",
+            "stream_segments": [],
+            "content_chars": len(text),
+            "reasoning_chars": len(text),
+        }, phase="reaction", iteration=1),
+        _event(3, "llm_output_raw", {"response": text}, phase="reaction", iteration=1),
+        _event(4, "llm_output_parsed", {
+            "assistant_progress": text,
+            "assistant_reply": "",
+            "message_envelopes": [{"channel": "assistant_text", "text": text}],
+        }, phase="reaction", iteration=1),
+    ])["dialogue_timeline"]["nodes"]
+
+    assert [node["type"] for node in nodes] == ["reasoning", "progress"]
+
+
+def test_spec772_phase_settlements_close_terminal_tools_without_aggregate_duplicates():
+    events = [
+        _event(1, "llm_output_raw", {
+            "tool_call_envelopes": [{
+                "tool_id": "setup_finalize",
+                "call_id": "call-setup",
+                "arguments": {},
+            }],
+        }, phase="setup", iteration=1),
+        _event(2, "step_settlement", {
+            "intent": {
+                "security_verdict": "pass",
+                "reject_reason": None,
+                "task_guidance_required": False,
+                "mount_requests": [],
+                "setup_finalize_trace": {"call_id": "call-setup"},
+            },
+            "interaction_meta": {"identity_status": "known"},
+        }, phase="setup", iteration=1),
+        _event(3, "llm_output_raw", {
+            "tool_call_envelopes": [{
+                "tool_id": "guide_submit",
+                "call_id": "call-guide",
+                "arguments": {},
+            }],
+        }, phase="reaction", iteration=1),
+        _event(4, "step_settlement", {
+            "settlement_scope": "frame",
+            "protocol_tool_receipts": [
+                {"tool_id": "guide_submit", "status": "submission_received"},
+                {"tool_id": "guide_submit", "call_id": "call-guide", "status": "applied"},
+            ],
+        }, phase="reaction", iteration=1),
+        _event(5, "step_settlement", {
+            "protocol_tool_receipts": [
+                {"tool_id": "guide_submit", "status": "submission_received"},
+                {"tool_id": "guide_submit", "call_id": "call-guide", "status": "applied"},
+            ],
+            "reaction_iterations": 1,
+        }, phase="reaction", iteration=2),
+        _event(6, "llm_output_raw", {
+            "tool_call_envelopes": [{
+                "tool_id": "cleanup_finalize",
+                "call_id": "call-cleanup",
+                "arguments": {},
+            }],
+        }, phase="cleanup", iteration=1),
+        _event(7, "step_settlement", {
+            "errors": [],
+            "warnings": [],
+            "memory_ids": [],
+            "_connection_bridges": [],
+            "orphans": [],
+        }, phase="cleanup", iteration=1),
+    ]
+
+    tools = [
+        node for node in build_live_state(events)["dialogue_timeline"]["nodes"]
+        if node["type"] == "tool"
+    ]
+    assert [(node["tool_id"], node["status"]) for node in tools] == [
+        ("setup_finalize", "success"),
+        ("guide_submit", "success"),
+        ("cleanup_finalize", "success"),
+    ]
+
+
+def test_spec772_cleanup_errors_fail_the_single_proven_terminal_tool():
+    tools = [
+        node for node in build_live_state([
+            _event(1, "llm_output_raw", {
+                "tool_call_envelopes": [{
+                    "tool_id": "cleanup_finalize",
+                    "call_id": "call-cleanup",
+                    "arguments": {},
+                }],
+            }, phase="cleanup", iteration=1),
+            _event(2, "step_settlement", {
+                "errors": ["cleanup_failed"],
+                "warnings": ["warning"],
+                "memory_ids": [],
+                "_connection_bridges": [],
+                "orphans": [],
+            }, phase="cleanup", iteration=1),
+        ])["dialogue_timeline"]["nodes"]
+        if node["type"] == "tool"
+    ]
+
+    assert len(tools) == 1
+    assert tools[0]["status"] == "failed"
+    assert tools[0]["result"]["errors"] == ["cleanup_failed"]
+
+
+def test_spec771_same_frame_anonymous_tool_boundaries_pair_by_proven_order():
+    nodes = build_live_state([
+        _event(1, "llm_stream_delta", {
+            "stream_id": "anonymous-tools",
+            "stream_tool_boundaries": [
+                {"boundary_id": "tool-0001", "sequence": 1, "tool_id": "tool_call"},
+                {"boundary_id": "tool-0002", "sequence": 2, "tool_id": "tool_call"},
+            ],
+        }, phase="reaction", iteration=1),
+        _event(2, "llm_output_raw", {
+            "tool_call_envelopes": [
+                {"tool_id": "file_read", "arguments": {"path": "first"}},
+                {"tool_id": "file_grep", "arguments": {"query": "second"}},
+            ],
+        }, phase="reaction", iteration=1),
+    ])["dialogue_timeline"]["nodes"]
+
+    assert [(node["tool_id"], node["arguments"]) for node in nodes] == [
+        ("file_read", {"path": "first"}),
+        ("file_grep", {"query": "second"}),
+    ]
+
+
+def test_spec771_parsed_text_replaces_latest_successful_attempt_without_duplicates():
+    events = [
+        _event(1, "llm_stream_delta", {
+            "stream_id": "attempt-1",
+            "stream_segments": [{
+                "segment_id": "seg-0001", "channel": "content", "delta": "失败半截",
+            }],
+        }, phase="reaction", iteration=1),
+        _event(2, "llm_stream_error", {
+            "stream_id": "attempt-1", "reason": "connection_reset",
+        }, phase="reaction", iteration=1),
+        _event(3, "llm_stream_delta", {
+            "stream_id": "attempt-2",
+            "stream_segments": [
+                {"segment_id": "seg-0001", "channel": "content", "delta": "  合法"},
+                {"segment_id": "seg-0002", "channel": "content", "delta": "答案  "},
+            ],
+        }, phase="reaction", iteration=1),
+        _event(4, "llm_stream_done", {"stream_id": "attempt-2"}, phase="reaction", iteration=1),
+        _event(5, "llm_output_parsed", {
+            "message_envelopes": [{"channel": "final_reply.text", "text": "合法答案"}],
+        }, phase="reaction", iteration=1),
+    ]
+
+    nodes = build_live_state(events)["dialogue_timeline"]["nodes"]
+    assert any(
+        node["type"] == "progress"
+        and node["status"] == "interrupted"
+        and node["content_raw"] == "失败半截"
+        for node in nodes
+    )
+    adopted = [node for node in nodes if node["type"] == "final"]
+    assert len(adopted) == 1
+    assert adopted[0]["content_raw"] == "合法答案"
+    assert sum(
+        str(node.get("content_raw") or "").count("合法答案")
+        for node in nodes
+    ) == 1
+
+
+def test_spec771_degraded_closed_round_activity_is_failed_not_completed():
+    state = build_live_state([
+        _event(1, "round_started"),
+        _event(2, "round_settled", {
+            "status": "degraded",
+            "degraded_reasons": ["runtime_internal_error"],
+        }),
+        _event(3, "round_closed", {
+            "status": "degraded",
+            "degraded_reasons": ["runtime_internal_error"],
+        }),
+    ])
+
+    assert state["dialogue_activity"]["terminal"] is True
+    assert state["dialogue_activity"]["activity"] == "failed"
 
 
 def test_spec739_soft_response_contract_does_not_hide_terminal_candidate():
@@ -980,6 +1585,12 @@ def test_spec710_user_stop_keeps_partial_stream_as_stopped_not_final():
 
     assert stream["content_raw"] == "已经收到的半截正文"
     assert stream["stream_state"] == "stopped"
+    dialogue = next(
+        node for node in state["dialogue_timeline"]["nodes"]
+        if node["type"] == "progress"
+    )
+    assert dialogue["content_raw"] == "已经收到的半截正文"
+    assert dialogue["status"] == "stopped"
     assert not [
         card for card in state["conversation"]
         if card["type"] == "assistant-final"
@@ -1684,12 +2295,13 @@ def test_live_projection_translates_structured_cards_to_chinese_markdown_without
     assert "已读到第 700 行" in tool_result["content_md"]
 
 
-def test_live_input_box_is_present_but_does_not_send_provider():
-    state = build_live_state([])
+def test_spec773_light_state_does_not_mix_viewer_input_configuration():
+    state = build_light_live_state([])
 
-    assert state["input_box"]["label"] == "用户输入"
-    assert state["input_box"]["editable"] is True
-    assert state["input_box"]["send_live_provider"] is False
+    assert "input_box" not in state
+    html = (Path(__file__).parents[1] / "audit" / "round_live.html").read_text(encoding="utf-8")
+    assert 'id="draftInput"' in html
+    assert "第一版不发送 live provider" in html
 
 
 def test_events_after_returns_incremental_events_and_state():
@@ -1883,6 +2495,10 @@ def test_round_live_html_declares_local_markdown_it_and_single_conversation_stre
     assert "let changed = false;" in html
     assert "if (pinnedToBottom && liveMode && changed)" in html
     assert 'scrollConversationToBottom({ smooth: false })' in html
+    assert 'kind: "timeline_node"' in html
+    assert "timelineNodeDetails" in html
+    assert "detail_ref: node.detail_ref" in html
+    assert "frameDetailRequestKey !== requestKey" in html
     assert 'behavior: smooth ? "smooth" : "auto"' in html
     assert "scroll-behavior: smooth" not in html
     assert "refreshPaused" in html

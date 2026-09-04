@@ -41,7 +41,6 @@ RELATION_CARD_FIELDS = {
     "tags":        ("list", "语义标签"),
     "aliases":     ("list", "别名"),
     "summary_resident": ("bool", "STATUSBAR 关系摘要跨轮常驻标记"),
-    "body_resident": ("bool", "CONTENT 关系正文跨轮常驻标记"),
 }
 
 RELATION_LEGACY_PREFIX = "REL-"
@@ -91,7 +90,6 @@ def default_relation_card(card_id, name, category="ours"):
         "tags": [],
         "aliases": [],
         "summary_resident": False,
-        "body_resident": False,
     }
 
 
@@ -116,7 +114,6 @@ def default_registry_card_entry(card_id, name, category, path):
         "path": path,
         "status": "active",
         "summary_resident": False,
-        "body_resident": False,
         "aliases": [],
         "tags": [],
         "updated_at": now,

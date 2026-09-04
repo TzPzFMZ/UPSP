@@ -42,13 +42,14 @@ L3 若被反复采用，可整理为 `procedures/subtype=workflow`；未整理�
 | reaction | provider_native_tool_call | L1 | 每次反应步迭代内 | LLM-facing 工具入口；直接调用当前已导出的 provider-native tool schema | Runtime 按注册表分流到 protocol/general/substrate 内部链路 |
 | reaction | protocol_tool_request | internal | provider-native 协议工具投影后 | 内部路由字段；LLM 直接写旧文本字段会被 Runtime 记为 retired / invalid，不执行并回灌纠错 | processor / receipt |
 | reaction | general_tool_request | internal | provider-native 通用工具投影后 | 内部路由字段；LLM 直接写旧文本字段会被 Runtime 记为 retired / invalid，不执行并回灌纠错；已开通 `file_read` / `file_glob` / `file_grep` / `file_edit` / `file_write` / `web_fetch` / `web_search` / `shell_command` / `subagent_dispatch` | `general_tool_call` |
-| reaction | focus_tool_execution | L1 | provider-native focus tool 调用时 | 焦点工具正文编辑或 WB focus 切换 | 单焦点提交 |
-| reaction | sync_tool_submission | L1 | provider-native sync tool 调用时 | 同步工具结构化提交 | 多工具串行落盘 |
-| reaction | read_tool_mount | L1 | 需要只读资料或内环境只读内容时 | provider-native read tool | 资料语料、只读装配、回执 |
+| reaction | read_tool_execution | L1 | provider-native read tool 调用时 | 读取资料或内环境正文，并执行该读工具既定的确定性生命周期 | 资料、CONTENT、回执 |
+| reaction | sync_tool_submission | L1 | provider-native sync tool 调用时 | 位格内部同步事务 | 多工具分别串行落盘 |
+| reaction | action_tool_execution | L1 | provider-native action tool 调用时 | 宿主或外部环境动作 | 权限、审批、handler 结果 |
 | runtime | tool_transaction_audit | L0/L1 | 协议工具 processor 完成后、round JSONL 收尾前 | 工具事务验账基座审计线 | `round_{N}.jsonl:runtime_audit` |
 | reaction | style_or_pattern_modulation | L2 | 生成回复或填写 guide 前 | 认知范式、程序能力、reminder | 提醒风格、指南风格，不改硬 schema |
 | reaction | contradiction_handling | L2 | 检测到前提冲突后 | 程序能力 | 澄清策略、批判/质疑模式提醒 |
-| cleanup | training_material_settlement | L1 | 善后训练材料线 | 联系先行默契落账规则、联想五表计数规则 | `connection_material_settle` → `tacit_material_settle` → `association_count_update` |
+| cleanup | training_material_settlement | L1 | 善后联系/默契材料线 | 联系先行、默契随后落账 | `connection_material_settle` → `tacit_material_settle` |
+| reaction | terminal_memory_metabolism | L0/L1 | 合法语义终态 | 热度、遗忘、自然入库、联想五表 | `heat_decay` → `stm_forgetting` → `memory_admission` → `association_count_update` |
 | reaction | lately_compaction | L1 | 善后已按共同窗口压力冻结 v3 债务，且当前为下一自然轮 Reaction | 最近缓存即时压缩指南 | 分片结果暂存；达标后一次原子替换 |
 | cleanup | minimum_commitment | L0 | 善后脚本固定边界标记 | 最小承诺规则 | kind=minimum_commitment |
 | cleanup | settlement_review | L1/L2 | 善后收束时 | 默契/联系处理规则 | 善后两线清单 |
@@ -71,7 +72,7 @@ L3 若被反复采用，可整理为 `procedures/subtype=workflow`；未整理�
 - `native_tool_result` 是 provider-native 工具失败 POPUP 警告层 feedback，不是 workflow slot、不是工具入口、不是 `protocol_tool_submission`、不是 processor receipt、不是 `tool_id` 或请求字段，也不进入 now/lately/Corpus；它的结构字段留给 Runtime、step.json 和 audit 判读，可见 POPUP 只说明失败事实、失败原因和纠偏动作。
 - `native_tool_result` 中的 `actual/expected`、`arguments_json`、命令、参数、正文、密钥、关系轴数值、`state.json` 数值和 live `persona/` 状态只可脱敏/截断，不得完整回显。
 - 通用工具不能伪装成协议提交；`file_read`、`file_glob`、`file_grep`、`file_edit`、`file_write`、`web_fetch`、`web_search`、`shell_command`、`subagent_dispatch` 经 provider-native 调用投影到内部 `general_tool_request`，并通过 `general_tool_result` 独立闭环。
-- `backend_type` / `active_backend` 只描述通用工具的执行后端，不改变 workflow slot 或 `tool_family`。
+- `backend_type` / `active_backend` 只描述行动或读取工具的执行后端，不改变模型可见工具姿态。
 - 固定输出表、脚本事件、基座工具动作和 C 轨单次调用临时语料走各自边界，不能伪装成协议工具提交。
 - 插槽不能新增第二套心跳事实源。
 - 立场一致性检查不新增近期交互摘要层；缓存里有就参考，没有就依靠关系卡、记忆与链容器。

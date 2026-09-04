@@ -21,11 +21,18 @@ def _replace_with_retry(
         target: str,
         *,
         replace_attempts: int,
-        retry_base_seconds: float) -> None:
+        retry_base_seconds: float,
+        durable: bool = False) -> None:
     attempts = max(1, int(replace_attempts))
     for attempt in range(attempts):
         try:
-            os.replace(tmp, target)
+            if durable and os.name == "nt":
+                import ctypes
+                flags = 0x1 | 0x8  # REPLACE_EXISTING | WRITE_THROUGH
+                if not ctypes.windll.kernel32.MoveFileExW(tmp, target, flags):
+                    raise ctypes.WinError()
+            else:
+                os.replace(tmp, target)
             return
         except PermissionError as exc:
             if attempt >= attempts - 1:
@@ -39,30 +46,27 @@ def _replace_with_retry(
             raise WriteError(target, cause=exc) from exc
 
 
-def atomic_write_text(
-        path: str | os.PathLike[str],
-        text: Any,
-        *,
-        encoding: str = "utf-8",
-        newline: str | None = None,
-        replace_attempts: int = 5,
-        retry_base_seconds: float = 0.05) -> None:
+def _atomic_write_payload(
+        path, payload, *, binary=False, encoding="utf-8", newline=None,
+        replace_attempts=5, retry_base_seconds=0.05, durable=False):
     target = _target_path(path)
     directory = os.path.dirname(target) or "."
     os.makedirs(directory, exist_ok=True)
     fd, tmp = tempfile.mkstemp(
-        prefix=f"{os.path.basename(target)}.",
-        suffix=".tmp",
-        dir=directory,
-    )
+        prefix=f"{os.path.basename(target)}.", suffix=".tmp", dir=directory)
     try:
-        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as handle:
-            handle.write(str(text))
+        options = {} if binary else {"encoding": encoding, "newline": newline}
+        with os.fdopen(fd, "wb" if binary else "w", **options) as handle:
+            handle.write(bytes(payload) if binary else str(payload))
+            if durable:
+                handle.flush()
+                os.fsync(handle.fileno())
         _replace_with_retry(
             tmp,
             target,
             replace_attempts=replace_attempts,
             retry_base_seconds=retry_base_seconds,
+            durable=durable,
         )
         tmp = ""
     except WriteError:
@@ -84,7 +88,8 @@ def atomic_write_json(
         indent: int | None = 2,
         sort_keys: bool = False,
         trailing_newline: bool = False,
-        replace_attempts: int = 5) -> None:
+        replace_attempts: int = 5,
+        durable: bool = False) -> None:
     text = json.dumps(
         data,
         ensure_ascii=False,
@@ -93,7 +98,12 @@ def atomic_write_json(
     )
     if trailing_newline:
         text += "\n"
-    atomic_write_text(path, text, replace_attempts=replace_attempts)
+    atomic_write_text(
+        path,
+        text,
+        replace_attempts=replace_attempts,
+        durable=durable,
+    )
 
 
 def atomic_write_jsonl(
@@ -110,3 +120,30 @@ def atomic_write_jsonl(
     if lines:
         text += "\n"
     atomic_write_text(path, text, replace_attempts=replace_attempts)
+
+
+def durable_write_bytes(
+        path: str | os.PathLike[str],
+        payload: bytes,
+        *,
+        replace_attempts: int = 5,
+        retry_base_seconds: float = 0.05) -> None:
+    """Write exact bytes through a same-directory durable replacement."""
+    _atomic_write_payload(
+        path, payload, binary=True, replace_attempts=replace_attempts,
+        retry_base_seconds=retry_base_seconds, durable=True)
+
+
+def atomic_write_text(
+        path: str | os.PathLike[str],
+        text: Any,
+        *,
+        encoding: str = "utf-8",
+        newline: str | None = None,
+        replace_attempts: int = 5,
+        retry_base_seconds: float = 0.05,
+        durable: bool = False) -> None:
+    _atomic_write_payload(
+        path, text, encoding=encoding, newline=newline,
+        replace_attempts=replace_attempts,
+        retry_base_seconds=retry_base_seconds, durable=durable)

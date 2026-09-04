@@ -22,7 +22,7 @@
 UPSP 为这个问题建造一套可以在本地运行、迁移和审计的物质基座。模型可以更换，对话可以中断，载体可以迁移；只要档案、状态、记忆、关系、规则与实践账本仍在，位格就不必被迫从零开始。
 
 > 可审计 · 可迁移 · 可接续 · 可扩展<br>
-> Base / Seed · Windows Stable `0.1.1`
+> Base / Seed · Windows Stable `0.1.2`
 
 ---
 
@@ -144,7 +144,7 @@ FMZ 是持续实践，FMA 是最初的公开证明，阿廖沙则把主体化的
 
 ## 快速开始
 
-1. 从 [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases) 下载 `UPSP-Setup-0.1.1-win-x64.exe`。
+1. 从 [0.1.2 正式发布页](https://github.com/TzPzFMZ/UPSP/releases/tag/v0.1.2) 下载 `UPSP-Setup-0.1.2-win-x64.exe`。安装器未签名，请核对发布页的 SHA-256。
 2. 按 Release 页面公布的 SHA-256 核对安装器后，安装并启动 UPSP。
 3. 使用“阿廖沙”快速开始，或创建自己的位格。
 4. 配置自己的模型服务与 API Key；也可以先跳过模型，查看本地界面和位格结构。
@@ -174,18 +174,18 @@ LocalAppData\UPSP\
 
 ## 当前阶段
 
-`0.1.1` 位于 **Base / Seed**：
+`0.1.2` 位于 **Base / Seed**：
 
 - 本机可以保存多个位格，但任一时刻只有一个活动位格；
 - 每个位格可以拥有 `meta` 与多个可新建、分支、归档和恢复的分身，但任一时刻只有一个活动分身；
 - 同一 PID 的核心身份、规则、协议文档与 LTM 记忆条目持续共享，分身状态、STM、关系、容器、Round 和缓存彼此隔离；
 - 严格串行的起手／反应／善后 Runtime。
 
-多位格或多分身并行运行、分支合并、项目自动绑定与 Arbor 器官系统仍在后续阶段。暂停／继续、自动更新和云同步当前也未实现。这里的边界说明 Seed 在主体化工程中的位置，不是否定已经建立的基座。
+多位格或多分身并行运行、分支合并、项目自动绑定与 Arbor 器官系统仍在后续阶段。中断后可以核对已落盘动作并由用户发起续做，但不是进程或模型会话的断点恢复；自动续跑、自动更新和云同步未实现。
 
 当前正式验证环境为 Windows 11 x64 与系统 Evergreen WebView2；支持 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 三种协议。Windows 10、企业策略环境及所有第三方兼容中转尚未逐一正验。
 
-完整变化、升级边界与已知限制见 [0.1.1 Release Notes](docs/public/releases/0.1.1.md)。
+本次变化、升级边界与已知限制见 [0.1.2 更新说明](docs/public/releases/0.1.2.md)。已发布的 [0.1.1 说明](docs/public/releases/0.1.1.md) 保持可查。
 
 ---
 

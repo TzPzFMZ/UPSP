@@ -10,7 +10,11 @@ from constants import corpus_entry_timestamp, normalize_iso_timestamp
 from data.prompt_cache_telemetry import total_input_tokens
 
 
-SCHEMA_VERSION = "round_live_state.v2"
+SCHEMA_VERSION = "round_live_state.v3"
+EVENTS_SCHEMA_VERSION = "round_live_events.v2"
+DETAIL_SCHEMA_VERSION = "round_live_detail.v1"
+DIALOGUE_TIMELINE_SCHEMA = "round_dialogue_timeline.v1"
+DIALOGUE_ACTIVITY_SCHEMA = "round_dialogue_activity.v1"
 
 CONTEXT_PANES = (
     ("00_call_header", "00_call_header"),
@@ -111,69 +115,963 @@ DSML_STREAM_MARKER_RE = re.compile(
 
 
 def build_live_state(events, live_context_root=None, use_live_layers=False):
-    """Build a complete live viewer state from round JSONL events."""
+    """Build the lightweight first-paint state; heavy audit bodies are details."""
     ordered_all = _ordered_events(events)
     ordered = _visible_events(ordered_all)
     latest_round = _latest_round(ordered)
-    frames = _build_call_frames(
-        ordered,
-        live_context_root=live_context_root,
-        use_live_layers=use_live_layers,
-    )
-    frame_ids = {frame["frame_id"] for frame in frames}
-    conversation = []
-    stream_states = {}
-    user_sources = _canonical_user_sources(ordered)
-    for event in ordered:
-        frame_id = _frame_id_for_event(event, frame_ids)
-        source = user_sources.get(int(event.get("round") or 0))
-        if source and int(event.get("event_index") or 0) == source[0]:
-            conversation.extend(_user_cards_from_messages(
-                event,
-                source[1],
-                frame_id=frame_id,
-            ))
-        if event.get("event_type") in STREAM_EVENT_TYPES:
-            _accumulate_stream_card(stream_states, conversation, event, frame_id=frame_id)
-            continue
-        conversation.extend(_cards_for_event(event, frame_id=frame_id))
-    conversation = _dedupe_conversation_cards(conversation)
-    conversation = _drop_superseded_streaming_cards(conversation)
+    frame_catalog = _build_frame_catalog(ordered)
+    frame_ids = {frame["frame_id"] for frame in frame_catalog}
     lifecycle = _round_lifecycle(ordered)
-    if lifecycle.get("state") in {"settled", "closed", "unsettled"}:
-        for frame in frames:
-            usage = frame.get("context_usage")
-            if isinstance(usage, dict) and usage.get("state") == "pending":
-                usage["state"] = "unavailable"
-    _annotate_streaming_cards(conversation, lifecycle)
+    display_mode = _dialogue_display_mode(ordered_all)
+    dialogue_timeline = None
+    dialogue_activity = None
+    if display_mode == "timeline":
+        dialogue_timeline = _slim_dialogue_timeline(_build_dialogue_timeline(
+            ordered_all,
+            frame_ids=frame_ids,
+            lifecycle=lifecycle,
+        ))
+        dialogue_activity = _build_dialogue_activity(
+            ordered_all,
+            lifecycle=lifecycle,
+            nodes=dialogue_timeline["nodes"],
+        )
 
-    latest_frame = frames[-1] if frames else None
-    panes = latest_frame["context_panes"] if latest_frame else _default_context_panes()
+    latest_frame = frame_catalog[-1] if frame_catalog else None
 
     return {
         "schema_version": SCHEMA_VERSION,
         "round": latest_round,
         "last_event_index": _last_event_index(ordered_all),
         "latest_frame_id": latest_frame["frame_id"] if latest_frame else None,
-        "call_frames": frames,
-        "context_panes": panes,
-        "conversation": conversation,
+        "display_mode": display_mode,
+        "frame_catalog": frame_catalog,
+        "dialogue_timeline": dialogue_timeline,
+        "dialogue_activity": dialogue_activity,
         "statusbar_projection": _statusbar_projection(ordered),
         "round_lifecycle": lifecycle,
-        "rendering": {
-            "default_mode": "markdown",
-            "raw_available": True,
-            "markdown_engine": "markdown-it@14.2.0",
-            "html_enabled": False,
-            "images_enabled": False,
+    }
+
+
+def build_live_detail(events, *, kind, ref="", live_context_root=None,
+                      use_live_layers=False):
+    """Build one explicitly requested heavy audit surface."""
+    ordered_all = _ordered_events(events)
+    ordered = _visible_events(ordered_all)
+    round_num = _latest_round(ordered_all)
+    if kind == "frame":
+        catalog = _build_frame_catalog(ordered)
+        latest_frame_id = str(catalog[-1].get("frame_id") or "") if catalog else ""
+        payload = _build_frame_detail(
+            ordered,
+            ref,
+            live_context_root=live_context_root,
+            use_live_layers=(use_live_layers and str(ref or "") == latest_frame_id),
+        )
+    elif kind == "ledger":
+        payload = {"items": _build_ledger_items(ordered)}
+    elif kind == "event":
+        payload = _build_event_detail(ordered_all, ref)
+    elif kind == "timeline_node":
+        payload = _build_timeline_node_detail(ordered_all, ref)
+    elif kind == "legacy_conversation":
+        payload = {"conversation": _build_legacy_conversation(ordered)}
+    elif kind == "evidence":
+        payload = _build_evidence_detail(
+            ordered_all,
+            live_context_root=live_context_root,
+            use_live_layers=use_live_layers,
+        )
+    else:
+        raise ValueError("live_detail_kind_invalid")
+    return {
+        "schema_version": DETAIL_SCHEMA_VERSION,
+        "round": round_num,
+        "kind": kind,
+        "ref": str(ref or ""),
+        "payload": payload,
+    }
+
+
+def _dialogue_display_mode(events):
+    for event in events:
+        if event.get("event_type") != "round_started":
+            continue
+        if (event.get("payload") or {}).get("dialogue_projection_schema") == DIALOGUE_TIMELINE_SCHEMA:
+            return "timeline"
+        return "legacy"
+    return "legacy"
+
+
+def _slim_dialogue_timeline(timeline):
+    result = deepcopy(timeline)
+    for node in result.get("nodes") or []:
+        if node.get("type") != "tool":
+            continue
+        node["detail_ref"] = str(node.get("node_id") or "")
+        for key in ("arguments", "result", "provider_block"):
+            node.pop(key, None)
+    return result
+
+
+def _build_frame_catalog(events):
+    frames = []
+    by_key = {}
+    for event in events:
+        key = _call_key(event)
+        if not key:
+            continue
+        frame = by_key.get(key)
+        if frame is None:
+            frame = _new_frame(event)
+            for field in ("manifest", "_layers"):
+                frame.pop(field, None)
+            by_key[key] = frame
+            frames.append(frame)
+        event_index = int(event.get("event_index") or 0)
+        frame["event_start_index"] = min(frame["event_start_index"], event_index)
+        frame["event_end_index"] = max(frame["event_end_index"], event_index)
+        payload = event.get("payload") or {}
+        envelope = _provider_request_envelope_for_event(event)
+        frame_projection = payload.get("frame_projection")
+        frame_projection = frame_projection if isinstance(frame_projection, dict) else {}
+        provider = envelope.get("provider")
+        if isinstance(provider, dict):
+            frame["model_profile_id"] = str(provider.get("profile_id") or "")
+        elif frame_projection.get("model_profile_id"):
+            frame["model_profile_id"] = str(frame_projection.get("model_profile_id") or "")
+        created_at = normalize_iso_timestamp(
+            envelope.get("created_at") or frame_projection.get("created_at"))
+        if created_at and not frame.get("created_at"):
+            frame["created_at"] = created_at
+        call_channel = _call_channel_for_event(event)
+        if call_channel:
+            frame["call_channel"] = call_channel
+            frame["label"] = _frame_label(frame.get("round"), call_channel, frame.get("iteration"))
+        if event.get("event_type") == "step_input_snapshot":
+            context_chars = _int_or_none(frame_projection.get("context_chars"))
+            if context_chars is None:
+                context_chars = _manifest_total_chars(payload.get("manifest"))
+            if context_chars is None:
+                context_chars = _layers_manifest_chars(envelope.get("layers_manifest"))
+            if context_chars is None:
+                context_chars = _layers_snapshot_chars(payload.get("layers_snapshot"))
+            frame["context_usage"] = {
+                "chars": context_chars or 0,
+                "input_tokens": None,
+                "window_tokens": _int_or_none(
+                    envelope.get("context_window_tokens")
+                    or frame_projection.get("context_window_tokens"), 1),
+                "state": "pending",
+            }
+        elif event.get("event_type") == "llm_output_raw" and "context_usage" in frame:
+            input_tokens = total_input_tokens(payload.get("raw_usage"))
+            frame["context_usage"]["input_tokens"] = input_tokens
+            frame["context_usage"]["state"] = "reported" if input_tokens is not None else "unavailable"
+        elif event.get("event_type") in {"llm_error", "round_unsettled"} and "context_usage" in frame:
+            if frame["context_usage"].get("state") != "reported":
+                frame["context_usage"]["state"] = "unavailable"
+    lifecycle = _round_lifecycle(events)
+    if lifecycle.get("state") in {"settled", "closed", "unsettled"}:
+        for frame in frames:
+            usage = frame.get("context_usage")
+            if isinstance(usage, dict) and usage.get("state") == "pending":
+                usage["state"] = "unavailable"
+    for frame in frames:
+        for key in tuple(frame):
+            if key.startswith("_"):
+                frame.pop(key, None)
+        if not frame.get("created_at"):
+            frame.pop("created_at", None)
+    return frames
+
+
+def _build_frame_detail(events, frame_id, *, live_context_root=None,
+                        use_live_layers=False):
+    frame_id = str(frame_id or "").strip()
+    if not frame_id:
+        raise ValueError("live_detail_ref_required")
+    frame_events = [event for event in events if _call_key(event) == frame_id]
+    if not frame_events:
+        raise ValueError("live_detail_frame_not_found")
+    frame_events.extend(
+        event for event in events
+        if not _call_key(event)
+        and event.get("event_type") in {"round_settled", "round_closed", "round_unsettled"}
+    )
+    frames = _build_call_frames(
+        frame_events,
+        live_context_root=live_context_root,
+        use_live_layers=use_live_layers,
+    )
+    matches = [frame for frame in frames if frame.get("frame_id") == frame_id]
+    if len(matches) != 1:
+        raise ValueError("live_detail_frame_ambiguous")
+    return matches[0]
+
+
+def _build_legacy_conversation(events):
+    frame_catalog = _build_frame_catalog(events)
+    frame_ids = {frame["frame_id"] for frame in frame_catalog}
+    conversation = []
+    stream_states = {}
+    user_sources = _canonical_user_sources(events)
+    for event in events:
+        frame_id = _frame_id_for_event(event, frame_ids)
+        source = user_sources.get(int(event.get("round") or 0))
+        if source and int(event.get("event_index") or 0) == source[0]:
+            conversation.extend(_user_cards_from_messages(event, source[1], frame_id=frame_id))
+        if event.get("event_type") in STREAM_EVENT_TYPES:
+            _accumulate_stream_card(stream_states, conversation, event, frame_id=frame_id)
+            continue
+        conversation.extend(_cards_for_event(event, frame_id=frame_id))
+    conversation = _dedupe_conversation_cards(conversation)
+    conversation = _drop_superseded_streaming_cards(conversation)
+    _annotate_streaming_cards(conversation, _round_lifecycle(events))
+    return conversation
+
+
+def _build_ledger_items(events):
+    items = []
+    for event in events:
+        payload = event.get("payload") or {}
+        event_type = str(event.get("event_type") or "")
+        lowered = event_type.lower()
+        item_type = (
+            "warning-error" if any(word in lowered for word in ("error", "fatal", "blocked"))
+            else "settlement" if any(word in lowered for word in ("receipt", "settlement", "settled"))
+            else "tool" if "tool" in lowered
+            else "event"
+        )
+        items.append({
+            "event_index": int(event.get("event_index") or 0),
+            "event_type": event_type,
+            "phase": str(event.get("phase") or ""),
+            "iteration": int(event.get("iteration") or 1),
+            "frame_id": _call_key(event),
+            "recorded_at": str(event.get("recorded_at") or ""),
+            "status": str(payload.get("status") or ""),
+            "type": item_type,
+            "title": str(payload.get("tool_id") or payload.get("title") or event_type or "event"),
+            "severity": "error" if item_type == "warning-error" else "",
+            "detail_ref": str(int(event.get("event_index") or 0)),
+        })
+    return items
+
+
+def _build_event_detail(events, ref):
+    try:
+        event_index = int(str(ref or ""))
+    except ValueError as exc:
+        raise ValueError("live_detail_ref_invalid") from exc
+    matches = [event for event in events if int(event.get("event_index") or 0) == event_index]
+    if len(matches) != 1:
+        raise ValueError("live_detail_event_not_found")
+    event = matches[0]
+    frame_ids = {_call_key(item) for item in events if _call_key(item)}
+    return {
+        "event": deepcopy(event),
+        "cards": _cards_for_event(
+            event,
+            frame_id=_frame_id_for_event(event, frame_ids),
+        ),
+    }
+
+
+def _build_timeline_node_detail(events, ref):
+    ref = str(ref or "").strip()
+    if not ref:
+        raise ValueError("live_detail_ref_required")
+    frame_ids = {_call_key(event) for event in events if _call_key(event)}
+    timeline = _build_dialogue_timeline(
+        events,
+        frame_ids=frame_ids,
+        lifecycle=_round_lifecycle(events),
+    )
+    matches = [node for node in timeline.get("nodes") or [] if node.get("node_id") == ref]
+    if len(matches) != 1 or matches[0].get("type") != "tool":
+        raise ValueError("live_detail_timeline_node_not_found")
+    return matches[0]
+
+
+def _build_evidence_detail(events, *, live_context_root=None, use_live_layers=False):
+    ordered = _visible_events(events)
+    frames = _build_call_frames(
+        ordered,
+        live_context_root=live_context_root,
+        use_live_layers=use_live_layers,
+    )
+    latest_frame = frames[-1] if frames else None
+    return {
+        "schema_version": "seed_gui_evidence_export.v1",
+        "runtime_projection": {
+            "schema_version": SCHEMA_VERSION,
+            "round": _latest_round(ordered),
+            "last_event_index": _last_event_index(events),
+            "latest_frame_id": latest_frame.get("frame_id") if latest_frame else "",
+            "statusbar_projection": _statusbar_projection(ordered),
+            "round_lifecycle": _round_lifecycle(ordered),
+            "call_frames": frames,
+            "context_panes": latest_frame.get("context_panes") if latest_frame else _default_context_panes(),
+            "conversation": _build_legacy_conversation(ordered),
+            "manifest": deepcopy(latest_frame.get("manifest") or {}) if latest_frame else {},
         },
-        "input_box": {
-            "label": "用户输入",
-            "editable": True,
-            "send_live_provider": False,
-            "placeholder": "第一版仅保留草稿，不发送 live provider。",
-        },
-        "manifest": deepcopy(latest_frame.get("manifest") or {}) if latest_frame else {},
+    }
+
+
+def _build_dialogue_timeline(events, *, frame_ids, lifecycle):
+    """Project only user- and provider-visible events in true audit order."""
+    nodes = []
+    nodes_by_id = {}
+    frame_content_nodes = {}
+    frame_tool_nodes = {}
+    frame_stream_evidence = {}
+    frame_raw_responses = {}
+    user_sources = _canonical_user_sources(events)
+    rejected_frames = {
+        _call_key(event)
+        for event in events
+        if event.get("event_type") == "final_response_candidate_rejected"
+    }
+    guarded_rounds = {
+        int(event.get("round") or 0)
+        for event in events
+        if event.get("event_type") == "round_started"
+        and isinstance((event.get("payload") or {}).get("input_snapshot"), dict)
+        and isinstance(
+            (((event.get("payload") or {}).get("input_snapshot") or {}).get("trigger") or {}).get("final_response_max_chars"),
+            int,
+        )
+    }
+    closed_rounds = {
+        int(event.get("round") or 0)
+        for event in events
+        if event.get("event_type") == "round_closed"
+    }
+    frame_rounds = {
+        _call_key(event): int(event.get("round") or 0)
+        for event in events
+        if _call_key(event)
+    }
+    terminal_candidates = {
+        _call_key(event): str((event.get("payload") or {}).get("natural_final_reply_candidate") or "").strip()
+        for event in events
+        if event.get("event_type") == "llm_output_parsed"
+        and str((event.get("payload") or {}).get("natural_final_reply_candidate") or "").strip()
+    }
+    hidden_candidate_frames = set(rejected_frames)
+    hidden_candidate_frames.update(
+        frame_key
+        for frame_key, candidate in terminal_candidates.items()
+        if candidate
+        and frame_rounds.get(frame_key) in guarded_rounds
+        and frame_rounds.get(frame_key) not in closed_rounds
+    )
+
+    def add_node(node):
+        existing = nodes_by_id.get(node["node_id"])
+        if existing is not None:
+            return existing
+        nodes_by_id[node["node_id"]] = node
+        nodes.append(node)
+        return node
+
+    def base_node(event, node_id, node_type, *, sequence=0, status="completed"):
+        return {
+            "node_id": node_id,
+            "type": node_type,
+            "phase": str(event.get("phase") or ""),
+            "frame_id": _frame_id_for_event(event, frame_ids),
+            "iteration": event.get("iteration"),
+            "first_event_index": int(event.get("event_index") or 0),
+            "first_event_sequence": int(sequence),
+            "status": status,
+            "started_at": str(event.get("recorded_at") or ""),
+            "ended_at": "" if status in {"active", "running", "pending_approval"} else str(event.get("recorded_at") or ""),
+        }
+
+    for event in events:
+        event_index = int(event.get("event_index") or 0)
+        event_type = str(event.get("event_type") or "")
+        payload = event.get("payload") or {}
+        frame_id = _frame_id_for_event(event, frame_ids)
+        frame_key = _call_key(event)
+        source = user_sources.get(int(event.get("round") or 0))
+        if source and event_index == source[0]:
+            for message_position, card in enumerate(
+                    _user_cards_from_messages(event, source[1], frame_id=frame_id), 1):
+                node = base_node(
+                    event,
+                    f"dialogue:{card['card_id']}",
+                    "user",
+                    sequence=message_position,
+                )
+                node["content_raw"] = str(card.get("content_raw") or "")
+                add_node(node)
+
+        if event_type in STREAM_EVENT_TYPES:
+            stream_id = str(payload.get("stream_id") or "legacy").strip() or "legacy"
+            segments = payload.get("stream_segments")
+            conservative = not isinstance(segments, list)
+            if conservative:
+                segments = []
+                if payload.get("reasoning_delta"):
+                    segments.append({
+                        "segment_id": "legacy-reasoning",
+                        "channel": "reasoning",
+                        "provider_block": {},
+                        "delta": payload.get("reasoning_delta"),
+                    })
+                if payload.get("content_delta"):
+                    segments.append({
+                        "segment_id": "legacy-content",
+                        "channel": "content",
+                        "provider_block": {},
+                        "delta": payload.get("content_delta"),
+                    })
+            evidence = frame_stream_evidence.setdefault(frame_key, {}).setdefault(
+                stream_id,
+                {
+                    "has_segments": not conservative,
+                    "reasoning": [],
+                    "content": [],
+                    "done": None,
+                    "failed": False,
+                },
+            )
+            evidence["has_segments"] = bool(
+                evidence.get("has_segments") or not conservative)
+            for segment in segments or []:
+                if not isinstance(segment, dict):
+                    continue
+                channel = str(segment.get("channel") or "")
+                delta = str(segment.get("delta") or "")
+                if channel in {"reasoning", "content"} and delta:
+                    evidence[channel].append(delta)
+            if event_type == "llm_stream_done":
+                evidence["done"] = {
+                    "content_chars": payload.get("content_chars"),
+                    "reasoning_chars": payload.get("reasoning_chars"),
+                }
+            elif event_type == "llm_stream_error":
+                evidence["failed"] = True
+            stream_items = []
+            for fallback_sequence, segment in enumerate(segments or [], 1):
+                if isinstance(segment, dict):
+                    stream_items.append((
+                        int(segment.get("sequence") or fallback_sequence),
+                        "text",
+                        segment,
+                    ))
+            for fallback_sequence, boundary in enumerate(
+                    payload.get("stream_tool_boundaries") or [],
+                    len(stream_items) + 1):
+                if isinstance(boundary, dict):
+                    stream_items.append((
+                        int(boundary.get("sequence") or fallback_sequence),
+                        "tool",
+                        boundary,
+                    ))
+            stream_items.sort(key=lambda item: item[0])
+            for sequence, item_type, segment in stream_items:
+                if item_type == "tool":
+                    boundary_id = str(
+                        segment.get("boundary_id") or f"tool-{sequence:04d}")
+                    call_id = str(segment.get("call_id") or "").strip()
+                    tool_id = str(segment.get("tool_id") or "tool_call")
+                    identity = call_id or boundary_id
+                    node = add_node(base_node(
+                        event,
+                        f"dialogue:{frame_id}:tool:{identity}",
+                        "tool",
+                        sequence=sequence,
+                        status="running",
+                    ))
+                    node.update({
+                        "tool_id": tool_id,
+                        "call_id": call_id,
+                        "arguments": None,
+                        "result": None,
+                        "approval_id": "",
+                        "provider_block": deepcopy(
+                            segment.get("provider_block") or {}),
+                    })
+                    ids = frame_tool_nodes.setdefault(frame_key, [])
+                    if node["node_id"] not in ids:
+                        ids.append(node["node_id"])
+                    continue
+                if not isinstance(segment, dict):
+                    continue
+                channel = str(segment.get("channel") or "")
+                if channel not in {"reasoning", "content"}:
+                    continue
+                if channel == "content" and frame_key in hidden_candidate_frames:
+                    continue
+                delta = str(segment.get("delta") or "")
+                if not delta:
+                    continue
+                segment_id = str(segment.get("segment_id") or f"legacy-{channel}")
+                node_id = f"dialogue:{frame_id}:{stream_id}:{segment_id}:{channel}"
+                node_type = "reasoning" if channel == "reasoning" else "progress"
+                node = add_node(base_node(
+                    event,
+                    node_id,
+                    node_type,
+                    sequence=sequence,
+                    status="active",
+                ))
+                node["content_raw"] = str(node.get("content_raw") or "") + delta
+                node["provider_block"] = deepcopy(segment.get("provider_block") or {})
+                node["stream_id"] = stream_id
+                node["legacy_order"] = conservative
+                node["ended_at"] = str(event.get("recorded_at") or "")
+                if channel == "content":
+                    ids = frame_content_nodes.setdefault(frame_key, [])
+                    if node_id not in ids:
+                        ids.append(node_id)
+            if event_type in {"llm_stream_done", "llm_stream_error"}:
+                terminal_status = "completed" if event_type == "llm_stream_done" else "interrupted"
+                for node in nodes:
+                    if node.get("frame_id") == frame_id and node.get("stream_id") == stream_id:
+                        node["status"] = terminal_status
+                        node["ended_at"] = str(event.get("recorded_at") or "")
+            if event_type == "llm_stream_error":
+                failure = base_node(
+                    event,
+                    f"dialogue:{frame_id}:{stream_id}:stream-failure:{event_index}",
+                    "failure",
+                    sequence=len(segments or []),
+                    status="failed",
+                )
+                failure["message"] = str(payload.get("reason") or "provider_stream_error")
+                add_node(failure)
+            continue
+
+        if event_type == "llm_output_raw":
+            if isinstance(payload.get("response"), str):
+                frame_raw_responses[frame_key] = payload.get("response")
+            envelopes = [
+                envelope for envelope in payload.get("tool_call_envelopes") or []
+                if isinstance(envelope, dict)
+            ]
+            unresolved_boundaries = [
+                nodes_by_id[node_id]
+                for node_id in frame_tool_nodes.get(frame_key, [])
+                if node_id in nodes_by_id
+                and nodes_by_id[node_id].get("result") is None
+                and nodes_by_id[node_id].get("arguments") is None
+            ]
+            pair_by_order = len(envelopes) == len(unresolved_boundaries)
+            for sequence, envelope in enumerate(envelopes):
+                if not isinstance(envelope, dict):
+                    continue
+                tool_id = str(envelope.get("tool_id") or envelope.get("name") or "tool_call")
+                call_id = str(envelope.get("call_id") or "").strip()
+                node = _match_timeline_tool(
+                    nodes_by_id,
+                    frame_tool_nodes.get(frame_key, []),
+                    envelope,
+                )
+                if node is None and pair_by_order:
+                    node = unresolved_boundaries[sequence]
+                if node is None:
+                    identity = call_id or f"unmatched-{event_index}-{sequence}"
+                    node = add_node(base_node(
+                        event,
+                        f"dialogue:{frame_id}:tool:{identity}",
+                        "tool",
+                        sequence=sequence,
+                        status="running",
+                    ))
+                node.update({
+                    "tool_id": tool_id,
+                    "call_id": call_id,
+                    "arguments": deepcopy(
+                        envelope.get("arguments")
+                        if envelope.get("arguments") is not None
+                        else envelope.get("arguments_json")
+                    ),
+                    "result": None,
+                    "approval_id": "",
+                })
+                ids = frame_tool_nodes.setdefault(frame_key, [])
+                if node["node_id"] not in ids:
+                    ids.append(node["node_id"])
+            continue
+
+        if event_type == "llm_output_parsed":
+            for sequence, envelope in enumerate(payload.get("message_envelopes") or []):
+                if not isinstance(envelope, dict):
+                    continue
+                channel = str(envelope.get("channel") or "")
+                text = str(envelope.get("text") or envelope.get("redacted_marker") or "")
+                if channel in {"assistant_text", "reaction.progress", "final_reply.text"}:
+                    reasoning_echo = (
+                        channel == "assistant_text"
+                        and text
+                        and text == str(payload.get("assistant_progress") or "")
+                        and not str(payload.get("assistant_reply") or "")
+                        and text == str(frame_raw_responses.get(frame_key) or "")
+                        and any(
+                            evidence.get("has_segments") is True
+                            and evidence.get("failed") is not True
+                            and isinstance(evidence.get("done"), dict)
+                            and evidence["done"].get("content_chars") == 0
+                            and int(evidence["done"].get("reasoning_chars") or 0) > 0
+                            and not "".join(evidence.get("content") or [])
+                            and text == "".join(evidence.get("reasoning") or [])
+                            for evidence in (
+                                frame_stream_evidence.get(frame_key) or {}
+                            ).values()
+                        )
+                    )
+                    if reasoning_echo:
+                        continue
+                    terminal = channel == "final_reply.text" or (
+                        envelope.get("terminal_text_candidate") is True
+                        and str(envelope.get("terminal_decision") or "") == "finish"
+                    )
+                    if (
+                        frame_key in hidden_candidate_frames
+                        and text == terminal_candidates.get(frame_key, "")
+                    ):
+                        continue
+                    all_content_nodes = [
+                        nodes_by_id[node_id]
+                        for node_id in frame_content_nodes.get(frame_key, [])
+                        if node_id in nodes_by_id
+                    ]
+                    content_groups = {}
+                    for item in all_content_nodes:
+                        content_groups.setdefault(
+                            str(item.get("stream_id") or "legacy"), []).append(item)
+                    usable_groups = [
+                        group for group in content_groups.values()
+                        if not all(item.get("status") == "interrupted" for item in group)
+                    ]
+                    content_nodes = (
+                        usable_groups[-1]
+                        if usable_groups
+                        else (list(content_groups.values())[-1] if content_groups else [])
+                    )
+                    streamed = "".join(str(node.get("content_raw") or "") for node in content_nodes)
+                    if content_nodes and streamed == text:
+                        for item in content_nodes:
+                            item["status"] = "completed"
+                            item["ended_at"] = str(event.get("recorded_at") or "")
+                        if terminal:
+                            content_nodes[-1]["type"] = "final"
+                    elif content_nodes and text:
+                        adopted = content_nodes[-1]
+                        for obsolete in content_nodes[:-1]:
+                            if obsolete in nodes:
+                                nodes.remove(obsolete)
+                            nodes_by_id.pop(obsolete["node_id"], None)
+                            frame_content_nodes[frame_key].remove(
+                                obsolete["node_id"])
+                        adopted["content_raw"] = text
+                        adopted["type"] = (
+                            "final" if terminal or str(event.get("phase") or "")
+                            in {"final_reply", "closeout"} else "progress"
+                        )
+                        adopted["status"] = "completed"
+                        adopted["ended_at"] = str(event.get("recorded_at") or "")
+                    elif text:
+                        node = base_node(
+                            event,
+                            f"dialogue:{frame_id}:parsed:{event_index}:{sequence}",
+                            "final" if terminal or str(event.get("phase") or "") in {"final_reply", "closeout"} else "progress",
+                            sequence=sequence,
+                        )
+                        node["content_raw"] = text
+                        add_node(node)
+                elif "illegal" in channel or "empty" in channel or "invalid" in channel:
+                    node = base_node(
+                        event,
+                        f"dialogue:{frame_id}:invalid:{event_index}:{sequence}",
+                        "failure",
+                        sequence=sequence,
+                        status="rejected",
+                    )
+                    node["message"] = text or channel or "invalid_text_response"
+                    add_node(node)
+            continue
+
+        if event_type in {"general_tool_approval_requested", "general_tool_approval_resolved"}:
+            tool = _match_timeline_tool(
+                nodes_by_id,
+                frame_tool_nodes.get(frame_key, []),
+                payload,
+            )
+            if tool is None:
+                approval_id = str(payload.get("approval_id") or event_index)
+                tool = add_node(base_node(
+                    event,
+                    f"dialogue:{frame_id}:tool:approval-{approval_id}",
+                    "tool",
+                    status="pending_approval",
+                ))
+                tool.update({
+                    "tool_id": str(payload.get("tool_id") or "tool"),
+                    "call_id": str(payload.get("call_id") or ""),
+                    "arguments": None,
+                    "result": None,
+                })
+                frame_tool_nodes.setdefault(frame_key, []).append(tool["node_id"])
+            tool["approval_id"] = str(payload.get("approval_id") or "")
+            tool["approval_decision"] = str(payload.get("decision") or "")
+            tool["status"] = (
+                "pending_approval"
+                if event_type == "general_tool_approval_requested"
+                else _tool_status_from_decision(payload.get("decision"))
+            )
+            tool["ended_at"] = (
+                "" if tool["status"] == "pending_approval"
+                else str(event.get("recorded_at") or "")
+            )
+            continue
+
+        if event_type == "step_settlement":
+            phase = str(event.get("phase") or "")
+            if phase == "reaction" and payload.get("settlement_scope") != "frame":
+                continue
+            results = [
+                result for result in _iter_tool_results(payload)
+                if str(result.get("status") or "").strip() != "submission_received"
+            ]
+            if phase == "setup":
+                intent = payload.get("intent") if isinstance(
+                    payload.get("intent"), dict) else {}
+                trace = intent.get("setup_finalize_trace") if isinstance(
+                    intent.get("setup_finalize_trace"), dict) else {}
+                if str(trace.get("call_id") or "").strip():
+                    interaction = payload.get("interaction_meta") if isinstance(
+                        payload.get("interaction_meta"), dict) else {}
+                    results = [{
+                        "tool_id": "setup_finalize",
+                        "call_id": str(trace.get("call_id") or ""),
+                        "status": "applied",
+                        "security_verdict": intent.get("security_verdict"),
+                        "reject_reason": intent.get("reject_reason"),
+                        "identity_status": interaction.get("identity_status"),
+                        "task_guidance_required": intent.get(
+                            "task_guidance_required"),
+                        "mount_request_count": len(
+                            intent.get("mount_requests") or []),
+                    }]
+            elif phase == "cleanup" and not results:
+                errors = payload.get("errors") if isinstance(
+                    payload.get("errors"), list) else []
+                results = [{
+                    "tool_id": "cleanup_finalize",
+                    "status": "failed" if errors else "applied",
+                    "error_count": len(errors),
+                    "warning_count": len(payload.get("warnings") or []),
+                    "memory_count": len(payload.get("memory_ids") or []),
+                    "connection_bridge_count": len(
+                        payload.get("_connection_bridges") or []),
+                    "orphan_count": len(payload.get("orphans") or []),
+                    **({"errors": deepcopy(errors)} if errors else {}),
+                }]
+            for sequence, result in enumerate(results):
+                tool = _match_timeline_tool(
+                    nodes_by_id,
+                    frame_tool_nodes.get(frame_key, []),
+                    result,
+                )
+                if tool is None:
+                    tool_id = str(result.get("tool_id") or result.get("tool") or result.get("name") or "tool_result")
+                    tool = add_node(base_node(
+                        event,
+                        f"dialogue:{frame_id}:tool:unmatched-result-{event_index}-{sequence}",
+                        "tool",
+                        sequence=sequence,
+                        status="unmatched_result",
+                    ))
+                    tool.update({
+                        "tool_id": tool_id,
+                        "call_id": str(result.get("call_id") or ""),
+                        "arguments": None,
+                        "approval_id": "",
+                    })
+                tool["result"] = deepcopy(result)
+                tool["status"] = _tool_status_from_result(result)
+                tool["ended_at"] = str(event.get("recorded_at") or "")
+            continue
+
+        if event_type == "final_response_candidate_rejected":
+            for node_id in frame_content_nodes.get(frame_key, []):
+                node = nodes_by_id.get(node_id)
+                if node is not None:
+                    node["type"] = "failure"
+                    node["status"] = "not_adopted"
+                    node["content_raw"] = ""
+                    node["message"] = "输出未采用"
+            node = base_node(
+                event,
+                f"dialogue:{frame_id}:candidate-rejected:{event_index}",
+                "failure",
+                status="not_adopted",
+            )
+            node["message"] = str(payload.get("status") or "输出未采用")
+            add_node(node)
+            continue
+
+        if event_type == "llm_error":
+            node = base_node(
+                event,
+                f"dialogue:{frame_id}:llm-error:{event_index}",
+                "failure",
+                status="failed",
+            )
+            node["message"] = str(payload.get("error") or "llm_error")
+            add_node(node)
+            continue
+
+        if event_type == "round_closed":
+            final_response = str(payload.get("final_response") or "").strip()
+            if final_response:
+                candidates = [
+                    node for node in nodes
+                    if node.get("type") in {"progress", "final"}
+                    and str(node.get("content_raw") or "")
+                ]
+                joined = "".join(str(node.get("content_raw") or "") for node in candidates)
+                if candidates and joined.endswith(final_response):
+                    candidates[-1]["type"] = "final"
+                    candidates[-1]["status"] = "completed"
+                elif not any(
+                        node.get("type") == "final"
+                        and str(node.get("content_raw") or "") == final_response
+                        for node in nodes):
+                    node = base_node(
+                        event,
+                        f"dialogue:round-final:{event_index}",
+                        "final",
+                    )
+                    node["content_raw"] = final_response
+                    add_node(node)
+
+    stopped = "user_stopped" in (lifecycle.get("degraded_reasons") or [])
+    terminal_recorded_at = str((events[-1] if events else {}).get("recorded_at") or "")
+    if stopped:
+        for node in nodes:
+            if node.get("status") in {"active", "running", "pending_approval"}:
+                node["status"] = "stopped"
+                node["ended_at"] = terminal_recorded_at
+    elif lifecycle.get("state") in {"closed", "settled", "unsettled"}:
+        for node in nodes:
+            if node.get("status") == "active":
+                node["status"] = "interrupted"
+                node["ended_at"] = node.get("ended_at") or terminal_recorded_at
+            elif node.get("status") in {"running", "pending_approval"}:
+                node["status"] = "unmatched_result"
+                node["ended_at"] = terminal_recorded_at
+    for frame_key in rejected_frames:
+        for node_id in frame_content_nodes.get(frame_key, []):
+            node = nodes_by_id.get(node_id)
+            if node is not None and node.get("type") == "final":
+                node["type"] = "failure"
+                node["status"] = "not_adopted"
+                node["content_raw"] = ""
+                node["message"] = "输出未采用"
+    return {
+        "schema_version": DIALOGUE_TIMELINE_SCHEMA,
+        "order": [node["node_id"] for node in nodes],
+        "nodes": nodes,
+    }
+
+
+def _match_timeline_tool(nodes_by_id, node_ids, payload):
+    call_id = str(payload.get("call_id") or "").strip()
+    tool_id = str(payload.get("tool_id") or payload.get("tool") or payload.get("name") or "").strip()
+    candidates = [nodes_by_id[node_id] for node_id in node_ids if node_id in nodes_by_id]
+    if call_id:
+        matched = [
+            node for node in nodes_by_id.values()
+            if node.get("type") == "tool"
+            and str(node.get("call_id") or "") == call_id
+        ]
+        if len(matched) == 1:
+            return matched[-1]
+    if tool_id:
+        matched = [
+            node for node in candidates
+            if str(node.get("tool_id") or "") == tool_id
+            and node.get("result") is None
+        ]
+        if len(matched) == 1:
+            return matched[-1]
+    unresolved = [node for node in candidates if node.get("result") is None]
+    if len(unresolved) == 1:
+        return unresolved[0]
+    return None
+
+
+def _tool_status_from_result(result):
+    status = str(result.get("status") or "").strip().lower()
+    if status in {
+            "ok", "success", "accepted", "applied", "completed",
+            "guide_loaded"}:
+        return "success"
+    if status in {"skip", "skipped"}:
+        return "skipped"
+    if status in {"cancelled", "canceled", "stopped"}:
+        return "stopped"
+    return "failed" if status or result.get("error") else "completed"
+
+
+def _tool_status_from_decision(decision):
+    value = str(decision or "").strip().lower()
+    if value == "skip":
+        return "skipped"
+    if value in {"cancelled", "canceled"}:
+        return "stopped"
+    return "running" if value == "allow_once" else "completed"
+
+
+def _build_dialogue_activity(events, *, lifecycle, nodes):
+    started = next(
+        (str(event.get("recorded_at") or "") for event in events if event.get("event_type") == "round_started"),
+        "",
+    )
+    latest = events[-1] if events else {}
+    phase = str(latest.get("phase") or "")
+    active_nodes = [node for node in nodes if node.get("status") in {"active", "running", "pending_approval"}]
+    current = active_nodes[-1] if active_nodes else None
+    state = str(lifecycle.get("state") or "idle")
+    stopped = "user_stopped" in (lifecycle.get("degraded_reasons") or [])
+    failed = bool(
+        lifecycle.get("fatal_reasons")
+        or lifecycle.get("degraded_reasons")
+        or str(lifecycle.get("settlement_status") or "")
+        in {"degraded", "unsettled", "failed"}
+    )
+    if state in {"closed", "settled"}:
+        activity = "stopped" if stopped else ("failed" if failed else "completed")
+    elif state == "unsettled" or failed:
+        activity = "failed"
+    elif current and current.get("status") == "pending_approval":
+        activity = "approval"
+    elif current and current.get("type") == "reasoning":
+        activity = "reasoning"
+    elif current and current.get("type") == "tool":
+        activity = "tool"
+    elif current and current.get("type") in {"progress", "final"}:
+        activity = "output"
+    elif latest.get("event_type") == "llm_call_started":
+        activity = "connecting"
+    else:
+        activity = "waiting"
+    return {
+        "schema_version": DIALOGUE_ACTIVITY_SCHEMA,
+        "round_started_at": started,
+        "round_ended_at": str(latest.get("recorded_at") or "") if state in {"closed", "settled", "unsettled"} else "",
+        "phase": phase,
+        "activity": activity,
+        "terminal": state in {"closed", "settled", "unsettled"},
+        "round_state": state,
+        "status_text": f"{phase or 'round'}:{activity}",
     }
 
 
@@ -182,7 +1080,13 @@ def _statusbar_projection(events):
     for event in reversed(events):
         if event.get("event_type") != "step_input_snapshot":
             continue
-        snapshot = (event.get("payload") or {}).get("layers_snapshot")
+        payload = event.get("payload") or {}
+        frame_projection = payload.get("frame_projection")
+        if isinstance(frame_projection, dict):
+            projection = frame_projection.get("statusbar_projection")
+            if isinstance(projection, dict) and projection.get("schema") == "statusbar_snapshot.v1":
+                return deepcopy(projection)
+        snapshot = payload.get("layers_snapshot")
         if not isinstance(snapshot, dict):
             continue
         for layer in reversed(snapshot.get("layers") or []):
@@ -555,7 +1459,7 @@ def events_after(events, after=0, include_state=True, live_context_root=None,
     ordered_all = _ordered_events(events)
     ordered = _visible_events(ordered_all)
     return {
-        "schema_version": "round_live_events.v1",
+        "schema_version": EVENTS_SCHEMA_VERSION,
         "after": after_index,
         "last_event_index": _last_event_index(ordered_all),
         "events": [
@@ -585,7 +1489,13 @@ def _build_call_frames(events, live_context_root=None, use_live_layers=False):
         _apply_event_to_frame(frame, event)
     if frames and use_live_layers and live_context_root:
         _apply_live_layers_to_frame(frames[-1], live_context_root)
-    return [_finalize_frame(frame) for frame in frames]
+    finalized = [_finalize_frame(frame) for frame in frames]
+    if _round_lifecycle(events).get("state") in {"settled", "closed", "unsettled"}:
+        for frame in finalized:
+            usage = frame.get("context_usage")
+            if isinstance(usage, dict) and usage.get("state") == "pending":
+                usage["state"] = "unavailable"
+    return finalized
 
 
 def _new_frame(event):
@@ -911,6 +1821,27 @@ def _layers_manifest_chars(manifest):
     if set(chars_by_key) != valid_keys:
         return None
     return sum(chars_by_key.values())
+
+
+def _manifest_total_chars(manifest):
+    if not isinstance(manifest, dict):
+        return None
+    direct = _int_or_none(manifest.get("total_chars"))
+    if direct is not None:
+        return direct
+    layers = manifest.get("layers")
+    if not isinstance(layers, dict):
+        return None
+    values = []
+    for item in layers.values():
+        if not isinstance(item, dict):
+            continue
+        chars = _int_or_none(item.get("model_visible_chars"))
+        if chars is None:
+            chars = _int_or_none(item.get("chars"))
+        if chars is not None:
+            values.append(chars)
+    return sum(values) if values else None
 
 
 def _layers_snapshot_chars(snapshot):

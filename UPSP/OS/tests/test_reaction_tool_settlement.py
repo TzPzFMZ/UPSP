@@ -1,3 +1,108 @@
+def test_spec779_task_bootstrap_and_general_results_settle_independently(tmp_path):
+    from types import SimpleNamespace
+
+    from data.workbench import WorkbenchStore
+    from engines.reaction_tool_settlement import ReactionToolSettlementDispatcher
+    from logic.task_guide import create_task_bootstrap_guide
+
+    store = WorkbenchStore(root_dir=str(tmp_path / "workbench"))
+    create_task_bootstrap_guide(store, reason="用户要求读取任务来源后执行")
+    source_url = "https://example.com/task-brief"
+    prior_read = {
+        "tool_id": "web_fetch",
+        "status": "ok",
+        "call_id": "call_prior_source",
+        "url": source_url,
+    }
+    current_general_result = {
+        "tool_id": "web_search",
+        "status": "ok",
+        "call_id": "call_same_frame_search",
+        "query": "unrelated current lookup",
+    }
+    all_general_results = [prior_read]
+    all_protocol_receipts = []
+    general_dispatcher = SimpleNamespace(
+        handle_requests=lambda requests, guides, prior_results, runtime_context: [
+            current_general_result
+        ],
+    )
+    runner = SimpleNamespace(
+        workbench=store,
+        sm=SimpleNamespace(
+            get_total_round=lambda: 691,
+            get=lambda key, default=None: default,
+        ),
+        ctx_store=None,
+        alert_store=None,
+        services=SimpleNamespace(),
+        general_tool_dispatcher=general_dispatcher,
+        action_recovery_store=None,
+        _current_round_type="interactive",
+        _current_interaction_meta={},
+        _write_general_tool_results=lambda *args, **kwargs: None,
+    )
+
+    dispatcher = ReactionToolSettlementDispatcher(runner)
+    prior_results = list(all_general_results)
+    iter_results = dispatcher.handle_general_tool_results(
+        iter_general_tool_requests=[{
+            "tool_id": "web_search",
+            "query": "unrelated current lookup",
+        }],
+        active_general_tool_guides=[],
+        accumulated_messages=[],
+        iter_native_tool_call_envelopes=[],
+        all_general_tool_results=all_general_results,
+        iter_native_feedbacks=[],
+        round_num=691,
+        iteration=4,
+        interaction_meta={},
+    )
+    receipts = dispatcher.handle_guide_submit(
+        iter_accepted_tools={"guide_submit"},
+        iter_guide_submit_requests=[{
+            "guide_id": "task_bootstrap",
+            "submissions": [{
+                "item_id": "build_initial_task_guide",
+                "option_id": "submit_initial_guide",
+                "fields": {
+                    "task_title": "同帧共存回归",
+                    "task_goal": "按已读任务来源完成交付",
+                    "source_refs": [source_url],
+                    "source_requirements": [{
+                        "requirement_id": "req_01",
+                        "source_ref": source_url,
+                        "summary": "完成来源要求的交付",
+                    }],
+                    "items": [{
+                        "item_id": "item_01",
+                        "title": "完成交付",
+                        "requirement_refs": ["req_01"],
+                    }],
+                    "acceptance": [{
+                        "acceptance_id": "acc_01",
+                        "description": "交付结果可核验",
+                        "item_refs": ["item_01"],
+                    }],
+                },
+            }],
+        }],
+        prior_general_tool_results=prior_results,
+        accumulated_messages=[],
+        iter_native_tool_call_envelopes=[],
+        all_guide_submit_receipts=[],
+        all_protocol_tool_receipts=all_protocol_receipts,
+        current_reaction_iteration=4,
+    )
+
+    assert receipts[0]["status"] == "accepted"
+    assert all_protocol_receipts == receipts
+    assert iter_results == [current_general_result]
+    assert all_general_results == [prior_read, current_general_result]
+    assert store.get("base.active_task")
+
+
 def test_spec650_task_ledger_accepts_prior_successful_protocol_receipts(tmp_path):
     from types import SimpleNamespace
 
@@ -68,7 +173,6 @@ def test_spec650_task_ledger_accepts_prior_successful_protocol_receipts(tmp_path
                 },
             }],
         }],
-        current_general_tool_requests=[],
         prior_general_tool_results=[],
         accumulated_messages=[],
         iter_native_tool_call_envelopes=[],
@@ -378,7 +482,6 @@ class _Spec566Assembler:
         self.last_index_kwargs = kwargs
         return {
             "tool_id": "index_view",
-            "tool_family": "protocol_tool",
             "tool_class": "read_tool",
             "status": "accepted",
             "source": "protocol_tool_request",
@@ -390,7 +493,6 @@ class _Spec566Assembler:
         self.last_index_kwargs = kwargs
         return {
             "tool_id": "memory_search",
-            "tool_family": "protocol_tool",
             "tool_class": "read_tool",
             "status": "accepted",
             "source": "protocol_tool_request",
@@ -495,9 +597,138 @@ def test_spec566_dispatcher_executes_relation_card_write_without_runner_private_
 
     assert receipts == [{
         "tool_id": "relation_card_write",
-        "tool_family": "protocol_tool",
-        "tool_class": "sync_tool",
         "status": "multiple_relation_card_declarations",
         "source": "relation_card_declaration",
         "reason": "multiple_relation_card_declarations",
     }]
+
+
+def test_action_recovery_pending_input_uses_direct_completion_and_blocker_refs(tmp_path):
+    import hashlib
+
+    from data.action_recovery_store import ActionRecoveryStore
+    from data.workbench import WorkbenchStore
+    from logic.action_recovery import attach_pending_task
+    from logic.task_guide import (
+        apply_pending_input_integration, apply_task_status_update,
+        materialize_initial_task_guide)
+
+    recovery = ActionRecoveryStore(tmp_path / "action_recovery_pending.json")
+    context = {"round_num": 12, "iteration": 3,
+               "frame_id": "R000012:reaction:3"}
+
+    def prepare_file(name, call):
+        target = tmp_path / name
+        target.write_bytes(b"before")
+        action_id = recovery.prepare_file(
+            tool_id="file_write",
+            request_sha256=hashlib.sha256(call.encode()).hexdigest(),
+            runtime_context=context, call_id=call, target_path=str(target),
+            before_bytes=b"before", candidate_bytes=b"after")
+        recovery.commit_file(action_id, target, b"before", b"after")
+        return action_id
+
+    old_id = prepare_file("old.txt", "old")
+    recovery.classify_interrupted(12)
+    recovery.mark_disclosed(12)
+    applied_id = prepare_file("output.txt", "current")
+    unknown_id = recovery.prepare_opaque(
+        tool_id="shell_command", request_sha256="f" * 64,
+        runtime_context=context | {"iteration": 4}, call_id="shell", target="shell")
+    recovery.classify_interrupted(12)
+    receipt = recovery.recovery_receipt(pending_only=True)
+    assert f"action:{old_id}" not in receipt["source_refs"]
+
+    workbench = WorkbenchStore(root_dir=str(tmp_path / "workbench"))
+    task_id = materialize_initial_task_guide(workbench, {
+        "task_title": "resume", "task_goal": "finish safely",
+        "items": [
+            {"item_id": "written", "description": "write output"},
+            {"item_id": "shell", "description": "run command"},
+            {"item_id": "old", "description": "unrelated prior action"}],
+        "acceptance": []})
+    assert attach_pending_task(workbench, receipt, 13) is True
+    assert attach_pending_task(workbench, receipt, 13) is True
+    pending = workbench.load_task_guide(task_id)["pending_inputs"]
+    assert len(pending) == 1
+    assert pending[0]["source_refs"] == receipt["source_refs"]
+    evidence = {"action_recovery_receipt": recovery.recovery_receipt()}
+
+    rejected = apply_pending_input_integration(workbench, task_id, {
+        "pending_inputs": [pending[0]["pending_input_id"]],
+        "items": {"shell": {"status": "done",
+                            "evidence_refs": [f"action:{unknown_id}"]}}},
+        evidence_context=evidence)
+    assert rejected["reason"] == "task_completion_evidence_not_found"
+    assert not any(ref.startswith("EV-") for ref in rejected["details"]["known_evidence_refs"])
+
+    accepted = apply_task_status_update(workbench, task_id, {"items": {
+        "written": {"status": "done",
+                    "evidence_refs": [f"action:{applied_id}"]},
+        "shell": {"status": "blocked", "reason": "outcome unknown",
+                  "evidence_refs": [f"action:{unknown_id}"]}}},
+        evidence_context=evidence)
+    assert accepted["status"] == "accepted"
+    rejected = apply_task_status_update(
+        workbench, task_id,
+        {"items": {"old": {"status": "done",
+                            "evidence_refs": [f"action:{old_id}"]}}},
+        evidence_context=evidence)
+    assert rejected["reason"] == "task_completion_evidence_not_found"
+
+
+def test_action_result_and_frame_settlement_fail_closed_after_effect():
+    import pytest
+
+    from data.action_recovery_store import ActionRecoveryEffectError
+    from engines.reaction_loop_main import _settle_reaction_frame
+    from engines.reaction_loop_result import ReactionLoopResultState
+    from engines.reaction_tool_settlement import ReactionToolSettlementDispatcher
+    from engines.round_context import FrameRef
+
+    class Dispatcher:
+        @staticmethod
+        def handle_requests(*_args, **_kwargs):
+            return [{"tool_id": "file_write", "status": "ok",
+                     "action_id": "ACT-R000001-F000001-A001"}]
+
+    for failure_site in ("tool_fact", "journal"):
+        class ActionStore:
+            @staticmethod
+            def record_results(_results):
+                if failure_site == "journal":
+                    raise OSError("journal offline")
+
+        class Runner:
+            sm = type("State", (), {"get": staticmethod(lambda *_args: None)})()
+            general_tool_dispatcher = Dispatcher()
+            action_recovery_store = ActionStore()
+            execution_permission_level = "guarded"
+
+            @staticmethod
+            def _write_general_tool_results(*_args, **_kwargs):
+                if failure_site == "tool_fact":
+                    raise OSError("tool fact offline")
+
+        with pytest.raises(ActionRecoveryEffectError, match="result_record_failed"):
+            ReactionToolSettlementDispatcher(Runner()).handle_general_tool_results(
+                iter_general_tool_requests=[], active_general_tool_guides=[],
+                accumulated_messages=[], iter_native_tool_call_envelopes=[],
+                all_general_tool_results=[], iter_native_feedbacks=[], round_num=1,
+                iteration=1, interaction_meta={})
+
+    class AuditFailureRunner:
+        action_recovery_store = None
+        organ_runtime = None
+
+        @staticmethod
+        def _round_audit_settlement(*_args, **_kwargs):
+            raise OSError("audit offline")
+
+    state = ReactionLoopResultState(all_general_tool_results=[{
+        "tool_id": "file_write", "status": "ok",
+        "action_id": "ACT-R000001-F000001-A001"}])
+    with pytest.raises(ActionRecoveryEffectError, match="frame_settlement_failed"):
+        _settle_reaction_frame(
+            AuditFailureRunner(), state, FrameRef.for_axis(1, "reaction", 1),
+            (0, 0, 0, 0), "continue_requested")

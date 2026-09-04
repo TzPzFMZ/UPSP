@@ -108,11 +108,92 @@ def test_spec759_tracker_renders_guide_and_c_material_without_body_in_audit(
     guide = tracker.render_guide("按冻结字段重写；上限不是目标篇幅。")
     materials = tracker.render_materials()
     assert "submit_memory_write_rewrites" in guide
+    assert (
+        '"rewrite_id":"MWR-R000759-N001","action":"rewrite",'
+        '"semantic_content"'
+    ) in guide
+    assert '"body":' not in guide
     assert "甲" * 129 not in guide
     assert materials[0]["source"] == "memory_write_rewrite"
     assert materials[0]["source_block_id"] == "MWR-R000759-N001"
     assert "甲" * 129 in materials[0]["content"]
     assert "original_body" not in str(tracker.audit_state())
+
+
+@pytest.mark.parametrize(
+    ("arguments", "reason"),
+    [
+        (
+            {
+                "guide_id": "memory_write_rewrite:R000759",
+                "item_id": "memory_write_rewrite_due",
+                "option_id": "submit_memory_write_rewrites",
+                "fields": {"body": "错误旧字段"},
+            },
+            "memory_write_rewrite_fields_invalid",
+        ),
+        (
+            {
+                "guide_id": "memory_write_rewrite:R000759",
+                "item_id": "memory_write_rewrite_due",
+                "option_id": "submit_memory_write_rewrites",
+                "fields": {"results": {"body": "不是数组"}},
+            },
+            "memory_write_rewrite_results_invalid",
+        ),
+    ],
+)
+def test_spec775_rewrite_shape_errors_keep_pending_truth(
+        arguments, reason):
+    from logic.memory_write_rewrite import (
+        MemoryWriteRewriteTracker,
+        apply_memory_write_rewrite_guide,
+    )
+
+    tracker = MemoryWriteRewriteTracker(759)
+    tracker._pending["MWR-R000759-N001"] = {}
+
+    receipt = apply_memory_write_rewrite_guide(
+        arguments, {"memory_write_rewrite_tracker": tracker}
+    )
+
+    assert receipt["status"] == "rejected"
+    assert receipt["reason"] == reason
+    assert receipt["completed_ids"] == []
+    assert receipt["remaining_ids"] == ["MWR-R000759-N001"]
+
+
+def test_spec775_dogfood_body_alias_gets_exact_feedback_and_pending_truth():
+    from logic.guide_submit import apply_guide_submit
+    from logic.memory_write_rewrite import MemoryWriteRewriteTracker
+
+    tracker = MemoryWriteRewriteTracker(775)
+    tracker._pending["MWR-R000775-N001"] = {}
+
+    receipt = apply_guide_submit(
+        None,
+        {
+            "guide_id": tracker.guide_id,
+            "item_id": "memory_write_rewrite_due",
+            "option_id": "submit_memory_write_rewrites",
+            "fields": {"results": [{
+                "rewrite_id": "MWR-R000775-N001",
+                "action": "rewrite",
+                "body": "狗粮中实际出现的错误旧字段",
+            }]},
+        },
+        evidence_context={"memory_write_rewrite_tracker": tracker},
+    )
+
+    assert receipt["status"] == "rejected"
+    assert receipt["remaining_ids"] == ["MWR-R000775-N001"]
+    assert receipt["error_hint"]["expected"]["result_fields"] == [
+        "rewrite_id", "action", "semantic_content"
+    ]
+    assert any(
+        item.get("reason") == "memory_write_rewrite_result_fields_invalid"
+        for item in receipt["backend_receipts"]
+    )
 
 
 def test_spec759_guide_rewrite_and_not_written_settle_independently(
@@ -424,9 +505,9 @@ def test_spec759_same_frame_container_resolves_guide_pending_alias():
 
     from engines.product_committer import RuntimeProductCommitter
     from tests.test_spec243_memory_container_tools import (
+        DummyAssembler,
         DummyContainerStore,
         DummyMemoryStore,
-        DummyWorkbenchStore,
     )
 
     memory_store = DummyMemoryStore()
@@ -435,13 +516,15 @@ def test_spec759_same_frame_container_resolves_guide_pending_alias():
         "title": "指南重写记忆",
         "linked_containers": [],
     }
+    assembler = DummyAssembler()
     services = SimpleNamespace(
         sm=_StateStore(),
         memory_store=memory_store,
         memory_index=None,
         heat=None,
         container_store=DummyContainerStore(),
-        workbench=DummyWorkbenchStore(focus="DC-OLD"),
+        assembler=assembler,
+        resident_store=assembler.resident_store,
         relation_store=_RelationStore(),
     )
     committer = RuntimeProductCommitter(services)

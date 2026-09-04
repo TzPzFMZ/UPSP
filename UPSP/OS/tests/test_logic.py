@@ -447,29 +447,29 @@ class TestDecay:
         assert updates["MEM-01"]["AH_high"] == 2
 
 
-class TestRelationFocusBoundaries:
-    def test_relation_focus_accepts_explicit_max_slots(self):
-        from logic.relation_focus import RelationFocusManager
+class TestRelationContextBoundaries:
+    def test_relation_context_accepts_explicit_max_slots(self):
+        from logic.relation_context import RelationContextManager
 
         cards = [
             {"id": "REL-A", "name": "Alice", "category": "ours", "summary_resident": True},
             {"id": "REL-B", "name": "Bob", "category": "ours"},
         ]
-        rfm = RelationFocusManager(max_slots=1)
+        manager = RelationContextManager(max_slots=1)
 
-        result = rfm.determine_focus_states("Alice 和 Bob 都在", registry_cards=cards)
+        result = manager.determine_context_roles("Alice 和 Bob 都在", registry_cards=cards)
 
-        assert rfm.get_max_slots() == 1
+        assert manager.get_max_slots() == 1
         assert len(result["active"]) == 1
         assert result["active"][0]["id"] == "REL-A"
 
-    def test_relation_focus_without_registry_cards_does_not_autoload_store(self):
-        from logic.relation_focus import RelationFocusManager
+    def test_relation_context_without_registry_cards_does_not_autoload_store(self):
+        from logic.relation_context import RelationContextManager
 
-        rfm = RelationFocusManager(max_slots=3)
+        manager = RelationContextManager(max_slots=3)
 
-        assert rfm.extract_interaction_objects("Alice", registry_cards=None) == []
-        result = rfm.determine_focus_states("Alice", registry_cards=None)
+        assert manager.extract_interaction_objects("Alice", registry_cards=None) == []
+        result = manager.determine_context_roles("Alice", registry_cards=None)
         assert result["active"] == []
 
 class TestSkillSettlements:
@@ -653,28 +653,10 @@ class TestSkillSettlements:
         assert any("默契集kept无承接证据" in warning for warning in report["warnings"])
         assert any("默契集added缺少前置痕迹" in warning for warning in report["warnings"])
 
-    def test_process_cleanup_builds_association_counts_from_applied_memory_receipts(self, monkeypatch):
-        from logic import cleanup_processor as cp
+    def test_reaction_builds_association_counts_from_applied_memory_receipts(self):
+        from engines.reaction_metabolism import build_association_counts_from_receipts
 
-        class DummyContext:
-            def append_to_cache(self, *args, **kwargs):
-                pass
-
-        monkeypatch.setattr(cp, "scan_orphans", lambda cs, round_start: ([], None))
-        data_modules = {
-            "state_store": object(),
-            "memory_store": object(),
-            "memory_index": object(),
-            "memory_heat": object(),
-            "container_store": object(),
-            "context_store": DummyContext(),
-        }
-
-        report = cp.process_cleanup(
-            _cleanup_projection(),
-            {},
-            64,
-            {"_memory_write_receipts": [{
+        counts = build_association_counts_from_receipts([{
                 "status": "applied",
                 "mem_id": "MEM-NEW",
                 "subject": "FMZ",
@@ -684,11 +666,9 @@ class TestSkillSettlements:
                     {"subject": "TzPz", "word": "可靠"},
                     {"subject": "Codex", "word": "坦率"},
                 ],
-            }]},
-            data_modules,
-        )
+            }])
 
-        assert report["_association_counts"] == {
+        assert counts == {
             "assoc_kw_kw": [("默契", "联系")],
             "assoc_kw_ifeel": [("默契", "专注"), ("联系", "专注")],
             "assoc_kw_rfeel": [
@@ -700,7 +680,7 @@ class TestSkillSettlements:
         }
 
     def test_association_counts_keep_historical_relation_feeling_receipts_readable(self):
-        from logic.cleanup_processor import build_association_counts_from_receipts
+        from engines.reaction_metabolism import build_association_counts_from_receipts
 
         counts = build_association_counts_from_receipts([{
             "status": "applied",
@@ -816,33 +796,31 @@ class TestStaticMemoryReminder:
 # ============================================================
 
 class TestReactionParser:
-    def test_protocol_tool_definitions_use_tool_class_not_focus_policy(self):
+    def test_protocol_tool_definitions_use_three_public_tool_classes(self):
         from logic.protocol_tools import TOOL_DEFINITIONS
 
         classes = {meta.get("tool_class") for meta in TOOL_DEFINITIONS.values()}
-        assert classes <= {"focus_tool", "sync_tool", "read_tool"}
-        assert "focus_tool" in classes
-        assert "sync_tool" in classes
+        assert classes == {"read_tool", "sync_tool", "action_tool"}
         assert all("focus_policy" not in meta for meta in TOOL_DEFINITIONS.values())
         assert TOOL_DEFINITIONS["state_settle"]["handler"] == "state_settlement"
 
     def test_protocol_tool_class_helpers_match_registered_tools(self):
         from logic.protocol_tools import (
-            is_focus_tool,
+            is_action_tool,
             is_read_tool,
             is_sync_tool,
             tool_class_for,
         )
 
-        assert tool_class_for("container_focus") == "focus_tool"
-        assert is_focus_tool("container_focus")
+        assert tool_class_for("container_focus") == ""
+        assert is_action_tool("file_write")
         assert tool_class_for("memory_write") == "sync_tool"
         assert is_sync_tool("memory_write")
         assert is_sync_tool("relation_card_write")
         assert is_read_tool("relation_read")
         assert is_read_tool("index_view")
 
-    def test_protocol_tool_family_and_metadata_helpers_match_registered_tools(self):
+    def test_execution_routes_and_metadata_helpers_match_registered_tools(self):
         from logic.protocol_tools import (
             GENERAL_TOOL_IDS,
             PROTOCOL_TOOL_IDS,
@@ -851,30 +829,28 @@ class TestReactionParser:
             tool_metadata_for,
         )
 
-        assert {meta.get("tool_family") for meta in TOOL_DEFINITIONS.values()} == {
-            "general_tool",
-            "protocol_tool",
-            "substrate_tool",
+        assert {meta.get("execution_route") for meta in TOOL_DEFINITIONS.values()} == {
+            "host_dispatch", "internal_processor", "substrate",
         }
         memory_meta = tool_metadata_for("memory_write_declaration")
-        assert memory_meta["tool_family"] == "protocol_tool"
+        assert memory_meta["execution_route"] == "internal_processor"
         assert memory_meta["tool_class"] == "sync_tool"
         assert memory_meta["domain"] == "memory"
         assert memory_meta["risk"] == "high"
         assert memory_meta["handler"] == "memory_write_processor"
         assert memory_meta["result_kind"] == "protocol_tool_receipt"
         assert tool_metadata_for("setup_security_gate")["handler"] == "setup_runner"
-        assert tool_metadata_for("relation_read")["tool_family"] == "protocol_tool"
-        assert tool_metadata_for("index_view")["tool_family"] == "protocol_tool"
+        assert tool_metadata_for("relation_read")["execution_route"] == "internal_processor"
+        assert tool_metadata_for("index_view")["execution_route"] == "internal_processor"
         assert tool_metadata_for("made_up_table") == {}
         assert PROTOCOL_TOOL_IDS
         assert all(
-            TOOL_DEFINITIONS[tool_id]["tool_family"] == "protocol_tool"
+            TOOL_DEFINITIONS[tool_id]["execution_route"] == "internal_processor"
             for tool_id in PROTOCOL_TOOL_IDS
         )
         assert "file_read" in GENERAL_TOOL_IDS
         file_read_meta = tool_metadata_for("file_read")
-        assert file_read_meta["tool_family"] == "general_tool"
+        assert file_read_meta["execution_route"] == "host_dispatch"
         assert file_read_meta["tool_class"] == "read_tool"
         assert file_read_meta["backend_type"] == "python"
         assert file_read_meta["handler"] == "file_read_handler"
@@ -885,7 +861,7 @@ class TestReactionParser:
                 ("web_search", "web_search_handler")):
             meta = tool_metadata_for(tool_id)
             assert tool_id in GENERAL_TOOL_IDS
-            assert meta["tool_family"] == "general_tool"
+            assert meta["execution_route"] == "host_dispatch"
             assert meta["tool_class"] == "read_tool"
             assert meta["domain"] == "web"
             assert meta["backend_type"] == "python"
@@ -894,8 +870,8 @@ class TestReactionParser:
             assert meta["result_kind"] == "general_tool_result"
             assert meta["status"] == "enabled"
         file_edit_meta = tool_metadata_for("file_edit")
-        assert file_edit_meta["tool_family"] == "general_tool"
-        assert file_edit_meta["tool_class"] == "focus_tool"
+        assert file_edit_meta["execution_route"] == "host_dispatch"
+        assert file_edit_meta["tool_class"] == "action_tool"
         assert file_edit_meta["domain"] == "filesystem"
         assert file_edit_meta["backend_type"] == "python"
         assert file_edit_meta["handler"] == "file_edit_handler"
@@ -903,8 +879,8 @@ class TestReactionParser:
         assert file_edit_meta["result_kind"] == "general_tool_result"
         assert file_edit_meta["status"] == "enabled"
         file_write_meta = tool_metadata_for("file_write")
-        assert file_write_meta["tool_family"] == "general_tool"
-        assert file_write_meta["tool_class"] == "focus_tool"
+        assert file_write_meta["execution_route"] == "host_dispatch"
+        assert file_write_meta["tool_class"] == "action_tool"
         assert file_write_meta["domain"] == "filesystem"
         assert file_write_meta["backend_type"] == "python"
         assert file_write_meta["handler"] == "file_write_handler"
@@ -912,8 +888,8 @@ class TestReactionParser:
         assert file_write_meta["result_kind"] == "general_tool_result"
         assert file_write_meta["status"] == "enabled"
         shell_meta = tool_metadata_for("shell_command")
-        assert shell_meta["tool_family"] == "general_tool"
-        assert shell_meta["tool_class"] == "focus_tool"
+        assert shell_meta["execution_route"] == "host_dispatch"
+        assert shell_meta["tool_class"] == "action_tool"
         assert shell_meta["domain"] == "shell"
         assert shell_meta["backend_type"] == "python"
         assert shell_meta["handler"] == "shell_command_handler"
@@ -921,8 +897,8 @@ class TestReactionParser:
         assert shell_meta["result_kind"] == "general_tool_result"
         assert shell_meta["status"] == "enabled"
         subagent_meta = tool_metadata_for("subagent_dispatch")
-        assert subagent_meta["tool_family"] == "general_tool"
-        assert subagent_meta["tool_class"] == "focus_tool"
+        assert subagent_meta["execution_route"] == "host_dispatch"
+        assert subagent_meta["tool_class"] == "action_tool"
         assert subagent_meta["domain"] == "agent"
         assert subagent_meta["backend_type"] == "python"
         assert subagent_meta["handler"] == "subagent_dispatch_handler"
@@ -950,9 +926,7 @@ class TestReactionParser:
             assert backend["permission_scope"] == meta["permission_scope"]
         assert general_tool_backend_for("memory_write") == {}
 
-    def test_tool_short_indexes_are_routing_cards_not_registry_mirrors(self):
-        from logic import protocol_tools
-
+    def test_tool_document_has_no_activity_catalog(self):
         repo_root = Path(__file__).resolve().parents[3]
         tools_md = (
             repo_root
@@ -965,98 +939,14 @@ class TestReactionParser:
         )
         text = tools_md.read_text(encoding="utf-8")
 
-        def parse_routing_table(section):
-            header = None
-            rows = {}
-            for line in section.splitlines():
-                stripped = line.strip()
-                if not stripped.startswith("| ") or stripped.startswith("|---"):
-                    continue
-                cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-                if cells[0] == "tool_id":
-                    header = cells
-                    continue
-                if header:
-                    rows[cells[0]] = dict(zip(header, cells))
-            return header or [], rows
-
-        protocol_section = text.split("<!-- PROTOCOL_TOOL_INDEX_START -->", 1)[1].split(
-            "<!-- PROTOCOL_TOOL_INDEX_END -->", 1
-        )[0]
-        general_section = text.split("<!-- GENERAL_TOOL_INDEX_START -->", 1)[1].split(
-            "<!-- GENERAL_TOOL_INDEX_END -->", 1
-        )[0]
-        protocol_header, protocol_rows = parse_routing_table(protocol_section)
-        general_header, general_rows = parse_routing_table(general_section)
-        forbidden_registry_columns = {
-            "tool_family",
-            "handler",
-            "result_kind",
-            "backend_type",
-            "active_backend",
-            "permission_scope",
-            "submission",
-            "状态",
-        }
-
-        assert protocol_header == ["tool_id", "姿态", "领域", "何时请求", "guide/边界提示"]
-        assert general_header == ["tool_id", "姿态", "领域", "何时请求", "guide/边界提示"]
-        assert not forbidden_registry_columns.intersection(protocol_header)
-        assert not forbidden_registry_columns.intersection(general_header)
-
-        from logic.native_tool_calls import export_provider_tool_schemas
-
-        exported = []
-        exported.extend(export_provider_tool_schemas(
-            provider="openai_responses", include_standard_tools=False,
-            include_step_terminal_tools=["setup_finalize", "cleanup_finalize"],
-        ))
-        exported.extend(export_provider_tool_schemas(
-            provider="openai_responses", include_protocol_writes=True,
-            include_step_terminal_tools=["reaction_finalize"],
-            execution_permission_level="unlimited",
-        ))
-        registered_protocol_tools = {
-            item["name"]: protocol_tools.tool_metadata_for(item["name"])
-            for item in exported
-            if protocol_tools.tool_metadata_for(item["name"]).get("tool_family")
-            != "general_tool"
-        }
-        enabled_general_tools = {
-            tool_id
-            for tool_id, meta in protocol_tools.TOOL_DEFINITIONS.items()
-            if meta.get("tool_family") == "general_tool"
-            and meta.get("status") == "enabled"
-        }
-        substrate_tools = {
-            tool_id
-            for tool_id, meta in protocol_tools.TOOL_DEFINITIONS.items()
-            if meta.get("tool_family") == "substrate_tool"
-        }
-
-        assert set(protocol_rows) == set(registered_protocol_tools)
-        assert set(general_rows) - {"general_tool_result"} == enabled_general_tools
-        assert "unlimited" in " ".join(general_rows["shell_command"].values())
-        assert not substrate_tools.intersection(protocol_rows)
-        assert not substrate_tools.intersection(general_rows)
-        for tool_id, meta in registered_protocol_tools.items():
-            row = protocol_rows[tool_id]
-            assert row["姿态"] == meta["tool_class"]
-            assert row["领域"]
-            assert row["何时请求"]
-            assert row["guide/边界提示"]
-        for tool_id in enabled_general_tools:
-            row = general_rows[tool_id]
-            meta = protocol_tools.TOOL_DEFINITIONS[tool_id]
-            assert row["姿态"] == meta["tool_class"]
-            assert row["领域"]
-            assert row["何时请求"]
-            assert row["guide/边界提示"]
+        assert "PROTOCOL_TOOL_INDEX_START" not in text
+        assert "GENERAL_TOOL_INDEX_START" not in text
+        assert "当前 Frame 的 `01_tool_header` 是唯一活动工具清单" in text
 
     def test_spec089_relation_read_replaces_relation_card_read(self):
         from logic import protocol_tools
 
-        assert protocol_tools.tool_metadata_for("relation_read")["tool_family"] == "protocol_tool"
+        assert protocol_tools.tool_metadata_for("relation_read")["execution_route"] == "internal_processor"
         assert protocol_tools.tool_class_for("relation_read") == "read_tool"
         assert protocol_tools.tool_metadata_for("relation_card_read") == {}
         assert protocol_tools.tool_metadata_for("relation_content_read") == {}
@@ -1087,7 +977,7 @@ class TestReactionParser:
                     "notes": [{"content": "正在做关系读取清缝"}],
                 }
 
-        receipts, mounts = apply_relation_read_requests(
+        receipts, mounts, unmounts = apply_relation_read_requests(
             [{
                 "tool_id": "relation_read",
                 "subject": "Codex",
@@ -1098,6 +988,7 @@ class TestReactionParser:
         )
 
         assert receipts[0]["status"] == "accepted"
+        assert unmounts == []
         assert receipts[0]["summary_mode"] == "temporary"
         assert receipts[0]["body_mode"] == "temporary"
         assert {
@@ -1113,48 +1004,169 @@ class TestReactionParser:
         assert relation_mount["source"] == "relation_read"
         assert relation_mount["read_mode"] == "full"
 
-    def test_spec089_relation_read_none_clears_resident_flags(self):
+    def test_spec781_relation_read_none_clears_summary_and_resident_body(
+            self, tmp_path):
+        from data.resident_list_store import ResidentListStore
         from logic.relation_read import apply_relation_read_requests
+
+        resident = ResidentListStore(str(tmp_path / "resident_list.json"))
+        resident.reconcile()
+        resident.add({"item_type": "relation", "item_id": "REL-Codex"})
 
         class DummyRelationStore:
             def __init__(self):
                 self.summary_flags = []
-                self.body_flags = []
-
-            def load_registry(self):
-                return {"cards": [{
+                self.registry = {"cards": [{
                     "id": "REL-Codex",
                     "name": "Codex",
                     "category": "them",
                     "status": "active",
                     "summary_resident": True,
-                    "body_resident": True,
                 }]}
+
+            def load_registry(self):
+                return copy.deepcopy(self.registry)
+
+            def save_registry(self, value):
+                self.registry = copy.deepcopy(value)
 
             def read_card(self, card_id, category=None):
                 return {"id": card_id, "name": "Codex", "notes": []}
 
             def set_summary_resident(self, card_id, enabled=True):
                 self.summary_flags.append((card_id, enabled))
+                self.registry["cards"][0]["summary_resident"] = bool(enabled)
 
-            def set_body_resident(self, card_id, enabled=True):
-                self.body_flags.append((card_id, enabled))
+        class DummyAssembler:
+            resident_store = resident
 
         store = DummyRelationStore()
-        receipts, mounts = apply_relation_read_requests(
+        receipts, mounts, unmounts = apply_relation_read_requests(
             [{
                 "tool_id": "relation_read",
                 "subject": "Codex",
                 "summary": "none",
                 "body": "none",
             }],
-            {"relation_store": store},
+            {
+                "relation_store": store,
+                "assembler": DummyAssembler(),
+                "resident_store": resident,
+            },
         )
 
         assert receipts[0]["status"] == "accepted"
         assert mounts == []
         assert store.summary_flags == [("REL-Codex", False)]
-        assert store.body_flags == [("REL-Codex", False)]
+        assert unmounts == [
+            {"item_type": "relation", "item_id": "REL-Codex"},
+            {"item_type": "relation_summary", "item_id": "REL-Codex"},
+        ]
+        assert receipts[0]["resident_revision"] == resident.load()["revision"]
+        assert not resident.contains(
+            item_type="relation", item_id="REL-Codex")
+        assert not store.load_registry()["cards"][0]["summary_resident"]
+
+    @pytest.mark.parametrize(
+        ("request_payload", "initial_body_resident", "initial_summary_resident"),
+        [
+            (
+                {"summary": "none", "body": "resident"},
+                False,
+                False,
+            ),
+            (
+                {"summary": "none", "body": "none"},
+                True,
+                True,
+            ),
+        ],
+    )
+    def test_spec781_relation_resident_summary_failure_rolls_back_both_stores(
+            self,
+            tmp_path,
+            request_payload,
+            initial_body_resident,
+            initial_summary_resident):
+        from data.resident_list_store import ResidentListStore
+        from logic.relation_read import apply_relation_read_requests
+
+        resident = ResidentListStore(str(tmp_path / "resident_list.json"))
+        resident.reconcile()
+        if initial_body_resident:
+            resident.add({"item_type": "relation", "item_id": "REL-Codex"})
+
+        class DummyAssembler:
+            resident_store = resident
+
+            @staticmethod
+            def _load_relation_content(_card_id):
+                return "Codex\n关系事务正文"
+
+            @staticmethod
+            def preflight_resident_add(item, *, content_overrides=None):
+                preview = resident.preview_add(item)
+                return {
+                    "document": preview["document"],
+                    "changed": preview["changed"],
+                    "chars": len(next(iter(
+                        (content_overrides or {}).values()), "")),
+                    "expected_revision": resident.load()["revision"],
+                }
+
+        class FailingSummaryStore:
+            def __init__(self):
+                self.registry = {"cards": [{
+                    "id": "REL-Codex",
+                    "name": "Codex",
+                    "category": "them",
+                    "status": "active",
+                    "summary_resident": initial_summary_resident,
+                }]}
+
+            def load_registry(self):
+                return copy.deepcopy(self.registry)
+
+            def save_registry(self, value):
+                self.registry = copy.deepcopy(value)
+
+            def read_card(self, card_id, category=None):
+                return {
+                    "id": card_id,
+                    "name": "Codex",
+                    "category": category or "them",
+                    "notes": [{"content": "关系事务正文"}],
+                }
+
+            @staticmethod
+            def set_summary_resident(_card_id, _enabled=True):
+                raise RuntimeError("injected_summary_write_failure")
+
+        relation = FailingSummaryStore()
+        before_resident = resident.snapshot_bytes()
+        before_registry = relation.load_registry()
+        payload = {
+            "tool_id": "relation_read",
+            "subject": "Codex",
+            **request_payload,
+        }
+
+        receipts, mounts, unmounts = apply_relation_read_requests(
+            [payload],
+            {
+                "relation_store": relation,
+                "assembler": DummyAssembler(),
+                "resident_store": resident,
+            },
+        )
+
+        assert receipts[0]["status"] == "rejected"
+        assert receipts[0]["reason"].startswith(
+            "relation_resident_transaction_failed:")
+        assert mounts == []
+        assert unmounts == []
+        assert resident.snapshot_bytes() == before_resident
+        assert relation.load_registry() == before_registry
 
     def test_spec078_container_read_rejects_missing_container(self, tmp_path, monkeypatch):
         from data import container_store as cs
@@ -1177,8 +1189,6 @@ class TestReactionParser:
         assert mounts == []
         assert receipts == [{
             "tool_id": "container_read",
-            "tool_family": "protocol_tool",
-            "tool_class": "read_tool",
             "status": "rejected",
             "source": "protocol_tool_request",
             "container_id": "PRJ-20990101-99",
@@ -1189,6 +1199,8 @@ class TestReactionParser:
             "range_applied": None,
             "total_lines": 0,
             "total_chars": 0,
+            "resident_persisted": False,
+            "resident_revision": None,
             "protocol_tool_receipt": True,
             "reason": "container_not_found",
         }]
@@ -1499,8 +1511,6 @@ class TestMemoryWriteProtocol:
 
         assert receipts == [{
             "tool_id": "memory_write",
-            "tool_family": "protocol_tool",
-            "tool_class": "sync_tool",
             "status": "error",
             "source": "memory_write_declaration",
             "mem_id": None,
@@ -1747,8 +1757,6 @@ class TestMemoryWriteProtocol:
 
         assert receipts == [{
             "tool_id": "memory_write",
-            "tool_family": "protocol_tool",
-            "tool_class": "sync_tool",
             "status": "applied",
             "source": "memory_write_declaration",
             "mem_id": "MEM-041000AA",
@@ -1906,112 +1914,6 @@ class TestMemoryAnnotationProtocol:
 
         assert normalize_tool_id("memory_annotation_declaration") == "memory_annotation_declaration"
         assert tool_metadata_for("memory_annotation_declaration") == {}
-
-    def test_apply_memory_annotation_sets_and_clears_annotation(self):
-        from logic.memory_annotation import apply_memory_annotation_declarations
-
-        class DummyMemoryStore(_TransactionalMemoryStoreFake):
-            def __init__(self):
-                self.meta = {
-                    "MEM-041000AA": {
-                        "id": "MEM-041000AA",
-                        "linked_containers": ["DC-12", "PRJ-1"],
-                    }
-                }
-                self.annotations = []
-
-            def get_meta(self, mem_id):
-                if mem_id not in self.meta:
-                    raise KeyError(mem_id)
-                return self.meta[mem_id]
-
-            def update_annotation(self, mem_id, annotation):
-                self.annotations.append((mem_id, annotation))
-
-        store = DummyMemoryStore()
-
-        receipts = apply_memory_annotation_declarations(
-            [{
-                "mem_id": "MEM-041000AA",
-                "annotation_kind": "correction",
-                "annotation": "旧判断已订正，参见 DC-12",
-                "container_refs": ["DC-12"],
-                "reason": "订正旧判断",
-            }],
-            {"memory_store": store},
-        )
-
-        assert receipts[0]["status"] == "applied"
-        assert receipts[0]["annotation"] == "旧判断已订正，参见 DC-12"
-        assert store.annotations == [("MEM-041000AA", "旧判断已订正，参见 DC-12")]
-
-        receipts = apply_memory_annotation_declarations(
-            [{
-                "mem_id": "MEM-041000AA",
-                "annotation_kind": "other",
-                "annotation": None,
-                "reason": "清空注释",
-            }],
-            {"memory_store": store},
-        )
-
-        assert receipts[0]["status"] == "applied"
-        assert receipts[0]["annotation"] is None
-        assert store.annotations[-1] == ("MEM-041000AA", None)
-
-    def test_apply_memory_annotation_rejects_invalid_refs_and_length(self):
-        from logic.memory_annotation import apply_memory_annotation_declarations
-
-        class DummyMemoryStore(_TransactionalMemoryStoreFake):
-            def __init__(self):
-                self.meta = {
-                    "MEM-041000AA": {
-                        "id": "MEM-041000AA",
-                        "linked_containers": ["PRJ-1"],
-                    }
-                }
-
-            def get_meta(self, mem_id):
-                return self.meta[mem_id]
-
-            def update_annotation(self, mem_id, annotation):
-                raise AssertionError("不应落盘")
-
-        store = DummyMemoryStore()
-
-        receipts = apply_memory_annotation_declarations(
-            [{
-                "mem_id": "MEM-041000AA",
-                "annotation_kind": "correction",
-                "annotation": "旧判断已订正，参见 PRJ-1",
-                "container_refs": ["PRJ-1"],
-            }],
-            {"memory_store": store},
-        )
-        assert receipts[0]["status"] == "error"
-        assert receipts[0]["reason"] == "missing_chain_ref"
-
-        receipts = apply_memory_annotation_declarations(
-            [{
-                "mem_id": "MEM-041000AA",
-                "annotation_kind": "bridge",
-                "annotation": "未挂载容器引用",
-                "container_refs": ["DC-99"],
-            }],
-            {"memory_store": store},
-        )
-        assert receipts[0]["reason"] == "unlinked_container_ref"
-
-        receipts = apply_memory_annotation_declarations(
-            [{
-                "mem_id": "MEM-041000AA",
-                "annotation_kind": "bridge",
-                "annotation": "太长" * 33,
-                "container_refs": ["PRJ-1"],
-            }],
-            {"memory_store": store},
-        )
-        assert receipts[0]["reason"] == "annotation_too_long"
 
 
 class TestMemoryRecallCompletionProtocol:

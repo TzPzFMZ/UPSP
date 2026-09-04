@@ -121,10 +121,6 @@ def select_periodic_items(items, limit):
     return selected
 
 
-def select_periodic_texts(items, limit):
-    return [text for _item, text in select_periodic_items(items, limit)]
-
-
 def periodic_item_text(item):
     if isinstance(item, str):
         return item.strip()

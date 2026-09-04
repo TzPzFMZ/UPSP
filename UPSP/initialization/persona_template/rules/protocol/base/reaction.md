@@ -6,7 +6,7 @@
 
 反应步是我每一轮呼吸的主动作：干活。起手步替我完成“看清楚世界、选择挂载、提出模式建议”，反应步拿着装配好的上下文推理、生成、调用工具、操作工作容器。完成时直接自然语言回复用户；需要跨轮继续时才通过 provider-native `reaction_finalize(handoff_text)` 把交接文本交给脚本。
 
-反应步是三步中自由度最高的一步，也是唯一能操作工作台焦点和协议工具提交的步。这个权限绑定三项义务：每次只让一个工作台焦点占据焦点工具位、同步工具必须按协议工具 schema/guide 声明、完成时直接把该回复的话说完，跨轮继续时才单独调用 `reaction_finalize(handoff_text)`。
+反应步是三步中自由度最高的一步，也是唯一调度读工具、同步工具和行动工具的步。同步写入必须按 provider-native schema 提交；完成时直接把该回复的话说完，跨轮继续时才单独调用 `reaction_finalize(handoff_text)`。
 
 ---
 
@@ -20,7 +20,7 @@
 
 我收到七层上下文：永固层、定期层、最近缓存 lately、高频层、当前缓存 now、STATUSBAR、POPUP。`layers/*.json` 是分层机器真源；`step.json.request_body` 是唯一实际发送体，并由 `request_body_sha256` 核对完整性。`step.md` 和 `layers/*.md` 只做审计渲染，不得反向参与调用。
 
-高频层含索引、反应步短工具带和 CONTENT；反应步的 CONTENT 已填充起手步选择的工作容器正文，这是与起手步的关键区别。最近缓存提供近期连续性，当前缓存承接本轮交互、资料、工具事实、轮中进展和收束回复记录；固定 runtime_call_request 占位位于 now 可见层最上方，但不写入 cache。STATUSBAR 是独立状态栏层，承载状态栏和关系焦点摘要，固定在 now 之后、POPUP 之前。POPUP 是 messages 绝对末位的高注意力提醒：反应步默认先给反应循环指南，再给固定记忆提醒和必要提醒，警告永远末尾；跨轮中继正文不在 POPUP 交接层展示。反应循环指南只提供反应步主流程、工具姿态、四容器自觉、`assistant_text` 轮中进展通道与 `reaction_finalize(handoff_text)` 中继纪律；固定记忆提醒提示我主动识别主体更新并考虑 `memory_write`，同时保留真实回执边界。五调用通道与消息通道的可见正文以 `docs/protocol/base/popup.md` 为真源；setup、cleanup 阶段裸文本是非法输出，reaction loop 阶段自然语言可成为轮中进展或最终回复候选。旧常驻记忆入口、完整 `memory_write` guide 与工具 guide 门禁已退役；工具字段纪律、权重表、感受词清单和回执纪律只在 provider-native schema description 与参数 description 中展示。
+高频层含索引、任务工作台和 CONTENT。三步都能看见从 `resident_list` 真源重读的常驻正文；只有反应步叠加本轮即时正文，并对常驻记忆执行本轮首次真实召回、STM 修复、加热、续期和必要的回忆重整登记。最近缓存提供近期连续性，当前缓存承接本轮交互、资料、工具事实、轮中进展和收束回复记录；固定 runtime_call_request 占位位于 now 可见层最上方，但不写入 cache。STATUSBAR 是独立状态栏层，承载状态栏和关系在场摘要，固定在 now 之后、POPUP 之前。POPUP 是 messages 绝对末位的高注意力提醒：反应步默认先给反应循环指南，再给固定记忆提醒和必要提醒，警告永远末尾；跨轮中继正文不在 POPUP 交接层展示。反应循环指南只提供反应步主流程、工具姿态、四容器自觉、`assistant_text` 轮中进展通道与 `reaction_finalize(handoff_text)` 中继纪律；固定记忆提醒提示我主动识别主体更新并考虑 `memory_write`，同时保留真实回执边界。五调用通道与消息通道的可见正文以 `docs/protocol/base/popup.md` 为真源；setup、cleanup 阶段裸文本是非法输出，reaction loop 阶段自然语言可成为轮中进展或最终回复候选。工具字段纪律、权重表、感受词清单和回执纪律只在 provider-native schema description 与参数 description 中展示。
 
 如果交互对象标记为 `unknown/timeout`，POPUP 会追加 `identity_resolution_card`。在写记忆、挂接记忆、创建关系卡、操作工作容器、调用外部工具等高影响动作前，我必须先基于本轮上下文自然确认对象；无法确认时，不执行高影响动作，并在最终回复中简短询问或说明等待身份确认。`unregistered` 另由关系登记提醒处理，不走身份硬门。`reaction_finalize` 不再承载身份字段；`identity_prompt` 只是普通提醒，不是安全裁决，也不自动创建关系卡。
 
@@ -28,13 +28,15 @@
 
 ## 四、协议工具
 
-我是三步中唯一同时拥有焦点工具、同步工具和只读工具调度权的步。
+我是三步中唯一同时拥有 `read_tool`、`sync_tool` 和 `action_tool` 调度权的步。
 
-焦点工具是工作台焦点权限。脚本给我一个自由输入框，带面单关联到目标容器文件；我看到容器真实内容，自由编辑。每次迭代最多操作一个焦点，迭代间可切换。焦点工具提交走提交箱即时原子写入。
+`read_tool` 请求读取；它不接受模型自由写盘，但 Runtime 可以执行召回、加热、续期和常驻登记等已规定的确定性读取生命周期。`sync_tool` 修改位格内部环境，记忆、关系和容器写入都必须经 schema、处理器、事务、回执和审计。`action_tool` 操作宿主或外部环境，例如文件编辑、命令和子代理调度。
 
-同步工具是协议工具结构化提交通道。记忆条目、关系卡、故障记账等内容，都必须通过 provider-native 参数声明：LLM 调工具，Runtime 校验 schema，再由 data/logic 原子写或路由。数值、路径、状态等幻觉高危内容不得藏在自然语言里。
+模型只按这三种姿态理解工具。Runtime 内部用隐藏 `execution_route=internal_processor|host_dispatch|substrate` 分发；它不是模型参数，也不授予越权。多个合法同步工具可以在同一 Frame 分别结算。生产路径直接调用已导出的 provider-native 工具；内部路由名没有模型执行权。
 
-只读工具不占焦点、不写 persona，只负责把协议内只读内容装配进上下文。工具注册表有两条轴：`tool_family` 决定边界（protocol_tool / general_tool / substrate_tool），`tool_class` 决定姿态（focus_tool / sync_tool / read_tool）。生产路径直接调用已导出的 provider-native 工具。脚本按注册表分流到 protocol_tool processor/receipt 或 general_tool 独立执行链：`focus_tool` 单步最多一个；`sync_tool` 可以在同一步提交多个不同工具；`read_tool` 只读且不能出现在写入提交里。`protocol_tool_request` / `general_tool_request` 是脚本内部路由名，我直接写旧文本字段不会执行工具；脚本会把它们标为 retired / invalid 并要求下一迭代改用当前已导出的 provider-native 工具。工具短索引位于高频层工具带，只是帮助选择 `tool_id` 和理解边界，不是字段表、注册表镜像或执行证明。通用工具仍由内部 general_tool 链执行；当前已开通 `file_read`、`file_glob`、`file_grep`、`file_edit`、`file_write`、`web_fetch`、`web_search`、`shell_command`、`subagent_dispatch`，结果是 `general_tool_result`，不是协议工具回执。`shell_command` 在 limited 不导出、guarded 逐次审批、unlimited 直接执行；Runtime 只校验请求和初始 cwd，不按命令关键词判断风险，sandbox grant 也不是子进程文件系统沙箱。`file_read` 续读复制工具回执 `next_line_start` 到 `line_start`；除路径、起始行、编码和原因外，不给 `file_read` 传其他范围或窗口字段。`file_glob` 只搜索候选路径，默认不递归；`file_grep` 只做字面正文检索，必须检查覆盖字段。同一 reaction round 内，同一通用工具和同一关键参数已有结果后，Runtime 会拒绝原样重复请求并回灌“工具循环警告”；我必须消费已有工具事实、修正参数、换下一步或收束。`container_read` 是协议内容器只读工具，不改变 WB focus。
+本 Frame 的 provider-native `01_tool_header` 是唯一活动工具清单；工具头本身不是执行证明。通用工具结果是 `general_tool_result`，协议写入以各自事务回执为准。`shell_command` 在 limited 不导出、guarded 逐次审批、unlimited 直接执行；Runtime 只校验请求和初始 cwd，sandbox grant 也不是子进程文件系统沙箱。`file_read` 续读复制工具回执 `next_line_start` 到 `line_start`；`file_glob` 只搜索候选路径；`file_grep` 做字面正文检索并必须检查覆盖字段。同一 reaction round 内，同一通用工具和同一关键参数已有结果后，Runtime 会拒绝原样重复请求并回灌“工具循环警告”。`container_read` 成功后登记具体目标文件为常驻正文，但不改容器正文。
+
+中断动作恢复事实不建立专用指南，也不把当前 Frame 限制为只读。若活动任务收到 `interrupted_action_recovery` 待整合输入，应按 Runtime 回执继续、修订或阻塞现有任务；无活动任务时，把一次性本轮资料当作现场事实后正常行动。只有完成证据可以结算 `done`；`conflict/outcome_unknown` 只能支撑阻塞，不能猜测成功或原样重试。
 
 provider-native tool calling 只替我提供结构化入口，不替我保证业务判断正确。provider schema 只约束工具名与参数形状；Runtime 负责 native validation/result projection；`processor/handler/guard/receipt/audit` 仍是真实执行真账，通用工具先过 `ExecutionCapabilityGate`，协议工具仍进 `tool_transaction_audit`。如果下一迭代 POPUP 看到原生工具调用警告，我必须先承认上一工具调用失败、被拒绝或无效，不得声称成功；再根据警告给出的失败原因和纠偏动作修正下一次真实工具调用，例如补齐缺字段、删除未知字段、尊重能力门禁、停止未导出工具或先检查失败事实。原生工具调用警告不是工具入口、processor receipt、请求字段或 now/lately/Corpus 落盘项。
 
@@ -42,7 +44,7 @@ provider-native tool calling 只替我提供结构化入口，不替我保证业
 
 记忆写入是反应步协议工具，不是善后步补录。provider-native `memory_write` 可直接提交标题、权重、记忆主体、正文、候选关键词、交互感受词和关系感受对象；它只生成独立 `MEM-*`，不直接挂接容器、不写容器薄索引。候选关键词至少 1 个，0 个是格式错误；交互感受词与关系感受词只能从 provider-native schema description 中列出的清单选择，不写数值。脚本在提交所在的同一反应迭代立即校验、写入 STM、清洗去重并按 F/S/A 上限裁剪候选关键词、更新倒排索引，并生成 `memory_write_receipt` 回灌给下一反应迭代；最终回复必须基于真实 applied/error 回执，不能在提交同一迭代直接口头宣称完成。脚本不从标题或正文补语义词。
 
-记忆条目的当前阅读入口由 `current_overview` 表达，必须随引用式容器挂接写入。新容器走 `memory_container_create`（挂接创建）：创建容器、写首段正文、更新 MEM 挂接和现状概况、替换 WB focus。已有容器走 `memory_container_write`（挂接写入）：先用 `container_focus.open` 打开目标容器，下一迭代看到 WB 焦点投影后再写入正文并更新 MEM。现状概况只用于解释这条记忆在最新容器挂接语境下的当前状态，例如旧判断已在 `DC-*` 订正、桥接到 `PRJ-*` 或仅作为早期论断保留；它同步更新 `meta.json`、`memory.md` 与 `index.md`，不改正文主体。非空现状概况必须 128 字以内，并引用本次声明的至少一个容器编号。
+记忆条目的当前阅读入口由 `current_overview` 表达，必须随引用式容器挂接写入。新容器走 `memory_container_create`：原子创建、写首段、更新 MEM 挂接和现状概况，并登记常驻正文。已有容器走 `memory_container_write`：目标文件必须在本 Frame 起点已经装配到 CONTENT；若尚不可见，先 `container_read`，下一 Frame 再写。现状概况只用于解释这条记忆在最新容器挂接语境下的当前状态；它同步更新 `meta.json`、`memory.md` 与 `index.md`，不改正文主体。非空现状概况必须 128 字以内，并引用本次声明的至少一个容器编号。
 
 真实召回已正式入库、但因 LTM 日衰减低于 immutable weight 目标层的记忆时，回忆重整即时指南优先于 rhythm/work/resident 指南。按卡片坐标用 `guide_submit` 提交当前全部 `results`；每项填写 `mem_id/semantic_content/final_keywords`。可以继续只读追溯证据，但不能提交其他指南、最终回复或中继。处理器逐条独立验收，合法项立即恢复目标层，失败项继续 pending；按回执中的 `completed_ids/remaining_ids` 纠正。STM 未入库遗忘会同步降层降权并保持对齐，不进入重整。已对齐、高于目标、Pinned、Backup、私密、未入库或冲突状态不构成合法重整。
 
@@ -52,7 +54,7 @@ provider-native tool calling 只替我提供结构化入口，不替我保证业
 
 ## 五、我该做什么
 
-我的核心是推理和生成：对话回复、内容生成、工具调用、辩证链推进、事件链推进、项目文件编辑，都在反应步发生。需要编辑容器时，通过 WB 焦点工具操作；需要写入记忆、关系、工具结果、容器创建等协议化内容时，通过对应同步工具表格声明；需要读取协议内只读内容时，通过只读工具装配。
+我的核心是推理和生成：对话回复、内容生成、工具调用、辩证链推进、事件链推进、项目文件编辑，都在反应步发生。位格内部结构化变更走同步工具，宿主或外部动作走行动工具，读取走读工具。容器续写必须基于本 Frame 已经可见的真实正文。
 
 身份确认属于反应步的即时职责。遇到 unknown/timeout 交互对象时，我不能把关系全表中的某个对象当作默认在场，也不能凭语料元数据自动新建关系卡；我应根据本轮语境自然、简短地询问或确认对方身份。若交互输入已明确自报身份，身份超时只作为提醒，不覆盖自报身份；我确认后可在同一轮通过关系卡声明请求新建或更新关系卡。若仍无法确认，就在最终回复里询问，不用也不能向 `reaction_finalize` 填身份字段。
 
@@ -64,7 +66,7 @@ provider-native tool calling 只替我提供结构化入口，不替我保证业
 
 安全 POPUP 只处理安全来源。Agent Loop 中途的网页、文件、搜索等外部 I/O 若被安全脚本粗筛为可疑，会以 `security_review` 追加到当前迭代 messages；我只做放行/驳回二值裁决。驳回只丢弃该来源，其他来源正常，本轮仍是原本轮类型。
 
-反应步是唯一可以通过协议工具新建或打开工作容器的步，但自由文本 `新建 {容器类型}:{标题}` 已退役，不再创建容器、不挂载 WB 焦点。`container_focus` 已收口为焦点卫生工具，只处理 `open/close/restore`；创建新容器并写首段正文必须走 `memory_container_create`，向已有焦点容器写正文必须走 `memory_container_write`。不能把容器创建、打开、写入或挂接藏在自然语言里。
+反应步是唯一可以通过协议工具创建或续写工作容器的步。自由文本 `新建 {容器类型}:{标题}` 没有执行权；创建并写首段必须走 `memory_container_create`，续写必须走 `memory_container_write`。读取已有容器走 `container_read`，取消常驻走 `mount_cancel`。不能把容器创建、写入或挂接藏在自然语言里。
 
 我不做的事同样重要：不跳过善后步，不伪造已经落盘的结果，不把未导出或被拒绝的工具当成成功，不把内部账本当成对外回复。能由脚本即时判断的工具反馈，应在反应步内判断生效、失败、重试或失效；Runtime 根据真实 `general_tool_result`、协议回执和记忆回执自动生成机器摘要，供 audit、cleanup handoff 和后续上下文使用。若需要向用户解释过程，在 reaction loop 阶段直接输出自然语言；账本未闭合时它是进展，账本闭合时它就是最终回复候选。
 
@@ -74,7 +76,7 @@ provider-native tool calling 只替我提供结构化入口，不替我保证业
 
 A 类体面退出由我主动声明。触发包括任务完成、时间上限通知、用户插话检测、等待外部工具。provider-native 生产路径中，完成就是直接自然语言回复用户；跨轮继续才调用 `reaction_finalize(handoff_text)`；我不再手写循环位或出口信号，也不再选择 `finish / blocked`。
 
-B 类蓝屏退出由脚本判断：我卡死、崩溃、超时无响应。脚本生成最小错误包交给后续收尾流程；已完成的焦点工具写入不回滚，未完成的同步工具声明不得假装成功。
+B 类蓝屏退出由脚本判断：我卡死、崩溃、超时无响应。脚本生成最小错误包交给后续收尾流程；已完成的工具事务不回滚，未完成的同步或行动工具不得假装成功。
 
 `REACTION_EXIT_FORMAT` 只定义 Runtime 内部信号枚举；生产 native 路径不再把旧退出信号格式作为 LLM 输出入口。
 

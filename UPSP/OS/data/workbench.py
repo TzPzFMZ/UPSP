@@ -36,8 +36,6 @@ def default_workbench_status():
     return {
         "base": {
             "instance_id": "WB-main",
-            "focus": None,
-            "old_focus": None,
             "active_task": None,
             "active_guide": None,
             "active_guides": {
@@ -123,34 +121,6 @@ class WorkbenchStore:
             cur = cur[key]
         cur[keys[-1]] = value
         self.save_status(data)
-
-    def mount_focus(self, container_id):
-        data = self.load_status()
-        base = data.setdefault("base", {})
-        current = base.get("focus")
-        if current and current != container_id:
-            base["old_focus"] = current
-        base["focus"] = container_id
-        self.save_status(data)
-
-    def unmount_focus(self, container_id=None):
-        data = self.load_status()
-        base = data.setdefault("base", {})
-        current = base.get("focus")
-        if current and (container_id is None or current == container_id):
-            base["old_focus"] = current
-            base["focus"] = None
-        self.save_status(data)
-
-    def restore_focus(self):
-        data = self.load_status()
-        base = data.setdefault("base", {})
-        old_focus = base.get("old_focus")
-        if old_focus:
-            base["focus"] = old_focus
-            base["old_focus"] = None
-        self.save_status(data)
-        return old_focus
 
     # ============================================================
     # 任务物流
@@ -404,11 +374,6 @@ class WorkbenchStore:
     # 内部工具
     # ============================================================
 
-    def init_dirs_only(self):
-        for path in self.zone_dirs.values():
-            os.makedirs(path, exist_ok=True)
-        os.makedirs(self.guides_dir, exist_ok=True)
-
     def _move_task(self, task_id, src_zone, dst_zone, progress,
                    content_name=None, content=None, active_task=None):
         self._validate_task_id(task_id)
@@ -457,9 +422,6 @@ class WorkbenchStore:
                 except ValueError:
                     pass
         return f"{prefix}{max_seq + 1:02d}"
-
-    def _task_exists(self, task_id):
-        return any(os.path.isdir(self._task_dir(zone, task_id)) for zone in ZONES)
 
     def _find_task_dir(self, task_id, zone=None):
         self._validate_task_id(task_id)

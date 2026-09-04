@@ -74,8 +74,6 @@ class ProtocolReadDuplicateGuard:
             },
             "guard_receipt": {
                 "tool_id": "protocol_read",
-                "tool_family": "protocol_tool",
-                "tool_class": "runtime_guard",
                 "status": "protocol_read_correction_exhausted_auto_blocked",
                 "source": "reaction_protocol_read_correction",
                 "reason": blocked_reason,
@@ -179,6 +177,9 @@ def general_tool_result_success(item):
 
 def general_tool_guard_failure_trackable(item):
     item = item or {}
+    dispatch_stage = str(item.get("dispatch_stage") or "").strip()
+    if dispatch_stage and dispatch_stage != "handler":
+        return False
     status = str(item.get("status") or "").strip()
     reason = str(item.get("reason") or "").strip()
     if not reason or status in SUCCESS_STATUSES:
@@ -434,8 +435,6 @@ def recover_provider_interruption_if_possible(
     if count >= PROVIDER_INTERRUPTION_RECOVERY_LIMIT:
         return {
             "tool_id": "provider_interruption",
-            "tool_family": "runtime_guard",
-            "tool_class": "provider_recovery",
             "status": "provider_model_format_instability",
             "source": "reaction_loop",
             "reason": kind,
@@ -448,8 +447,6 @@ def recover_provider_interruption_if_possible(
         }
     receipt = {
         "tool_id": "provider_interruption",
-        "tool_family": "runtime_guard",
-        "tool_class": "provider_recovery",
         "status": "provider_interruption_recovered",
         "source": "reaction_loop",
         "reason": kind,

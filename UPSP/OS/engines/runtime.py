@@ -7,10 +7,11 @@ from engines.heartbeat import round_decision_from_heartbeat_flags, round_type_fr
 from engines.organ_runtime import OrganRuntime, organ_runtime_context
 from engines.product_committer import RuntimeProductCommitter
 from engines.reaction_loop import ReactionLoopRunner
+from engines.reaction_metabolism import ReactionMetabolism
 from engines.round_audit import RoundAuditRecorder
 from engines.round_context import RoundContext
 from engines.round_lifecycle import settle_round
-from engines.runtime_rhythm import chronicle_state_sample, continuation_response_policy, new_runtime_trigger, park_interaction_for_api_probe, prepare_chronicle_focus_for_active_guide, prepare_round_before_setup, refresh_round_alert_recovery, restore_interaction_after_api_probe
+from engines.runtime_rhythm import chronicle_state_sample, continuation_response_policy, new_runtime_trigger, park_interaction_for_api_probe, prepare_chronicle_write_scope_for_active_guide, prepare_round_before_setup, refresh_round_alert_recovery, restore_interaction_after_api_probe
 from engines.runtime_services import RuntimeServices
 from engines.runtime_control import RuntimeControl
 from engines.tool_approval import ToolApprovalCoordinator, request_runtime_tool_approval
@@ -30,15 +31,15 @@ class Runtime:
         "executor", "ctx_store", "assembler", "alert_store", "workbench",
         "dream_store", "state_backup_store", "memory_store", "memory_index", "container_store",
         "relation_store", "protocol_tool_dispatcher",
+        "resident_store", "action_recovery_store",
         "general_tool_dispatcher", "memory_recall", "on_round_complete",
     }
-
     def __init__(self, state_store=None, heartbeat=None, executor=None,
                  assembler=None, heat=None, ctx_store=None, config_store=None,
                  alert_store=None, connectivity_store=None,
                  workbench_store=None, dream_store=None,
                  state_backup_store=None, memory_store=None, memory_index=None,
-                 container_store=None, relation_store=None,
+                 container_store=None, relation_store=None, resident_store=None, action_recovery_store=None,
                  organ_topology_path=None, organ_handlers=None,
                  organ_context_providers=None):
         self.services = RuntimeServices.create(
@@ -58,7 +59,10 @@ class Runtime:
             memory_index=memory_index,
             container_store=container_store,
             relation_store=relation_store,
+            resident_store=resident_store, action_recovery_store=action_recovery_store,
         )
+        self.focus_retirement_migration_receipt = (
+            self.services.migrate_focus_retirement_on_startup())
         self.audit = RoundAuditRecorder(self.services)
         self.product_committer = RuntimeProductCommitter(self.services)
         self.organ_runtime = OrganRuntime(
@@ -70,9 +74,12 @@ class Runtime:
         )
         self.setup_runner = SetupRunner(self.services, self.audit)
         self.reaction_loop_runner = ReactionLoopRunner(self.services, self.audit)
+        self.reaction_metabolism = ReactionMetabolism(self.services, self.audit)
+        self.reaction_loop_runner.reaction_metabolism = self.reaction_metabolism
         self.cleanup_pipeline = CleanupPipeline(self.services, self.audit)
         for component in (
                 self.setup_runner, self.reaction_loop_runner,
+                self.reaction_metabolism,
                 self.cleanup_pipeline):
             component.organ_runtime = self.organ_runtime
         self.reaction_loop_runner.product_committer = self.product_committer
@@ -84,6 +91,7 @@ class Runtime:
         self.general_tool_dispatcher.approval_fn = self._request_tool_approval
         self.on_round_started = None
         self.on_round_finished = None
+        self.on_round_released = None
         self.cleanup_pipeline.stage_callback = self.control.set_stage
         self.permission_chain = ExecutionPermissionChain(self.executor, self.assembler, self.general_tool_dispatcher, self.setup_runner, self.reaction_loop_runner, self.cleanup_pipeline)
         self._pending_final_response_max_chars = None
@@ -93,13 +101,17 @@ class Runtime:
         self.setup_runner.permission_boundary_callback = self.permission_updates.apply
         self.reaction_loop_runner.permission_boundary_callback = self.permission_updates.apply
         self.services.reconcile_context_cache_lifecycle_on_startup()
+        self.reasoning_progress_repair_receipt = (
+            self.services.reconcile_reasoning_progress_on_startup()
+        )
         self.services.restore_cache_compaction_due_on_startup()
     def __setattr__(self, name, value):
         object.__setattr__(self, name, value)
         services = self.__dict__.get("services")
         if services is not None and name in self._SERVICE_ATTRS:
             setattr(services, name, value)
-        for component_name in ("setup_runner", "reaction_loop_runner", "cleanup_pipeline"):
+        for component_name in ("setup_runner", "reaction_loop_runner",
+                               "reaction_metabolism", "cleanup_pipeline"):
             component = self.__dict__.get(component_name)
             if component is not None and hasattr(component, name):
                 object.__setattr__(component, name, value)
@@ -116,6 +128,7 @@ class Runtime:
         for component in (
             self.__dict__.get("setup_runner"),
             self.__dict__.get("reaction_loop_runner"),
+            self.__dict__.get("reaction_metabolism"),
             self.__dict__.get("cleanup_pipeline"),
         ):
             if component is None:
@@ -363,7 +376,7 @@ class Runtime:
                 }
             else:
                 self._materialize_runtime_rhythm_guide(context)
-                self._prepare_chronicle_focus_for_round(
+                self._prepare_chronicle_write_scope_for_round(
                     context.round_type,
                     context.state,
                     context.round_num,
@@ -373,6 +386,7 @@ class Runtime:
                     self._prepare_task_bootstrap_guide(
                         setup_result.intent, context=context)
                     self._materialize_work_intent_debt_if_needed(context)
+                self.reaction_metabolism.prepare_entry(context)
                 self.sm.set_phase("main")
                 result = self._run_reaction_loop(
                     context.state,
@@ -382,12 +396,8 @@ class Runtime:
                     context=context,
                     setup_result=setup_result,
                 )
-                result["_setup_messages"] = setup_result.setup_messages
-                result["_user_input_text"] = setup_result.user_input_text
-                interaction_meta = result.get("_interaction_meta", interaction_meta)
-                context.interaction_meta = interaction_meta
-                result["_interaction_meta"] = interaction_meta
-
+                interaction_meta = self.reaction_metabolism.settle_result(
+                    context, result, setup_result)
         except Exception as exc:
             if isinstance(exc, ProviderCallCancelled):
                 result = {
@@ -409,6 +419,10 @@ class Runtime:
             else:
                 traceback.print_exc()
                 result = self.control.step_exception_result(last_phase, exc)
+                if failure_flag := getattr(exc, "round_failure_flag", ""):
+                    result[failure_flag] = True
+                self.reaction_metabolism.mark_exception(
+                    context, result, last_phase, exc)
         finally:
             if self.control.stop_requested.is_set():
                 result["_user_stop_requested"] = True
@@ -444,7 +458,7 @@ class Runtime:
                     if latch_until_explicit:
                         self.hb.pause()
                     elif not single_round_probe_enabled():
-                        self.hb.resume()
+                        self.hb.resume(run_tick=False)
                 except Exception:
                     pass
                 if callable(self.on_round_finished):
@@ -454,7 +468,14 @@ class Runtime:
                         traceback.print_exc()
             finally:
                 self.control.finish_round(latch_until_explicit)
+            released_callback = getattr(self, "on_round_released", None)
+            if callable(released_callback):
+                try:
+                    released_callback(round_num, round_type, result)
+                except Exception:
+                    traceback.print_exc()
         return result
+
     def _run_reaction_loop(self, *args, **kwargs):
         if args and isinstance(args[0], RoundContext):
             return self.reaction_loop_runner.run(*args, **kwargs)
@@ -556,18 +577,15 @@ class Runtime:
     def _determine_round_decision(self, flags, state=None):
         return round_decision_from_heartbeat_flags(flags)
 
-    def _prepare_chronicle_focus_for_round(self, round_type, state, round_num):
-        return prepare_chronicle_focus_for_active_guide(
+    def _prepare_chronicle_write_scope_for_round(
+            self, round_type, state, round_num):
+        return prepare_chronicle_write_scope_for_active_guide(
             self, round_type, state, round_num
         )
 
     @staticmethod
     def _chronicle_state_sample(base):
         return chronicle_state_sample(base)
-
-    def _wake_if_sleeping(self):
-        """Deferred compatibility hook; Seed round startup does not call it."""
-        return None
 
     def _update_daily_if_needed(self, state, round_type):
         try:

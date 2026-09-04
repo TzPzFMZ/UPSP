@@ -1,9 +1,15 @@
-"""Task-guide helpers for Spec434."""
+"""Task-guide helpers."""
 
+import copy
+import difflib
+import fnmatch
+import hashlib
+import json
 import os
 import re
 from pathlib import Path
 
+from errors import ReadError, WriteError
 from logic.evidence_refs import (
     command_evidence_refs,
     evidence_handle_for_result,
@@ -17,6 +23,14 @@ BOOTSTRAP_SUBMIT_OPTION_ID = "submit_initial_guide"
 TASK_PROGRESS_ITEM_ID = "task_progress"
 TASK_PROGRESS_UPDATE_OPTION_ID = "update_task_status"
 TASK_PENDING_INPUT_OPTION_ID = "integrate_pending_input"
+TASK_PLAN_REVISE_OPTION_ID = "revise_task_plan"
+TASK_PLAN_REVISION_FIELDS = (
+    "source_refs",
+    "source_requirements",
+    "items",
+    "acceptance",
+    "risk_notes",
+)
 
 COMPLETION_STATUS_ALIASES = {
     "complete",
@@ -39,6 +53,7 @@ ACCEPTANCE_COMPLETION_STATUSES = ITEM_COMPLETION_STATUSES | {
     "passed",
     "verified",
 }
+PLAN_SETTLED_RECORD_STATUSES = ACCEPTANCE_COMPLETION_STATUSES
 PENDING_INPUT_SETTLED_STATUSES = {
     "integrated",
     "deferred",
@@ -129,8 +144,6 @@ def materialize_initial_task_guide(
     acceptance = _normalize_acceptance(fields.get("acceptance"))
     risk_notes = _normalize_sequence(fields.get("risk_notes"))
     source_refs = _normalize_sequence(fields.get("source_refs"))
-    if evidence_refs:
-        source_refs.extend(str(item) for item in evidence_refs if item)
 
     task_guide = {
         "task_title": task_title,
@@ -151,6 +164,252 @@ def materialize_initial_task_guide(
     )
     refresh_task_execution_active_guide(workbench_store, task_id)
     return task_id
+
+
+def validate_task_plan_structure(fields, *, strict_sections=None):
+    """Normalize and validate the structural, non-evidence part of a task plan."""
+    fields = dict(fields or {})
+    strict_sections = set(strict_sections or [])
+    if "task_title" in fields and not str(fields.get("task_title") or "").strip():
+        return _task_plan_reject("task_plan_title_required")
+    try:
+        source_refs = _normalize_plan_text_list(fields.get("source_refs"))
+        risk_notes = _normalize_plan_text_list(fields.get("risk_notes"))
+        source_requirements = _canonical_source_requirements(
+            fields.get("source_requirements"),
+            strict="source_requirements" in strict_sections,
+        )
+        items = _canonical_plan_items(
+            fields.get("items"),
+            strict="items" in strict_sections,
+        )
+        acceptance = _canonical_plan_acceptance(
+            fields.get("acceptance"),
+            strict="acceptance" in strict_sections,
+        )
+    except _TaskPlanStructureError as exc:
+        return _task_plan_reject(exc.reason, exc.details)
+
+    if not items:
+        return _task_plan_reject("task_plan_items_required")
+    if not acceptance:
+        return _task_plan_reject("task_plan_acceptance_required")
+
+    requirement_ids = {item["requirement_id"] for item in source_requirements}
+    item_ids = {item["item_id"] for item in items}
+
+    unknown_sources = [
+        item["source_ref"]
+        for item in source_requirements
+        if not _plan_source_ref_declared(item["source_ref"], source_refs)
+    ]
+    if unknown_sources:
+        return _task_plan_reject(
+            "bootstrap_source_requirement_ref_unknown",
+            {
+                "unknown_source_refs": _dedupe(unknown_sources),
+                "source_refs": source_refs,
+            },
+        )
+
+    unknown_requirement_refs = _unknown_refs(
+        (ref for item in items for ref in item.get("requirement_refs") or []),
+        requirement_ids,
+    )
+    if unknown_requirement_refs:
+        return _task_plan_reject(
+            "bootstrap_unknown_requirement_refs",
+            {
+                "requirement_refs": unknown_requirement_refs,
+                "known_requirements": sorted(requirement_ids),
+            },
+        )
+
+    covered_requirements = {
+        ref for item in items for ref in item.get("requirement_refs") or []
+    }
+    missing_requirement_coverage = [
+        item["requirement_id"]
+        for item in source_requirements
+        if item["requirement_id"] not in covered_requirements
+    ]
+    if missing_requirement_coverage:
+        return _task_plan_reject(
+            "bootstrap_source_requirement_coverage_missing",
+            {"requirement_ids": missing_requirement_coverage},
+        )
+
+    acceptance_missing_refs = [
+        item["acceptance_id"]
+        for item in acceptance
+        if not item.get("item_refs") and not item.get("requirement_refs")
+    ]
+    if acceptance_missing_refs:
+        return _task_plan_reject(
+            "bootstrap_acceptance_refs_required",
+            {"acceptance": acceptance_missing_refs},
+        )
+
+    unknown_acceptance_items = _unknown_refs(
+        (ref for item in acceptance for ref in item.get("item_refs") or []),
+        item_ids,
+    )
+    unknown_acceptance_requirements = _unknown_refs(
+        (
+            ref
+            for item in acceptance
+            for ref in item.get("requirement_refs") or []
+        ),
+        requirement_ids,
+    )
+    if unknown_acceptance_items or unknown_acceptance_requirements:
+        return _task_plan_reject(
+            "bootstrap_acceptance_refs_unknown",
+            {
+                "item_refs": unknown_acceptance_items,
+                "requirement_refs": unknown_acceptance_requirements,
+                "known_items": sorted(item_ids),
+                "known_requirements": sorted(requirement_ids),
+            },
+        )
+
+    covered_items = {
+        ref for item in acceptance for ref in item.get("item_refs") or []
+    }
+    missing_item_coverage = [
+        item["item_id"] for item in items if item["item_id"] not in covered_items
+    ]
+    if missing_item_coverage:
+        return _task_plan_reject(
+            "bootstrap_item_acceptance_coverage_missing",
+            {"items": missing_item_coverage},
+        )
+
+    normalized = {
+        "source_refs": source_refs,
+        "source_requirements": source_requirements,
+        "items": items,
+        "acceptance": acceptance,
+        "risk_notes": risk_notes,
+    }
+    return {
+        "status": "accepted",
+        "normalized_plan": normalized,
+        "projection": _task_plan_projection_from_normalized(normalized),
+    }
+
+
+def apply_task_plan_revision(workbench_store, task_id, fields, *, reason=""):
+    """Atomically replace submitted task-plan sections and return a diff receipt."""
+    reason = str(reason or "").strip()
+    if not reason:
+        return _task_plan_reject("task_plan_revision_reason_required")
+    fields = dict(fields or {})
+    unknown_fields = sorted(set(fields) - set(TASK_PLAN_REVISION_FIELDS))
+    if unknown_fields:
+        return _task_plan_reject(
+            "task_plan_revision_fields_unknown",
+            {
+                "fields": unknown_fields,
+                "allowed_fields": list(TASK_PLAN_REVISION_FIELDS),
+            },
+        )
+    submitted_sections = [
+        field for field in TASK_PLAN_REVISION_FIELDS if field in fields
+    ]
+    if not submitted_sections:
+        return _task_plan_reject(
+            "task_plan_revision_empty",
+            {"allowed_fields": list(TASK_PLAN_REVISION_FIELDS)},
+        )
+
+    try:
+        current = workbench_store.load_task_guide(task_id)
+    except (ReadError, FileNotFoundError, ValueError) as exc:
+        return _task_plan_reject(
+            "task_plan_current_invalid",
+            {"error_type": type(exc).__name__},
+        )
+    before_validation = validate_task_plan_structure(current)
+    if before_validation.get("status") != "accepted":
+        return _task_plan_reject(
+            "task_plan_current_invalid",
+            {"validation": before_validation},
+        )
+
+    candidate = copy.deepcopy(current)
+    for section in submitted_sections:
+        candidate[section] = copy.deepcopy(fields.get(section))
+    validation = validate_task_plan_structure(
+        candidate,
+        strict_sections=submitted_sections,
+    )
+    if validation.get("status") != "accepted":
+        return validation
+
+    normalized = validation["normalized_plan"]
+    protected = _protected_plan_record_changes(
+        before_validation["normalized_plan"],
+        normalized,
+        submitted_sections,
+    )
+    if protected:
+        return _task_plan_reject(
+            "task_plan_revision_settled_record_immutable",
+            protected,
+        )
+
+    for section in submitted_sections:
+        if section == "items":
+            candidate[section] = _restore_plan_record_lifecycle(
+                current.get("items"),
+                normalized["items"],
+                "item_id",
+            )
+        elif section == "acceptance":
+            candidate[section] = _restore_plan_record_lifecycle(
+                current.get("acceptance"),
+                normalized["acceptance"],
+                "acceptance_id",
+            )
+        else:
+            candidate[section] = normalized[section]
+
+    after_validation = validate_task_plan_structure(candidate)
+    if after_validation.get("status") != "accepted":
+        return after_validation
+    before_text = _task_plan_projection_text(before_validation["projection"])
+    after_text = _task_plan_projection_text(after_validation["projection"])
+    before_sha = hashlib.sha256(before_text.encode("utf-8")).hexdigest()
+    after_sha = hashlib.sha256(after_text.encode("utf-8")).hexdigest()
+    action = "noop" if before_sha == after_sha else "applied"
+    unified_diff = ""
+    if action == "applied":
+        unified_diff = "".join(difflib.unified_diff(
+            before_text.splitlines(keepends=True),
+            after_text.splitlines(keepends=True),
+            fromfile="task-plan:before",
+            tofile="task-plan:after",
+        ))
+        try:
+            workbench_store.save_task_guide(task_id, candidate)
+        except WriteError as exc:
+            return _task_plan_reject(
+                "task_plan_revision_write_failed",
+                {"error_type": type(exc).__name__},
+            )
+
+    return {
+        "status": "accepted",
+        "task_id": task_id,
+        "task_plan_revision": {
+            "schema_version": "task_plan_revision.v1",
+            "action": action,
+            "before_sha256": before_sha,
+            "after_sha256": after_sha,
+            "unified_diff": unified_diff,
+        },
+    }
 
 
 def refresh_task_execution_active_guide(workbench_store, task_id):
@@ -211,6 +470,11 @@ def _task_progress_active_item():
                     "items",
                     "acceptance",
                 ],
+            },
+            {
+                "option_id": TASK_PLAN_REVISE_OPTION_ID,
+                "required_fields": [],
+                "allowed_fields": list(TASK_PLAN_REVISION_FIELDS),
             },
         ],
     }
@@ -638,6 +902,8 @@ def _pending_input_evidence_refs(pending_inputs, changed_pending):
     for item in pending_inputs or []:
         if not isinstance(item, dict):
             continue
+        if item.get("input_kind") == "interrupted_action_recovery":
+            continue
         pending_id = str(item.get("pending_input_id") or "").strip()
         if pending_id not in changed:
             continue
@@ -679,32 +945,54 @@ def apply_task_status_update(
     _normalize_update_statuses(item_updates)
     _normalize_update_statuses(acceptance_updates)
     if not item_updates and not acceptance_updates:
+        item_example_id = next((
+            str(item.get("item_id") or "").strip()
+            for item in guide.get("items") or []
+            if isinstance(item, dict)
+            and str(item.get("item_id") or "").strip()
+        ), "<当前任务项ID>")
+        acceptance_example_id = next((
+            str(item.get("acceptance_id") or "").strip()
+            for item in guide.get("acceptance") or []
+            if isinstance(item, dict)
+            and str(item.get("acceptance_id") or "").strip()
+        ), "<当前验收项ID>")
+        expected_fields = {
+            "items": {
+                item_example_id: {
+                    "status": "done",
+                    "evidence_refs": ["EV-..."],
+                }
+            },
+            "acceptance": {
+                acceptance_example_id: {
+                    "status": "passed",
+                    "evidence_refs": ["EV-..."],
+                }
+            },
+        }
+        item_example = json.dumps(
+            expected_fields["items"],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        acceptance_example = json.dumps(
+            expected_fields["acceptance"],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         return {
             "status": "rejected",
             "reason": "task_status_update_empty",
             "details": {
                 "hint": (
                     "update_task_status 必须提交结构字段；不要只写 reason，"
-                    "reason 不会改变账本状态。任务项写 "
-                    'fields.items={"task_01":{"status":"done",'
-                    '"evidence_refs":["EV-..."]}}；验收项写 '
-                    'fields.acceptance={"acc_01":{"status":"passed",'
-                    '"evidence_refs":["EV-..."]}}。'
+                    "reason 不会改变账本状态。ID 必须逐字复制当前看板，"
+                    "禁止改大小写、连字符、下划线或补零。任务项写 "
+                    f"fields.items={item_example}；验收项写 "
+                    f"fields.acceptance={acceptance_example}。"
                 ),
-                "expected_fields": {
-                    "items": {
-                        "task_01": {
-                            "status": "done",
-                            "evidence_refs": ["EV-..."],
-                        }
-                    },
-                    "acceptance": {
-                        "acc_01": {
-                            "status": "passed",
-                            "evidence_refs": ["EV-..."],
-                        }
-                    },
-                },
+                "expected_fields": expected_fields,
             },
         }
     _apply_submission_evidence_refs(
@@ -766,7 +1054,9 @@ def apply_task_status_update(
         label="acceptance",
         final_statuses=ACCEPTANCE_COMPLETION_STATUSES,
     )
-    known_evidence_refs = _known_task_evidence_refs(evidence_context)
+    known_evidence_refs = _known_task_evidence_refs(
+        evidence_context, guide=guide,
+    )
     blocker_evidence_refs = _known_blocker_evidence_refs(
         evidence_context,
         guide,
@@ -832,6 +1122,7 @@ def apply_task_status_update(
                 "known_evidence_items": _feedback_known_evidence_items(
                     evidence_context,
                     known_evidence_refs,
+                    guide=guide,
                 ),
                 "hint": (
                     "不要猜造 EV-*；直接按 known_evidence_items 的来源选择 ref，"
@@ -879,6 +1170,7 @@ def apply_task_status_update(
                     "known_evidence_items": _feedback_known_evidence_items(
                         evidence_context,
                         known_evidence_refs,
+                        guide=guide,
                     ),
                     "hint": (
                         "报告正文里自写的 EV-* 不是 Runtime evidence；"
@@ -914,6 +1206,454 @@ def apply_task_status_update(
         "updated_items": changed_items,
         "updated_acceptance": changed_acceptance,
     }
+
+
+class _TaskPlanStructureError(ValueError):
+    def __init__(self, reason, details=None):
+        super().__init__(reason)
+        self.reason = str(reason or "task_plan_structure_invalid")
+        self.details = dict(details or {})
+
+
+def _task_plan_reject(reason, details=None):
+    return {
+        "status": "rejected",
+        "reason": str(reason or "task_plan_structure_invalid"),
+        "details": dict(details or {}),
+    }
+
+
+def _normalize_plan_text_list(value):
+    result = []
+    for item in _normalize_sequence(value):
+        if not isinstance(item, str):
+            raise _TaskPlanStructureError(
+                "task_plan_text_list_invalid",
+                {"value_type": type(item).__name__},
+            )
+        text = item.strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def _canonical_source_requirements(value, *, strict=False):
+    records = []
+    allowed = {
+        "requirement_id", "req_id", "id", "source_ref",
+        "summary", "title", "description", "text",
+    }
+    seen = set()
+    for index, item in enumerate(_normalize_sequence(value), start=1):
+        if not isinstance(item, dict):
+            raise _TaskPlanStructureError(
+                "bootstrap_invalid_source_requirements",
+                {
+                    "invalid_requirements": [{
+                        "index": index,
+                        "missing_fields": ["object"],
+                    }],
+                    "repair_hint": (
+                        "逐条提交 source_requirements="
+                        "[{requirement_id, source_ref, summary}]。"
+                    ),
+                },
+            )
+        _reject_unknown_plan_record_fields(
+            item, allowed, "source_requirements", index, strict
+        )
+        requirement_id = str(
+            item.get("requirement_id")
+            or item.get("req_id")
+            or item.get("id")
+            or ""
+        ).strip()
+        source_ref = str(item.get("source_ref") or "").strip()
+        summary = str(
+            item.get("summary")
+            or item.get("title")
+            or item.get("description")
+            or item.get("text")
+            or ""
+        ).strip()
+        missing = []
+        if not requirement_id:
+            missing.append("requirement_id")
+        if not source_ref:
+            missing.append("source_ref")
+        if not summary:
+            missing.append("summary")
+        if missing:
+            raise _TaskPlanStructureError(
+                "bootstrap_invalid_source_requirements",
+                {"invalid_requirements": [{
+                    "index": index,
+                    "requirement_id": requirement_id or f"req_{index:02d}",
+                    "missing_fields": missing,
+                    "repair_hint": (
+                        "为该来源需求补充中文自然语言 "
+                        "summary/title/description。"
+                        if "summary" in missing else
+                        "补齐 requirement_id、source_ref 与 summary。"
+                    ),
+                }],
+                 "repair_hint": (
+                     "逐条提交 source_requirements="
+                     "[{requirement_id, source_ref, summary}]。"
+                 )},
+            )
+        if requirement_id in seen:
+            raise _TaskPlanStructureError(
+                "duplicate_task_plan_record_ids",
+                {"section": "source_requirements", "ids": [requirement_id]},
+            )
+        seen.add(requirement_id)
+        records.append({
+            "requirement_id": requirement_id,
+            "source_ref": source_ref,
+            "summary": summary,
+        })
+    return records
+
+
+def _canonical_plan_items(value, *, strict=False):
+    records = []
+    allowed = {
+        "item_id", "id", "title", "summary", "description", "text", "name",
+        "required", "mandatory", "requirement_refs", "source_requirement_refs",
+        "status", "evidence_refs", "reason",
+    }
+    seen = set()
+    for index, item in enumerate(_normalize_sequence(value), start=1):
+        if not isinstance(item, dict):
+            raise _TaskPlanStructureError(
+                "task_plan_item_invalid", {"index": index, "expected": "object"}
+            )
+        _reject_unknown_plan_record_fields(item, allowed, "items", index, strict)
+        _reject_submitted_lifecycle_fields(item, "items", index, strict)
+        item_id = str(item.get("item_id") or item.get("id") or "").strip()
+        title = str(
+            item.get("title")
+            or item.get("summary")
+            or item.get("description")
+            or item.get("text")
+            or item.get("name")
+            or ""
+        ).strip()
+        if not item_id or not title:
+            raise _TaskPlanStructureError(
+                "task_plan_item_invalid",
+                {
+                    "index": index,
+                    "missing_fields": [
+                        field
+                        for field, value in (("item_id", item_id), ("title", title))
+                        if not value
+                    ],
+                },
+            )
+        if item_id in seen:
+            raise _TaskPlanStructureError(
+                "duplicate_task_plan_record_ids",
+                {"section": "items", "ids": [item_id]},
+            )
+        seen.add(item_id)
+        record = {
+            "item_id": item_id,
+            "title": title,
+            "required": _plan_required_value(item),
+        }
+        requirement_refs = _normalize_plan_text_list(
+            item.get("requirement_refs")
+            if "requirement_refs" in item
+            else item.get("source_requirement_refs")
+        )
+        if requirement_refs:
+            record["requirement_refs"] = requirement_refs
+        _copy_plan_lifecycle(record, item, default_status="open")
+        records.append(record)
+    return records
+
+
+def _canonical_plan_acceptance(value, *, strict=False):
+    records = []
+    allowed = {
+        "acceptance_id", "acc_id", "id", "description", "summary", "title",
+        "text", "target", "kind", "required", "mandatory", "item_ref", "item_refs",
+        "requirement_refs", "source_requirement_refs", "status",
+        "evidence_refs", "reason",
+    }
+    seen = set()
+    for index, item in enumerate(_normalize_sequence(value), start=1):
+        if not isinstance(item, dict):
+            raise _TaskPlanStructureError(
+                "task_plan_acceptance_invalid",
+                {"index": index, "expected": "object"},
+            )
+        _reject_unknown_plan_record_fields(
+            item, allowed, "acceptance", index, strict
+        )
+        _reject_submitted_lifecycle_fields(item, "acceptance", index, strict)
+        acceptance_id = str(
+            item.get("acceptance_id") or item.get("acc_id") or item.get("id") or ""
+        ).strip()
+        description = str(
+            item.get("description")
+            or item.get("summary")
+            or item.get("title")
+            or item.get("text")
+            or item.get("target")
+            or ""
+        ).strip()
+        if not acceptance_id or not description:
+            raise _TaskPlanStructureError(
+                "task_plan_acceptance_invalid",
+                {
+                    "index": index,
+                    "missing_fields": [
+                        field
+                        for field, value in (
+                            ("acceptance_id", acceptance_id),
+                            ("description", description),
+                        )
+                        if not value
+                    ],
+                },
+            )
+        if acceptance_id in seen:
+            raise _TaskPlanStructureError(
+                "duplicate_task_plan_record_ids",
+                {"section": "acceptance", "ids": [acceptance_id]},
+            )
+        seen.add(acceptance_id)
+        record = {
+            "acceptance_id": acceptance_id,
+            "description": description,
+            "required": _plan_required_value(item),
+        }
+        item_refs = _normalize_plan_text_list(
+            item.get("item_refs")
+            if "item_refs" in item
+            else item.get("item_ref")
+        )
+        requirement_refs = _normalize_plan_text_list(
+            item.get("requirement_refs")
+            if "requirement_refs" in item
+            else item.get("source_requirement_refs")
+        )
+        if item_refs:
+            record["item_refs"] = item_refs
+        if requirement_refs:
+            record["requirement_refs"] = requirement_refs
+        for field in ("kind", "target"):
+            if field in item and str(item.get(field) or "").strip():
+                record[field] = str(item.get(field) or "").strip()
+        _copy_plan_lifecycle(record, item, default_status="pending")
+        records.append(record)
+    return records
+
+
+def _reject_unknown_plan_record_fields(item, allowed, section, index, strict):
+    if not strict:
+        return
+    unknown = sorted(set(item) - set(allowed))
+    if unknown:
+        raise _TaskPlanStructureError(
+            "task_plan_record_fields_unknown",
+            {"section": section, "index": index, "fields": unknown},
+        )
+
+
+def _reject_submitted_lifecycle_fields(item, section, index, strict):
+    if not strict:
+        return
+    forbidden = sorted(
+        field for field in ("status", "evidence_refs", "reason") if field in item
+    )
+    if forbidden:
+        raise _TaskPlanStructureError(
+            "task_plan_revision_lifecycle_fields_forbidden",
+            {"section": section, "index": index, "fields": forbidden},
+        )
+
+
+def _plan_required_value(item):
+    if "required" in item:
+        value = item.get("required")
+    elif "mandatory" in item:
+        value = item.get("mandatory")
+    else:
+        return True
+    if not isinstance(value, bool):
+        raise _TaskPlanStructureError(
+            "task_plan_required_flag_invalid",
+            {"value_type": type(value).__name__},
+        )
+    return value
+
+
+def _copy_plan_lifecycle(target, source, *, default_status):
+    status = str(source.get("status") or default_status).strip() or default_status
+    target["status"] = status
+    if "evidence_refs" in source:
+        target["evidence_refs"] = _normalize_evidence_refs(
+            source.get("evidence_refs")
+        )
+    if "reason" in source:
+        target["reason"] = str(source.get("reason") or "").strip()
+
+
+def _unknown_refs(refs, known):
+    return _dedupe(ref for ref in refs if ref not in known)
+
+
+def _plan_source_ref_declared(requirement_ref, source_refs):
+    requirement = _plan_source_ref_key(requirement_ref)
+    if not requirement:
+        return False
+    requirement_basename = requirement.rsplit("/", 1)[-1]
+    for source_ref in source_refs or []:
+        source = _plan_source_ref_key(source_ref)
+        if not source:
+            continue
+        if requirement == source:
+            return True
+        source_basename = source.rsplit("/", 1)[-1]
+        if "*" in source or "?" in source:
+            if (
+                    fnmatch.fnmatch(requirement, source)
+                    or fnmatch.fnmatch(requirement_basename, source_basename)):
+                return True
+        elif requirement_basename and requirement_basename == source_basename:
+            return True
+        elif requirement.startswith(source.rstrip("/") + "/"):
+            return True
+        elif requirement.endswith("/" + source) or source.endswith("/" + requirement):
+            return True
+    return False
+
+
+def _plan_source_ref_key(value):
+    text = str(value or "").strip().replace("\\", "/")
+    if "#" in text:
+        text = text.split("#", 1)[0]
+    return text.rstrip("/").lower()
+
+
+def _dedupe(values):
+    result = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def _task_plan_projection_from_normalized(normalized):
+    return {
+        "source_refs": list(normalized.get("source_refs") or []),
+        "source_requirements": copy.deepcopy(
+            normalized.get("source_requirements") or []
+        ),
+        "items": [
+            {
+                key: copy.deepcopy(item.get(key))
+                for key in ("item_id", "title", "required", "requirement_refs")
+            }
+            for item in normalized.get("items") or []
+        ],
+        "acceptance": [
+            {
+                key: copy.deepcopy(item.get(key))
+                for key in (
+                    "acceptance_id", "description", "required", "kind", "target",
+                    "item_refs", "requirement_refs",
+                )
+                if key in item
+            }
+            for item in normalized.get("acceptance") or []
+        ],
+        "risk_notes": list(normalized.get("risk_notes") or []),
+    }
+
+
+def _task_plan_projection_text(projection):
+    return json.dumps(
+        projection,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+
+
+def _protected_plan_record_changes(before, after, submitted_sections):
+    changes = {}
+    for section, id_key, completed in (
+        ("items", "item_id", PLAN_SETTLED_RECORD_STATUSES),
+        ("acceptance", "acceptance_id", PLAN_SETTLED_RECORD_STATUSES),
+    ):
+        if section not in submitted_sections:
+            continue
+        before_records = {
+            str(item.get(id_key) or "").strip(): item
+            for item in before.get(section) or []
+            if isinstance(item, dict)
+        }
+        after_records = {
+            str(item.get(id_key) or "").strip(): item
+            for item in after.get(section) or []
+            if isinstance(item, dict)
+        }
+        blocked = []
+        for record_id, record in before_records.items():
+            status = str(record.get("status") or "").strip().lower()
+            if status not in completed:
+                continue
+            replacement = after_records.get(record_id)
+            if replacement is None or _plan_record_structure(
+                    record, section) != _plan_record_structure(replacement, section):
+                blocked.append(record_id)
+        if blocked:
+            changes[section] = blocked
+    return changes
+
+
+def _plan_record_structure(record, section):
+    keys = (
+        ("item_id", "title", "required", "requirement_refs")
+        if section == "items"
+        else (
+            "acceptance_id",
+            "description",
+            "required",
+            "kind",
+            "target",
+            "item_refs",
+            "requirement_refs",
+        )
+    )
+    return {
+        key: copy.deepcopy(record.get(key)) for key in keys if key in record
+    }
+
+
+def _restore_plan_record_lifecycle(existing, replacements, id_key):
+    index = {
+        str(item.get(id_key) or "").strip(): item
+        for item in existing or []
+        if isinstance(item, dict) and str(item.get(id_key) or "").strip()
+    }
+    result = []
+    for replacement in replacements or []:
+        record = copy.deepcopy(replacement)
+        prior = index.get(str(record.get(id_key) or "").strip())
+        if prior is not None:
+            for field in ("status", "evidence_refs", "reason"):
+                if field in prior:
+                    record[field] = copy.deepcopy(prior.get(field))
+                else:
+                    record.pop(field, None)
+        result.append(record)
+    return result
 
 
 def _normalize_sequence(value):
@@ -1292,6 +2032,7 @@ def _unknown_task_evidence_refs(
 def _known_task_evidence_refs(
         evidence_context,
         *,
+        guide=None,
         cache_min_round=None,
         include_cache=True,
         include_active_corpus=True):
@@ -1306,9 +2047,15 @@ def _known_task_evidence_refs(
                 refs.add(text)
     for result in _task_evidence_results(
             context,
+            guide=guide,
             cache_min_round=cache_min_round,
             include_cache=include_cache):
         if not isinstance(result, dict):
+            continue
+        recovery_receipt = _action_recovery_backend_receipt(result)
+        if recovery_receipt is not None:
+            refs.update(_normalize_evidence_refs(
+                recovery_receipt.get("completion_evidence_refs")))
             continue
         status = str(result.get("status") or "").strip().lower()
         if status not in SUCCESS_EVIDENCE_STATUSES:
@@ -1345,7 +2092,7 @@ def _known_blocker_evidence_refs(evidence_context, guide=None):
     if evidence_context is None:
         return None
     guide = guide if isinstance(guide, dict) else {}
-    refs = set(_normalize_evidence_refs(guide.get("source_refs")))
+    refs = set()
     for records in (guide.get("items") or [], guide.get("acceptance") or []):
         for record in records:
             if isinstance(record, dict):
@@ -1353,6 +2100,7 @@ def _known_blocker_evidence_refs(evidence_context, guide=None):
     created_round = _positive_round(guide.get("created_round"))
     refs.update(_known_task_evidence_refs(
         evidence_context,
+        guide=guide,
         cache_min_round=created_round,
         include_cache=created_round is not None,
         include_active_corpus=False,
@@ -1360,9 +2108,15 @@ def _known_blocker_evidence_refs(evidence_context, guide=None):
     context = evidence_context if isinstance(evidence_context, dict) else {}
     for result in _task_evidence_results(
             context,
+            guide=guide,
             cache_min_round=created_round,
             include_cache=created_round is not None):
         if not isinstance(result, dict):
+            continue
+        recovery_receipt = _action_recovery_backend_receipt(result)
+        if recovery_receipt is not None:
+            refs.update(_normalize_evidence_refs(
+                recovery_receipt.get("blocker_evidence_refs")))
             continue
         status = str(result.get("status") or "").strip().lower()
         if status not in BLOCKER_EVIDENCE_STATUSES:
@@ -1406,6 +2160,7 @@ def _feedback_known_evidence_items(
         known_evidence_refs,
         limit=12,
         *,
+        guide=None,
         cache_min_round=None,
         include_cache=True):
     if evidence_context is None:
@@ -1430,6 +2185,7 @@ def _feedback_known_evidence_items(
 
     for result in _task_evidence_results(
             context,
+            guide=guide,
             cache_min_round=cache_min_round,
             include_cache=include_cache):
         if len(items) >= limit:
@@ -1470,11 +2226,31 @@ def _feedback_blocker_evidence_items(
     include_cache = created_round is not None
     for result in _task_evidence_results(
             context,
+            guide=guide,
             cache_min_round=created_round,
             include_cache=include_cache):
         if len(items) >= limit:
             break
         if not isinstance(result, dict):
+            continue
+        recovery_receipt = _action_recovery_backend_receipt(result)
+        if recovery_receipt is not None:
+            for action in recovery_receipt.get("items") or []:
+                ref = str(action.get("evidence_ref") or "").strip()
+                if (
+                        action.get("outcome") not in {"applied", "known_success"}
+                        and ref in known and ref not in seen):
+                    seen.add(ref)
+                    outcome = str(action.get("outcome") or "blocked")
+                    items.append({
+                        "ref": ref,
+                        "tool_id": str(action.get("tool_id") or ""),
+                        "status": "blocked",
+                        "reason": outcome,
+                        "summary": (
+                            f"中断动作 {action.get('action_id')}：{outcome}"
+                        ),
+                    })
             continue
         status = str(result.get("status") or "").strip().lower()
         call_id = str(
@@ -1506,6 +2282,7 @@ def _feedback_blocker_evidence_items(
             evidence_context,
             blocker_evidence_refs,
             limit=limit,
+            guide=guide,
             cache_min_round=created_round,
             include_cache=include_cache):
         if len(items) >= limit:
@@ -1536,10 +2313,15 @@ def _blocked_record_labels(item_updates, acceptance_updates):
 
 
 def _blocked_correction_example(records, blocker_items):
-    record = str((records or ["items:item_01"])[0] or "items:item_01")
+    record = str(
+        (records or ["items:<当前任务项ID>"])[0]
+        or "items:<当前任务项ID>"
+    )
     section, _, record_id = record.partition(":")
     section = "acceptance" if section == "acceptance" else "items"
-    record_id = record_id or ("acc_01" if section == "acceptance" else "item_01")
+    record_id = record_id or (
+        "<当前验收项ID>" if section == "acceptance" else "<当前任务项ID>"
+    )
     ref = str(((blocker_items or [{}])[0]).get("ref") or "call:<call_id>")
     id_key = "acceptance_id" if section == "acceptance" else "item_id"
     return {
@@ -1562,15 +2344,62 @@ def _positive_round(value):
     return value if value > 0 else None
 
 
+def _action_recovery_backend_receipt(receipt):
+    if not isinstance(receipt, dict):
+        return None
+    if (
+            receipt.get("schema_version") != "action_recovery_receipt.v2"
+            or str(receipt.get("tool_id") or "").strip()
+            != "runtime_action_recovery"
+            or str(receipt.get("status") or "").strip().lower() != "applied"
+    ):
+        return None
+    return receipt
+
+
+def _task_recovery_receipt(context, guide):
+    guide = guide if isinstance(guide, dict) else {}
+    allowed = {
+        ref
+        for item in guide.get("pending_inputs") or []
+        if isinstance(item, dict)
+        and item.get("input_kind") == "interrupted_action_recovery"
+        for ref in _normalize_evidence_refs(item.get("source_refs"))
+    }
+    if not allowed:
+        return None
+    receipt = (context or {}).get("action_recovery_receipt")
+    receipt = _action_recovery_backend_receipt(receipt)
+    if receipt is None:
+        return None
+    if not allowed.intersection(_normalize_evidence_refs(receipt.get("source_refs"))):
+        return None
+    receipt = dict(receipt)
+    receipt["items"] = [item for item in receipt.get("items") or []
+                        if item.get("evidence_ref") in allowed]
+    for key in ("completion_evidence_refs", "blocker_evidence_refs",
+                "evidence_refs", "source_refs"):
+        receipt[key] = [ref for ref in receipt.get(key) or [] if ref in allowed]
+    return receipt
+
+
+def _task_evidence_protocol_receipt(receipt):
+    if not isinstance(receipt, dict):
+        return False
+    return str(receipt.get("tool_id") or "").strip() != "guide_submit"
+
+
 def _task_evidence_results(
-        context, *, cache_min_round=None, include_cache=True):
+        context, *, guide=None, cache_min_round=None, include_cache=True):
     results = list(context.get("prior_general_tool_results") or [])
     results.extend(
         receipt
         for receipt in context.get("prior_protocol_tool_receipts") or []
-        if isinstance(receipt, dict)
-        and str(receipt.get("tool_id") or "").strip() != "guide_submit"
+        if _task_evidence_protocol_receipt(receipt)
     )
+    recovery_receipt = _task_recovery_receipt(context, guide)
+    if recovery_receipt is not None:
+        results.append(recovery_receipt)
     if not include_cache:
         return results
     context_store = context.get("context_store")
@@ -1599,8 +2428,7 @@ def _task_evidence_results(
             results.extend(
                 receipt
                 for receipt in receipts
-                if isinstance(receipt, dict)
-                and str(receipt.get("tool_id") or "").strip() != "guide_submit"
+                if _task_evidence_protocol_receipt(receipt)
             )
     return results
 

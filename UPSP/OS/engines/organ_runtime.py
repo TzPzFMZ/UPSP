@@ -66,18 +66,16 @@ class OrganResult:
 
 
 def organ_runtime_context(runtime, context):
-    try:
-        visible_focus_id = runtime.workbench.get("base.focus") or ""
-    except Exception:
-        visible_focus_id = ""
     runner = runtime.reaction_loop_runner
     return {
         "round_num": context.round_num,
         "interaction_meta": context.interaction_meta,
         "pending_memory_ids": {},
-        "visible_focus_id": visible_focus_id,
+        "visible_container_targets": tuple(
+            runtime.assembler.visible_container_targets()),
         "chronicle_store": getattr(runner, "chronicle_store", None),
-        "chronicle_focus": getattr(runner, "chronicle_focus", None),
+        "chronicle_write_scope": getattr(
+            runner, "chronicle_write_scope", None),
         "memory_heat_boosted_ids": context.memory_heat_boosted_ids,
     }
 
@@ -270,11 +268,13 @@ class OrganRuntime:
                                     "round_num", frame.get("round_num", 0)),
                                 interaction_meta=context.get("interaction_meta"),
                                 pending_memory_ids=context.get("pending_memory_ids"),
-                                visible_focus_id=context.get("visible_focus_id", ""),
+                                visible_container_targets=context.get(
+                                    "visible_container_targets", ()),
                                 visible_relation_body_ids=context.get(
                                     "visible_relation_body_ids", ()),
                                 chronicle_store=context.get("chronicle_store"),
-                                chronicle_focus=context.get("chronicle_focus"),
+                                chronicle_write_scope=context.get(
+                                    "chronicle_write_scope"),
                                 memory_heat_boosted_ids=context.get(
                                     "memory_heat_boosted_ids"),
                             )

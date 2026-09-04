@@ -241,7 +241,7 @@ class FakeHeartbeat:
         self.pause_calls += 1
         self._paused = True
 
-    def resume(self):
+    def resume(self, run_tick=True):
         self.resume_calls += 1
         self._paused = False
 
@@ -279,6 +279,7 @@ class FakeRuntime:
         self.audit = FakeAudit()
         self.on_round_started = None
         self.on_round_finished = None
+        self.on_round_released = None
         self._stopped = threading.Event()
         self.execution_permission_level = "unlimited"
         self.final_response_max_chars = None
@@ -325,6 +326,7 @@ class FakeRuntime:
             })
         self.on_round_finished(number, "interactive", result)
         self.control.finish_round(False)
+        self.on_round_released(number, "interactive", result)
         return True
 
     def cancel_pending_input(self):
@@ -972,17 +974,148 @@ def test_spec704_service_send_and_stop_receipts_are_resident(tmp_path):
 def test_spec704_runtime_error_callback_keeps_round_admission_closed():
     runtime = FakeRuntime()
     observed = []
-    runtime.on_round_finished = lambda *_args: observed.append(
-        runtime.control.snapshot(runtime.hb)["round_in_flight"])
+    runtime.on_round_finished = lambda *_args: observed.append((
+        "ledger", runtime.control.snapshot(runtime.hb)["round_in_flight"]))
+    runtime.on_round_released = lambda *_args: observed.append((
+        "released", runtime.control.snapshot(runtime.hb)["round_in_flight"]))
     runtime.control.establish_round("interactive", lambda: 704)
 
     runtime.control.handle_round_error(
         runtime, object(), RuntimeError("failed"))
 
-    assert observed == [True]
+    assert observed == [("ledger", True), ("released", False)]
     assert runtime.control.snapshot(runtime.hb)["round_in_flight"] is False
     assert runtime.control.stop_latched is True
     assert runtime.hb._paused is True
+
+
+def test_spec778_resident_operation_is_signalled_only_after_runtime_release(
+        tmp_path):
+    runtime = FakeRuntime()
+    resident = service(tmp_path / "runtime", runtime)
+    resident.start()
+    operation = resident._begin_operation("send", "limited")
+    try:
+        runtime.control.establish_round("interactive", lambda: 778)
+        result = {"response": "done", "_settlement": {"status": "settled"}}
+
+        resident._on_round_finished(778, "interactive", result)
+
+        assert operation["event"].is_set() is False
+        assert runtime.runtime_status()["round_in_flight"] is True
+
+        runtime.control.finish_round(False)
+        resident._on_round_released(778, "interactive", result)
+
+        assert operation["event"].is_set() is True
+        assert operation["result"]["round_num"] == 778
+        assert runtime.runtime_status()["round_in_flight"] is False
+    finally:
+        resident._end_operation(operation)
+        resident.close()
+
+
+def test_spec788_resident_counts_only_closed_rounds_for_action_retention(tmp_path):
+    runtime = FakeRuntime()
+    observed = []
+
+    class ActionStore:
+        def note_round_closed(self, round_num):
+            observed.append(round_num)
+
+    runtime.action_recovery_store = ActionStore()
+    resident = service(tmp_path / "runtime", runtime)
+    resident.runtime = runtime
+    try:
+        resident._on_round_finished(
+            788, "interactive", {"_settlement": {"status": "settled"}})
+        resident._on_round_finished(
+            789, "interactive", {"_settlement": {"status": "unsettled"}})
+
+        assert observed == [788]
+    finally:
+        resident.close()
+
+
+def test_spec789_action_retention_failure_retries_only_proven_closed_rounds(
+        tmp_path):
+    runtime = FakeRuntime()
+    observed = []
+
+    class ActionStore:
+        def note_round_closed(self, round_num):
+            observed.append(round_num)
+            if observed == [788]:
+                raise OSError("journal temporarily unavailable")
+
+    runtime.action_recovery_store = ActionStore()
+    resident = service(tmp_path / "runtime", runtime)
+    resident.runtime = runtime
+    try:
+        resident._on_round_finished(
+            788, "interactive", {"_settlement": {"status": "settled"}})
+        assert resident.last_outcome[
+            "action_recovery_retention_pending_rounds"] == [788]
+
+        resident._on_round_finished(
+            789, "interactive", {"_settlement": {"status": "unsettled"}})
+        assert observed == [788]
+        assert resident.last_outcome[
+            "action_recovery_retention_pending_rounds"] == [788]
+
+        resident._on_round_finished(
+            790, "interactive", {"_settlement": {"status": "degraded"}})
+        assert observed == [788, 788, 790]
+        assert "action_recovery_retention_pending_rounds" not in (
+            resident.last_outcome)
+        assert "action_recovery_retention_error" not in resident.last_outcome
+    finally:
+        resident.close()
+
+
+def test_spec789_startup_retries_persisted_action_retention_round(tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    (runtime_dir / "supervisor.json").write_text(json.dumps({
+        "schema_version": "upsp_runtime_supervisor.v2",
+        "state": "stopped",
+        "process_id": 111,
+        "session_id": "old-session",
+        "active_pid": "PID-704",
+        "active_instance_id": "meta",
+        "host": {"address": "127.0.0.1", "port": 8770},
+        "current_round": None,
+        "round_type": None,
+        "phase": "idle",
+        "stop_requested": False,
+        "heartbeat_suspended": False,
+        "last_outcome": {
+            "action_recovery_retention_pending_rounds": [788],
+        },
+        "updated_at": "2026-07-24T00:00:00+08:00",
+    }), encoding="utf-8")
+    runtime = FakeRuntime()
+    observed = []
+
+    class ActionStore:
+        def note_round_closed(self, round_num):
+            observed.append(round_num)
+
+        @staticmethod
+        def summary():
+            return {"pending": False, "round": None}
+
+    runtime.action_recovery_store = ActionStore()
+    resident = service(runtime_dir, runtime)
+    resident.start()
+    try:
+        assert observed == [788]
+        supervisor = json.loads(
+            resident.supervisor_path.read_text(encoding="utf-8"))
+        assert "action_recovery_retention_pending_rounds" not in (
+            supervisor["last_outcome"])
+    finally:
+        resident.close()
 
 
 def test_spec704_stop_during_local_cleanup_is_idempotent_and_does_not_kill_io(
@@ -1091,8 +1224,129 @@ def test_spec704_crash_recovery_marks_one_unsettled_without_provider(
     assert runtime.executor.cancelled == 0
 
 
-def test_spec704_existing_unsettled_still_repairs_local_recovery(tmp_path, monkeypatch):
+def test_spec788_crash_recovery_classifies_actions_before_unsettled_closeout(
+        tmp_path, monkeypatch):
+    from data.action_recovery_store import ActionRecoveryStore
+
+    store = FakeAuditStore([{
+        "event_type": "round_started",
+        "payload": {"input_snapshot": {"trigger": {"message": "继续"}}},
+    }])
+    action_store = ActionRecoveryStore(
+        tmp_path / "context" / "action_recovery_pending.json",
+    )
+    action_store.prepare_opaque(
+        tool_id="shell_command",
+        request_sha256="8" * 64,
+        runtime_context={
+            "round_num": 704,
+            "iteration": 2,
+            "frame_id": "R000704:reaction:2",
+        },
+        call_id="call-shell",
+        target="workspace",
+    )
+
+    class State:
+        def clear_flags(self, _flags):
+            return None
+
+        def set_phase(self, _phase):
+            return None
+
+        def load(self):
+            return {"base": {}}
+
+    class Backups:
+        def __init__(self):
+            self.rows = []
+
+        def read_backups(self):
+            return list(self.rows)
+
+        def append_backup(self, round_num, state, reason):
+            self.rows.append({
+                "round": round_num,
+                "state": state,
+                "reason": reason,
+            })
+
+    runtime = FakeRuntime()
+    runtime.audit = FakeAudit(store)
+    runtime.sm = State()
+    runtime.state_backup_store = Backups()
+    runtime.action_recovery_store = action_store
+    monkeypatch.setattr(
+        "engines.resident_runtime.settle_open_relay_intents",
+        lambda *_args, **_kwargs: None,
+    )
+
+    resident = service(tmp_path / "runtime", runtime)
+    previous = {
+        "state": "running",
+        "current_round": 704,
+        "process_id": 111,
+        "session_id": "old-session",
+    }
+    resident._recover_interrupted_round(runtime, previous)
+    resident._recover_interrupted_round(runtime, previous)
+
+    event_types = [item["event_type"] for item in store.events]
+    assert event_types.index("action_recovery_classified") < event_types.index(
+        "runtime_process_interrupted")
+    assert action_store.summary()["outcome_unknown"] == 1
+    assert runtime.control.stop_latched is True
+    assert runtime.executor.cancelled == 0
+
+
+def test_spec789_closed_round_recovery_finishes_action_retention(tmp_path):
+    from data.action_recovery_store import ActionRecoveryStore
+
     store = FakeAuditStore([
+        {"event_type": "round_started"},
+        {"event_type": "round_closed"},
+    ])
+    action_store = ActionRecoveryStore(
+        tmp_path / "context" / "action_recovery_pending.json",
+    )
+    action_id = action_store.prepare_opaque(
+        tool_id="shell_command",
+        request_sha256="9" * 64,
+        runtime_context={
+            "round_num": 704,
+            "iteration": 2,
+            "frame_id": "R000704:reaction:2",
+        },
+        call_id="call-shell",
+        target="workspace",
+    )
+    result = {"action_id": action_id, "status": "ok", "reason": ""}
+    action_store.record_results([result])
+    action_store.settle_results([result])
+
+    runtime = FakeRuntime()
+    runtime.audit = FakeAudit(store)
+    runtime.action_recovery_store = action_store
+    resident = service(tmp_path / "runtime", runtime)
+    resident._recover_interrupted_round(runtime, {
+        "state": "running",
+        "current_round": 704,
+        "process_id": 111,
+        "session_id": "old-session",
+    })
+
+    assert action_store.load()["items"] == []
+    assert [item["event_type"] for item in store.events] == [
+        "round_started", "round_closed"]
+
+
+def test_spec788_classified_interruption_without_actions_still_repairs_local_recovery(
+        tmp_path, monkeypatch):
+    store = FakeAuditStore([
+        {
+            "event_type": "action_recovery_classified",
+            "payload": {"pending": False, "round": 704},
+        },
         {"event_type": "runtime_process_interrupted"},
         {"event_type": "round_unsettled"},
     ])
@@ -1119,6 +1373,10 @@ def test_spec704_existing_unsettled_still_repairs_local_recovery(tmp_path, monke
     runtime.audit = FakeAudit(store)
     runtime.sm = State()
     runtime.state_backup_store = Backups()
+    runtime.action_recovery_store = type("NoActionRecovery", (), {
+        "summary": staticmethod(lambda: {"pending": False, "round": None}),
+        "recovery_receipt": staticmethod(lambda: None),
+    })()
     monkeypatch.setattr(
         "engines.resident_runtime.settle_open_relay_intents",
         lambda *_args, **kwargs: calls.append(("relay", kwargs)),

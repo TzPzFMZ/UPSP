@@ -426,7 +426,6 @@ class TestSpec745RuntimeAudit(RuntimeTestMixin):
             path = request["path"]
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -598,8 +597,6 @@ class TestSpec745RuntimeAudit(RuntimeTestMixin):
         monkeypatch.setattr(runtime.heat, "tick_decay", lambda **kwargs: None)
         monkeypatch.setattr(runtime, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(runtime, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(runtime, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(runtime, "_process_memory_lifecycle", lambda *a, **kw: None)
         monkeypatch.setattr(runtime, "_process_rest_cycle", lambda *a, **kw: None)
 
         result = {"response": "FINAL", "_interaction_meta": self._confirmed_meta()}

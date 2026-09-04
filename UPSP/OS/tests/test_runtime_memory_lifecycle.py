@@ -63,10 +63,10 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         monkeypatch.setattr(paths, f"{prefix}_META_JSON", str(meta_path))
         monkeypatch.setattr(paths, f"{prefix}_INDEX_MD", str(index_path), raising=False)
 
-    def test_cleanup_forgetting_skips_private_entries_and_keeps_public_behavior(
+    def test_reaction_forgetting_skips_private_entries_and_keeps_public_behavior(
             self, monkeypatch):
         from data.memory_store import MemoryStore
-        from engines.cleanup_pipeline import CleanupPipeline
+        from engines.reaction_metabolism import ReactionMetabolism
         from types import SimpleNamespace
 
         private_id = "MEM-PRIVATE1"
@@ -105,16 +105,16 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         )
         monkeypatch.setattr(
             MemoryStore, "verify_ltm_entry", lambda _self, _mem_id: "Full")
-        cleanup = CleanupPipeline(SimpleNamespace(
+        metabolism = ReactionMetabolism(SimpleNamespace(
             heat=Heat(),
             memory_store=MemoryStore(),
         ))
-        candidates, _to_abstract, _need_compress = cleanup._forgetting_candidates()
+        candidates, _to_abstract, _need_compress = metabolism._forgetting_candidates()
         assert candidates == [public_id]
         assert private_id not in candidates
 
     def test_spec735_private_upgrade_never_enters_public_ltm(self):
-        from engines.cleanup_pipeline import CleanupPipeline
+        from engines.reaction_metabolism import ReactionMetabolism
         from types import SimpleNamespace
 
         class Heat:
@@ -128,13 +128,13 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                 return {"id": "MEM-PRIVATE1", "access": "private"}
 
         result = {}
-        cleanup = CleanupPipeline(SimpleNamespace(
+        metabolism = ReactionMetabolism(SimpleNamespace(
             heat=Heat(),
             memory_store=Store(),
         ))
 
         with pytest.raises(RuntimeError, match="memory_lifecycle_failed"):
-            cleanup._process_memory_lifecycle(10, settlement_result=result)
+            metabolism.process_admission(10, settlement_result=result)
 
         assert result["_memory_lifecycle_receipts"] == [{
             "event": "memory_lifecycle_failed",
@@ -145,7 +145,7 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         }]
 
     def test_spec746_normal_upgrade_only_fills_stored_at_and_retains_stm(self):
-        from engines.cleanup_pipeline import CleanupPipeline
+        from engines.reaction_metabolism import ReactionMetabolism
         from types import SimpleNamespace
 
         calls = []
@@ -175,16 +175,55 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
                 calls.append(("admit", mem_id))
                 return {"stored_at": "2026-08-14T00:00:00+08:00"}
 
-        cleanup = CleanupPipeline(SimpleNamespace(
+        metabolism = ReactionMetabolism(SimpleNamespace(
             heat=Heat(),
             memory_store=Store(),
         ))
-        receipts = cleanup._process_memory_lifecycle(10)
+        receipts = metabolism.process_admission(10)
 
         assert calls == [("admit", "MEM-74300008")]
         assert receipts[0]["tier"] == "Full"
         assert receipts[0]["stored_at"] == "2026-08-14T00:00:00+08:00"
         assert receipts[0]["stm_retained"] is True
+
+    def test_spec786_terminal_failure_receipt_keeps_completed_cursor(
+            self, tmp_path, monkeypatch):
+        from engines.reaction_metabolism import MemoryLifecycleSettlementError
+
+        rt = self._make_runtime(tmp_path)
+        metabolism = rt.reaction_metabolism
+        monkeypatch.setattr(
+            metabolism.heat, "tick_decay", lambda round_num: True)
+        monkeypatch.setattr(
+            metabolism,
+            "process_forgetting",
+            lambda _round: [{"event": "forgotten", "mem_id": "MEM-ONE0001"}],
+        )
+        failed = {
+            "event": "memory_lifecycle_failed",
+            "status": "failed",
+            "mem_id": "MEM-TWO0002",
+        }
+
+        def fail_admission(_round):
+            raise MemoryLifecycleSettlementError(
+                "memory_lifecycle_failed:MEM-TWO0002", [failed])
+
+        monkeypatch.setattr(metabolism, "process_admission", fail_admission)
+
+        with pytest.raises(RuntimeError, match="memory_lifecycle_failed"):
+            metabolism.settle_terminal(21, [], terminal_kind="natural_final")
+
+        events = rt.audit.get_store().read_events(21)
+        receipt = next(
+            event["payload"] for event in reversed(events)
+            if event.get("event_type") == "reaction_terminal_metabolism_receipt"
+        )
+        assert receipt["status"] == "error"
+        assert [step["step"] for step in receipt["steps"]] == [
+            "heat_decay", "stm_forgetting"
+        ]
+        assert receipt["memory_lifecycle_receipts"][-1] == failed
 
     def test_ltm_degradation_candidates_use_countdown_not_weight(self, tmp_path, monkeypatch):
         import json

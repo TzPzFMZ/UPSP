@@ -69,7 +69,6 @@ CONTAINER_META_FIELDS = {
     "updated_at":  ("str",  "ISO时间戳"),
     "entries":     ("int",  "条目计数"),
     "tags":        ("list", "语义标签"),
-    "focus":       ("bool", "是否被 WB 焦点挂载"),
     # 扩展字段
     "linked_memories": ("list", "关联记忆条目ID"),
     "description":     ("str",  "容器描述"),
@@ -88,7 +87,6 @@ def default_container_meta(container_id, ctype, title=""):
         "updated_at": now,
         "entries": 0,
         "tags": [],
-        "focus": False,
         "linked_memories": [],
         "description": "",
     }
@@ -151,7 +149,7 @@ def validate_container_meta(meta):
     errors = []
     if "watched" in (meta or {}):
         errors.append("容器 meta 含退役字段 watched，请先运行迁移脚本")
-    required = ["id", "type", "title", "status", "created_at", "updated_at", "entries", "tags", "focus"]
+    required = ["id", "type", "title", "status", "created_at", "updated_at", "entries", "tags"]
     for k in required:
         if k not in meta:
             errors.append(f"容器 meta 缺字段: {k}")

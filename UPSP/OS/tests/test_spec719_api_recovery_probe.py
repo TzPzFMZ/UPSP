@@ -35,7 +35,7 @@ class TestSpec719ApiRecoveryProbe(RuntimeTestMixin):
                 interaction_meta=self._confirmed_meta(),
                 user_input_text="测试输入",
                 setup_messages=[],
-                internal_handoff=[],
+                setup_facts=[],
             )
 
         monkeypatch.setattr(runtime.setup_runner, "run", fake_setup)

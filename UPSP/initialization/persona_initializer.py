@@ -586,7 +586,6 @@ class PersonaInitializer:
                     "status": "active",
                     "updated_at": stamp["created_at"],
                     "summary_resident": False,
-                    "body_resident": False,
                     "aliases": aliases,
                     "tags": ["self"],
                 }],

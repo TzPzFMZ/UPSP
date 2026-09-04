@@ -9,6 +9,7 @@ from data.memory_store import (
     MEMORY_OVERLAY_FIELDS,
     _normalise_meta_entry,
     _read_memory_overlay,
+    project_memory_body,
     write_memory_overlay_entry,
 )
 from errors import EntryNotFoundError
@@ -26,7 +27,8 @@ class MemoryRecallProcessor:
 
     def __init__(
             self, *, memory_store, heat,
-            now_fn=local_now, instance_id=None, fault_hook=None):
+            now_fn=local_now, instance_id=None, fault_hook=None,
+            assembler=None):
         self.memory_store = memory_store
         self.heat = heat
         self.now_fn = now_fn
@@ -34,10 +36,12 @@ class MemoryRecallProcessor:
             instance_id or runtime_paths.ACTIVE_INSTANCE_ID or "meta"
         )
         self.fault_hook = fault_hook
+        self.assembler = assembler
 
     def recall(
             self, mem_id, *, round_num=None, boosted_ids=None,
-            reconsolidation_tracker=None, periodic_requested=False):
+            reconsolidation_tracker=None, periodic_requested=False,
+            transaction_commit=None, transaction_rollback=None):
         """Recall one public memory and return an auditable lifecycle result."""
         return self._apply(
             mem_id,
@@ -45,6 +49,8 @@ class MemoryRecallProcessor:
             boosted_ids=boosted_ids,
             reconsolidation_tracker=reconsolidation_tracker,
             periodic_requested=periodic_requested,
+            transaction_commit=transaction_commit,
+            transaction_rollback=transaction_rollback,
         )
 
     def inspect(self, mem_id):
@@ -86,7 +92,8 @@ class MemoryRecallProcessor:
 
     def _apply(
             self, mem_id, *, round_num, boosted_ids,
-            reconsolidation_tracker, periodic_requested):
+            reconsolidation_tracker, periodic_requested,
+            transaction_commit, transaction_rollback):
         clean_id = str(mem_id or "").strip()
         if not clean_id:
             raise MemoryRecallError("missing_mem_id")
@@ -147,6 +154,23 @@ class MemoryRecallProcessor:
                     decay_countdown_after = period
                     ltm_decay_reset_applied = True
 
+                if self.assembler is not None:
+                    prospective_meta = dict(updated_shared)
+                    if state["source"] == "ltm":
+                        overlay = _read_memory_overlay()["entries"].get(
+                            clean_id, {})
+                        prospective_meta.update({
+                            key: overlay.get(
+                                key, [] if key == "linked_containers" else ""
+                            )
+                            for key in MEMORY_OVERLAY_FIELDS
+                        })
+                    prospective_meta = _normalise_meta_entry(prospective_meta)
+                    self.assembler.preflight_resident_source_update(
+                        {"item_type": "memory", "item_id": clean_id},
+                        project_memory_body(target_body, prospective_meta),
+                    )
+
                 if state["source"] == "ltm":
                     tier = state["ltm"]["tier"]
                     self.memory_store.replace_ltm_entry(
@@ -194,6 +218,9 @@ class MemoryRecallProcessor:
                     ),
                 )
                 self._fault("after_verify")
+                if callable(transaction_commit):
+                    transaction_commit()
+                    self._fault("after_transaction_commit")
                 reconsolidation_item = None
                 if reconsolidation_tracker is not None:
                     reconsolidation_item = reconsolidation_tracker.register(
@@ -201,11 +228,22 @@ class MemoryRecallProcessor:
                         periodic_requested=periodic_requested,
                     )
             except Exception as exc:
+                external_rollback_error = None
+                if callable(transaction_rollback):
+                    try:
+                        transaction_rollback()
+                    except Exception as rollback_exc:
+                        external_rollback_error = rollback_exc
                 self._rollback(
                     stm_snapshot, ltm_snapshot, exc,
                     compression_manager=compression_manager,
                     compression_ledger_snapshot=compression_ledger_snapshot,
                 )
+                if external_rollback_error is not None:
+                    raise RuntimeError(
+                        "memory_recall_external_rollback_failed:"
+                        f"{type(external_rollback_error).__name__}"
+                    ) from exc
                 raise
 
             if heat_boost:

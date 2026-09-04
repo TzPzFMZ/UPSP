@@ -134,6 +134,64 @@ export interface ContextPane {
   content_blocks?: ContextContentBlock[];
 }
 
+export interface LedgerItem {
+  event_index: number;
+  event_type: string;
+  phase?: string;
+  iteration?: number | null;
+  frame_id?: string;
+  recorded_at?: string;
+  status?: string;
+  type?: string;
+  title?: string;
+  severity?: string;
+  detail_ref: string;
+}
+
+export type DialogueNodeType = "user" | "reasoning" | "progress" | "tool" | "final" | "failure";
+
+export interface DialogueNode {
+  node_id: string;
+  type: DialogueNodeType;
+  phase?: string;
+  frame_id?: string;
+  iteration?: number | null;
+  first_event_index: number;
+  first_event_sequence?: number;
+  status: string;
+  started_at?: string;
+  ended_at?: string;
+  content_raw?: string;
+  message?: string;
+  provider_block?: JsonObject;
+  stream_id?: string;
+  legacy_order?: boolean;
+  tool_id?: string;
+  call_id?: string;
+  arguments?: unknown;
+  result?: unknown;
+  approval_id?: string;
+  approval_decision?: string;
+  detail_ref?: string;
+}
+
+export interface DialogueTimeline {
+  schema_version: "round_dialogue_timeline.v1";
+  order: string[];
+  nodes: DialogueNode[];
+}
+
+export interface DialogueActivity {
+  schema_version: "round_dialogue_activity.v1";
+  round_started_at?: string;
+  round_ended_at?: string;
+  phase?: string;
+  activity?: string;
+  terminal?: boolean;
+  round_state?: string;
+  status_text?: string;
+}
+
 export interface ContextContentBlock {
   block_id: string;
   title?: string;
@@ -192,13 +250,14 @@ export interface StatusbarProjection {
 }
 
 export interface LiveState {
-  schema_version: "round_live_state.v2";
+  schema_version: "round_live_state.v3";
   round?: number;
   last_event_index?: number;
   latest_frame_id?: string;
-  call_frames?: CallFrame[];
-  context_panes?: ContextPane[];
-  conversation?: ConversationCard[];
+  display_mode?: "timeline" | "legacy";
+  frame_catalog?: CallFrame[];
+  dialogue_timeline?: DialogueTimeline;
+  dialogue_activity?: DialogueActivity;
   manifest?: JsonObject;
   statusbar_projection?: StatusbarProjection | null;
   round_lifecycle?: RoundLifecycle | null;
@@ -211,7 +270,7 @@ export interface RuntimeCliData {
 }
 
 export interface RuntimeStatus {
-  schema_version: "seed_gui_runtime_status.v2";
+  schema_version: "seed_gui_runtime_status.v3";
   host_session?: string;
   process_id?: number;
   current_round?: number | null;
@@ -225,6 +284,16 @@ export interface RuntimeStatus {
   relay_in_flight?: boolean;
   mutation_in_flight?: boolean;
   restart_requested?: boolean;
+  interrupted_recovery?: {
+    pending?: boolean;
+    round?: number | null;
+    applied_unregistered?: number;
+    applied_registered?: number;
+    not_applied?: number;
+    known_result?: number;
+    conflict?: number;
+    outcome_unknown?: number;
+  };
   pending_tool_approval?: {
     schema_version: "general_tool_approval.v1";
     approval_id: string;
@@ -261,7 +330,18 @@ export interface LivePayload {
 }
 
 export interface LiveEventsPayload extends LivePayload {
-  schema_version: "round_live_events.v1";
+  schema_version: "round_live_events.v2";
+}
+
+export type LiveDetailKind = "frame" | "ledger" | "event" | "timeline_node" | "legacy_conversation" | "evidence";
+
+export interface LiveDetailPayload {
+  schema_version: "round_live_detail.v1";
+  round: number;
+  kind: LiveDetailKind;
+  ref?: string;
+  payload: unknown;
+  source_sha?: string;
 }
 
 export interface TaskRecord {
@@ -431,7 +511,6 @@ export interface DepositionItem {
   type?: string;
   current_overview?: string;
   current_overview_updated_at?: string;
-  focus?: boolean;
   category?: string;
   created_round?: number | null;
   created_instance_id?: string;
@@ -464,28 +543,23 @@ export interface DepositionDetailPayload {
   item: DepositionDetailItem;
 }
 
-export interface ContainerFocusReceipt {
-  tool_id?: string;
-  status?: string;
-  action?: string;
-  container_id?: string;
-  reason?: string;
-}
-
 export interface DepositionIndexPayload {
   schema_version: "seed_gui_deposition_index.v1";
   memory: DepositionItem[];
   containers: DepositionItem[];
   relations: DepositionItem[];
-  focus?: { current?: string; previous?: string };
 }
 
 export interface RuntimeProjection {
   host: "connecting" | "connected" | "error";
+  hostSession: string;
   status: RuntimeStatus | null;
   live: LiveState | null;
   round: number | null;
   error: string;
+  liveError: string;
+  liveErrorEventIndex: number;
+  liveRetryAfter: number;
   sendFeedback: string;
   exportFeedback: string;
   sending: boolean;
@@ -504,6 +578,21 @@ export interface RuntimeProjection {
   conversationHistoryLatest: number | null;
   conversationHistoryError: string;
   conversationHistoryVersion: number;
+  conversationHistoryHasMore: boolean;
+  conversationHistoryLoading: boolean;
+  detailGeneration: number;
+  legacyCards: Map<number, ConversationCard[]>;
+  legacyCardsLoading: Set<number>;
+  legacyCardsErrors: Map<number, string>;
+  ledgerItems: Map<number, LedgerItem[]>;
+  ledgerItemsLoading: Set<number>;
+  ledgerItemsErrors: Map<number, string>;
+  frameDetail: { round: number; frameId: string; frame: CallFrame } | null;
+  frameDetailLoading: string;
+  frameDetailError: string;
+  timelineNodeDetails: Map<string, DialogueNode>;
+  timelineNodeLoading: Set<string>;
+  timelineNodeErrors: Map<string, string>;
   contextPrefixDiff: RequestPrefixDiffPayload | null;
   contextPrefixDiffKey: string;
   contextPrefixDiffLoading: boolean;
@@ -550,11 +639,6 @@ export interface DepositionProjection {
   details: Record<DepositionKind, Record<string, DepositionDetailPayload>>;
   pendingDetails: Set<string>;
   detailErrors: Record<string, string>;
-  focusMutation: {
-    pending: boolean;
-    feedback: string;
-    receipt: ContainerFocusReceipt | null;
-  };
   periodicMutation: {
     pending: boolean;
     memId: string;
@@ -845,8 +929,10 @@ export interface UiState {
   overviewCollapsed: boolean;
   overviewSectionsCollapsed: Set<string>;
   conversationDisclosure: Map<string, boolean>;
+  conversationStickToBottom: boolean;
   navCollapseLocked: boolean;
   systemWindowOpen: boolean;
+  systemWindowRatio: number;
   globalSettingsOpen: boolean;
   globalSettingsTab: GlobalSettingsTab;
   editingConnectionId: string | null;
@@ -885,7 +971,9 @@ export interface Elements {
   navLockToggle: HTMLButtonElement;
   pageCode: HTMLElement;
   pageTitle: HTMLElement;
+  mainStage: HTMLElement;
   stagePage: HTMLElement;
+  systemWindowSplitter: HTMLElement;
   overviewContent: HTMLElement;
   overviewPane: HTMLElement;
   chatThread: HTMLElement;

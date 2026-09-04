@@ -70,7 +70,6 @@ def test_parse_reaction_iteration_result_accepts_native_ordinary_tool_call():
             "tool_call_envelopes": [
                 {
                     "tool_id": "file_read",
-                    "tool_family": "general_tool",
                     "tool_class": "read_tool",
                     "arguments": {
                         "path": "UPSP/OS/persona/docs/protocol/base/tools.md",
@@ -98,7 +97,6 @@ def test_spec568_retired_guide_does_not_reject_ordinary_tool_call():
             "tool_call_envelopes": [
                 {
                     "tool_id": "file_read",
-                    "tool_family": "general_tool",
                     "tool_class": "read_tool",
                     "arguments": {"path": "task_materials/practice_evidence.jsonl"},
                     "parse_status": "ok",
@@ -168,8 +166,6 @@ def test_parse_reaction_iteration_result_rejects_retired_text_control_payload():
     assert "natural_final_reply_candidate" not in result.parsed_reaction
     assert result.parsed_reaction["invalid_tool_requests"] == [{
         "tool_id": "assistant_text",
-        "tool_family": "message_channel",
-        "tool_class": "runtime_guard",
         "status": "rejected",
         "source": "assistant_text",
         "call_id": "assistant_text_tool_payload",

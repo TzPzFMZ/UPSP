@@ -15,6 +15,7 @@ WB 不进此表
 import json
 import os
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -57,18 +58,18 @@ ALLOWED_CONTAINER_FILES = frozenset({
     "card.md", "changelog.md", "active.md", "resolved.md", "acquired.md",
     "objectives.md", "plans.md", "predictions.md",
 })
-SUPPORTED_FOCUS_CONTAINER_TYPES = frozenset({"DC", "EC", "PRJ", "SKL", "FUT"})
+SUPPORTED_RESIDENT_CONTAINER_TYPES = frozenset({"DC", "EC", "PRJ", "SKL", "FUT"})
 SKILL_CATEGORIES = frozenset({"habits", "procedures", "licenses", "patterns", "reflexes"})
 SOURCE_SKILL_CATEGORIES = frozenset({"procedures", "patterns"})
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-FOCUS_TARGET_FILES = {
+CONTAINER_TARGET_FILES = {
     "DC": frozenset({"open.md"}),
     "EC": frozenset({"open.md"}),
     "PRJ": frozenset({"plan.md", "notes.md"}),
     "SKL": frozenset({"card.md"}),
     "FUT": frozenset({"objectives.md", "plans.md", "predictions.md"}),
 }
-DEFAULT_FOCUS_TARGET = {
+DEFAULT_CONTAINER_TARGET = {
     "DC": "open.md",
     "EC": "open.md",
     "PRJ": "plan.md",
@@ -76,6 +77,7 @@ DEFAULT_FOCUS_TARGET = {
     "FUT": "plans.md",
 }
 LTM_INDEX_MD = os.path.join(LTM_DIR, "index.md")
+CONTAINER_MUTATION_LOCK = threading.RLock()
 
 
 def _safe_child(root, *parts):
@@ -111,6 +113,190 @@ class ContainerStore:
             if root:
                 os.makedirs(root, exist_ok=True)
 
+    def snapshot_mutation_files(self):
+        """Snapshot all files changed by container create/write transactions."""
+        snapshot = {}
+        roots = [
+            PREFIX_TO_DIR[prefix]
+            for prefix in self.CORE_CONTAINER_ROOTS
+            if prefix in PREFIX_TO_DIR
+        ]
+        for root in roots:
+            if not os.path.isdir(root):
+                continue
+            for current_root, _dirs, files in os.walk(root):
+                for name in files:
+                    path = os.path.join(current_root, name)
+                    try:
+                        with open(path, "r", encoding="utf-8") as handle:
+                            snapshot[path] = handle.read()
+                    except OSError as exc:
+                        raise ReadError(path, cause=exc) from exc
+        for path in (CONTAINER_REGISTRY_JSON, LTM_INDEX_MD):
+            if not os.path.isfile(path):
+                snapshot[path] = None
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    snapshot[path] = handle.read()
+            except OSError as exc:
+                raise ReadError(path, cause=exc) from exc
+        return {"roots": roots, "files": snapshot}
+
+    def restore_mutation_files(self, snapshot):
+        expected = dict((snapshot or {}).get("files") or {})
+        roots = list((snapshot or {}).get("roots") or [])
+        current = set()
+        for root in roots:
+            if not os.path.isdir(root):
+                continue
+            for current_root, _dirs, files in os.walk(root):
+                current.update(os.path.join(current_root, name) for name in files)
+        current.update(
+            path for path in (CONTAINER_REGISTRY_JSON, LTM_INDEX_MD)
+            if os.path.isfile(path)
+        )
+        for path in current.difference(expected):
+            try:
+                os.remove(path)
+            except OSError as exc:
+                raise WriteError(path, cause=exc) from exc
+        for path, text in expected.items():
+            if text is None:
+                if os.path.isfile(path):
+                    os.remove(path)
+                continue
+            _atomic_write_text(path, text)
+        for root in roots:
+            if not os.path.isdir(root):
+                continue
+            for current_root, dirs, _files in os.walk(root, topdown=False):
+                for name in dirs:
+                    path = os.path.join(current_root, name)
+                    try:
+                        if not os.listdir(path):
+                            os.rmdir(path)
+                    except OSError:
+                        pass
+
+    def has_retired_focus_fields(self, *, lightweight=False):
+        """Probe known focus tails; lightweight mode avoids walking container bodies."""
+        registry = _load_json_or_default(CONTAINER_REGISTRY_JSON, {})
+        if isinstance(registry, dict) and any(
+            isinstance(entry, dict) and "focus" in entry
+            for entry in registry.get("containers") or []
+        ):
+            return True
+        for path in (
+            LTM_INDEX_MD,
+            os.path.join(PREFIX_TO_DIR["SKL"], "index.md"),
+        ):
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    if " [focus]" in handle.read():
+                        return True
+            except OSError as exc:
+                raise ReadError(path, cause=exc) from exc
+        if lightweight:
+            return False
+
+        roots = [
+            PREFIX_TO_DIR[prefix]
+            for prefix in self.CORE_CONTAINER_ROOTS
+            if prefix in PREFIX_TO_DIR
+        ]
+        for root in roots:
+            if not os.path.isdir(root):
+                continue
+            for current_root, _dirs, files in os.walk(root):
+                for name in files:
+                    if not name.lower().endswith(".json"):
+                        continue
+                    path = os.path.join(current_root, name)
+                    value = _load_json_or_default(path, {})
+                    if (
+                        name.lower() in {"meta.json", "registry.json"}
+                        and isinstance(value, dict)
+                        and "focus" in value
+                    ) or (isinstance(value, dict) and any(
+                        isinstance(entry, dict) and "focus" in entry
+                        for collection in ("chains", "skills", "items", "containers")
+                        for entry in (value.get(collection) or [])
+                    )):
+                        return True
+        return False
+
+    def retire_focus_fields(self, snapshot=None):
+        """Remove the retired container focus marker from every active index."""
+        snapshot = snapshot or self.snapshot_mutation_files()
+        changed_paths = []
+
+        def strip_known_positions(value, path):
+            if not isinstance(value, dict):
+                return False
+            changed = False
+            # Legacy meta and per-project registry stored the flag at the
+            # document root.  Shared chain/skill/future registries stored it
+            # on their direct entries.  Never recursively delete an unrelated
+            # semantic field named ``focus`` from arbitrary container JSON.
+            if os.path.basename(path).lower() in {"meta.json", "registry.json"}:
+                if "focus" in value:
+                    value.pop("focus", None)
+                    changed = True
+            for collection in ("chains", "skills", "items", "containers"):
+                for entry in value.get(collection) or []:
+                    if isinstance(entry, dict) and "focus" in entry:
+                        entry.pop("focus", None)
+                        changed = True
+            return changed
+
+        def has_known_focus(value, path):
+            if not isinstance(value, dict):
+                return False
+            if (
+                os.path.basename(path).lower() in {"meta.json", "registry.json"}
+                and "focus" in value
+            ):
+                return True
+            return any(
+                isinstance(entry, dict) and "focus" in entry
+                for collection in ("chains", "skills", "items", "containers")
+                for entry in value.get(collection) or []
+            )
+
+        for path, text in (snapshot.get("files") or {}).items():
+            if text is None or not str(path).lower().endswith(".json"):
+                continue
+            try:
+                value = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ReadError(path, cause=exc) from exc
+            if strip_known_positions(value, path):
+                _atomic_write_json(path, value)
+                changed_paths.append(path)
+        # The master index is a derived projection, so rebuild it even when
+        # the source registries are already clean.  This closes a recoverable
+        # tail where an earlier interrupted migration cleaned JSON but left an
+        # old index on disk.
+        master_index = self._render_master_index()
+        if (snapshot.get("files") or {}).get(LTM_INDEX_MD) != master_index:
+            _atomic_write_text(LTM_INDEX_MD, master_index)
+            changed_paths.append(LTM_INDEX_MD)
+        skills_index_path = os.path.join(PREFIX_TO_DIR["SKL"], "index.md")
+        skills_index = self._render_skills_index()
+        if (snapshot.get("files") or {}).get(skills_index_path) != skills_index:
+            _atomic_write_text(skills_index_path, skills_index)
+            changed_paths.append(skills_index_path)
+        for path in changed_paths:
+            if not str(path).lower().endswith(".json"):
+                continue
+            value = _load_json_or_default(path, {})
+            if has_known_focus(value, path):
+                raise WriteError(path, message="retired_container_field_readback_failed")
+        return {"changed_paths": changed_paths, "snapshot": snapshot}
+
     # ==============================================================
     # container_registry.json 读写
     # ==============================================================
@@ -136,32 +322,6 @@ class ContainerStore:
                 os.remove(tmp)
             raise WriteError(CONTAINER_REGISTRY_JSON, cause=e)
 
-
-    def mount_focus(self, container_id, status_store):
-        """挂载容器到 WB 焦点（调用 state_store 写 status.json）"""
-        try:
-            status_store.set("base.focus", container_id)
-            # 同步更新容器的 focus 字段
-            meta = self.read_meta(container_id)
-            meta["focus"] = True
-            self.save_meta(container_id, meta)
-        except Exception:
-            pass
-
-    def unmount_focus(self, container_id, status_store):
-        """从 WB 焦点卸挂"""
-        try:
-            # 保存 old_focus
-            current = status_store.get("base.focus")
-            if current:
-                status_store.set("base.old_focus", current)
-            status_store.set("base.focus", None)
-            # 更新 focus
-            meta = self.read_meta(container_id)
-            meta["focus"] = False
-            self.save_meta(container_id, meta)
-        except Exception:
-            pass
 
     def get_container_info(self, container_id):
         """从注册表获取容器信息"""
@@ -281,15 +441,15 @@ class ContainerStore:
 
 
     # ==============================================================
-    # Spec 077: container_focus 工作容器焦点会话
+    # 工作容器创建与正文事务
     # ==============================================================
 
-    def create_focus_container(self, container_type, title, target_file=None,
-                               anchor_refs=None, round_num=0,
-                               skill_category=None, skill_name=None):
-        """创建首批可写焦点容器；实例不写入 LTM/container_registry.json。"""
+    def create_container(self, container_type, title, target_file=None,
+                         anchor_refs=None, round_num=0,
+                         skill_category=None, skill_name=None):
+        """创建一个受支持的工作容器。"""
         prefix = self._normalize_prefix(container_type)
-        if prefix not in SUPPORTED_FOCUS_CONTAINER_TYPES:
+        if prefix not in SUPPORTED_RESIDENT_CONTAINER_TYPES:
             raise ValueError("unsupported_container_type")
         target = self._normalize_target_file(prefix, target_file)
         title = str(title or "").strip()
@@ -336,12 +496,15 @@ class ContainerStore:
             return ""
         return container_id.split("-", 1)[0].upper()
 
-    def append_focus_content(self, container_id, target_file, title, content,
-                             mem_id=None, round_num=0, ledger_status="applied"):
+    def append_container_content(self, container_id, target_file, title, content,
+                                 mem_id=None, round_num=0,
+                                 ledger_status="applied"):
         prefix = self.resolve_container_type(container_id)
-        if prefix not in SUPPORTED_FOCUS_CONTAINER_TYPES:
+        if prefix not in SUPPORTED_RESIDENT_CONTAINER_TYPES:
             raise ValueError("unsupported_container_type")
         target = self._normalize_target_file(prefix, target_file)
+        if prefix == "FUT":
+            self._verify_future_target(container_id, target)
         content = str(content or "").strip()
         if not content:
             raise ValueError("missing_content_block")
@@ -387,52 +550,15 @@ class ContainerStore:
         self.refresh_master_index()
         return {"path": path, "chars_written": len(content)}
 
-    def set_container_focus(self, container_id, focus):
-        prefix = self.resolve_container_type(container_id)
-        if prefix == "FUT":
-            self._update_future_entry(container_id, focus=bool(focus))
-            return
-        try:
-            meta = self.read_meta(container_id)
-            meta["focus"] = bool(focus)
-            self.save_meta(container_id, meta)
-        except Exception:
-            pass
-        self._sync_instance_registry_entry(container_id, focus=bool(focus))
-
-    def read_focus_projection(self, container_id):
-        prefix = self.resolve_container_type(container_id)
-        info = self.get_container_info(container_id)
-        target = self._normalize_target_file(prefix, None)
-        allowed_targets = sorted(FOCUS_TARGET_FILES.get(prefix, []))
-        if prefix == "FUT":
-            target = info.get("target_file") or target
-            content = self._read_text_if_exists(_safe_child(PREFIX_TO_DIR[prefix], target))
-        else:
-            content = self.read_entries(container_id, file_name=target)
-        ranged = apply_explicit_range(content, {})
-        return {
-            "container_id": container_id,
-            "container_type": prefix,
-            "status": info.get("status", ""),
-            "title": info.get("title") or info.get("name") or container_id,
-            "allowed_targets": allowed_targets,
-            "default_target": target,
-            "content": ranged["content"],
-            "read_mode": ranged["read_mode"],
-            "total_lines": ranged["total_lines"],
-            "total_chars": ranged["total_chars"],
-            "format_hint": "memory_container_write via visible WB focus",
-        }
-
     def read_container_content(self, container_id, target_file=None, **range_request):
-        """只读已有索引可见容器内容，不改变 WB focus。"""
+        """只读已有索引可见容器内容，不改变常驻状态。"""
         prefix = self.resolve_container_type(container_id)
-        if prefix not in SUPPORTED_FOCUS_CONTAINER_TYPES:
+        if prefix not in SUPPORTED_RESIDENT_CONTAINER_TYPES:
             raise ValueError("unsupported_container_type")
         info = self.get_container_info(container_id)
         target = self._normalize_target_file(prefix, target_file)
         if prefix == "FUT":
+            self._verify_future_target(container_id, target, info=info)
             path = _safe_child(PREFIX_TO_DIR[prefix], target)
             content = self._read_text_if_exists(path)
         else:
@@ -455,7 +581,7 @@ class ContainerStore:
             "total_chars": ranged["total_chars"],
         }
 
-    def refresh_master_index(self):
+    def _render_master_index(self):
         containers = self._list_instance_containers()
         lines = ["# LTM 工作容器总索引", ""]
         if not containers:
@@ -464,9 +590,11 @@ class ContainerStore:
             title = item.get("title") or item.get("name") or ""
             status = item.get("status", "")
             path = item.get("path", "")
-            focus = " [focus]" if item.get("focus") else ""
-            lines.append(f"- {item.get('id')} {title} ({status}){focus} — {path}")
-        _atomic_write_text(LTM_INDEX_MD, "\n".join(lines).rstrip() + "\n")
+            lines.append(f"- {item.get('id')} {title} ({status}) — {path}")
+        return "\n".join(lines).rstrip() + "\n"
+
+    def refresh_master_index(self):
+        _atomic_write_text(LTM_INDEX_MD, self._render_master_index())
         self._refresh_skills_index()
 
     def _list_instance_containers(self):
@@ -548,8 +676,8 @@ class ContainerStore:
     def _normalize_target_file(self, prefix, target_file):
         target = os.path.basename(str(target_file or "").strip())
         if not target:
-            target = DEFAULT_FOCUS_TARGET.get(prefix, "open.md")
-        allowed = FOCUS_TARGET_FILES.get(prefix, frozenset())
+            target = DEFAULT_CONTAINER_TARGET.get(prefix, "open.md")
+        allowed = CONTAINER_TARGET_FILES.get(prefix, frozenset())
         if target not in allowed:
             raise ValueError("invalid_target_file")
         return target
@@ -668,7 +796,6 @@ class ContainerStore:
             "status": "ongoing" if prefix == "DC" else "active",
             "entries": [],
             "tags": [],
-            "focus": False,
             "created_at": local_now().isoformat(),
             "updated_at": local_now().isoformat(),
             "source_round": round_num,
@@ -707,7 +834,6 @@ class ContainerStore:
             "updated_at": now,
             "entries": [],
             "tags": [],
-            "focus": False,
             "path": f"LTM/Projects/{container_id}/",
             "progress": 0,
             "phase_count": 0,
@@ -754,7 +880,6 @@ class ContainerStore:
             "updated_at": now,
             "entries": [],
             "tags": [],
-            "focus": False,
             "linked_memories": list(anchor_refs or []),
             "path": f"LTM/Skills/{category}/{name}/",
         }
@@ -783,7 +908,6 @@ class ContainerStore:
             "updated_at": now,
             "entries": [],
             "tags": [],
-            "focus": False,
             "linked_containers": list(anchor_refs or []),
             "path": "LTM/Future/",
         }
@@ -805,6 +929,15 @@ class ContainerStore:
 
     def _future_category_from_target(self, target_file):
         return os.path.splitext(target_file)[0]
+
+    def _verify_future_target(self, container_id, target_file, *, info=None):
+        """Bind each FUT item to its registry-owned category file."""
+        info = info or self.get_container_info(container_id)
+        expected = str(info.get("target_file") or "").strip()
+        if expected not in CONTAINER_TARGET_FILES["FUT"]:
+            raise ValueError("future_target_binding_invalid")
+        if target_file != expected:
+            raise ValueError("container_target_mismatch")
 
     def _chain_registry_path(self, prefix):
         return os.path.join(PREFIX_TO_DIR[prefix], "registry.json")
@@ -835,22 +968,24 @@ class ContainerStore:
         )
 
     def _refresh_skills_index(self):
+        _atomic_write_text(
+            os.path.join(PREFIX_TO_DIR["SKL"], "index.md"),
+            self._render_skills_index(),
+        )
+
+    def _render_skills_index(self):
         lines = ["# 技能索引", ""]
         skills = self._load_skills_registry().get("skills", [])
         if not skills:
             lines.append("（暂无技能容器）")
         for item in skills:
-            focus = " [focus]" if item.get("focus") else ""
             lines.append(
                 f"- {item.get('id')} {item.get('title') or item.get('name', '')} "
-                f"({item.get('status', '')}){focus} — {item.get('path', '')}"
+                f"({item.get('status', '')}) — {item.get('path', '')}"
             )
-        _atomic_write_text(
-            os.path.join(PREFIX_TO_DIR["SKL"], "index.md"),
-            "\n".join(lines).rstrip() + "\n",
-        )
+        return "\n".join(lines).rstrip() + "\n"
 
-    def _update_future_entry(self, container_id, focus=None, increment_entries=False,
+    def _update_future_entry(self, container_id, increment_entries=False,
                              entry=None):
         registry = self._load_future_registry()
         now = local_now().isoformat()
@@ -858,8 +993,6 @@ class ContainerStore:
         for item in registry.get("items", []):
             if item.get("id") != container_id:
                 continue
-            if focus is not None:
-                item["focus"] = bool(focus)
             if increment_entries:
                 entries = item.setdefault("entries", [])
                 entries.append(dict(entry or {
@@ -877,22 +1010,22 @@ class ContainerStore:
             raise ContainerNotFoundError(f"容器不存在: {container_id}")
         _atomic_write_json(self._future_registry_path(), registry)
 
-    def _sync_instance_registry_entry(self, container_id, focus=None,
-                                      increment_entries=False, entry=None):
+    def _sync_instance_registry_entry(
+            self, container_id, increment_entries=False, entry=None):
         prefix = self.resolve_container_type(container_id)
         now = local_now().isoformat()
         if prefix in {"DC", "EC"}:
             self._sync_chain_registry_entry(
-                container_id, focus, increment_entries, now, entry=entry)
+                container_id, increment_entries, now, entry=entry)
         elif prefix == "PRJ":
             self._sync_project_registry_entry(
-                container_id, focus, increment_entries, now, entry=entry)
+                container_id, increment_entries, now, entry=entry)
         elif prefix == "SKL":
             self._sync_skill_registry_entry(
-                container_id, focus, increment_entries, now, entry=entry)
+                container_id, increment_entries, now, entry=entry)
 
     def _sync_chain_registry_entry(
-            self, container_id, focus, increment_entries, now, entry=None):
+            self, container_id, increment_entries, now, entry=None):
         prefix = self.resolve_container_type(container_id)
         paths = [
             self._chain_registry_path(prefix),
@@ -904,8 +1037,6 @@ class ContainerStore:
             for item in registry.get("chains", []):
                 if item.get("id") != container_id:
                     continue
-                if focus is not None:
-                    item["focus"] = bool(focus)
                 if increment_entries:
                     item.setdefault("entries", []).append(dict(entry or {
                         "updated_at": now,
@@ -916,11 +1047,9 @@ class ContainerStore:
                 _atomic_write_json(path, registry)
 
     def _sync_project_registry_entry(
-            self, container_id, focus, increment_entries, now, entry=None):
+            self, container_id, increment_entries, now, entry=None):
         path = os.path.join(self._get_container_dir(container_id), "registry.json")
         registry = _load_json_or_default(path, {})
-        if focus is not None:
-            registry["focus"] = bool(focus)
         if increment_entries:
             registry.setdefault("entries", []).append(dict(entry or {
                 "updated_at": now,
@@ -929,14 +1058,12 @@ class ContainerStore:
         _atomic_write_json(path, registry)
 
     def _sync_skill_registry_entry(
-            self, container_id, focus, increment_entries, now, entry=None):
+            self, container_id, increment_entries, now, entry=None):
         registry = self._load_skills_registry()
         changed = False
         for item in registry.get("skills", []):
             if item.get("id") != container_id:
                 continue
-            if focus is not None:
-                item["focus"] = bool(focus)
             if increment_entries:
                 item.setdefault("entries", []).append(dict(entry or {
                     "updated_at": now,

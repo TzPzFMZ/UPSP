@@ -428,7 +428,11 @@ def test_fake_memory_organ_reuses_reaction_committer_receipt_and_file_result(
         runtime_context={"round_num": 659, "interaction_meta": meta},
     )["receipts"][0]
     normalized = {key: value for key, value in organ.items() if key not in {
-        "product_id", "frame_id", "trigger_id", "role_id", "caused_by"}}
+        "product_id", "frame_id", "trigger_id", "role_id", "caused_by",
+        "tool_class", "execution_route",
+    }}
 
     assert normalized == direct
+    assert organ["tool_class"] == "sync_tool"
+    assert organ["execution_route"] == "internal_processor"
     assert _tree(organ_root) == _tree(direct_root)

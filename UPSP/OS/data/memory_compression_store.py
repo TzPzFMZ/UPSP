@@ -12,11 +12,15 @@ import paths
 from constants import local_now
 from data.atomic_write import atomic_write_json, atomic_write_text
 from data.memory_store import (
+    MEMORY_OVERLAY_FIELDS,
     MEMORY_MUTATION_LOCK,
     MemoryStore,
+    _normalise_meta_entry,
+    _read_memory_overlay,
     extract_memory_semantic,
     memory_is_admitted,
     memory_stm_forgetting_target,
+    project_memory_body,
     replace_memory_semantic_payload,
 )
 
@@ -256,12 +260,13 @@ class MemoryCompressionManager:
     """Queue, render and atomically apply rhythm memory compression batches."""
 
     def __init__(self, memory_store=None, ledger_store=None, now_fn=local_now,
-                 instance_id=None, fault_hook=None):
+                 instance_id=None, fault_hook=None, assembler=None):
         self.memory_store = memory_store or MemoryStore()
         self.ledger = ledger_store or MemoryCompressionStore(now_fn=now_fn)
         self.now_fn = now_fn
         self.instance_id = str(instance_id or paths.ACTIVE_INSTANCE_ID or "meta")
         self.fault_hook = fault_hook
+        self.assembler = assembler
 
     def queue_stm_forgetting(self, mem_id, *, round_num=None):
         """Persist the pending item before deleting the current STM copy."""
@@ -340,6 +345,15 @@ class MemoryCompressionManager:
             try:
                 degradation = LTMDegradationManager(memory_store=self.memory_store)
                 degradation.decrement_daily_countdowns()
+                resident_item_present = getattr(
+                    self.assembler, "resident_item_present", None)
+                if callable(resident_item_present):
+                    for mem_id, _meta, _body in degradation.due_entries(
+                            "Abstract"):
+                        if resident_item_present(
+                                item_type="memory", item_id=mem_id):
+                            raise ValueError(
+                                f"resident_memory_backup_conflict:{mem_id}")
                 degradation.apply_due_abstract_backups(round_num)
                 for tier in ("Full", "Summary"):
                     for mem_id, _meta, _body in degradation.due_entries(tier):
@@ -496,6 +510,23 @@ class MemoryCompressionManager:
                         result["semantic_content"], int(meta["weight"]),
                         tier=source["target_tier"],
                     )
+                    if self.assembler is not None:
+                        prospective_meta = dict(meta)
+                        overlay = _read_memory_overlay()["entries"].get(
+                            mem_id, {})
+                        prospective_meta.update({
+                            key: overlay.get(
+                                key,
+                                [] if key == "linked_containers" else "",
+                            )
+                            for key in MEMORY_OVERLAY_FIELDS
+                        })
+                        prospective_meta = _normalise_meta_entry(
+                            prospective_meta)
+                        self.assembler.preflight_resident_source_update(
+                            {"item_type": "memory", "item_id": mem_id},
+                            project_memory_body(target_body, prospective_meta),
+                        )
                     self.memory_store.store_ltm_entry(
                         source["target_tier"], mem_id, target_body, meta,
                         source_tier=source["source_tier"],

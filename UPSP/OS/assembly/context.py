@@ -11,9 +11,9 @@ DDS §19 上下文工程 + §19.7 灵活加载策略
 
 RULES 加载：读 rules_registry.json → 按层/步/场景选文件 → 读 .md 拼接
 三步装配差异：
-  setup:    CONTENT 为空 + setup.md + schema §21 输出模板
-  reaction: CONTENT 已填充 + reaction.md + schema §23 反应步最终输出表
-  cleanup:  压缩版 + cleanup.md + schema §20 输出模板
+  setup:    resident CONTENT 只读 + setup.md + schema §21 输出模板
+  reaction: resident/instant CONTENT + reaction.md + schema §23 反应步最终输出表
+  cleanup:  resident CONTENT 只读 + cleanup.md + schema §20 输出模板
 """
 import os
 import json
@@ -23,7 +23,11 @@ from paths import (
     RULES_REGISTRY, RULES_DIR,
     DOCS_SCHEMA,
 )
-from constants import STM_INDEX_DISPLAY_LIMIT, DREAMS_DISPLAY_LIMIT
+from constants import (
+    DREAMS_DISPLAY_LIMIT,
+    RESIDENT_LIST_CHAR_LIMIT,
+    STM_INDEX_DISPLAY_LIMIT,
+)
 
 from assembly.statusbar import StatusBarBuilder
 from assembly.popup import PopupManager
@@ -40,8 +44,6 @@ from assembly.context_helpers import (
     fold_marker,
     format_round_id,
     format_step_guide_popup,
-    load_general_tool_index,
-    load_protocol_tool_index,
     join_layer_blocks,
     messages_text,
     normalize_layer_entries,
@@ -118,14 +120,6 @@ class ContextAssembler:
         "training_evidence",
         "final_reply_handoff",
     }
-    CALL_ONLY_KINDS = set()
-
-    @classmethod
-    def _is_call_only_entry(cls, entry):
-        if not isinstance(entry, dict):
-            return False
-        return str(entry.get("kind") or "").strip() in cls.CALL_ONLY_KINDS
-
     @staticmethod
     def _runtime_call_request_entry():
         return {
@@ -164,7 +158,9 @@ class ContextAssembler:
                 and bool(content)
             )
         if kind == "material" and source in {
+            "action_recovery",
             "cache_compaction",
+            "chronicle_write",
             "memory_compression_rhythm",
             "memory_write_rewrite",
         }:
@@ -176,10 +172,15 @@ class ContextAssembler:
         )
 
     def __init__(self, state_store=None, context_dir=None, config_store=None,
-                 context_store=None, context_profile="full"):
+                 context_store=None, context_profile="full", resident_store=None,
+                 memory_store=None, container_store=None, relation_store=None):
         self.state_store = state_store
         self.config_store = config_store
         self.context_store = context_store
+        self.resident_store = resident_store
+        self.memory_store = memory_store
+        self.container_store = container_store
+        self.relation_store = relation_store
         self.statusbar = StatusBarBuilder()
         self._last_statusbar_projection = {}
         self.popup = PopupManager(state_store=state_store)
@@ -195,6 +196,7 @@ class ContextAssembler:
         self._hidden_stm_memory_ids = set()
         self._active_corpus_registry = {}
         self._pending_corpus_expand_once_keys = set()
+        self._visible_container_targets = set()
         # 上下文输出目录（可注入，测试用 tmp_path，生产用 paths.STM_CONTEXT_DIR）
         if context_dir is None:
             from paths import STM_CONTEXT_DIR
@@ -234,8 +236,9 @@ class ContextAssembler:
             from data.memory_store import MemoryStore
             from data.relation_store import RelationStore
             mem_id = str((meta or {}).get("id") or "").strip()
-            relation_store = RelationStore()
-            owners = MemoryStore().private_subjects_for_memory(mem_id)
+            relation_store = self.relation_store or RelationStore()
+            memory_store = self.memory_store or MemoryStore()
+            owners = memory_store.private_subjects_for_memory(mem_id)
             return can_see_memory(
                 meta,
                 self._confirmed_memory_subjects(relation_store),
@@ -255,7 +258,7 @@ class ContextAssembler:
     # ==============================================================
 
     def assemble_setup(self, state, round_type, user_messages=None,
-                       material_inputs=None, internal_handoff=None,
+                       material_inputs=None,
                        interaction_meta=None, task_guidance_enabled=True):
         self._current_interaction_meta = (
             dict(interaction_meta) if isinstance(interaction_meta, dict) else None
@@ -264,22 +267,20 @@ class ContextAssembler:
             self._current_input_text = None
         system, full_messages = self._build_full_context(
             step="setup", round_type=round_type, state=state,
-            include_content=False, mount_ids=None,
+            content_scope="resident", mount_ids=None,
             user_messages=user_messages,
             material_inputs=material_inputs,
-            internal_handoff=internal_handoff,
             task_guidance_enabled=task_guidance_enabled)
         return system, full_messages
 
     def assemble_reaction(self, state, round_type, mount_ids=None,
-                          material_inputs=None, internal_handoff=None,
+                          material_inputs=None,
                           protocol_tool_guides=None,
                           general_tool_guides=None,
                           reaction_loop_phase="loop",
                           native_tool_feedbacks=None,
                           hidden_stm_memory_ids=None,
                           hidden_lately_block_ids=None,
-                          runtime_focus_entries=None,
                           current_reaction_iteration=None,
                           response_contract=None):
         previous_hidden = set(getattr(self, "_hidden_stm_memory_ids", set()))
@@ -289,14 +290,12 @@ class ContextAssembler:
         try:
             system, full_messages = self._build_full_context(
                 step="reaction", round_type=round_type, state=state,
-                include_content=True, mount_ids=mount_ids,
+                content_scope="reaction", mount_ids=mount_ids,
                 material_inputs=material_inputs,
-                internal_handoff=internal_handoff,
                 protocol_tool_guides=protocol_tool_guides,
                 general_tool_guides=general_tool_guides,
                 reaction_loop_phase=reaction_loop_phase,
                 native_tool_feedbacks=native_tool_feedbacks,
-                runtime_focus_entries=runtime_focus_entries,
                 current_reaction_iteration=current_reaction_iteration,
                 response_contract=response_contract)
             return system, full_messages
@@ -305,18 +304,16 @@ class ContextAssembler:
             self._hidden_lately_block_ids = previous_hidden_lately
 
     def assemble_cleanup(self, state, round_type, result,
-                         material_inputs=None, internal_handoff=None,
+                         material_inputs=None,
                          popup_fragments=None):
         """善后步装配：前序频率层 + now 临时材料 + 真实交接 + POPUP。"""
-        handoff_entries = normalize_layer_entries(internal_handoff)
         return self._build_full_context(
             step="cleanup",
             round_type=round_type,
             state=state,
-            include_content=False,
+            content_scope="resident",
             mount_ids=None,
             material_inputs=material_inputs,
-            internal_handoff=handoff_entries,
             popup_fragments=popup_fragments,
         )
 
@@ -324,15 +321,14 @@ class ContextAssembler:
     # messages 构造（频率梯度）
     # ==============================================================
 
-    def _build_full_context(self, step, round_type, state, include_content,
+    def _build_full_context(self, step, round_type, state, content_scope,
                             mount_ids, user_messages=None,
-                            material_inputs=None, internal_handoff=None,
+                            material_inputs=None,
                             protocol_tool_guides=None,
                             general_tool_guides=None,
                             reaction_loop_phase="loop",
                             native_tool_feedbacks=None,
                             popup_fragments=None,
-                            runtime_focus_entries=None,
                             current_reaction_iteration=None,
                             response_contract=None,
                             task_guidance_enabled=True):
@@ -386,10 +382,9 @@ class ContextAssembler:
 
         # 4. 高频层
         high_freq = self._build_high_freq(
-            state, context_step, round_type, include_content, mount_ids, None,
+            state, context_step, round_type, content_scope, mount_ids, None,
             visible_input_text,
-            visible_interaction_meta,
-            runtime_focus_entries)
+            visible_interaction_meta)
         if high_freq:
             messages.append({"role": "system", "content": f"<!-- 高频层 -->\n{high_freq}"})
 
@@ -929,10 +924,9 @@ class ContextAssembler:
     # ==============================================================
 
     def _build_high_freq(self, state, step, round_type,
-                         include_content, mount_ids, input_keywords=None,
-                         current_input_text=None, interaction_meta=None,
-                         runtime_focus_entries=None):
-        """DDS §19 高频层排序：索引→本步短工具带→CONTENT。"""
+                         content_scope, mount_ids, input_keywords=None,
+                         current_input_text=None, interaction_meta=None):
+        """DDS §19 高频层排序：索引→任务工作台→CONTENT。"""
         # 推导当前轮的焦点关键词（供联想索引的重排序查询用）
         if input_keywords is None:
             input_keywords = self._derive_input_keywords(state, step, mount_ids)
@@ -990,38 +984,21 @@ class ContextAssembler:
             ))
         task_board = self._build_task_board_projection()
         add("high_freq:task_board", "任务工作台", "task_board", task_board)
-        step_toolbelt = self._build_step_toolbelt_index(step, round_type)
-        add("high_freq:step_toolbelt", "当前步短工具带", "step_toolbelt",
-            step_toolbelt)
-        # 9. CONTENT（挂载正文 + 参考窗口 + WB工作台）
+        # 9. CONTENT：三步都读取 resident，只有 Reaction 合并本轮临时正文。
         current_round = current_round_from_state(state)
-        try:
-            focus_projection = self._build_workbench_focus_projection(current_round)
-        except TypeError:
-            focus_projection = self._build_workbench_focus_projection()
-        add("high_freq:workbench_focus", "WB 焦点投影", "workbench_focus",
-            focus_projection)
-        for index, focus_entry in enumerate(
-                normalize_layer_entries(runtime_focus_entries), 1):
-            focus_content = str(focus_entry.get("content") or "").strip()
-            if focus_content:
-                ref = focus_entry.get("ref") if isinstance(focus_entry.get("ref"), dict) else {}
-                source_id = str(
-                    focus_entry.get("source_block_id")
-                    or focus_entry.get("id")
-                    or ref.get("source_block_id")
-                    or ""
-                )
-                add(
-                    f"high_freq:runtime_focus:{index}:{source_id}",
-                    str(focus_entry.get("title") or f"Runtime 焦点 {index}"),
-                    "runtime_focus",
-                    focus_content,
-                    source_id,
-                )
-        content_mounts = self._content_mounts_with_triple_hits(
-            mount_ids, input_keywords) if include_content else []
-        if include_content and content_mounts:
+        if content_scope == "reaction":
+            content_mounts = self._content_mounts_with_triple_hits(
+                mount_ids, input_keywords)
+        elif content_scope == "resident":
+            content_mounts = self._resident_content_mounts()
+        elif content_scope == "none":
+            # Internal index-only callers and isolated tests; public three-step
+            # entrypoints never select this scope.
+            content_mounts = []
+        else:
+            raise RequiredContextError(
+                "read", "high_freq_content_scope", f"unknown:{content_scope}")
+        if content_mounts:
             blocks.extend(context_build_mounted_content_blocks(
                 self, content_mounts, current_round=current_round
             ))
@@ -1087,84 +1064,36 @@ class ContextAssembler:
             pass
         return defaults
 
-    def _build_step_toolbelt_index(self, step, round_type=None):
-        if step == "setup":
-            handoff_tool = (
-                "standby_setup_handoff"
-                if str(round_type or "").strip().lower() == "standby"
-                else "setup_handoff"
+    def _resident_content_mounts(self):
+        mounts = self._resident_mount_requests()
+        self._visible_container_targets = {
+            (
+                str(item.get("ids") or "").strip(),
+                str(item.get("target_file") or "").strip(),
             )
-            return "\n".join([
-                "<!-- [STEP_TOOLBELT:setup] -->",
-                "## 起手步短工具带",
-                "| tool_id | tool_family | tool_class | 用途 |",
-                "|---------|-------------|------------|------|",
-                "| setup_mount_apply | substrate_tool | read_tool | 应用起手挂载清单并装配反应步入口 |",
-                "| setup_security_gate | substrate_tool | sync_tool | 承接起手安全二值裁决 |",
-                f"| {handoff_tool} | substrate_tool | sync_tool | 写入起手步到后续步骤的交接 |",
-            ])
-        if step == "reaction":
-            parts = ["<!-- [STEP_TOOLBELT:reaction] -->", "## 反应步短工具带"]
-            tool_index = load_protocol_tool_index()
-            if tool_index:
-                parts.append(f"<!-- [PROTOCOL_TOOLS:index] -->\n{tool_index}")
-            general_tool_index = load_general_tool_index()
-            if general_tool_index:
-                parts.append(f"<!-- [GENERAL_TOOLS:index] -->\n{general_tool_index}")
-            return "\n\n".join(parts) if len(parts) > 2 else ""
-        if step == "cleanup":
-            return "\n".join([
-                "<!-- [STEP_TOOLBELT:cleanup] -->",
-                "## 善后步短工具带",
-                "| tool_id | tool_family | tool_class | 用途 |",
-                "|---------|-------------|------------|------|",
-                "| connection_material_settle | substrate_tool | sync_tool | 承接联系集处理表 |",
-                "| tacit_material_settle | substrate_tool | sync_tool | 承接默契集处理表 |",
-                "| association_count_update | substrate_tool | sync_tool | 基于有效材料更新联想计数 |",
-                "| cleanup_handoff | substrate_tool | sync_tool | 写入善后内部整理提示 |",
-            ])
-        return ""
-
-    def _build_workbench_focus_projection(self, current_round=None):
-        try:
-            from data.workbench import WorkbenchStore
-            from data.container_store import ContainerStore
-            status = WorkbenchStore().load_status()
-            focus = (status.get("base") or {}).get("focus")
-            if not focus:
-                return ""
-            projection = ContainerStore().read_focus_projection(focus)
-        except Exception as exc:
-            raise RequiredContextError("read", "workbench_focus", exc) from exc
-
-        allowed = " / ".join(projection.get("allowed_targets") or [])
-        content_for_native_focus = projection.get("content") or "(empty focus projection)"
-        round_id = format_round_id(current_round)
-        lines = [
-            "## WB 焦点投影",
-        ]
-        if round_id:
-            lines.append(f"- 当前可见轮次：{round_id}")
-        lines.extend([
-            f"- 容器编号：{projection.get('container_id')}",
-            f"- 容器类型：{projection.get('container_type')}",
-            f"- 标题：{projection.get('title')}",
-            f"- 状态：{projection.get('status')}",
-            f"- 允许写入目标：{allowed}",
-            f"- 默认写入目标：{projection.get('default_target')}",
-            "- 写入约束：只有在迭代入口已经看见本 WB 焦点投影时，才能通过 provider-native `memory_container_write` 追加正文。",
-            "- 焦点约束：同一迭代刚通过 `container_focus.open` 打开的容器，要到下一迭代看见焦点投影后才能写入。",
-            "- 内容边界：POPUP 只承载规则；本 WB 焦点投影才是可见 CONTENT 材料。",
-            "- 轮次边界：当前可见只说明本步看见了材料，不证明本轮已经执行新的工具动作。",
-            "",
-            "### 当前内容片段",
-            content_for_native_focus,
-        ])
-        return "\n".join(lines)
+            for item in mounts
+            if isinstance(item, dict)
+            and item.get("type") == "container"
+            and str(item.get("ids") or "").strip()
+            and str(item.get("target_file") or "").strip()
+        }
+        return mounts
 
     def _content_mounts_with_triple_hits(self, mount_ids, input_keywords):
-        mounts = list(mount_ids or [])
-        mounts.extend(self._resident_relation_body_mounts())
+        mounts = []
+        seen = set()
+        for item in self._resident_mount_requests() + list(mount_ids or []):
+            if not isinstance(item, dict):
+                continue
+            key = (
+                str(item.get("type") or "").strip(),
+                str(item.get("ids") or "").strip(),
+                str(item.get("target_file") or "").strip(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            mounts.append(item)
         existing_memory_ids = self._mounted_memory_ids(mounts)
         for mem_id in self._triple_hit_stm_memory_ids(input_keywords):
             if mem_id in existing_memory_ids:
@@ -1175,28 +1104,175 @@ class ContextAssembler:
                 "source": "stm_triple_hit",
             })
             existing_memory_ids.add(mem_id)
+        self._visible_container_targets = {
+            (
+                str(item.get("ids") or "").strip(),
+                str(item.get("target_file") or "").strip(),
+            )
+            for item in mounts
+            if isinstance(item, dict)
+            and item.get("type") == "container"
+            and str(item.get("ids") or "").strip()
+            and str(item.get("target_file") or "").strip()
+        }
         return mounts
 
-    def _resident_relation_body_mounts(self, limit=3):
+    def _resident_mount_requests(self, document=None, content_overrides=None):
+        if self.resident_store is None:
+            raise RequiredContextError(
+                "read", "resident_list", "resident_store_not_configured")
+        document = document or self.resident_store.load()
+        overrides = content_overrides or {}
+        relation_items = [
+            item for item in document.get("items") or []
+            if str(item.get("item_type") or "").strip() == "relation"
+        ]
+        if len(relation_items) > 3:
+            raise ValueError("relation_body_limit_exceeded")
         mounts = []
-        try:
-            from data.relation_store import RelationStore
-            for card in RelationStore().load_registry().get("cards", []):
-                if card.get("status") == "archived" or not card.get("body_resident"):
-                    continue
-                card_id = str(card.get("id") or "").strip()
-                if card_id:
-                    mounts.append({
-                        "type": "relation",
-                        "ids": card_id,
-                        "mode": "resident",
-                        "source": "relation_read_resident",
-                    })
-                if len(mounts) >= limit:
-                    break
-        except Exception:
-            return []
+        for item in document.get("items") or []:
+            item_type = str(item.get("item_type") or "").strip()
+            item_id = str(item.get("item_id") or "").strip()
+            target_file = str(item.get("target_file") or "").strip()
+            key = (item_type, item_id, target_file)
+            content = overrides.get(key)
+            if content is None:
+                if item_type == "memory":
+                    content = self._load_memory_content(item_id)
+                elif item_type == "container":
+                    content = self._load_container_content(item_id, target_file)
+                elif item_type == "relation":
+                    content = self._load_relation_content(item_id)
+                else:
+                    raise RequiredContextError(
+                        "read", "resident_list", "resident_item_type_invalid")
+            if not str(content or "").strip():
+                raise RequiredContextError(
+                    "read", "resident_list", f"resident_source_missing:{item_id}")
+            mount = {
+                "type": item_type,
+                "ids": item_id,
+                "mode": "resident",
+                "source": "resident_list",
+                "content": str(content),
+                "read_mode": "full",
+                "total_chars": len(str(content)),
+            }
+            if item_type == "memory":
+                # _load_memory_content/content overrides already carry the
+                # canonical LTM meta projection.  Re-projecting a body that
+                # lacks a legacy MEM heading would duplicate those fields.
+                mount["content_projected"] = True
+            if target_file:
+                mount["target_file"] = target_file
+            mounts.append(mount)
         return mounts
+
+    def resident_mount_requests(self):
+        """Return verified full-body mounts for the active branch."""
+        return self._resident_mount_requests()
+
+    def resident_item_present(self, *, item_type, item_id, target_file=""):
+        """Expose resident membership without leaking the store implementation."""
+        return self.resident_store.contains(
+            item_type=item_type,
+            item_id=item_id,
+            target_file=target_file,
+        )
+
+    def resident_projection_chars(self, document=None, content_overrides=None):
+        mounts = self._resident_mount_requests(
+            document=document,
+            content_overrides=content_overrides,
+        )
+        if not mounts:
+            return 0
+        return len(self._build_mounted_content(mounts, current_round=None))
+
+    def preflight_resident_add(self, item, *, content_overrides=None):
+        if self.resident_store is None:
+            raise RequiredContextError(
+                "read", "resident_list", "resident_store_not_configured")
+        document, changed = self.resident_store.preview_add(item)
+        chars = self.resident_projection_chars(
+            document=document,
+            content_overrides=content_overrides,
+        )
+        if chars > RESIDENT_LIST_CHAR_LIMIT:
+            raise ValueError(
+                "resident_list_char_limit_exceeded:"
+                f"max={RESIDENT_LIST_CHAR_LIMIT};actual={chars}")
+        return {
+            "document": document,
+            "changed": changed,
+            "chars": chars,
+            "expected_revision": document["revision"] - (1 if changed else 0),
+        }
+
+    def preflight_resident_source_update(
+            self, item, content, *, require_resident=False):
+        key = (
+            str(item.get("item_type") or "").strip(),
+            str(item.get("item_id") or "").strip(),
+            str(item.get("target_file") or "").strip(),
+        )
+        return self.preflight_resident_source_updates(
+            {key: str(content or "")},
+            required_keys={key} if require_resident else set(),
+        )
+
+    def preflight_resident_source_updates(
+            self, content_overrides, *, required_keys=None):
+        overrides = {
+            (
+                str(key[0] or "").strip(),
+                str(key[1] or "").strip(),
+                str(key[2] or "").strip(),
+            ): str(content or "")
+            for key, content in dict(content_overrides or {}).items()
+            if isinstance(key, tuple) and len(key) == 3
+        }
+        required = set(required_keys or ())
+        if self.resident_store is None:
+            raise RequiredContextError(
+                "read", "resident_list", "resident_store_not_configured")
+        document = self.resident_store.load()
+        present_keys = {
+            (
+                str(current.get("item_type") or "").strip(),
+                str(current.get("item_id") or "").strip(),
+                str(current.get("target_file") or "").strip(),
+            )
+            for current in document.get("items") or []
+        }
+        if required.difference(present_keys):
+            raise ValueError("resident_item_not_found")
+        applicable = {
+            key: content for key, content in overrides.items()
+            if key in present_keys
+        }
+        if not applicable:
+            return {
+                "resident": False,
+                "resident_keys": [],
+                "chars": self.resident_projection_chars(document),
+            }
+        chars = self.resident_projection_chars(
+            document,
+            applicable,
+        )
+        if chars > RESIDENT_LIST_CHAR_LIMIT:
+            raise ValueError(
+                "resident_list_char_limit_exceeded:"
+                f"max={RESIDENT_LIST_CHAR_LIMIT};actual={chars}")
+        return {
+            "resident": True,
+            "resident_keys": sorted(applicable),
+            "chars": chars,
+        }
+
+    def visible_container_targets(self):
+        return set(getattr(self, "_visible_container_targets", set()))
 
     @staticmethod
     def _relation_summary_mounts(mount_ids):
@@ -1394,7 +1470,8 @@ class ContextAssembler:
         parts = ["## 关系倒排索引"]
         try:
             from data.relation_store import RelationStore
-            cards = RelationStore().load_registry().get("cards", [])
+            relation_store = self.relation_store or RelationStore()
+            cards = relation_store.load_registry().get("cards", [])
             hits = self._relation_hit_scores(
                 cards, current_input_text=current_input_text,
                 interaction_meta=interaction_meta)
@@ -1434,8 +1511,9 @@ class ContextAssembler:
         zones = [zone] if zone else ["self", "ours", "them", "orgs"]
         try:
             from data.relation_store import RelationStore
+            relation_store = self.relation_store or RelationStore()
             cards = self._active_relation_cards(
-                RelationStore().load_registry().get("cards", []))
+                relation_store.load_registry().get("cards", []))
             hits = self._relation_hit_scores(
                 cards, current_input_text=current_input_text,
                 interaction_meta=interaction_meta)
@@ -1503,8 +1581,6 @@ class ContextAssembler:
         }
         receipt = {
             "tool_id": "index_view",
-            "tool_family": "protocol_tool",
-            "tool_class": "read_tool",
             "status": "accepted" if scope in builders and not query_error else "rejected",
             "source": "protocol_tool_request",
             "scope": scope,
@@ -1532,8 +1608,6 @@ class ContextAssembler:
 
         receipt = {
             "tool_id": "memory_search",
-            "tool_family": "protocol_tool",
-            "tool_class": "read_tool",
             "status": "accepted",
             "source": "protocol_tool_request",
             "locator_only": True,
@@ -1555,7 +1629,7 @@ class ContextAssembler:
             })
         return receipt
 
-    def _relation_focus_max_slots(self):
+    def _relation_context_max_slots(self):
         cfg = self.config_store
         if cfg and hasattr(cfg, "get_relation_params"):
             try:
@@ -1590,11 +1664,11 @@ class ContextAssembler:
                 "read", "execution_permission", exc) from exc
         try:
             from data.relation_store import RelationStore
-            from logic.relation_focus import RelationFocusManager
+            from logic.relation_context import RelationContextManager
 
-            rs = RelationStore()
-            max_slots = self._relation_focus_max_slots()
-            rfm = RelationFocusManager(max_slots=max_slots + 1)
+            rs = self.relation_store or RelationStore()
+            max_slots = self._relation_context_max_slots()
+            context_manager = RelationContextManager(max_slots=max_slots + 1)
             reg = rs.load_registry()
             all_cards = reg.get("cards", [])
 
@@ -1637,28 +1711,28 @@ class ContextAssembler:
                 self._current_input_text or
                 self._get_current_input_text()
             )
-            focus_result = rfm.determine_focus_states(
+            context_result = context_manager.determine_context_roles(
                 input_text, all_cards,
                 interaction_object=meta.get("interaction_object"))
-            active_ids = {obj["id"] for obj in focus_result["active"]}
+            active_ids = {obj["id"] for obj in context_result["active"]}
             for card in all_cards:
                 if card.get("summary_resident"):
                     active_ids.add(card.get("id"))
             for card_id in relation_summary_mounts or []:
                 active_ids.add(card_id)
 
-            focus_type_map = {}
-            for obj in focus_result["active"]:
-                focus_type_map[obj["id"]] = obj["match_type"]
-            for obj in focus_result.get("recall", []):
-                if obj["id"] not in focus_type_map:
-                    focus_type_map[obj["id"]] = "recall"
+            role_map = {}
+            for obj in context_result["active"]:
+                role_map[obj["id"]] = obj["context_role"]
+            for obj in context_result.get("resident", []):
+                if obj["id"] not in role_map:
+                    role_map[obj["id"]] = "resident"
             for card in all_cards:
-                if card.get("summary_resident") and card.get("id") not in focus_type_map:
-                    focus_type_map[card.get("id")] = "resident"
+                if card.get("summary_resident") and card.get("id") not in role_map:
+                    role_map[card.get("id")] = "resident"
             for card_id in relation_summary_mounts or []:
-                if card_id not in focus_type_map:
-                    focus_type_map[card_id] = "temporary"
+                if card_id not in role_map:
+                    role_map[card_id] = "mentioned"
             other_cards = [
                 card for card in all_cards
                 if card.get("id") in active_ids and card.get("id") != current_id
@@ -1672,9 +1746,9 @@ class ContextAssembler:
                     "id": card_id,
                     "name": self._relation_visible_label(card),
                     "category": card.get("category", "?"),
-                    "focus_type": (
-                        "present" if card_id == current_id
-                        else focus_type_map.get(card_id, "")),
+                    "context_role": (
+                        "interaction" if card_id == current_id
+                        else role_map.get(card_id, "")),
                     "summary": summary,
                 })
                 if card_id == current_id:
@@ -1968,12 +2042,19 @@ class ContextAssembler:
         return context_build_mounted_content(
             self, mount_ids, current_round=current_round)
     def _load_relation_content(self, relation_id):
-        return context_load_relation_content(relation_id)
+        return context_load_relation_content(
+            relation_id, relation_store=self.relation_store)
     def _load_skill_content(self, skill_id):
-        return context_load_skill_content(skill_id)
+        return context_load_skill_content(
+            skill_id, container_store=self.container_store)
     def _load_memory_content(self, mem_ids_str):
         return context_load_memory_content(self, mem_ids_str)
     def _memory_mount_meta(self, mem_ids_str):
-        return context_memory_mount_meta(mem_ids_str)
-    def _load_container_content(self, container_id):
-        return context_load_container_content(container_id)
+        return context_memory_mount_meta(
+            mem_ids_str, memory_store=self.memory_store)
+    def _load_container_content(self, container_id, target_file=None):
+        return context_load_container_content(
+            container_id,
+            target_file=target_file,
+            container_store=self.container_store,
+        )

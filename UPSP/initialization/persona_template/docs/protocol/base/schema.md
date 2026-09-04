@@ -22,18 +22,19 @@
 | active tool hint | 当前轮需要展示的短工具提示，不是 guide 门禁。 |
 | `memory_settlement_reminder` | 每次 reaction provider 请求恰好一张的固定精简提醒卡；提示识别主体更新并主动考虑 `memory_write`，同时说明 material/最近缓存承载正文、`dialogue_progress` 不是私有笔记、`MEM-*` 回执才算真实写入；不根据本轮证据动态生成行为树。 |
 
-## CONTENT / WB focus
+## CONTENT / 常驻与即时正文
 
 | 结构 | 说明 |
 |---|---|
-| `CONTENT` | 当前迭代可阅读和改写参考材料面。read tool 结果、记忆正文、关系正文、容器正文可投到这里。 |
-| `WB focus` | 工作台焦点投影，展示当前焦点容器的元数据、可写目标和正文片段。 |
+| `CONTENT` | 当前 Frame 可阅读的参考材料面。read tool 结果、本轮即时挂载和跨轮常驻的记忆、关系、容器正文可投到这里；模型不能直接改写真源。 |
+| `resident_list` | 跨轮引用账本；每 Frame 从对应真源读取完整当前正文，不复制正文。 |
+| `instant_list` | 当前 Round 的内存挂载投影，不存在活动持久文件。 |
 | `kind=setup_fact` | 起手步或心跳触发说明的自然语言短事实，不等于 POPUP，不承载自由文本暗层；与起手包留在 now，首个成功 Reaction 后进入 lately/Corpus。 |
 | `runtime_call_request` | 每次 provider 调用固定占位，文本为“请根据上下文继续本次调用。”；只出现在实际调用上下文，不写 cache。 |
 | `relay_handoff` | `reaction_finalize.handoff_text` 形成的跨轮交接语料，role=user，但标题声明不是用户原始输入。 |
 | `relay_intents[]` | Runtime 中继意图池，承载 `reaction_finalize.handoff_text` 调度 payload；模型可见层同时有 `relay_handoff` 和目标卡/意图指针。 |
 
-已有内容改写必须先通过 CONTENT / WB focus 看见材料。POPUP 不承载待改正文。
+已有内容改写必须先在 Frame 起点通过 CONTENT 看见材料。POPUP 不承载待改正文；同 Frame 新读取的内容要到下一 Frame 才能作为写入依据。
 
 ## provider-native tool envelope
 
@@ -48,17 +49,15 @@ provider-native tool call 是当前 reaction 的 LLM-facing 工具入口。
 | `response_id` | string | provider response ID。 |
 | `provider_item_id` | string | provider item ID。 |
 | `index` | int | 同一 response 内顺序。 |
-| `tool_family` | enum | `protocol_tool` / `general_tool` / `substrate_tool`。 |
-| `tool_class` | enum | `focus_tool` / `sync_tool` / `read_tool`。 |
-| `parse_status` | enum | `ok` / `invalid_json` / `schema_invalid` / `unknown_tool_id` / `unsupported_tool_family`。 |
+| `tool_class` | enum | `read_tool` / `sync_tool` / `action_tool`。模型只看工具姿态。 |
+| `parse_status` | enum | `ok` / `invalid_json` / `schema_invalid` / `unknown_tool_id` / `unsupported_execution_route`。 |
 
 ## protocol receipt
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `tool_id` | string | 被处理的协议工具。 |
-| `tool_family` | enum | 通常为 `protocol_tool`。 |
-| `tool_class` | enum | `focus_tool` / `sync_tool` / `read_tool`。 |
+| `tool_class` | enum | `read_tool` / `sync_tool` / `action_tool`。 |
 | `status` | enum | `accepted` / `applied` / `rejected` / `needs_review` / `processor_error` / `invalid_tool_request`。 |
 | `source` | string | `provider_tool_call`、processor 或 audit 来源。 |
 | `detail` | string | 可选处理摘要。 |
@@ -95,7 +94,7 @@ provider-native tool call 是当前 reaction 的 LLM-facing 工具入口。
 <!-- STANDBY_SETUP_FORMAT_END -->
 
 <!-- CLEANUP_FORMAT_START -->
-善后步：落账、归档、收尾。connection_material_settle: 联系材料整理结构；tacit_material_settle: 默契材料整理结构。善后本轮材料作为 C 轨 `transient_scope=cleanup_round`、`transient_target_step=cleanup` 临时语料块进入上下文，目标 cleanup 调用完成后清除，不进入 lately/Corpus。成功调用完整输入 Token 达三步共同逻辑窗口 90% 时 Runtime 记录压力；善后最终缓存落账后只冻结 `cache_compaction_debt.v3`，不改写 lately、不置 heartbeat。下一自然轮 Setup 照常，Reaction 以即时 `guide_submit(submit_cache_compaction_batch)` 分片暂存，随后由 v3 `ContextStore` 原子事务写回。cleanup_finalize 结构字段仍为 connection_materials, tacit_materials, lately_compression；善后裸文本只进 audit。
+善后步：落账、归档、收尾。connection_material_settle: 联系材料整理结构；tacit_material_settle: 默契材料整理结构。善后本轮材料作为 C 轨 `transient_scope=cleanup_round`、`transient_target_step=cleanup` 临时语料块进入上下文，目标 cleanup 调用完成后清除，不进入 lately/Corpus。成功调用完整输入 Token 达三步共同逻辑窗口 90% 时 Runtime 记录压力；善后最终缓存落账后只冻结 `cache_compaction_debt.v3`，不改写 lately、不置 heartbeat。下一自然轮 Setup 照常，Reaction 以即时 `guide_submit(submit_cache_compaction_batch)` 分片暂存，随后由 v3 `ContextStore` 原子事务写回。`cleanup_finalize` 活动结构字段只保留 `connection_bridges` 与 `tacit_associations`；不再接收 `lately_compression`，善后裸文本只进 audit。
 <!-- CLEANUP_FORMAT_END -->
 
 <!-- REACTION_RESULT_FORMAT_START -->

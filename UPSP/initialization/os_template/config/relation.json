@@ -1,8 +1,8 @@
 {
   "_comment": "关系域配置",
-  "_version": "Base-0.10.0",
+  "_version": "Base-0.11.0",
 
-  "relation_focus": {
+  "relation_context": {
     "max_slots": 3
   },
 

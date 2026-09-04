@@ -184,8 +184,8 @@ class TestNativeToolCallAdapter:
             "tool_id": "file_read",
             "arguments": {"path": "README.md", "reason": "inspect"},
             "arguments_json": "{\"path\":\"README.md\",\"reason\":\"inspect\"}",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
+            "execution_route": "host_dispatch",
             "risk": "medium",
             "parse_status": "ok",
             "requires_guide": False,
@@ -271,9 +271,9 @@ class TestNativeToolCallAdapter:
 
         assert [item["parse_status"] for item in envelopes] == [
             "unknown_tool_id",
-            "unsupported_tool_family",
+            "unsupported_execution_route",
         ]
-        assert envelopes[1]["tool_family"] == "substrate_tool"
+        assert envelopes[1]["execution_route"] == "substrate"
 
     def test_invalid_arguments_json_is_preserved_but_not_executable(self):
         from logic.native_tool_calls import extract_tool_call_envelopes
@@ -379,8 +379,10 @@ class TestNativeToolCallAdapter:
         assert {
             "memory_link_update",
             "relation_card_write",
-            "container_focus",
+            "memory_container_create",
+            "memory_container_write",
         } <= names
+        assert "container_focus" not in names
         assert "memory_recall_complete" not in names
         assert {
             "chronicle_write",
@@ -434,12 +436,12 @@ class TestNativeToolCallAdapter:
             for item in tools
         )
         expected_structure_sha = {
-            ("openai_responses", "limited"): "f200599d1679e83fbe0c84afbffe30a92c64c0c68ad556587e7eded4b431d2d8",
-            ("openai_responses", "unlimited"): "0a41121b60b4b1a124ce86e24ee25c016e2f76e303899a1b77e28a397a17693d",
-            ("openai_chat", "limited"): "68f3ea6803a639ed15a60bdd7dd4047131652467d5abba1e7838928b96a143d1",
-            ("openai_chat", "unlimited"): "ba143cc04dfd0e990fecdff3aed0fc485f5018349d09c167d510d8ba9a954a93",
-            ("anthropic_messages", "limited"): "62fcda5ac55efcda0e23e1f7ecf95708815c8c95659c2ff5c116b3bc255b8d70",
-            ("anthropic_messages", "unlimited"): "8e3192af8361a8899a4e48cf656b06f0ad52a5325005f2f27cdcfa222401ed7c",
+            ("openai_responses", "limited"): "4c321cd2407002b6b75d7462c75c7c2047b505c8bfcce9239b8ac46d725a9013",
+            ("openai_responses", "unlimited"): "34ce0655c30744e7d683e4240056826c6e89a82eeb674b938f3100842a0e0af7",
+            ("openai_chat", "limited"): "18da64b1e4600c96df02c7f2abd092fe122f4ab4aa80faed25922e90ff4f12d9",
+            ("openai_chat", "unlimited"): "026f79d4544ed8d2dc3ad8a742dfc340e3c048011edbceffeb99190b1fae5005",
+            ("anthropic_messages", "limited"): "ffd5b0f3c324d04443bdda35ca54bc1effdd612c7c9e381ab17a205c2a303a10",
+            ("anthropic_messages", "unlimited"): "9cf908d2f8da73b17cd8e827fe47a6ddddf505faed9d9933920c7e1b746deffa",
         }
         for (provider, permission), expected_sha in expected_structure_sha.items():
             provider_tools = export_provider_tool_schemas(
@@ -448,7 +450,7 @@ class TestNativeToolCallAdapter:
                 include_step_terminal_tools=["reaction_finalize"],
                 execution_permission_level=permission,
             )
-            assert len(provider_tools) == (21 if permission == "limited" else 25)
+            assert len(provider_tools) == (20 if permission == "limited" else 24)
             structure_json = json.dumps(
                 _without_descriptions(provider_tools),
                 ensure_ascii=False,
@@ -494,7 +496,7 @@ class TestNativeToolCallAdapter:
                 assert_described(tool_id, items, f"{path}[]")
 
         by_name = {item["name"]: item for item in tools}
-        assert len(by_name) == 27
+        assert len(by_name) == 26
         for tool_id, tool in by_name.items():
             assert_described(tool_id, tool["parameters"], tool_id)
 
@@ -530,14 +532,12 @@ class TestNativeToolCallAdapter:
         by_name = {item["name"]: item for item in tools}
         index_schema_text = json.dumps(by_name["index_view"], ensure_ascii=False)
         container_read_props = by_name["container_read"]["parameters"]["properties"]
-        container_focus_props = by_name["container_focus"]["parameters"]["properties"]
 
         assert "container_registry" not in index_schema_text
         assert "不提供容器注册表视图" in index_schema_text
         assert "具体容器编号" in container_read_props["container_id"]["description"]
         assert "EC、DC、PRJ、SKL、FUT 只是容器类型" in container_read_props["container_id"]["description"]
-        assert "具体容器编号" in container_focus_props["container_id"]["description"]
-        assert "restore 可留空" in container_focus_props["container_id"]["description"]
+        assert "container_focus" not in by_name
 
     def test_spec216_memory_write_schema_keeps_low_weight_daily_memory_open(self):
         from logic.native_tool_calls import export_provider_tool_schemas
@@ -783,7 +783,7 @@ class TestNativeToolCallAdapter:
         assert "protocol_tool_guide_request" not in names
         assert "memory_write" in names
         assert "memory_link_update" in names
-        assert "container_focus" in names
+        assert "container_focus" not in names
 
     def test_file_read_schema_is_tool_specific_and_closed(self):
         from logic.native_tool_calls import export_provider_tool_schemas
@@ -816,7 +816,6 @@ class TestNativeToolCallAdapter:
         routed = apply_native_tool_calls_to_parsed_reaction({}, [{
             "parse_status": "ok",
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "risk": "medium",
             "arguments": {
@@ -851,7 +850,6 @@ class TestNativeToolCallAdapter:
         routed = apply_native_tool_calls_to_parsed_reaction({}, [{
             "parse_status": "ok",
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "risk": "medium",
             "arguments": {
@@ -878,7 +876,6 @@ class TestNativeToolCallAdapter:
         routed = apply_native_tool_calls_to_parsed_reaction({}, [{
             "parse_status": "ok",
             "tool_id": "guide_submit",
-            "tool_family": "protocol_tool",
             "tool_class": "sync_tool",
             "risk": "high",
             "arguments": {
@@ -986,7 +983,6 @@ class TestNativeToolCallAdapter:
             include_protocol_writes=True,
             active_protocol_tool_guides=[
                 "memory_write",
-                "container_focus",
                 "memory_container_create",
                 "memory_container_write",
             ],
@@ -1036,16 +1032,7 @@ class TestNativeToolCallAdapter:
         }
         assert "linked_containers" not in memory_write["properties"]
 
-        container_focus = by_name["container_focus"]
-        focus_props = container_focus["properties"]
-        assert container_focus["required"] == ["action"]
-        assert container_focus["additionalProperties"] is False
-        assert focus_props["action"]["enum"] == ["open", "close", "restore"]
-        assert "container_type" not in focus_props
-        assert "write_mode" not in focus_props
-        assert "content" not in focus_props
-        assert "command" not in focus_props
-        assert "url" not in focus_props
+        assert "container_focus" not in by_name
 
         create_props = by_name["memory_container_create"]["properties"]
         assert by_name["memory_container_create"]["required"] == [
@@ -1078,8 +1065,8 @@ class TestNativeToolCallAdapter:
             "current_overview",
             "reason",
         ]
-        assert "入口已可见" in write_props["container_id"]["description"]
-        assert "按当前 focus 容器类型选择" in write_props["target_file"]["description"]
+        assert "本 Frame 起点" in write_props["container_id"]["description"]
+        assert "本 Frame 起点已可见" in write_props["target_file"]["description"]
         assert "DC/EC=open.md" in write_props["target_file"]["description"]
 
         assert "fault_record" not in by_name
@@ -1103,8 +1090,8 @@ class TestNativeToolCallAdapter:
         assert expected <= set(by_name)
         for tool_id in expected:
             meta = protocol_tools.tool_metadata_for(tool_id)
-            assert meta["tool_family"] == "protocol_tool"
             assert meta["tool_class"] == "read_tool"
+            assert meta["execution_route"] == "internal_processor"
             assert meta["result_kind"] == "protocol_tool_receipt"
             assert by_name[tool_id]["additionalProperties"] is False
 
@@ -1146,15 +1133,14 @@ class TestNativeToolCallAdapter:
 
         assert "mount_cancel" in by_name
         meta = protocol_tools.tool_metadata_for("mount_cancel")
-        assert meta["tool_family"] == "protocol_tool"
         assert meta["tool_class"] == "sync_tool"
+        assert meta["execution_route"] == "internal_processor"
         assert meta["domain"] == "context_mount"
         assert meta["risk"] == "medium"
         assert meta["result_kind"] == "protocol_tool_receipt"
-        assert by_name["mount_cancel"]["required"] == ["mount_area"]
+        assert by_name["mount_cancel"]["required"] == ["mount_area", "item_id"]
         assert by_name["mount_cancel"]["additionalProperties"] is False
         assert by_name["mount_cancel"]["properties"]["mount_area"]["enum"] == [
-            "focus",
             "resident_list",
             "instant_list",
         ]
@@ -1163,7 +1149,6 @@ class TestNativeToolCallAdapter:
             "memory",
             "container",
             "relation",
-            "relation_summary",
         ]
 
     def test_spec305_native_mount_cancel_routes_to_request_declaration(self):
@@ -1187,7 +1172,6 @@ class TestNativeToolCallAdapter:
                 "reason": "no longer needed",
             },
             "arguments_json": "{}",
-            "tool_family": "protocol_tool",
             "tool_class": "sync_tool",
             "risk": "medium",
             "parse_status": "ok",
@@ -1230,7 +1214,6 @@ class TestNativeToolCallAdapter:
                 "provider_item_id": f"fc_spec148_{index}",
                 "index": index,
                 "tool_id": tool_id,
-                "tool_family": "protocol_tool",
                 "tool_class": "read_tool",
                 "risk": "low",
                 "parse_status": "ok",
@@ -1284,7 +1267,6 @@ class TestNativeToolCallAdapter:
                 "memory_privacy_mark",
                 "memory_privacy_declassify",
                 "relation_card_write",
-                "container_focus",
                 "fault_record",
             ],
         )
@@ -1337,7 +1319,7 @@ class TestNativeToolCallAdapter:
         }
         for tool_id, step in expected_steps.items():
             meta = tool_metadata_for(tool_id)
-            assert meta["tool_family"] == "protocol_tool"
+            assert meta["execution_route"] == "internal_processor"
             assert meta["result_kind"] == "protocol_tool_receipt"
             assert meta["native_only"] is True
             assert meta["step_terminal"] == step
@@ -1383,7 +1365,7 @@ class TestNativeToolCallAdapter:
         assert rhythm_guided_names == normal_names | {"guide_submit"}
         assert "memory_write" in rhythm_guided_names
         assert "relation_card_write" in rhythm_guided_names
-        assert "container_focus" in rhythm_guided_names
+        assert "container_focus" not in rhythm_guided_names
         assert "guide_submit" in rhythm_guided_names
         assert "chronicle_write" not in rhythm_guided_names
 
@@ -1425,7 +1407,6 @@ class TestNativeToolCallAdapter:
             "tool_id": "chronicle_write",
             "arguments": {"content": "旧入口不再可见。"},
             "arguments_json": "{\"content\":\"旧入口不再可见。\"}",
-            "tool_family": "protocol_tool",
             "tool_class": "sync_tool",
             "risk": "medium",
             "parse_status": "ok",
@@ -1509,7 +1490,6 @@ class TestNativeToolCallAdapter:
                 "tool_id": "file_read",
                 "arguments": {"path": "README.md"},
                 "arguments_json": "{\"path\":\"README.md\"}",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "parse_status": "ok",
             }],
@@ -1595,16 +1575,7 @@ class TestNativeToolCallAdapter:
         assert "reaction_progress_emit" not in by_name
         assert by_name["cleanup_finalize"]["additionalProperties"] is False
         assert by_name["cleanup_finalize"]["properties"]["connection_bridges"]["items"]["type"] == "object"
-        cleanup_schema = by_name["cleanup_finalize"]["properties"]["lately_compression"]
-        assert cleanup_schema["type"] == "object"
-        assert set(cleanup_schema["properties"]) == {
-            "action",
-            "replacement_text",
-            "reason",
-        }
-        assert "block_id" not in cleanup_schema["properties"]
-        assert "source_block_ids" not in cleanup_schema["properties"]
-        assert "candidate_numbers" not in cleanup_schema["properties"]
+        assert "lately_compression" not in by_name["cleanup_finalize"]["properties"]
         assert "handoff_note" not in by_name["cleanup_finalize"]["properties"]
 
     def test_spec575_reaction_finalize_description_allows_post_settled_mixed_handoff(self):
@@ -1664,7 +1635,6 @@ class TestNativeToolCallAdapter:
                     ),
                 },
                 "arguments_json": "{}",
-                "tool_family": "substrate_tool",
                 "tool_class": "sync_tool",
                 "parse_status": "ok",
             }],
@@ -1896,7 +1866,6 @@ class TestNativeToolCallAdapter:
 
         projected, ordinary, invalids = terminal_finalize_from_envelopes([{
             "tool_id": "reaction_finalize",
-            "tool_family": "substrate_tool",
             "tool_class": "sync_tool",
             "parse_status": "ok",
             "provider": "openai_responses",
@@ -1916,7 +1885,6 @@ class TestNativeToolCallAdapter:
 
         projected, ordinary, invalids = terminal_finalize_from_envelopes([{
             "tool_id": "reaction_finalize",
-            "tool_family": "substrate_tool",
             "tool_class": "sync_tool",
             "parse_status": "ok",
             "provider": "openai_responses",
@@ -1936,7 +1904,6 @@ class TestNativeToolCallAdapter:
 
         projected, ordinary, invalids = terminal_finalize_from_envelopes([{
             "tool_id": "reaction_finalize",
-            "tool_family": "substrate_tool",
             "tool_class": "sync_tool",
             "parse_status": "ok",
             "provider": "anthropic_messages",
@@ -1980,7 +1947,6 @@ class TestNativeToolCallAdapter:
             {},
             [{
                 "tool_id": "reaction_progress_emit",
-                "tool_family": "substrate_tool",
                 "tool_class": "sync_tool",
                 "arguments": {"message": "still reading"},
                 "parse_status": "ok",
@@ -1992,7 +1958,7 @@ class TestNativeToolCallAdapter:
         assert routed["assistant_progress"] == ""
         assert routed["reaction_loop"] == {}
         assert routed["invalid_tool_requests"][0]["tool_id"] == "reaction_progress_emit"
-        assert routed["invalid_tool_requests"][0]["reason"] == "unsupported_tool_family"
+        assert routed["invalid_tool_requests"][0]["reason"] == "unsupported_execution_route"
 
     def test_native_envelopes_replace_text_tool_requests_for_runtime_routing(self):
         from logic.native_tool_calls import apply_native_tool_calls_to_parsed_reaction
@@ -2017,7 +1983,6 @@ class TestNativeToolCallAdapter:
             "tool_id": "file_read",
             "arguments": {"path": "README.md", "reason": "inspect"},
             "arguments_json": "{\"path\":\"README.md\",\"reason\":\"inspect\"}",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "risk": "medium",
             "parse_status": "ok",
@@ -2033,7 +1998,6 @@ class TestNativeToolCallAdapter:
             "path": "README.md",
             "reason": "inspect",
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "risk": "medium",
             "source": "provider_tool_call",
@@ -2078,19 +2042,18 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_005",
             "index": 0,
             "tool_id": "context_assemble",
-            "tool_family": "substrate_tool",
             "tool_class": "read_tool",
+            "execution_route": "substrate",
             "risk": "high",
-            "parse_status": "unsupported_tool_family",
+            "parse_status": "unsupported_execution_route",
             "arguments": {},
         }], native_mode=True)
 
         assert routed["invalid_tool_requests"] == [{
             "tool_id": "context_assemble",
-            "tool_family": "substrate_tool",
             "tool_class": "read_tool",
             "risk": "high",
-            "reason": "unsupported_tool_family",
+            "reason": "unsupported_execution_route",
             "source": "provider_tool_call",
             "call_id": "call_005",
             "provider": "openai_responses",
@@ -2116,7 +2079,6 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_invalid_only",
             "index": 0,
             "tool_id": "not_a_tool",
-            "tool_family": "",
             "tool_class": "",
             "risk": "",
             "parse_status": "unknown_tool_id",
@@ -2140,7 +2102,6 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_missing_arg",
             "index": 0,
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "risk": "medium",
             "parse_status": "ok",
@@ -2166,7 +2127,6 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_unknown_arg",
             "index": 0,
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "risk": "medium",
             "parse_status": "ok",
@@ -2178,7 +2138,7 @@ class TestNativeToolCallAdapter:
         assert invalid["reason"] == "native_argument_unknown_field"
         assert invalid["field"] == "command"
 
-    def test_native_arguments_invalid_enum_rejected_before_protocol_submission(self):
+    def test_spec781_retired_focus_mount_area_is_rejected_before_submission(self):
         from logic.native_tool_calls import apply_native_tool_calls_to_parsed_reaction
 
         routed = apply_native_tool_calls_to_parsed_reaction({}, [{
@@ -2188,22 +2148,22 @@ class TestNativeToolCallAdapter:
             "call_id": "call_bad_enum",
             "provider_item_id": "fc_bad_enum",
             "index": 0,
-            "tool_id": "container_focus",
-            "tool_family": "protocol_tool",
-            "tool_class": "focus_tool",
+            "tool_id": "mount_cancel",
+            "tool_class": "sync_tool",
+            "execution_route": "internal_processor",
             "risk": "high",
             "parse_status": "ok",
-            "arguments": {"action": "write"},
-        }], native_mode=True, active_protocol_tool_guides=["container_focus"])
+            "arguments": {"mount_area": "focus", "item_id": "PRJ-000001"},
+        }], native_mode=True)
 
         assert routed["protocol_tool_requests"] == []
         assert routed["protocol_tool_submissions"] == []
-        assert routed["container_focus_declarations"] == []
+        assert routed["mount_cancel_requests"] == []
         invalid = routed["invalid_tool_requests"][0]
         assert invalid["reason"] == "native_argument_invalid_enum"
-        assert invalid["field"] == "action"
-        assert invalid["expected"] == ["open", "close", "restore"]
-        assert invalid["actual"] == "write"
+        assert invalid["field"] == "mount_area"
+        assert invalid["expected"] == ["resident_list", "instant_list"]
+        assert invalid["actual"] == "focus"
 
     def test_native_arguments_invalid_type_rejected_before_protocol_submission(self):
         from logic.native_tool_calls import apply_native_tool_calls_to_parsed_reaction
@@ -2216,7 +2176,6 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_bad_type",
             "index": 0,
             "tool_id": "memory_write",
-            "tool_family": "protocol_tool",
             "tool_class": "sync_tool",
             "risk": "high",
             "parse_status": "ok",
@@ -2249,7 +2208,6 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_bad_array_item",
             "index": 0,
             "tool_id": "memory_write",
-            "tool_family": "protocol_tool",
             "tool_class": "sync_tool",
             "risk": "high",
             "parse_status": "ok",
@@ -2283,7 +2241,6 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_bad_keywords",
             "index": 0,
             "tool_id": "memory_write",
-            "tool_family": "protocol_tool",
             "tool_class": "sync_tool",
             "risk": "high",
             "parse_status": "ok",
@@ -2316,7 +2273,6 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_float_integer",
             "index": 0,
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "risk": "medium",
             "parse_status": "ok",
@@ -2343,7 +2299,6 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_missing_schema",
             "index": 0,
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "risk": "medium",
             "parse_status": "ok",
@@ -2377,7 +2332,6 @@ class TestNativeToolCallAdapter:
                 "target_hint": "MEM-1 -> DC-1",
             },
             "arguments_json": "{}",
-            "tool_family": "runtime_tool",
             "tool_class": "guide_request",
             "risk": "medium",
             "parse_status": "ok",
@@ -2414,11 +2368,10 @@ class TestNativeToolCallAdapter:
                 "candidate_keywords": ["Spec205", "native"],
             },
             "arguments_json": "{}",
-            "tool_family": "protocol_tool",
             "tool_class": "sync_tool",
             "risk": "high",
             "parse_status": "ok",
-        }], native_mode=True, active_protocol_tool_guides=["container_focus"])
+        }], native_mode=True)
 
         assert routed["protocol_tool_requests"] == []
         assert routed["protocol_tool_submissions"] == ["memory_write"]
@@ -2458,7 +2411,6 @@ class TestNativeToolCallAdapter:
                 "container_refs": ["DC-1"],
             },
             "arguments_json": "{}",
-            "tool_family": "protocol_tool",
             "tool_class": "sync_tool",
             "risk": "high",
             "parse_status": "ok",
@@ -2501,7 +2453,6 @@ class TestNativeToolCallAdapter:
                 "candidate_keywords": ["Spec135", "native"],
             },
             "arguments_json": "{}",
-            "tool_family": "protocol_tool",
             "tool_class": "sync_tool",
             "risk": "high",
             "parse_status": "ok",
@@ -2535,7 +2486,6 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_relation",
             "index": 0,
             "tool_id": "relation_card_write",
-            "tool_family": "protocol_tool",
             "tool_class": "sync_tool",
             "risk": "high",
             "parse_status": "ok",
@@ -2565,8 +2515,8 @@ class TestNativeToolCallAdapter:
             "provider_item_id": "fc_focus",
             "index": 0,
             "tool_id": "memory_container_create",
-            "tool_family": "protocol_tool",
-            "tool_class": "focus_tool",
+            "tool_class": "sync_tool",
+            "execution_route": "internal_processor",
             "risk": "high",
             "parse_status": "ok",
             "arguments": {
@@ -2664,7 +2614,6 @@ class TestNativeToolCallExecutorAndAudit:
                 "reason": "request protocol tool guide",
             },
             "arguments_json": "{}",
-            "tool_family": "runtime_tool",
             "tool_class": "guide_request",
             "risk": "medium",
             "parse_status": "ok",
@@ -3227,7 +3176,6 @@ class TestNativeToolCallExecutorAndAudit:
                     }],
                     "native_tool_outputs": [{
                         "tool_id": "file_read",
-                        "tool_family": "general_tool",
                         "tool_class": "read_tool",
                         "status": "ok",
                         "result_kind": "general_tool_result",
@@ -3363,7 +3311,6 @@ class TestNativeToolCallExecutorAndAudit:
                     }],
                     "native_tool_outputs": [{
                         "tool_id": "web_search",
-                        "tool_family": "general_tool",
                         "tool_class": "read_tool",
                         "status": "ok",
                         "result_kind": "general_tool_result",
@@ -3475,7 +3422,6 @@ class TestNativeToolCallExecutorAndAudit:
                 "tool_id": "file_read",
                 "arguments": {"path": "README.md"},
                 "arguments_json": "{\"path\":\"README.md\"}",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "risk": "medium",
                 "parse_status": "ok",
@@ -3690,7 +3636,6 @@ class TestNativeToolCallExecutorAndAudit:
                             "tool_id": "file_read",
                             "arguments": {"path": "example.txt", "reason": "native"},
                             "arguments_json": "{\"path\":\"example.txt\",\"reason\":\"native\"}",
-                            "tool_family": "general_tool",
                             "tool_class": "read_tool",
                             "risk": "medium",
                             "parse_status": "ok",
@@ -3706,7 +3651,6 @@ class TestNativeToolCallExecutorAndAudit:
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -3771,7 +3715,6 @@ class TestNativeToolCallExecutorAndAudit:
                             "tool_id": "file_read",
                             "arguments": {"path": "example.txt", "reason": "native"},
                             "arguments_json": "{\"path\":\"example.txt\",\"reason\":\"native\"}",
-                            "tool_family": "general_tool",
                             "tool_class": "read_tool",
                             "risk": "medium",
                             "parse_status": "ok",
@@ -3783,7 +3726,6 @@ class TestNativeToolCallExecutorAndAudit:
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -3868,7 +3810,6 @@ class TestNativeToolCallExecutorAndAudit:
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -3935,7 +3876,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "tool_id": "not_a_tool",
                     "arguments": {},
                     "arguments_json": "{}",
-                    "tool_family": "",
                     "tool_class": "",
                     "risk": "",
                     "parse_status": "unknown_tool_id",
@@ -3977,7 +3917,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "tool_id": "file_read",
                     "arguments": {"reason": "missing path"},
                     "arguments_json": "{\"reason\":\"missing path\"}",
-                    "tool_family": "general_tool",
                     "tool_class": "read_tool",
                     "risk": "medium",
                     "parse_status": "ok",
@@ -4043,7 +3982,6 @@ class TestNativeToolCallExecutorAndAudit:
                         "body": "记录关键词格式错误。",
                         "candidate_keywords": submitted_keywords,
                     }, ensure_ascii=False, sort_keys=True),
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "risk": "high",
                     "parse_status": "ok",
@@ -4085,7 +4023,6 @@ class TestNativeToolCallExecutorAndAudit:
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -4109,7 +4046,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "raw_type": "function_call",
                     "tool_id": "file_read",
                     "arguments": {"path": "example.txt", "reason": "native"},
-                    "tool_family": "general_tool",
                     "tool_class": "read_tool",
                     "risk": "medium",
                     "parse_status": "ok",
@@ -4125,7 +4061,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "raw_type": "function_call",
                     "tool_id": "not_a_tool",
                     "arguments": {},
-                    "tool_family": "",
                     "tool_class": "",
                     "risk": "",
                     "parse_status": "unknown_tool_id",
@@ -4443,7 +4378,6 @@ class TestNativeToolCallExecutorAndAudit:
                                 "body": "Route pending body",
                                 "candidate_keywords": ["Spec202", "route"],
                             },
-                            "tool_family": "protocol_tool",
                             "tool_class": "sync_tool",
                             "risk": "high",
                             "parse_status": "ok",
@@ -4474,7 +4408,7 @@ class TestNativeToolCallExecutorAndAudit:
         assert result["_settlement_ledgers"][0]["pending_resolution_result"] == "open"
         assert len(rt.executor.calls) == 2
 
-    def test_reaction_loop_popups_native_argument_enum_feedback(
+    def test_spec781_reaction_loop_popups_retired_focus_mount_area_feedback(
             self, tmp_path, monkeypatch):
         from tests.runtime_test_helpers import RuntimeTestMixin
 
@@ -4498,11 +4432,14 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_enum_feedback",
                     "index": 0,
                     "raw_type": "function_call",
-                    "tool_id": "container_focus",
-                    "arguments": {"action": "write"},
-                    "arguments_json": "{\"action\":\"write\"}",
-                    "tool_family": "protocol_tool",
-                    "tool_class": "focus_tool",
+                    "tool_id": "mount_cancel",
+                    "arguments": {
+                        "mount_area": "focus",
+                        "item_id": "PRJ-000001",
+                    },
+                    "arguments_json": "{\"mount_area\":\"focus\",\"item_id\":\"PRJ-000001\"}",
+                    "tool_class": "sync_tool",
+                    "execution_route": "internal_processor",
                     "risk": "high",
                     "parse_status": "ok",
                 }],
@@ -4549,8 +4486,8 @@ class TestNativeToolCallExecutorAndAudit:
                         "cwd": ".",
                     },
                     "arguments_json": "{\"command\":\"echo shell ok\"}",
-                    "tool_family": "general_tool",
-                    "tool_class": "focus_tool",
+                    "tool_class": "action_tool",
+                    "execution_route": "host_dispatch",
                     "risk": "high",
                     "parse_status": "ok",
                 }],
@@ -4597,8 +4534,8 @@ class TestNativeToolCallExecutorAndAudit:
                         "patch": "--- a/live.md\n+++ b/live.md\n@@ -1,1 +1,1 @@\n-a\n+b\n",
                         "purpose": "try live persona edit",
                     },
-                    "tool_family": "general_tool",
-                    "tool_class": "focus_tool",
+                    "tool_class": "action_tool",
+                    "execution_route": "host_dispatch",
                     "risk": "high",
                     "parse_status": "ok",
                 }],
@@ -4650,8 +4587,8 @@ class TestNativeToolCallExecutorAndAudit:
                         "expected_artifacts": "diff",
                         "task_mode": "code_change",
                     },
-                    "tool_family": "general_tool",
-                    "tool_class": "focus_tool",
+                    "tool_class": "action_tool",
+                    "execution_route": "host_dispatch",
                     "risk": "high",
                     "parse_status": "ok",
                 }],
@@ -4706,7 +4643,6 @@ class TestNativeToolCallExecutorAndAudit:
                             "provider_item_id": "fc_mem",
                             "index": 0,
                             "tool_id": "memory_write",
-                            "tool_family": "protocol_tool",
                             "tool_class": "sync_tool",
                             "risk": "high",
                             "parse_status": "ok",
@@ -4785,7 +4721,6 @@ class TestNativeToolCallExecutorAndAudit:
                                 "下一轮从当前页继续。原因：native relay"
                             ),
                         },
-                        "tool_family": "substrate_tool",
                         "tool_class": "sync_tool",
                         "parse_status": "ok",
                         "index": 0,
@@ -4863,7 +4798,6 @@ class TestNativeToolCallExecutorAndAudit:
                             "provider_item_id": "fc_fault",
                             "index": 0,
                             "tool_id": "fault_record",
-                            "tool_family": "protocol_tool",
                             "tool_class": "sync_tool",
                             "risk": "medium",
                             "parse_status": "ok",
@@ -4885,7 +4819,6 @@ class TestNativeToolCallExecutorAndAudit:
                         "arguments": {
                             "closeout_decision": "finish",
                         },
-                        "tool_family": "substrate_tool",
                         "tool_class": "sync_tool",
                         "parse_status": "ok",
                         "index": 0,
@@ -4936,7 +4869,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_privacy",
                     "index": 0,
                     "tool_id": "memory_privacy_mark",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "risk": "high",
                     "parse_status": "ok",
@@ -5000,7 +4932,6 @@ class TestNativeToolCallExecutorAndAudit:
 
         result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
 
-        assert result["_memory_annotation_receipts"] == []
         assert result["_invalid_tool_requests"][0]["call_id"] == "call_annotation"
         assert result["_invalid_tool_requests"][0]["tool_id"] == "memory_annotation_update"
         assert result["_invalid_tool_requests"][0]["reason"] == "unknown_tool_id"
@@ -5021,7 +4952,6 @@ class TestNativeToolCallExecutorAndAudit:
             "build_index_view",
             lambda **kwargs: {
                 "tool_id": "index_view",
-                "tool_family": "protocol_tool",
                 "tool_class": "read_tool",
                 "status": "accepted",
                 "source": "protocol_tool_request",
@@ -5042,7 +4972,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_index_read",
                     "index": 0,
                     "tool_id": "index_view",
-                    "tool_family": "protocol_tool",
                     "tool_class": "read_tool",
                     "risk": "low",
                     "parse_status": "ok",
@@ -5077,7 +5006,6 @@ class TestNativeToolCallExecutorAndAudit:
             "build_memory_search",
             lambda **kwargs: {
                 "tool_id": "memory_search",
-                "tool_family": "protocol_tool",
                 "tool_class": "read_tool",
                 "status": "accepted",
                 "source": "protocol_tool_request",
@@ -5101,7 +5029,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_memory_search",
                     "index": 0,
                     "tool_id": "memory_search",
-                    "tool_family": "protocol_tool",
                     "tool_class": "read_tool",
                     "risk": "low",
                     "parse_status": "ok",
@@ -5143,7 +5070,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_relation_read",
                     "index": 0,
                     "tool_id": "relation_read",
-                    "tool_family": "protocol_tool",
                     "tool_class": "read_tool",
                     "risk": "low",
                     "parse_status": "ok",
@@ -5186,7 +5112,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_mem_read",
                     "index": 0,
                     "tool_id": "memory_content_read",
-                    "tool_family": "protocol_tool",
                     "tool_class": "read_tool",
                     "risk": "medium",
                     "parse_status": "ok",
@@ -5227,7 +5152,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_container_read",
                     "index": 0,
                     "tool_id": "container_read",
-                    "tool_family": "protocol_tool",
                     "tool_class": "read_tool",
                     "risk": "medium",
                     "parse_status": "ok",
@@ -5269,8 +5193,8 @@ class TestNativeToolCallExecutorAndAudit:
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
 
         store = cs.ContainerStore()
-        project = store.create_focus_container("PRJ", "Spec 141", target_file="notes.md")
-        store.append_focus_content(
+        project = store.create_container("PRJ", "Spec 141", target_file="notes.md")
+        store.append_container_content(
             project["container_id"],
             "notes.md",
             "验收正文",
@@ -5295,7 +5219,6 @@ class TestNativeToolCallExecutorAndAudit:
                             "provider_item_id": "fc_container_read_ok",
                             "index": 0,
                             "tool_id": "container_read",
-                            "tool_family": "protocol_tool",
                             "tool_class": "read_tool",
                             "risk": "medium",
                             "parse_status": "ok",
@@ -5342,7 +5265,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_container_read_legacy",
                     "index": 0,
                     "tool_id": "container_read",
-                    "tool_family": "protocol_tool",
                     "tool_class": "read_tool",
                     "risk": "medium",
                     "parse_status": "ok",
@@ -5385,7 +5307,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_declassify",
                     "index": 0,
                     "tool_id": "memory_privacy_declassify",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "risk": "high",
                     "parse_status": "ok",
@@ -5428,7 +5349,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_recall",
                     "index": 0,
                     "tool_id": "memory_recall_complete",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "risk": "medium",
                     "parse_status": "ok",
@@ -5449,7 +5369,7 @@ class TestNativeToolCallExecutorAndAudit:
             "memory_recall_complete"
         )
         assert result["_invalid_tool_requests"][0]["reason"] == (
-            "native_protocol_write_not_enabled"
+            "unsupported_execution_route"
         )
         self._assert_no_native_replay_messages(rt.executor.calls[1])
 
@@ -5476,7 +5396,6 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_relation",
                     "index": 0,
                     "tool_id": "relation_card_write",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "risk": "high",
                     "parse_status": "ok",
@@ -5523,11 +5442,21 @@ class TestNativeToolCallExecutorAndAudit:
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
 
         class DummyMemoryStore:
+            def __init__(self):
+                self.ltm = {}
+                self.stm = {}
+
             def list_entries(self):
                 return ["MEM-243NATIVE"]
 
             def get_meta(self, mem_id):
                 return {"id": mem_id, "access": "public", "subject": "Codex"}
+
+            def read_body_by_id(self, mem_id):
+                return {
+                    "body": "内容\nNative source",
+                    "meta": self.get_meta(mem_id),
+                }
 
             def update_linked_containers(
                     self, mem_id, operation, refs, current_overview=None):
@@ -5537,6 +5466,18 @@ class TestNativeToolCallExecutorAndAudit:
                     "linked_containers": list(refs),
                     "current_overview": current_overview,
                 }
+
+            def snapshot_ltm_files(self):
+                return dict(self.ltm)
+
+            def snapshot_stm_files(self):
+                return dict(self.stm)
+
+            def restore_ltm_files(self, snapshot):
+                self.ltm = dict(snapshot)
+
+            def restore_stm_files(self, snapshot):
+                self.stm = dict(snapshot)
 
         rt.memory_store = DummyMemoryStore()
 
@@ -5551,8 +5492,8 @@ class TestNativeToolCallExecutorAndAudit:
                     "provider_item_id": "fc_focus",
                     "index": 0,
                     "tool_id": "memory_container_create",
-                    "tool_family": "protocol_tool",
-                    "tool_class": "focus_tool",
+                    "tool_class": "sync_tool",
+                    "execution_route": "internal_processor",
                     "risk": "high",
                     "parse_status": "ok",
                     "arguments": {
@@ -5572,7 +5513,9 @@ class TestNativeToolCallExecutorAndAudit:
         result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
 
         assert result["_protocol_tool_submissions"] == ["memory_container_create"]
-        assert result["_memory_container_create_receipts"][0]["status"] == "applied"
+        assert result["_memory_container_create_receipts"][0]["status"] == "applied", (
+            result["_memory_container_create_receipts"][0]
+        )
         assert result["_memory_container_create_receipts"][0]["call_id"] == "call_focus"
         assert result["_general_tool_results"] == []
         assert "_native_tool_result_projections" not in result
@@ -5618,7 +5561,7 @@ class TestNativeToolCallExecutorAndAudit:
             "FUT",
         ]
         assert "SKL=card.md" in combined
-        assert "入口已可见" in combined
+        assert "本 Frame 起点" in combined
         assert "不是复制 MEM" in combined
         assert "memory_container_create" in by_name
         assert "memory_container_write" in by_name

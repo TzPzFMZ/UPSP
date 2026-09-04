@@ -8,8 +8,12 @@ from data.round_snapshot_store import RoundSnapshotStore
 from data.state_store import StateStore
 from logic.state_settlement import (
     StateSettlementError,
+    _apply_state_slice,
+    _state_slice,
+    commit_reaction_entry,
+    prepare_reaction_entry,
     settle_due_state,
-    settle_state,
+    settle_reaction_frame,
 )
 
 
@@ -80,12 +84,203 @@ def _receipt(mem_id="MEM-01", interaction=None, relationships=None):
     }
 
 
+def _settle_reaction(state_store, relation_store, round_store, round_num,
+                     round_type, memory_write_receipts=None,
+                     user_input_text="", observed_at=None,
+                     external_interaction=None):
+    """Exercise the two active Reaction scopes without a legacy adapter."""
+    interactive = (
+        bool(external_interaction)
+        if external_interaction is not None
+        else bool(round_type == "interactive" and str(user_input_text).strip())
+    )
+    preparation = prepare_reaction_entry(
+        state_store,
+        relation_store,
+        round_store,
+        round_num,
+        round_type,
+        external_interaction=interactive,
+        observed_at=observed_at,
+    )
+    entry = commit_reaction_entry(
+        state_store,
+        relation_store,
+        round_store,
+        round_num,
+        round_type,
+        preparation,
+    )
+    if not memory_write_receipts:
+        return entry
+    return settle_reaction_frame(
+        state_store,
+        relation_store,
+        round_store,
+        round_num,
+        round_type,
+        frame_iteration=1,
+        memory_write_receipts=memory_write_receipts,
+        observed_at=observed_at,
+    )
+
+
+def test_reaction_entry_is_the_only_round_natural_return(tmp_path):
+    state, relations, rounds = _stores(tmp_path)
+    current = state.load()
+    current["base"]["dynamic_axes"]["humor"]["value"] = 3
+    state.save(current)
+
+    preparation = prepare_reaction_entry(
+        state, relations, rounds, 1, "interactive",
+        external_interaction=True,
+        observed_at=datetime(2026, 7, 18, tzinfo=TZ_SHANGHAI),
+    )
+    receipt = commit_reaction_entry(
+        state, relations, rounds, 1, "interactive", preparation)
+
+    assert receipt["settlement_id"] == "SS-R000001-E"
+    assert receipt["settlement_scope"] == "reaction_entry"
+    assert state.load()["base"]["dynamic_axes"]["humor"]["value"] == 2
+
+
+def test_reaction_entry_preparation_is_read_only_until_commit(tmp_path):
+    state, relations, rounds = _stores(tmp_path)
+    current = state.load()
+    current["base"]["dynamic_axes"]["humor"]["value"] = 3
+    state.save(current)
+
+    preparation = prepare_reaction_entry(
+        state, relations, rounds, 1, "interactive",
+        external_interaction=True,
+        observed_at=datetime(2026, 7, 18, tzinfo=TZ_SHANGHAI),
+    )
+
+    assert state.load()["base"]["dynamic_axes"]["humor"]["value"] == 3
+    assert preparation["preview_state"]["base"]["dynamic_axes"][
+        "humor"]["value"] == 2
+    assert not any(
+        event["event_type"].startswith("state_settle_")
+        for event in rounds.read_events(1)
+    )
+
+    receipt = commit_reaction_entry(
+        state, relations, rounds, 1, "interactive", preparation)
+
+    assert receipt["status"] == "applied"
+    assert state.load()["base"]["dynamic_axes"]["humor"]["value"] == 2
+
+
+def test_reaction_entry_commit_rejects_relevant_state_drift(tmp_path):
+    state, relations, rounds = _stores(tmp_path)
+    preparation = prepare_reaction_entry(
+        state, relations, rounds, 1, "interactive")
+    current = state.load()
+    current["base"]["dynamic_axes"]["focus"]["value"] = 4
+    state.save(current)
+
+    with pytest.raises(StateSettlementError) as caught:
+        commit_reaction_entry(
+            state, relations, rounds, 1, "interactive", preparation)
+
+    assert "prepared_state_drift" in caught.value.receipt["reason"]
+    assert state.load()["base"]["dynamic_axes"]["focus"]["value"] == 4
+
+
+def test_reaction_entry_commit_preserves_new_due_flag_by_rejecting_drift(
+        tmp_path):
+    state, relations, rounds = _stores(tmp_path)
+    preparation = prepare_reaction_entry(
+        state, relations, rounds, 1, "interactive")
+    state.set_flag("feeling_settle_due", True)
+
+    with pytest.raises(StateSettlementError) as caught:
+        commit_reaction_entry(
+            state, relations, rounds, 1, "interactive", preparation)
+
+    assert "prepared_state_drift" in caught.value.receipt["reason"]
+    assert state.get_flags()["feeling_settle_due"] is True
+
+
+def test_reaction_entry_commit_rejects_changed_round_type(tmp_path):
+    state, relations, rounds = _stores(tmp_path)
+    preparation = prepare_reaction_entry(
+        state, relations, rounds, 1, "interactive")
+
+    with pytest.raises(StateSettlementError) as caught:
+        commit_reaction_entry(
+            state, relations, rounds, 1, "relay", preparation)
+
+    assert caught.value.receipt["reason"] == (
+        "state_settlement_preparation_round_type_mismatch")
+    assert state.get("base.meta.last_state_settlement_id") is None
+
+
+def test_legacy_frame_plan_without_due_field_does_not_clear_current_due_flag(
+        tmp_path):
+    state, _relations, _rounds = _stores(tmp_path)
+    current = state.load()
+    current["base"]["heartbeat_flags"]["feeling_settle_due"] = True
+    legacy_values = _state_slice(current)
+    legacy_values.pop("feeling_settle_due")
+
+    _apply_state_slice(current, legacy_values, clear_due=False)
+
+    assert current["base"]["heartbeat_flags"]["feeling_settle_due"] is True
+
+
+def test_reaction_frame_applies_new_feelings_without_natural_return(tmp_path):
+    state, relations, rounds = _stores(tmp_path)
+    current = state.load()
+    current["base"]["dynamic_axes"]["humor"]["value"] = 3
+    state.save(current)
+
+    receipt = settle_reaction_frame(
+        state, relations, rounds, 1, "interactive", frame_iteration=2,
+        memory_write_receipts=[
+            _receipt(interaction=["核心判断被推翻"]),
+        ],
+        observed_at=datetime(2026, 7, 18, tzinfo=TZ_SHANGHAI),
+    )
+
+    base = state.load()["base"]
+    assert receipt["settlement_id"] == "SS-R000001-F000002"
+    assert receipt["settlement_scope"] == "reaction_frame"
+    assert base["dynamic_axes"]["humor"]["value"] == 3
+    assert base["dynamic_axes"]["arousal"]["value"] == 3
+    assert base["feeling_buffer"]
+
+
+def test_idle_timer_settles_due_pulse_without_natural_return(tmp_path):
+    start = datetime(2026, 7, 18, tzinfo=TZ_SHANGHAI)
+    state, relations, rounds = _stores(tmp_path)
+    settle_reaction_frame(
+        state, relations, rounds, 1, "interactive", frame_iteration=1,
+        memory_write_receipts=[
+            _receipt(interaction=["核心判断被推翻"]),
+        ],
+        observed_at=start,
+    )
+    current = state.load()
+    current["base"]["dynamic_axes"]["humor"]["value"] = 3
+    state.save(current)
+    state.set_flag("feeling_settle_due", True)
+
+    receipt = settle_due_state(
+        state, relations,
+        observed_at=start + timedelta(minutes=5),
+    )
+
+    assert receipt["settlement_scope"] == "idle_timer"
+    assert state.load()["base"]["dynamic_axes"]["humor"]["value"] == 3
+
+
 @pytest.mark.parametrize(
-    "round_type", ["interactive", "rhythm", "relay", "autonomous", "standby"])
+    "round_type", ["interactive", "rhythm", "relay"])
 def test_every_round_type_settles_without_memory(tmp_path, round_type):
     state, relations, rounds = _stores(tmp_path)
 
-    receipt = settle_state(
+    receipt = _settle_reaction(
         state, relations, rounds, 1, round_type,
         user_input_text="外部输入" if round_type == "interactive" else "",
     )
@@ -96,7 +291,7 @@ def test_every_round_type_settles_without_memory(tmp_path, round_type):
     assert base["dynamic_axes"]["safety"]["value"] == 0
     assert base["dynamic_axes"]["arousal"]["value"] == 0
     assert base["workhood_index"]["value"] > 0
-    assert base["meta"]["last_state_settlement_id"] == "SS-R000001"
+    assert base["meta"]["last_state_settlement_id"] == "SS-R000001-E"
 
 
 def test_memory_round_closes_dynamic_relation_buffer_and_audit(tmp_path):
@@ -107,7 +302,7 @@ def test_memory_round_closes_dynamic_relation_buffer_and_audit(tmp_path):
         relationships=[{"subject": "REL-A", "word": "信任"}],
     )
 
-    result = settle_state(
+    result = _settle_reaction(
         state, relations, rounds, 1, "interactive",
         memory_write_receipts=[receipt],
         user_input_text="这是真实外部输入",
@@ -120,21 +315,21 @@ def test_memory_round_closes_dynamic_relation_buffer_and_audit(tmp_path):
     assert base["feeling_buffer"]
     assert relations.cards["REL-A"]["axes"]["trust"] == 3
     event_types = [event["event_type"] for event in rounds.read_events(1)]
-    assert event_types.count("state_settle_plan") == 1
-    assert event_types.count("state_settle_receipt") == 1
+    assert event_types.count("state_settle_plan") == 2
+    assert event_types.count("state_settle_receipt") == 2
 
 
 def test_duplicate_receipt_and_cleanup_do_not_accumulate(tmp_path):
     state, relations, rounds = _stores(tmp_path)
     receipt = _receipt(interaction=["专注"])
 
-    first = settle_state(
+    first = _settle_reaction(
         state, relations, rounds, 1, "interactive",
         memory_write_receipts=[receipt, deepcopy(receipt)],
         user_input_text="输入",
     )
     after_first = state.load()
-    second = settle_state(
+    second = _settle_reaction(
         state, relations, rounds, 1, "interactive",
         memory_write_receipts=[receipt],
         user_input_text="输入",
@@ -144,14 +339,14 @@ def test_duplicate_receipt_and_cleanup_do_not_accumulate(tmp_path):
     assert state.load() == after_first
     assert after_first["base"]["dynamic_axes"]["focus"]["value"] == 2
     events = rounds.read_events(1)
-    assert sum(e["event_type"] == "state_settle_plan" for e in events) == 1
-    assert sum(e["event_type"] == "state_settle_receipt" for e in events) == 1
+    assert sum(e["event_type"] == "state_settle_plan" for e in events) == 2
+    assert sum(e["event_type"] == "state_settle_receipt" for e in events) == 2
 
 
 def test_noninteractive_round_does_not_advance_buffer_but_time_does(tmp_path):
     start = datetime(2026, 7, 18, tzinfo=TZ_SHANGHAI)
     state, relations, rounds = _stores(tmp_path)
-    settle_state(
+    _settle_reaction(
         state, relations, rounds, 1, "interactive",
         memory_write_receipts=[_receipt(interaction=["核心判断被推翻"])],
         user_input_text="输入",
@@ -159,16 +354,16 @@ def test_noninteractive_round_does_not_advance_buffer_but_time_does(tmp_path):
     )
 
     rounds.start_round(2, "relay")
-    settle_state(
+    _settle_reaction(
         state, relations, rounds, 2, "relay",
         observed_at=start + timedelta(minutes=1),
     )
     assert state.load()["base"]["feeling_buffer"][0][
         "interactive_rounds_elapsed"] == 0
 
-    rounds.start_round(3, "standby")
-    settle_state(
-        state, relations, rounds, 3, "standby",
+    rounds.start_round(3, "rhythm")
+    _settle_reaction(
+        state, relations, rounds, 3, "rhythm",
         observed_at=start + timedelta(minutes=5),
     )
     base = state.load()["base"]
@@ -179,7 +374,7 @@ def test_noninteractive_round_does_not_advance_buffer_but_time_does(tmp_path):
 def test_only_real_interactive_input_advances_round_trigger(tmp_path):
     start = datetime(2026, 7, 18, tzinfo=TZ_SHANGHAI)
     state, relations, rounds = _stores(tmp_path)
-    settle_state(
+    _settle_reaction(
         state, relations, rounds, 1, "interactive",
         memory_write_receipts=[_receipt(interaction=["核心判断被推翻"])],
         user_input_text="输入",
@@ -191,7 +386,7 @@ def test_only_real_interactive_input_advances_round_trigger(tmp_path):
         (4, "interactive", "第二次真实输入"),
     ):
         rounds.start_round(round_num, round_type)
-        settle_state(
+        _settle_reaction(
             state, relations, rounds, round_num, round_type,
             user_input_text=text,
             observed_at=start + timedelta(minutes=round_num - 1),
@@ -203,14 +398,14 @@ def test_only_real_interactive_input_advances_round_trigger(tmp_path):
 def test_rhythm_with_explicit_external_trigger_advances_buffer(tmp_path):
     start = datetime(2026, 7, 18, tzinfo=TZ_SHANGHAI)
     state, relations, rounds = _stores(tmp_path)
-    settle_state(
+    _settle_reaction(
         state, relations, rounds, 1, "interactive",
         memory_write_receipts=[_receipt(interaction=["核心判断被推翻"])],
         user_input_text="输入",
         observed_at=start,
     )
     rounds.start_round(2, "rhythm")
-    settle_state(
+    _settle_reaction(
         state, relations, rounds, 2, "rhythm",
         user_input_text="被节律优先级合并的外部输入",
         external_interaction=True,
@@ -228,7 +423,7 @@ def test_invalid_buffer_fails_closed_without_data_loss(tmp_path):
     rounds.start_round(1, "relay")
 
     with pytest.raises(StateSettlementError):
-        settle_state(
+        _settle_reaction(
             state, relations, rounds, 1, "relay",
             observed_at=datetime(2026, 7, 18, tzinfo=TZ_SHANGHAI),
         )
@@ -243,7 +438,7 @@ def test_corrupt_round_audit_fails_closed_and_writes_error_receipt(tmp_path):
         handle.write("{broken-json\n")
 
     with pytest.raises(StateSettlementError) as caught:
-        settle_state(
+        _settle_reaction(
             state, relations, rounds, 1, "relay",
             observed_at=datetime(2026, 7, 18, tzinfo=TZ_SHANGHAI),
         )
@@ -263,14 +458,15 @@ def test_partial_relation_failure_reuses_absolute_plan(tmp_path):
     ])
 
     with pytest.raises(StateSettlementError):
-        settle_state(
+        _settle_reaction(
             state, relations, rounds, 1, "interactive",
             memory_write_receipts=[receipt], user_input_text="输入")
     assert relations.cards["REL-A"]["axes"]["trust"] == 2
     assert relations.cards["REL-B"]["axes"]["trust"] == 0
-    assert state.load()["base"]["meta"]["last_state_settlement_id"] is None
+    assert state.load()["base"]["meta"]["last_state_settlement_id"] == (
+        "SS-R000001-E")
 
-    result = settle_state(
+    result = _settle_reaction(
         state, relations, rounds, 1, "interactive",
         memory_write_receipts=[receipt], user_input_text="输入")
     assert result["status"] == "applied"
@@ -278,9 +474,9 @@ def test_partial_relation_failure_reuses_absolute_plan(tmp_path):
     assert relations.cards["REL-B"]["axes"]["trust"] == 2
     assert relations.calls.count("REL-A") == 2
     assert state.load()["base"]["meta"]["last_state_settlement_id"] == (
-        "SS-R000001")
+        "SS-R000001-F000001")
     events = rounds.read_events(1)
-    assert sum(e["event_type"] == "state_settle_plan" for e in events) == 1
+    assert sum(e["event_type"] == "state_settle_plan" for e in events) == 2
 
 
 def test_stale_partial_plan_cannot_overwrite_newer_settlement(tmp_path):
@@ -292,7 +488,7 @@ def test_stale_partial_plan_cannot_overwrite_newer_settlement(tmp_path):
     ])
 
     with pytest.raises(StateSettlementError):
-        settle_state(
+        _settle_reaction(
             state, relations, rounds, 1, "interactive",
             memory_write_receipts=[receipt], user_input_text="输入")
 
@@ -300,12 +496,12 @@ def test_stale_partial_plan_cannot_overwrite_newer_settlement(tmp_path):
     current["base"]["meta"]["total_round"] = 2
     state.save(current)
     rounds.start_round(2, "relay")
-    settle_state(state, relations, rounds, 2, "relay")
+    _settle_reaction(state, relations, rounds, 2, "relay")
     state_after_round_2 = state.load()
     relations_after_round_2 = deepcopy(relations.cards)
 
     with pytest.raises(StateSettlementError) as caught:
-        settle_state(
+        _settle_reaction(
             state, relations, rounds, 1, "interactive",
             memory_write_receipts=[receipt], user_input_text="输入")
 
@@ -316,28 +512,29 @@ def test_stale_partial_plan_cannot_overwrite_newer_settlement(tmp_path):
 
 def test_completed_old_settlement_remains_idempotent_after_newer_round(tmp_path):
     state, relations, rounds = _stores(tmp_path)
-    first = settle_state(state, relations, rounds, 1, "relay")
+    first = _settle_reaction(state, relations, rounds, 1, "relay")
     current = state.load()
     current["base"]["meta"]["total_round"] = 2
     state.save(current)
     rounds.start_round(2, "relay")
-    settle_state(state, relations, rounds, 2, "relay")
+    _settle_reaction(state, relations, rounds, 2, "relay")
     state_after_round_2 = state.load()
 
-    assert settle_state(state, relations, rounds, 1, "relay") == first
+    assert _settle_reaction(state, relations, rounds, 1, "relay") == first
     assert state.load() == state_after_round_2
 
 
 def test_due_feeling_settles_locally_without_incrementing_round(tmp_path):
     start = datetime(2026, 7, 24, 20, 0, tzinfo=TZ_SHANGHAI)
     state, relations, rounds = _stores(tmp_path)
-    first = settle_state(
+    memory_receipt = _receipt(interaction=["核心判断被推翻"])
+    first = _settle_reaction(
         state,
         relations,
         rounds,
         1,
         "interactive",
-        memory_write_receipts=[_receipt(interaction=["核心判断被推翻"])],
+        memory_write_receipts=[memory_receipt],
         user_input_text="输入",
         observed_at=start,
     )
@@ -357,7 +554,15 @@ def test_due_feeling_settles_locally_without_incrementing_round(tmp_path):
     assert base["meta"]["total_round"] == total_before
     assert base["heartbeat_flags"]["feeling_settle_due"] is False
     assert base["meta"]["last_state_settlement_id"].startswith("SS-T")
-    assert settle_state(state, relations, rounds, 1, "interactive") == first
+    assert settle_reaction_frame(
+        state,
+        relations,
+        rounds,
+        1,
+        "interactive",
+        frame_iteration=1,
+        memory_write_receipts=[memory_receipt],
+    ) == first
 
 
 def test_stale_due_flag_clears_without_state_drift(tmp_path):
@@ -465,7 +670,7 @@ def test_round_recovers_partial_local_settlement_before_new_plan(tmp_path):
     assert relations.cards["REL-A"]["axes"]["trust"] == 2
     assert relations.cards["REL-B"]["axes"]["trust"] == 0
 
-    settle_state(
+    _settle_reaction(
         state,
         relations,
         rounds,
@@ -478,7 +683,7 @@ def test_round_recovers_partial_local_settlement_before_new_plan(tmp_path):
 
     assert relations.cards["REL-A"]["axes"]["trust"] == 2
     assert relations.cards["REL-B"]["axes"]["trust"] == 2
-    assert state.get("base.meta.last_state_settlement_id") == "SS-R000001"
+    assert state.get("base.meta.last_state_settlement_id") == "SS-R000001-E"
 
 
 def test_invalid_utf8_local_journal_fails_closed(tmp_path):

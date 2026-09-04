@@ -218,6 +218,6 @@ def render_execution_permission_guide(level=None):
     return (
         "### 执行权限：放行\n"
         "当前可写文件、改文件、运行命令和调用子代理。"
-        "文件工具仍服从各自路径门；shell_command 以当前 Windows 用户权限执行，"
+        "文件工具仍服从各自路径门；shell_command 以当前宿主用户权限执行，"
         "不会被命令字符串检查限制在工作区内。"
     )

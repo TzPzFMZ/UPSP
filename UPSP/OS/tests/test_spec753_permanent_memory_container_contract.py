@@ -74,7 +74,7 @@ def test_spec753_tool_headers_sync_semantics_without_wire_changes() -> None:
         include_step_terminal_tools=["reaction_finalize"],
         execution_permission_level="unlimited",
     )
-    assert len(tools) == 25
+    assert len(tools) == 24
     by_name = {item["name"]: item for item in tools}
     assert {"memory_search", "shell_command"} <= set(by_name)
 
@@ -150,7 +150,7 @@ def test_spec753_dds_and_passive_docs_match_the_permanent_contract() -> None:
     assert "模型语义扩词与多候选聚合纪律（Spec740/753）" in dds
     assert "宿主仍只做确定性字面扫描" in dds
     assert "不新增 finalize 硬阻或跨轮路由债务" in dds
-    assert "任务债务边界（Spec753/754 复审）" in dds
+    assert "任务债务边界（Spec753/754/775 复审）" in dds
     assert "不同职责可由 DC/EC/PRJ/FUT 等不同类型并存" in dds
     assert "### 主动建链判定" in containers_doc
     assert "同一种语义职责复用同类型主链" in containers_doc

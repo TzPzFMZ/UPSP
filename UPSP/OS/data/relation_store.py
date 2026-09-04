@@ -269,19 +269,6 @@ class RelationStore:
         self.save_registry(reg)
         return reg
 
-    def set_body_resident(self, card_id, enabled=True):
-        """切换 CONTENT 关系正文常驻标记；正文常驻时摘要同步常驻。"""
-        reg = self.load_registry()
-        for c in reg.get("cards", []):
-            if c.get("id") == card_id:
-                c["body_resident"] = bool(enabled)
-                if enabled:
-                    c["summary_resident"] = True
-                c["updated_at"] = local_now().isoformat()
-                break
-        self.save_registry(reg)
-        return reg
-
 
 def _read_relation_md(path):
     """从 .md 文件读取关系卡 → dict"""

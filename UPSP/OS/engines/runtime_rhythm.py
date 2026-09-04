@@ -1,9 +1,9 @@
-"""Rhythm preflight and Chronicle focus helpers for Runtime."""
+"""Rhythm preflight and Chronicle write-scope helpers for Runtime."""
 
 from datetime import datetime
 
 from constants import local_now
-from errors import ProviderCallCancelled
+from errors import ProviderCallCancelled, RequiredContextError
 from engines.round_context import RuntimeTrigger
 from logic.rhythm_guide_materializer import reconcile_recovered_emergency_flags
 from logic.single_round_probe_policy import validate_single_round_probe_round
@@ -249,14 +249,12 @@ def refresh_round_alert_recovery(runtime, context):
     return cleared
 
 
-def prepare_chronicle_focus_for_active_guide(runtime, round_type, state, round_num):
-    """Create Chronicle focus only from the coordinated active rhythm guide."""
+def prepare_chronicle_write_scope_for_active_guide(
+        runtime, round_type, state, round_num):
+    """Freeze Chronicle input and target without pre-writing an active file."""
     runner = runtime.reaction_loop_runner
     if str(round_type or "").strip().lower() != "rhythm":
-        try:
-            runner.chronicle_focus = None
-        except Exception:
-            pass
+        runner.chronicle_write_scope = None
         return {}
     try:
         guide_id = str(runtime.workbench.get("base.active_guides.rhythm") or "").strip()
@@ -264,7 +262,7 @@ def prepare_chronicle_focus_for_active_guide(runtime, round_type, state, round_n
     except Exception:
         active_guide = {}
     if str(active_guide.get("kind") or "").strip() != "main_axis_rhythm_guide":
-        runner.chronicle_focus = None
+        runner.chronicle_write_scope = None
         return {}
     store = getattr(runner, "chronicle_store", None)
     if store is None:
@@ -274,7 +272,9 @@ def prepare_chronicle_focus_for_active_guide(runtime, round_type, state, round_n
             store = ChronicleStore()
             runner.chronicle_store = store
         except Exception:
-            return {}
+            raise RequiredContextError(
+                "read", "chronicle_write_scope", "chronicle_store_unavailable"
+            )
     state = state or {}
     base = state.get("base", {}) if isinstance(state, dict) else {}
     meta = base.get("meta", {}) if isinstance(base, dict) else {}
@@ -282,31 +282,21 @@ def prepare_chronicle_focus_for_active_guide(runtime, round_type, state, round_n
     state_sample = chronicle_state_sample(base)
     memory_stats = chronicle_memory_stats(runtime.memory_store, round_num)
     try:
-        path = store.refresh_active_rhythm(
+        scope = store.build_rhythm_write_scope(
             round_num=round_num,
             closed_at=closed_at,
             state_sample=state_sample,
             memory_stats=memory_stats,
             range_start_round=meta.get("last_rhythm_round"),
             range_start_time=meta.get("last_round_closed_at"),
+            guide_id=guide_id,
         )
-    except Exception:
-        return {}
-    focus = {
-        "layer": "rhythms",
-        "path": path,
-        "round_num": int(round_num or 0),
-        "round_type": "rhythm",
-        "source_refs": [f"round:{int(round_num or 0)}"],
-        "range_start_round": meta.get("last_rhythm_round"),
-        "range_start_time": meta.get("last_round_closed_at"),
-        "range_end_round": int(round_num or 0),
-        "range_end_time": closed_at,
-        "state_sample": state_sample,
-        "memory_stats": memory_stats,
-    }
-    runner.chronicle_focus = focus
-    return focus
+    except Exception as exc:
+        raise RequiredContextError(
+            "read", "chronicle_write_scope", exc
+        ) from exc
+    runner.chronicle_write_scope = scope
+    return scope
 
 
 def chronicle_state_sample(base):

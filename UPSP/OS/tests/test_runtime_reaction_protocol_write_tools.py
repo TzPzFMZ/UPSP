@@ -15,6 +15,35 @@ from runtime_test_helpers import (
 )
 
 
+class _CapturingChronicleStore:
+    """Wrap the real v1 write-scope store while exposing deterministic calls."""
+
+    def __init__(self, root):
+        from data.chronicle_store import ChronicleStore
+
+        self._store = ChronicleStore(chronicle_dir=str(root))
+        self.entries = []
+        self.built_scopes = []
+
+    def build_rhythm_write_scope(self, **kwargs):
+        scope = self._store.build_rhythm_write_scope(**kwargs)
+        self.built_scopes.append(dict(scope))
+        return scope
+
+    def build_calendar_write_scope(self, **kwargs):
+        scope = self._store.build_calendar_write_scope(**kwargs)
+        self.built_scopes.append(dict(scope))
+        return scope
+
+    def render_write_scope_material(self, scope):
+        return self._store.render_write_scope_material(scope)
+
+    def commit_write_scope(self, scope, content):
+        path = self._store.commit_write_scope(scope, content)
+        self.entries.append((dict(scope), content))
+        return path
+
+
 def test_spec536_dsml_text_payload_generates_channel_hygiene_warning():
     from engines.reaction_loop_main import _assistant_text_tool_payload_warning
     from assembly.context_helpers import build_native_tool_feedback_popup
@@ -393,7 +422,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             load_guide_fn=lambda tool_id: "file_read guide",
             execute_fn=lambda request: {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -487,7 +515,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             load_guide_fn=lambda tool_id: "file_read guide",
             execute_fn=lambda request: {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -633,7 +660,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "rejected",
                 "source": "general_tool_call",
@@ -752,7 +778,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -838,7 +863,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -1288,7 +1312,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -1432,8 +1455,9 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert "WARNING｜任务账本未闭合" in feedback
         assert "任务验收 checkpoint" in feedback
         assert "guide_id=task:T-20260704-01" in feedback
-        assert "fields.items={\"task_01\":{\"status\":\"done\"" in feedback
-        assert "fields.acceptance={\"acc_01\":{\"status\":\"passed\"" in feedback
+        assert "<逐字复制当前任务项ID>" in feedback
+        assert "<逐字复制当前验收项ID>" in feedback
+        assert "禁止把 - 改成 _" in feedback
         assert "不要只写 reason" in feedback
         assert "reason 不会改变账本状态" in feedback
 
@@ -1473,8 +1497,9 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         })
 
         assert "guide_submit/update_task_status" in feedback
-        assert "fields.items={\"task_01\":{\"status\":\"done\"" in feedback
-        assert "fields.acceptance={\"acc_01\":{\"status\":\"passed\"" in feedback
+        assert "<逐字复制当前任务项ID>" in feedback
+        assert "<逐字复制当前验收项ID>" in feedback
+        assert "禁止把 - 改成 _" in feedback
         assert "reason 不会改变账本状态" in feedback
         assert task_acceptance_block_signature({
             "blockers": [" task_01 ", "acc_01"],
@@ -1714,7 +1739,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "write_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -2096,34 +2120,34 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert "下一次必须" not in fact
 
         duplicate_fact = format_protocol_tool_fact({
-            "tool_id": "container_focus",
+            "tool_id": "container_read",
             "status": "rejected",
-            "reason": "duplicate_container_focus_satisfied",
-            "call_id": "call_focus_duplicate",
-            "duplicate_of_call_id": "call_focus_first",
+            "reason": "duplicate_protocol_read_satisfied",
+            "call_id": "call_read_duplicate",
+            "duplicate_of_call_id": "call_read_first",
             "container_id": "DC-338",
         })
 
         assert "重复命中：本轮已有同一协议工具结果。" in duplicate_fact
-        assert "重复对象：call_focus_first。" in duplicate_fact
+        assert "重复对象：call_read_first。" in duplicate_fact
         assert "工具循环警告" not in duplicate_fact
-        assert "duplicate_container_focus_satisfied" not in duplicate_fact
+        assert "duplicate_protocol_read_satisfied" not in duplicate_fact
         assert "不要原样重复调用" not in duplicate_fact
 
-    def test_spec406_chronicle_no_active_focus_fact_is_actionable(self):
+    def test_spec781_chronicle_no_active_write_scope_fact_is_actionable(self):
         from engines.reaction_helpers import format_protocol_tool_fact
 
         fact = format_protocol_tool_fact({
             "tool_id": "chronicle_write",
             "status": "rejected",
-            "reason": "no_active_chronicle_focus",
-            "call_id": "call_chronicle_stale_focus",
+            "reason": "no_active_chronicle_write_scope",
+            "call_id": "call_chronicle_stale_scope",
         })
 
         assert "chronicle_write" in fact
-        assert "call_chronicle_stale_focus" in fact
-        assert "no_active_chronicle_focus" in fact
-        assert "当前没有编年史写入焦点" in fact
+        assert "call_chronicle_stale_scope" in fact
+        assert "no_active_chronicle_write_scope" in fact
+        assert "当前没有编年史写入事务范围" in fact
         assert "不要重复提交当前编年 guide 选项" in fact
         assert "reaction_finalize" in fact
 
@@ -2282,7 +2306,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -2369,7 +2392,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -2529,8 +2551,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert result["_protocol_tool_submissions"] == []
         assert result["_closeout_relay_receipts"] == [{
             "tool_id": "reaction_finalize",
-            "tool_family": "substrate_tool",
-            "tool_class": "sync_tool",
             "status": "continue_requested_set",
             "source": "closeout_form",
             "set_flags": ["continue_requested"],
@@ -2769,18 +2789,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             round_num=238,
         )
 
-        class CapturingChronicleStore:
-            def __init__(self):
-                self.entries = []
-
-            def write_entry(self, layer, content):
-                self.entries.append((layer, content))
-                return str(tmp_path / "Chronicle" / layer / "R-000.md")
-
-            def write_focused_entry(self, focus, content):
-                layer = (focus or {}).get("layer") or "rhythms"
-                return self.write_entry(layer, content)
-
         class ChronicleExecutor:
             def __init__(self):
                 self.calls = []
@@ -2813,14 +2821,11 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
                     }
                 return {"response": "chronicle written", "tool_call_envelopes": []}
 
-        chronicle_store = CapturingChronicleStore()
+        chronicle_store = _CapturingChronicleStore(tmp_path / "Chronicle")
         rt.reaction_loop_runner.chronicle_store = chronicle_store
-        rt.reaction_loop_runner.chronicle_focus = {
-            "layer": "rhythms",
-            "round_num": 238,
-            "round_type": "rhythm",
-            "source_refs": ["round:238"],
-        }
+        rt._prepare_chronicle_write_scope_for_round(
+            "rhythm", rt.sm.load(), rt.sm.get_total_round()
+        )
         rt.executor = ChronicleExecutor()
 
         result = rt._run_reaction_loop(rt.sm.load(), "rhythm", [])
@@ -2829,10 +2834,10 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         backend = result["_guide_submit_receipts"][0]["backend_receipts"][0]
         assert backend["tool_id"] == "chronicle_write"
         assert backend["status"] == "applied"
-        assert backend["path"].endswith("R-000.md")
-        assert chronicle_store.entries == [
-            ("rhythms", "主轴节律完成一次自检。")
-        ]
+        assert backend["path"].endswith(".md")
+        assert len(chronicle_store.entries) == 1
+        assert chronicle_store.entries[0][0]["layer"] == "rhythms"
+        assert chronicle_store.entries[0][1] == "主轴节律完成一次自检。"
 
     def test_spec443_rhythm_finish_waits_for_calendar_guide_settlement(
             self, tmp_path, monkeypatch):
@@ -2851,22 +2856,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             {"calendar_day_due": True},
             round_num=rt.sm.get_total_round(),
         )
-
-        class CapturingChronicleStore:
-            def __init__(self):
-                self.refreshed = []
-                self.entries = []
-
-            def refresh_active_calendar(self, **kwargs):
-                self.refreshed.append(dict(kwargs))
-                path = tmp_path / "Chronicle" / "daily" / "D-active.md"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("今日待归档节律材料。", encoding="utf-8")
-                return str(path)
-
-            def write_focused_entry(self, focus, content):
-                self.entries.append((dict(focus), content))
-                return str(tmp_path / "Chronicle" / "daily" / "D-000.md")
 
         class CalendarExecutor:
             def __init__(self):
@@ -2911,14 +2900,14 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
                     "tool_call_envelopes": [],
                 }
 
-        chronicle_store = CapturingChronicleStore()
+        chronicle_store = _CapturingChronicleStore(tmp_path / "Chronicle")
         rt.reaction_loop_runner.chronicle_store = chronicle_store
         rt.executor = CalendarExecutor()
 
         result = rt._run_reaction_loop(rt.sm.load(), "rhythm", [])
 
         assert result["_reaction_finalize_validated"] is True
-        assert chronicle_store.refreshed
+        assert chronicle_store.built_scopes
         assert len(chronicle_store.entries) == 1
         assert chronicle_store.entries[0][0]["calendar_flag"] == "calendar_day_due"
         assert chronicle_store.entries[0][1] == "今日节律事项已经归档。"
@@ -2953,20 +2942,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             {"calendar_day_due": True},
             round_num=rt.sm.get_total_round(),
         )
-
-        class CapturingChronicleStore:
-            def __init__(self):
-                self.entries = []
-
-            def refresh_active_calendar(self, **kwargs):
-                path = tmp_path / "Chronicle" / "daily" / "D-active-memory.md"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("今日节律焦点材料。", encoding="utf-8")
-                return str(path)
-
-            def write_focused_entry(self, focus, content):
-                self.entries.append((dict(focus), content))
-                return str(tmp_path / "Chronicle" / "daily" / "D-memory.md")
 
         class MemoryThenRhythmExecutor:
             def __init__(self):
@@ -3021,7 +2996,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
                     "tool_call_envelopes": [],
                 }
 
-        chronicle_store = CapturingChronicleStore()
+        chronicle_store = _CapturingChronicleStore(tmp_path / "Chronicle")
         rt.reaction_loop_runner.chronicle_store = chronicle_store
         rt.executor = MemoryThenRhythmExecutor()
 
@@ -3065,20 +3040,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             round_num=rt.sm.get_total_round(),
         )
 
-        class CapturingChronicleStore:
-            def __init__(self):
-                self.entries = []
-
-            def refresh_active_calendar(self, **kwargs):
-                path = tmp_path / "Chronicle" / "daily" / "D-active-calendar.md"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("calendar focus", encoding="utf-8")
-                return str(path)
-
-            def write_focused_entry(self, focus, content):
-                self.entries.append((dict(focus), content))
-                return str(tmp_path / "Chronicle" / "daily" / "D-calendar.md")
-
         class ContinueThenSettleExecutor:
             def __init__(self):
                 self.reaction_calls = 0
@@ -3121,7 +3082,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
                     "tool_call_envelopes": [],
                 }
 
-        chronicle_store = CapturingChronicleStore()
+        chronicle_store = _CapturingChronicleStore(tmp_path / "Chronicle")
         rt.reaction_loop_runner.chronicle_store = chronicle_store
         rt.executor = ContinueThenSettleExecutor()
 
@@ -3228,7 +3189,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         )
         assert rt.sm.get("base.heartbeat_flags.api_degraded") is False
 
-    def test_spec406_chronicle_focus_is_high_freq_content_not_cache(
+    def test_spec781_chronicle_material_is_single_frame_c_track_not_cache(
             self, tmp_path, monkeypatch):
         from logic.rhythm_guide_materializer import materialize_current_rhythm_guide
 
@@ -3243,56 +3204,39 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_inverted_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_domain_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_step_toolbelt_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_content_mounts_with_triple_hits", lambda *args, **kwargs: [])
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
 
-        focus_path = tmp_path / "Chronicle" / "daily" / "D-active-calendar.md"
-        focus_path.parent.mkdir(parents=True)
-        focus_path.write_text("今日节律焦点正文。", encoding="utf-8")
         rt.sm.set_flag("calendar_day_due", True)
         materialize_current_rhythm_guide(
             rt.workbench,
             {"calendar_day_due": True},
             round_num=617,
         )
-
-        class ExistingFocusChronicleStore:
-            @staticmethod
-            def refresh_active_calendar(**_kwargs):
-                return str(focus_path)
-
-        rt.reaction_loop_runner.chronicle_store = ExistingFocusChronicleStore()
-        rt.reaction_loop_runner.chronicle_focus = {
-            "layer": "daily",
-            "path": str(focus_path),
-            "round_num": 617,
-            "round_type": "rhythm",
-            "calendar_flag": "calendar_day_due",
-            "title": "日节律",
-            "source_refs": ["calendar:calendar_day_due", "round:617"],
-        }
+        store = _CapturingChronicleStore(tmp_path / "Chronicle")
+        rt.reaction_loop_runner.chronicle_store = store
 
         current_state = rt.sm.load()
-        rt.reaction_loop_runner._sync_chronicle_focus_for_current_guide(
+        scope = rt.reaction_loop_runner._sync_chronicle_write_scope_for_current_guide(
             round_type="rhythm",
             current_state=current_state,
             round_num=617,
             completed_flags=set(),
         )
-        projection = rt.reaction_loop_runner._chronicle_focus_content_projection()
+        material = rt.reaction_loop_runner._chronicle_write_material()
         _system, messages = assembler.assemble_reaction(
             current_state,
             "rhythm",
-            runtime_focus_entries=[projection],
+            material_inputs=[material],
         )
         first_messages = "\n".join(
             msg.get("content", "") for msg in messages
         )
-        assert "<!-- 高频层 -->" in first_messages
-        assert "编年史写入焦点（Runtime 预填）" in first_messages
-        assert "当前调用临时输入" not in first_messages
+        assert scope["schema_version"] == "chronicle_write_scope.v1"
+        assert "【本轮资料】编年史写入材料" in first_messages
+        assert "请按当前节律指南提交自然语言正文" in first_messages
+        assert "高频层" not in material["content"]
+        assert "焦点" not in material["content"]
         cache_text = ""
         for path in (
                 tmp_path / "context_cache" / "now_cache.jsonl",
@@ -3301,8 +3245,8 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         ):
             if path.exists():
                 cache_text += path.read_text(encoding="utf-8")
-        assert "chronicle_focus" not in cache_text
-        assert "今日节律焦点正文" not in cache_text
+        assert "chronicle_write_scope" not in cache_text
+        assert "编年史写入材料" not in cache_text
 
     def test_spec468_retired_chronicle_write_direct_call_returns_native_warning(
             self, tmp_path, monkeypatch):
@@ -3355,39 +3299,31 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             "pending_items"
         ] == []
 
-    def test_spec350_chronicle_write_rejects_without_active_focus(self):
+    def test_spec781_chronicle_write_rejects_without_active_scope(self):
         from logic.chronicle_write import apply_chronicle_write_declarations
 
         class CapturingChronicleStore:
-            def write_entry(self, *args, **kwargs):
-                raise AssertionError("chronicle write without focus must not write")
+            def commit_write_scope(self, *args, **kwargs):
+                raise AssertionError("chronicle write without scope must not write")
 
         receipts = apply_chronicle_write_declarations(
             [{
-                "content": "bad focus",
-                "reason": "no active focus",
+                "content": "bad scope",
+                "reason": "no active scope",
             }],
             {"chronicle_store": CapturingChronicleStore()},
         )
 
         assert receipts[0]["status"] == "rejected"
-        assert receipts[0]["reason"] == "no_active_chronicle_focus"
+        assert receipts[0]["reason"] == "no_active_chronicle_write_scope"
 
-    def test_spec363_runtime_prepares_chronicle_focus_for_main_axis_rhythm(
+    def test_spec781_runtime_prepares_chronicle_scope_for_main_axis_rhythm(
             self, tmp_path):
         from logic.rhythm_guide_materializer import materialize_current_rhythm_guide
 
         rt = self._make_runtime(tmp_path)
 
-        class CapturingChronicleStore:
-            def __init__(self):
-                self.refreshed = []
-
-            def refresh_active_rhythm(self, **kwargs):
-                self.refreshed.append(dict(kwargs))
-                return str(tmp_path / "Chronicle" / "rhythms" / "R-active-main-axis.md")
-
-        store = CapturingChronicleStore()
+        store = _CapturingChronicleStore(tmp_path / "Chronicle")
         rt.reaction_loop_runner.chronicle_store = store
         rt.sm.set("base.meta.total_round", 363)
         materialize_current_rhythm_guide(
@@ -3396,58 +3332,229 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             round_num=363,
         )
 
-        focus = rt._prepare_chronicle_focus_for_round("rhythm", rt.sm.load(), 363)
+        scope = rt._prepare_chronicle_write_scope_for_round(
+            "rhythm", rt.sm.load(), 363
+        )
 
-        assert store.refreshed
-        assert focus["layer"] == "rhythms"
-        assert focus["round_type"] == "rhythm"
-        assert focus["round_num"] == 363
-        assert rt.reaction_loop_runner.chronicle_focus == focus
+        assert store.built_scopes
+        assert scope["layer"] == "rhythms"
+        assert scope["round_type"] == "rhythm"
+        assert scope["round_num"] == 363
+        assert rt.reaction_loop_runner.chronicle_write_scope == scope
 
-    def test_spec350_chronicle_write_uses_active_focus_metadata(self):
+    def test_spec781_chronicle_write_uses_frozen_scope_metadata(self, tmp_path):
         from logic.chronicle_write import apply_chronicle_write_declarations
 
-        class CapturingChronicleStore:
-            def __init__(self):
-                self.focus_entries = []
-
-            def write_focused_entry(self, focus, content):
-                self.focus_entries.append((dict(focus), content))
-                return "Chronicle/rhythms/R-active.md"
-
-        store = CapturingChronicleStore()
-        focus = {
-            "layer": "rhythms",
-            "round_num": 352,
-            "round_type": "rhythm",
-            "source_refs": ["active-rhythm"],
-        }
+        store = _CapturingChronicleStore(tmp_path / "Chronicle")
+        scope = store.build_rhythm_write_scope(
+            round_num=352,
+            closed_at="2026-06-18T12:00:00+08:00",
+            state_sample={},
+            memory_stats={},
+        )
         receipts = apply_chronicle_write_declarations(
-            [{"content": "节志正文", "reason": "write current focus"}],
-            {"chronicle_store": store, "chronicle_focus": focus},
+            [{"content": "节志正文", "reason": "write current scope"}],
+            {"chronicle_store": store, "chronicle_write_scope": scope},
         )
 
         assert receipts[0]["status"] == "applied"
         assert receipts[0]["layer"] == "rhythms"
         assert receipts[0]["round_num"] == 352
-        assert store.focus_entries == [(focus, "节志正文")]
+        assert store.entries == [(scope, "节志正文")]
 
-    def test_spec350_active_rhythm_file_refresh_records_weight_counts(self, tmp_path):
+    @pytest.mark.parametrize("closed_at", [None, "", "not-a-time"])
+    def test_spec781_chronicle_scope_rejects_unfrozen_time(
+            self, tmp_path, closed_at):
         from data.chronicle_store import ChronicleStore
 
         store = ChronicleStore(chronicle_dir=str(tmp_path / "Chronicle"))
-        path = store.refresh_active_rhythm(
+
+        with pytest.raises(ValueError, match="chronicle_closed_at_invalid"):
+            store.build_rhythm_write_scope(
+                round_num=352,
+                closed_at=closed_at,
+                state_sample={},
+                memory_stats={},
+            )
+
+    def test_spec782_chronicle_scope_rejects_unknown_layer_and_outside_paths(
+            self, tmp_path):
+        from data.chronicle_store import ChronicleStore
+
+        root = tmp_path / "Chronicle"
+        store = ChronicleStore(chronicle_dir=str(root))
+        scope = store.build_calendar_write_scope(
+            layer="daily",
+            title="日志",
+            round_num=12,
+            closed_at="2026-06-18T12:00:00+08:00",
+            calendar_flag="calendar_day_due",
+        )
+
+        invalid_layer = dict(scope, layer="unknown")
+        with pytest.raises(ValueError, match="chronicle_write_scope_layer_invalid"):
+            store.render_write_scope_material(invalid_layer)
+
+        outside_target = dict(scope, target_path=str(tmp_path / "outside.md"))
+        with pytest.raises(
+                ValueError, match="chronicle_write_scope_target_outside_layer"):
+            store.commit_write_scope(outside_target, "正文。")
+
+        source_path = root / "rhythms" / "R-source.md"
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text("来源。", encoding="utf-8")
+        with_source = dict(
+            scope,
+            source_layer="rhythms",
+            sources=[{
+                "name": source_path.name,
+                "path": str(tmp_path / "outside-source.md"),
+                "sha256": store._sha256_text("来源。"),
+                "content": "来源。",
+            }],
+        )
+        with pytest.raises(
+                ValueError, match="chronicle_write_scope_source_outside_layer"):
+            store.render_write_scope_material(with_source)
+
+    def test_spec781_committed_rhythm_scope_records_weight_counts(self, tmp_path):
+        from data.chronicle_store import ChronicleStore
+
+        store = ChronicleStore(chronicle_dir=str(tmp_path / "Chronicle"))
+        scope = store.build_rhythm_write_scope(
             round_num=12,
             closed_at="2026-06-18T12:00:00+08:00",
             state_sample={"dynamic_axes": {"focus": 6}, "workhood_index": {"value": 61}},
             memory_stats={"total": 3, "weights": {"F": 1, "S": 2, "A": 0, "P": 0}},
         )
+        path = store.commit_write_scope(scope, "主轴节律正文。")
 
         text = open(path, "r", encoding="utf-8").read()
         assert "range_end_round: 12" in text
         assert "新增记忆总数: 3" in text
         assert "F: 1" in text
         assert "S: 2" in text
+
+    def test_spec781_rhythm_scope_retry_is_idempotent_across_rounds(self, tmp_path):
+        from data.chronicle_store import ChronicleStore
+
+        store = ChronicleStore(chronicle_dir=str(tmp_path / "Chronicle"))
+        first = store.build_rhythm_write_scope(
+            round_num=12,
+            closed_at="2026-06-18T12:00:00+08:00",
+            range_start_round=7,
+            range_start_time="2026-06-18T11:00:00+08:00",
+        )
+        first_path = store.commit_write_scope(first, "同一待办的正文。")
+        retry = store.build_rhythm_write_scope(
+            round_num=13,
+            closed_at="2026-06-18T12:05:00+08:00",
+            range_start_round=7,
+            range_start_time="2026-06-18T11:00:00+08:00",
+        )
+
+        assert retry["scope_id"] == first["scope_id"]
+        assert retry["target_path"] != first["target_path"]
+        assert store.commit_write_scope(retry, "同一待办的正文。") == first_path
+        with pytest.raises(ValueError, match="chronicle_scope_conflict"):
+            store.commit_write_scope(retry, "同一待办却出现不同正文。")
+        assert len(list((tmp_path / "Chronicle" / "rhythms").glob("*.md"))) == 1
+
+    def test_spec781_calendar_scope_retry_is_idempotent_within_period(self, tmp_path):
+        from data.chronicle_store import ChronicleStore
+
+        store = ChronicleStore(chronicle_dir=str(tmp_path / "Chronicle"))
+        first = store.build_calendar_write_scope(
+            layer="daily",
+            title="日志",
+            round_num=12,
+            closed_at="2026-06-18T12:00:00+08:00",
+            calendar_flag="calendar_day_due",
+        )
+        first_path = store.commit_write_scope(first, "本日正文。")
+        retry = store.build_calendar_write_scope(
+            layer="daily",
+            title="日志",
+            round_num=13,
+            closed_at="2026-06-18T12:05:00+08:00",
+            calendar_flag="calendar_day_due",
+        )
+
+        assert retry["scope_id"] == first["scope_id"]
+        assert store.commit_write_scope(retry, "本日正文。") == first_path
+        with pytest.raises(ValueError, match="chronicle_scope_conflict"):
+            store.commit_write_scope(retry, "冲突正文。")
+
+    def test_spec781_calendar_scope_retry_keeps_guide_identity_across_date_boundary(
+            self, tmp_path):
+        from data.chronicle_store import ChronicleStore
+
+        store = ChronicleStore(chronicle_dir=str(tmp_path / "Chronicle"))
+        first = store.build_calendar_write_scope(
+            layer="daily",
+            title="日志",
+            round_num=12,
+            closed_at="2026-06-18T23:59:59+08:00",
+            calendar_flag="calendar_day_due",
+            guide_id="rhythm:calendar_day:R000012",
+        )
+        first_path = store.commit_write_scope(first, "跨午夜仍是同一待办。")
+        retry = store.build_calendar_write_scope(
+            layer="daily",
+            title="日志",
+            round_num=13,
+            closed_at="2026-06-19T00:00:01+08:00",
+            calendar_flag="calendar_day_due",
+            guide_id="rhythm:calendar_day:R000012",
+        )
+
+        assert retry["scope_id"] == first["scope_id"]
+        assert retry["target_path"] != first["target_path"]
+        assert store.commit_write_scope(
+            retry, "跨午夜仍是同一待办。") == first_path
+        assert len(list((tmp_path / "Chronicle" / "daily").glob("*.md"))) == 1
+
+    def test_spec781_chronicle_write_failure_restores_original_target(
+            self, tmp_path, monkeypatch):
+        import data.chronicle_store as chronicle_store_module
+        from data.chronicle_store import ChronicleStore
+
+        store = ChronicleStore(chronicle_dir=str(tmp_path / "Chronicle"))
+        scope = store.build_calendar_write_scope(
+            layer="daily",
+            title="日志",
+            round_num=12,
+            closed_at="2026-06-18T12:00:00+08:00",
+            calendar_flag="calendar_day_due",
+        )
+        target = scope["target_path"]
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write("原始正文。\n")
+        scope = store.build_calendar_write_scope(
+            layer="daily",
+            title="日志",
+            round_num=12,
+            closed_at="2026-06-18T12:00:00+08:00",
+            calendar_flag="calendar_day_due",
+        )
+        real_atomic_write = chronicle_store_module.atomic_write_text
+        calls = 0
+
+        def fail_after_replace(path, text):
+            nonlocal calls
+            calls += 1
+            real_atomic_write(path, text)
+            if calls == 1:
+                raise OSError("injected post-replace failure")
+
+        monkeypatch.setattr(
+            chronicle_store_module, "atomic_write_text", fail_after_replace
+        )
+        with pytest.raises(OSError, match="post-replace failure"):
+            store.commit_write_scope(scope, "新正文。")
+
+        assert open(target, "r", encoding="utf-8").read() == "原始正文。\n"
 
     def test_reaction_alert_mode_settle_clears_flags_and_writes_alert(
             self, tmp_path, monkeypatch):
@@ -3651,7 +3758,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -3866,7 +3972,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             start_line = int(request.get("line_start") or 1)
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -4244,7 +4349,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -4546,7 +4650,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -4797,7 +4900,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": "file_read",
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "source": "general_tool_call",
@@ -5126,7 +5228,6 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         rt.executor = ResetExecutor()
         rt.general_tool_dispatcher = GeneralToolDispatcher(execute_fn=lambda request: {
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "status": evidence_status,
             "reason": "source unavailable" if evidence_status == "not_found" else "",

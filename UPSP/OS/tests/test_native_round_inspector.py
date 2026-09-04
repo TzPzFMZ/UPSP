@@ -461,7 +461,7 @@ class TestSpec143NativeToolRoundInspector:
         assert summary["read_only_tool_ids"] == ["file_read"]
         assert summary["non_read_only_tool_ids"] == []
         assert summary["tool_classes"] == {"file_read": "read_tool"}
-        assert summary["tool_families"] == {"file_read": "general_tool"}
+        assert "tool_families" not in summary
 
     def test_spec249_inspector_accepts_machine_dogfood_label_in_input_snapshot(
             self, tmp_path):

@@ -314,13 +314,16 @@ def test_spec452_task_bootstrap_feedback_requires_explicit_source_ledger_mapping
     feedback = runner._active_guide_feedback()
 
     assert "建账专用卡：" in feedback
-    assert "一次提交完整初始账本" in feedback
-    assert "source_refs=已读材料目录" in feedback
-    assert "source_requirements=任务需求账" in feedback
+    assert "一次提交完整初始计划" in feedback
+    assert "source_refs=计划来源坐标" in feedback
+    assert "source_requirements 与 risk_notes 均可选" in feedback
     assert "items=执行项" in feedback
     assert "acceptance=验收项" in feedback
-    assert "先读材料：路径/URL/文件名只是入口" in feedback
-    assert "读取材料和 submit_initial_guide 不同次提交" in feedback
+    assert "初始清单是可修订工作计划" in feedback
+    assert "source_refs 只是计划准备读取或核验的稳定坐标，不是读取成功证据" in feedback
+    assert "source_refs 必须命中此前成功读取证据" not in feedback
+    assert "同一 response 的其他工具不会阻止建账" in feedback
+    assert "读取材料和 submit_initial_guide 不同次提交" not in feedback
     assert "中文自然语言" in feedback
     assert "工具调用走 native 通道" in feedback
     assert "不承载 DSML/JSON/完整参数" in feedback
@@ -350,7 +353,8 @@ def test_spec508_popup_doc_records_guide_naturalization_policy():
     assert "task_bootstrap 必须保留任务源锚定" in popup_doc
     assert "task_bootstrap 是建账专用卡" in popup_doc
     assert "长别名清单、执行期证据登记、任务验收 checkpoint、记忆/容器提示不放进建账卡" in popup_doc
-    assert "`source_refs` 是已读材料目录" in popup_doc
+    assert "`source_refs` 是计划来源坐标" in popup_doc
+    assert "不等于已经读到内容或取得证据" in popup_doc
     assert "`items` 是执行项" in popup_doc
     assert "`acceptance` 是验收项" in popup_doc
     assert "task_bootstrap 必须提示分批整理而不是半账本提交" not in popup_doc
@@ -361,7 +365,9 @@ def test_spec508_popup_doc_records_guide_naturalization_policy():
     assert "任务项状态只用 `done / blocked`" in popup_doc
     assert "验收项状态只用 `passed / blocked`" in popup_doc
     assert "guide_submit(guide_id=<当前task>, item_id=task_progress, option_id=update_task_status)" in popup_doc
-    assert 'fields.pending_inputs=[{"pending_input_id":"input_01"' in popup_doc
+    assert "guide_submit(guide_id=<当前task>, item_id=task_progress, option_id=revise_task_plan)" in popup_doc
+    assert 'fields={"pending_inputs":[{"pending_input_id":"<逐字复制当前待整合ID>"' in popup_doc
+    assert "待整合 ID 同样是不透明标识" in popup_doc
     assert "option_id=integrate_pending_input" in popup_doc
     assert "resident reaction guide 只是短入口" in popup_doc
     assert "无工作债务" not in popup_doc

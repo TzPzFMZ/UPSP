@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover - Windows product only
 
 
 SUPERVISOR_SCHEMA = "upsp_runtime_supervisor.v2"
+ACTION_RETENTION_PENDING_KEY = "action_recovery_retention_pending_rounds"
 
 
 class RuntimeServiceError(RuntimeError):
@@ -148,6 +149,12 @@ class ResidentRuntimeService:
             previous = self._read_supervisor()
             recovery_pending = self._recovery_round(previous) is not None
             self._previous_supervisor = previous
+            pending_retention = self._action_retention_pending_rounds(
+                (previous or {}).get("last_outcome"))
+            self.last_outcome = (
+                {ACTION_RETENTION_PENDING_KEY: pending_retention}
+                if pending_retention else {}
+            )
             self.host = {"address": str(host_address), "port": int(port)}
             self._started = True
             if self.persona_ready():
@@ -205,8 +212,10 @@ class ResidentRuntimeService:
             runtime = self.runtime_factory(sm, cfg)
             runtime.on_round_started = self._on_round_started
             runtime.on_round_finished = self._on_round_finished
+            runtime.on_round_released = self._on_round_released
             runtime.control.on_change = self._on_runtime_state_changed
             self.runtime = runtime
+            self._retry_action_recovery_retention(runtime)
             self._recovering = True
             try:
                 self._recover_interrupted_round(
@@ -470,6 +479,14 @@ class ResidentRuntimeService:
         )
         with self._lock:
             operation = self._operation
+        action_store = (
+            getattr(self.runtime, "action_recovery_store", None)
+            if self.runtime is not None else None
+        )
+        interrupted_recovery = (
+            action_store.summary() if action_store is not None
+            else {"pending": False, "round": None}
+        )
         return {
             "session_id": self.session_id,
             "process_id": os.getpid(),
@@ -485,6 +502,7 @@ class ResidentRuntimeService:
             "runtime": runtime_status,
             "cli_data": self._gui_cli_projection(runtime_status),
             "last_outcome": dict(self.last_outcome),
+            "interrupted_recovery": interrupted_recovery,
         }
 
     def _gui_cli_projection(self, runtime_status):
@@ -600,7 +618,8 @@ class ResidentRuntimeService:
         if self._started and not self._closed and not self._recovering:
             self._write_supervisor("running")
 
-    def _on_round_finished(self, round_num, round_type, result):
+    @staticmethod
+    def _round_result_payload(round_num, round_type, result):
         stopped = bool((result or {}).get("_user_stop_requested"))
         settlement = (result or {}).get("_settlement") or {}
         final_response_source = str(
@@ -612,7 +631,7 @@ class ResidentRuntimeService:
             or final_response_source
             == "reaction.runtime_auto_blocked_final_reply"
         )
-        payload = {
+        return {
             "status": (
                 "round_stopped" if stopped
                 else str((result or {}).get("status") or "round_completed")
@@ -634,12 +653,72 @@ class ResidentRuntimeService:
             "degraded_reasons": list(settlement.get("degraded_reasons") or []),
             "fatal_reasons": list(settlement.get("fatal_reasons") or []),
         }
+
+    def _on_round_finished(self, round_num, round_type, result):
+        payload = self._round_result_payload(round_num, round_type, result)
+        pending_retention = self._action_retention_pending_rounds(
+            self.last_outcome)
         self.last_outcome = {
             key: value
             for key, value in payload.items()
             if key != "final_response"
         }
+        if pending_retention:
+            self.last_outcome[ACTION_RETENTION_PENDING_KEY] = pending_retention
+        if payload["settlement_status"] in {"settled", "degraded"}:
+            action_store = getattr(
+                self.runtime, "action_recovery_store", None)
+            if action_store is not None or pending_retention:
+                self._retry_action_recovery_retention(
+                    self.runtime,
+                    additional_rounds=(
+                        [round_num] if action_store is not None else []),
+                )
         self._write_supervisor("running", current_round=None, round_type=None)
+
+    @staticmethod
+    def _action_retention_pending_rounds(outcome):
+        if not isinstance(outcome, dict):
+            return []
+        raw = outcome.get(ACTION_RETENTION_PENDING_KEY, [])
+        if not isinstance(raw, list) or any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+                for value in raw):
+            raise RuntimeSupervisorCorrupt(
+                "runtime_supervisor_action_retention_invalid")
+        return list(dict.fromkeys(raw))
+
+    def _retry_action_recovery_retention(
+            self, runtime, *, additional_rounds=()):
+        rounds = self._action_retention_pending_rounds(self.last_outcome)
+        rounds.extend(int(value) for value in additional_rounds)
+        rounds = list(dict.fromkeys(rounds))
+        if not rounds:
+            self.last_outcome.pop("action_recovery_retention_error", None)
+            return
+        action_store = getattr(runtime, "action_recovery_store", None)
+        remaining = []
+        errors = []
+        for closed_round in rounds:
+            try:
+                if action_store is None:
+                    raise RuntimeError("action_recovery_store_unavailable")
+                action_store.note_round_closed(closed_round)
+            except Exception as exc:
+                remaining.append(closed_round)
+                errors.append(type(exc).__name__)
+        if remaining:
+            self.last_outcome[ACTION_RETENTION_PENDING_KEY] = remaining
+            self.last_outcome["action_recovery_retention_error"] = ",".join(
+                dict.fromkeys(errors))
+        else:
+            self.last_outcome.pop(ACTION_RETENTION_PENDING_KEY, None)
+            self.last_outcome.pop("action_recovery_retention_error", None)
+
+    def _on_round_released(self, round_num, round_type, result):
+        payload = self._round_result_payload(round_num, round_type, result)
         self._finish_operation(payload)
 
     def _recover_interrupted_round(self, runtime, previous):
@@ -653,8 +732,34 @@ class ResidentRuntimeService:
             raise RuntimeServiceError(
                 "runtime_recovery_round_missing") from exc
         types = [item.get("event_type") for item in events]
+        action_store = getattr(runtime, "action_recovery_store", None)
         if "round_closed" in types:
+            if action_store is not None:
+                action_store.note_round_closed(round_num)
             return
+        classified_event = next((
+            item for item in events
+            if item.get("event_type") == "action_recovery_classified"
+        ), None)
+        if action_store is not None and classified_event is None:
+            summary = action_store.classify_interrupted(round_num)
+            receipt = action_store.recovery_receipt(pending_only=True)
+            store.append_event(
+                round_num,
+                "action_recovery_classified",
+                {
+                    "schema_version": "action_recovery_classification.v2",
+                    **summary,
+                    "receipt": receipt,
+                },
+            )
+        elif action_store is not None:
+            summary = action_store.summary()
+            expected_pending = bool(
+                ((classified_event or {}).get("payload") or {}).get("pending"))
+            if expected_pending and not summary.get("pending"):
+                raise RuntimeServiceError(
+                    "action_recovery_classification_missing")
         payload = {
             "reason": "runtime_process_interrupted",
             "previous_process_id": previous.get("process_id"),

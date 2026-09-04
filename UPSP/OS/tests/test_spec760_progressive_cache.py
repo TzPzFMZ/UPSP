@@ -11,6 +11,8 @@ from data.config_store import ConfigStore
 from errors import ReadError, WriteError
 from logic.progressive_cache_compaction import (
     current_batch,
+    pending_shards,
+    render_guide,
     render_materials,
 )
 from logic.guide_submit import apply_guide_submit
@@ -270,6 +272,9 @@ def test_spec760_guide_submit_preempts_other_guides_and_blocks_closeout(tmp_path
     )
     assert rejected["status"] == "rejected"
     assert rejected["reason"] == "cache_compaction_pending"
+    assert rejected["remaining_ids"] == [
+        item["shard_id"] for item in pending_shards(debt)
+    ]
     tracker = ReactionObligationTracker(context_store=store)
     closeout = tracker.validate_closeout_form({
         "closeout_decision": "finish",
@@ -279,6 +284,33 @@ def test_spec760_guide_submit_preempts_other_guides_and_blocks_closeout(tmp_path
     })
     assert closeout["blocked"] is True
     assert tracker.pending_types() == ["cache_compaction_pending"]
+
+
+def test_spec775_cache_shape_rejection_preserves_pending_truth(tmp_path):
+    store = _store(tmp_path)
+    store._write_jsonl_atomic(store._lately_cache_jsonl(), [
+        _block("u1", "user", "interaction", "问题", 1),
+        _block("a1", "assistant", "assistant_reply", "甲" * 400, 1),
+    ])
+    debt = store.prepare_lately_pressure_compaction(
+        775, {"kind": "token_ratio", "context_window": 1000}
+    )["debt"]
+    expected_ids = [item["shard_id"] for item in pending_shards(debt)]
+
+    receipt = store.stage_progressive_cache_compaction({
+        "shard_id": expected_ids[0],
+        "action": "replace",
+        "semantic_content": "错误的非数组结果",
+    })
+    guide = render_guide(debt, "按当前分片处理。")
+
+    assert receipt["status"] == "rejected"
+    assert receipt["reason"] == "cache_compaction_results_required"
+    assert receipt["completed_ids"] == []
+    assert receipt["remaining_ids"] == expected_ids
+    assert f'"shard_id":"{expected_ids[0]}"' in guide
+    assert '"semantic_content"' in guide
+    assert '"reason"' in guide
 
 
 def test_spec765_guide_submit_records_context_store_transaction_and_iteration(

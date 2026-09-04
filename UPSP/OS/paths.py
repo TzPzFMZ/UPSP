@@ -129,6 +129,8 @@ JOURNAL_DIR = os.path.join(STM_MEMORY_DIR, "journal")
 
 # STM/context/ — 内容窗口清单状态
 RESIDENT_LIST_JSON = os.path.join(STM_CONTEXT_DIR, "resident_list.json")
+ACTION_RECOVERY_PENDING_JSON = os.path.join(
+    STM_CONTEXT_DIR, "action_recovery_pending.json")
 
 # STM/buffer/ — 缓冲区
 RAW_LOG_JSONL      = os.path.join(STM_BUFFER_DIR, "raw_log.jsonl")
@@ -137,7 +139,6 @@ INTERRUPTS_JSONL   = os.path.join(STM_BUFFER_DIR, "interrupts.jsonl")
 STATE_BACKUPS_JSONL = os.path.join(STM_BUFFER_DIR, "state_backups.jsonl")
 STATE_SETTLEMENT_JOURNAL_JSON = os.path.join(
     STM_BUFFER_DIR, "state_settlement_journal.json")
-
 # STM/health/base/ — 健康监控
 CONNECTIVITY_JSON = os.path.join(STM_HEALTH_DIR, "connectivity.json")
 ALERTS_MD         = os.path.join(STM_HEALTH_DIR, "alerts.md")

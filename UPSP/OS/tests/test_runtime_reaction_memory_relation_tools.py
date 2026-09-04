@@ -49,8 +49,6 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
 
         result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
 
-        assert result["_memory_annotation_declarations"] == []
-        assert result["_memory_annotation_receipts"] == []
         assert result["_protocol_tool_receipts"] == []
         assert {
             "tool_id": "memory_annotation_update",
@@ -106,7 +104,7 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
         assert result["_protocol_tool_receipts"] == []
         assert {
             "tool_id": "memory_recall_complete",
-            "reason": "native_protocol_write_not_enabled",
+            "reason": "unsupported_execution_route",
         } in [
             {
                 "tool_id": item.get("tool_id"),
@@ -256,8 +254,6 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
 
         assert receipts == [{
             "tool_id": "relation_card_write",
-            "tool_family": "protocol_tool",
-            "tool_class": "sync_tool",
             "status": "processor_error",
             "source": "relation_card_declaration",
             "detail": "relation registry unavailable",
@@ -287,8 +283,6 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
 
         assert receipts == [{
             "tool_id": "relation_card_write",
-            "tool_family": "protocol_tool",
-            "tool_class": "sync_tool",
             "status": "multiple_relation_card_declarations",
             "source": "relation_card_declaration",
             "reason": "multiple_relation_card_declarations",
@@ -440,6 +434,66 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
             assert receipts[0]["reason"] == "relation_index_write_failed"
             assert receipts[0]["repair_debt"]["card_id"] == "REL-Codex"
 
+    def test_spec781_resident_relation_update_preflights_before_write(self, tmp_path):
+        rt = self._make_runtime(tmp_path)
+
+        class DummyRelationStore:
+            def __init__(self):
+                self.notes = []
+
+            def find_card(self, _subject):
+                return {
+                    "id": "REL-Codex",
+                    "name": "Codex",
+                    "category": "them",
+                }
+
+            def read_card(self, _card_id):
+                return {
+                    "id": "REL-Codex",
+                    "name": "Codex",
+                    "category": "them",
+                    "notes": [{"content": "既有事实"}],
+                }
+
+            def add_note(self, card_id, note):
+                self.notes.append((card_id, note))
+
+        class RejectingAssembler:
+            def __init__(self):
+                self.calls = []
+
+            def preflight_resident_source_update(self, item, body):
+                self.calls.append((dict(item), body))
+                raise ValueError(
+                    "resident_list_char_limit_exceeded:max=65536;actual=65537")
+
+        relation_store = DummyRelationStore()
+        assembler = RejectingAssembler()
+        receipts = apply_relation_card_declarations(
+            [{
+                "name": "Codex",
+                "category": "them",
+                "action": "append_note",
+                "note": "新增事实",
+                "reason": "update resident relation",
+            }],
+            {"interaction_object": "Codex", "identity_status": "declared"},
+            guard=rt.cfg.get_relation_card_write_guard(),
+            visible_relation_body_ids={"REL-Codex"},
+            relation_store_factory=lambda: relation_store,
+            relation_index_factory=lambda: rt.memory_index,
+            assembler=assembler,
+        )
+
+        assert receipts[0]["status"] == "processor_error"
+        assert "resident_list_char_limit_exceeded" in receipts[0]["detail"]
+        assert relation_store.notes == []
+        assert assembler.calls[0][0] == {
+            "item_type": "relation", "item_id": "REL-Codex"}
+        assert "既有事实" in assembler.calls[0][1]
+        assert "新增事实" in assembler.calls[0][1]
+
     def test_spec349_existing_relation_create_action_is_rejected(self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
 
@@ -499,8 +553,6 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
 
         assert receipts == [{
             "tool_id": "relation_card_write",
-            "tool_family": "protocol_tool",
-            "tool_class": "sync_tool",
             "status": "rejected_state_or_axis_write",
             "source": "relation_card_declaration",
             "reason": "rejected_state_or_axis_write",

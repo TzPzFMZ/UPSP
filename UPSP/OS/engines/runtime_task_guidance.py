@@ -97,8 +97,6 @@ def materialize_work_intent_debt_if_needed(runtime, context):
             "work_intent_debt_materialized",
             {
                 "tool_id": "runtime_work_intent_debt",
-                "tool_family": "substrate_tool",
-                "tool_class": "sync_tool",
                 "status": "task_bootstrap_created",
                 "source": debt.get("source") or "runtime",
                 "guide_id": guide.get("guide_id"),

@@ -12,7 +12,7 @@
 
   "content": {
     "modules": ["STATUSBAR"],
-    "includes_relation_focus_summary": true,
+    "includes_relation_context_summary": true,
     "relation_body_location": "CONTENT / relation_read.body"
   },
 

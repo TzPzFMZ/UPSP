@@ -69,8 +69,9 @@ def relation_gravity(relation_axes_by_subject):
     return {axis: clamp(value, -2, 2) for axis, value in total.items()}
 
 
-def apply_dynamic(current, comfort, direct_deltas, core_pulls, relation_pulls):
-    """有直接感受变化的轴叠加引力；其余轴每轮向舒适区移动 1。"""
+def apply_dynamic(current, comfort, direct_deltas, core_pulls, relation_pulls,
+                  *, natural_return=True):
+    """直接感受轴叠加引力；只有入口代谢允许其余轴自然回落。"""
     result = {}
     for axis in DYNAMIC_AXIS_KEYS:
         old = current.get(axis, {}).get("value", 0)
@@ -81,8 +82,10 @@ def apply_dynamic(current, comfort, direct_deltas, core_pulls, relation_pulls):
                 + core_pulls.get(axis, 0)
                 + relation_pulls.get(axis, 0)
             )
-        else:
+        elif natural_return:
             target = comfort.get(axis, 0)
             value = old + (1 if old < target else -1 if old > target else 0)
+        else:
+            value = old
         result[axis] = {"value": clamp(value)}
     return result

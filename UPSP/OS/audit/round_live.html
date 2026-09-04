@@ -555,6 +555,11 @@
     let selectedFrameId = null;
     let renderMode = "markdown";
     let pinnedToBottom = true;
+    let frameDetail = null;
+    let frameDetailRequestKey = "";
+    let legacyConversation = [];
+    const timelineNodeDetails = new Map();
+    const timelineNodeDetailLoading = new Set();
     const paneLocks = {};
     const manualCollapseState = {};
 
@@ -583,7 +588,8 @@
     liveToggle.addEventListener("click", () => {
       liveMode = true;
       selectedFrameId = latestState?.latest_frame_id || null;
-      renderCurrentState();
+      if (selectedFrameId) loadFrameDetail(selectedFrameId);
+      else renderCurrentState();
     });
 
     refreshToggle.addEventListener("click", () => {
@@ -606,7 +612,7 @@
     });
 
     eventCollapseToggle.addEventListener("click", () => {
-      const cards = (latestState?.conversation || []).filter((card) => card.collapsible);
+      const cards = visibleConversation().filter((card) => card.collapsible);
       const shouldExpand = cards.some((card) => isCardCollapsed(card));
       for (const card of cards) {
         const cardId = String(card.card_id || `${card.event_index}:${card.type}:${card.title}`);
@@ -691,7 +697,7 @@
     }
 
     function updateEventCollapseToggle() {
-      const cards = (latestState?.conversation || []).filter((card) => card.collapsible);
+      const cards = visibleConversation().filter((card) => card.collapsible);
       eventCollapseToggle.disabled = cards.length === 0;
       const anyCollapsed = cards.some((card) => isCardCollapsed(card));
       eventCollapseToggle.textContent = anyCollapsed ? "展开事件" : "收起事件";
@@ -707,7 +713,7 @@
     }
 
     function frames() {
-      return latestState?.call_frames || [];
+      return latestState?.frame_catalog || [];
     }
 
     function frameById(frameId) {
@@ -725,12 +731,13 @@
     }
 
     function effectiveFrame() {
-      return frameById(effectiveFrameId()) || frames()[frames().length - 1] || null;
+      const selected = effectiveFrameId();
+      return frameDetail?.frame_id === selected ? frameDetail : frameById(selected) || frames()[frames().length - 1] || null;
     }
 
     function panesForGlobalSelection() {
       const frame = effectiveFrame();
-      return frame?.context_panes || latestState?.context_panes || [];
+      return frame?.context_panes || [];
     }
 
     function renderRoundStrip(rounds) {
@@ -765,7 +772,7 @@
         button.addEventListener("click", () => {
           selectedFrameId = frame.frame_id;
           liveMode = frame.frame_id === latestState.latest_frame_id;
-          renderCurrentState({ scrollHighlight: !liveMode });
+          loadFrameDetail(frame.frame_id);
         });
         frameStrip.appendChild(button);
       }
@@ -782,6 +789,11 @@
       actualRound = null;
       lastEventIndex = 0;
       latestState = null;
+      frameDetail = null;
+      frameDetailRequestKey = "";
+      legacyConversation = [];
+      timelineNodeDetails.clear();
+      timelineNodeDetailLoading.clear();
       liveMode = true;
       selectedFrameId = null;
       pinnedToBottom = true;
@@ -793,7 +805,7 @@
       const globalPanes = panesForGlobalSelection();
       for (const pane of globalPanes) {
         const lock = paneLocks[pane.id] || { paused: false, frameId: null };
-        const lockedFrame = lock.paused && liveMode ? frameById(lock.frameId) : null;
+        const lockedFrame = lock.paused && liveMode && frameDetail?.frame_id === lock.frameId ? frameDetail : null;
         const paneSource = lockedFrame
           ? (lockedFrame.context_panes || []).find((item) => item.id === pane.id) || pane
           : pane;
@@ -871,7 +883,7 @@
         }
         select.addEventListener("change", () => {
           paneLocks[paneId] = { paused: true, frameId: select.value };
-          renderPanes();
+          loadFrameDetail(select.value);
         });
         target.appendChild(select);
       }
@@ -943,8 +955,10 @@
         }
         if (collapsible) {
           const toggleCard = () => {
-            manualCollapseState[cardId] = !isCardCollapsed(card);
+            const opening = isCardCollapsed(card);
+            manualCollapseState[cardId] = !opening;
             renderCurrentState({ preserveScroll: true });
+            if (opening && card.detail_ref) loadTimelineNodeDetail(card.detail_ref);
           };
           const toggleButton = node.querySelector("[data-card-toggle]");
           const titleRow = node.querySelector(".card-title");
@@ -956,6 +970,9 @@
           }
           if (titleRow) {
             titleRow.onclick = toggleCard;
+          }
+          if (!collapsed && card.detail_ref && !timelineNodeDetails.has(card.detail_ref)) {
+            loadTimelineNodeDetail(card.detail_ref);
           }
         }
       }
@@ -990,13 +1007,96 @@
       }
       renderFrameStrip();
       renderPanes();
-      renderConversation(latestState.conversation || [], options);
+      renderConversation(visibleConversation(), options);
       updateEventCollapseToggle();
       roundLabel.textContent = `轮次：${actualRound ?? latestState.round ?? "-"}`;
       eventLabel.textContent = `事件：${latestState.last_event_index || 0}`;
       modeLabel.textContent = liveMode ? "LIVE" : "回放";
       liveToggle.classList.toggle("active", liveMode);
       liveToggle.textContent = liveMode ? "LIVE" : "回到最新";
+    }
+
+    function visibleConversation() {
+      if (latestState?.display_mode === "legacy") return legacyConversation;
+      const timeline = latestState?.dialogue_timeline;
+      const byId = new Map((timeline?.nodes || []).map((node) => [node.node_id, node]));
+      return (timeline?.order || []).map((id) => byId.get(id)).filter(Boolean).map((node, index) => {
+        const cached = timelineNodeDetails.get(node.node_id);
+        const detail = cached?.status === node.status && cached?.ended_at === node.ended_at ? cached : null;
+        if (cached && !detail) timelineNodeDetails.delete(node.node_id);
+        const toolContent = detail
+          ? `## 调用参数\n\n\`\`\`json\n${JSON.stringify(detail.arguments ?? null, null, 2)}\n\`\`\`\n\n## 执行结果\n\n\`\`\`json\n${JSON.stringify(detail.result ?? null, null, 2)}\n\`\`\``
+          : "展开后读取工具参数与结果。";
+        return {
+          card_id: node.node_id,
+          event_index: node.first_event_index ?? index,
+          type: node.type,
+          title: node.type === "tool" ? node.tool_id || "工具" : node.type,
+          summary: node.status,
+          phase: node.phase,
+          frame_id: node.frame_id,
+          content_md: node.type === "tool" ? toolContent : node.content_raw || node.message || "",
+          content_raw: node.type === "tool" ? toolContent : node.content_raw || node.message || "",
+          collapsible: node.type === "tool",
+          default_collapsed: node.type === "tool",
+          detail_ref: node.detail_ref,
+        };
+      });
+    }
+
+    async function loadTimelineNodeDetail(nodeId) {
+      if (!nodeId || actualRound == null || timelineNodeDetailLoading.has(nodeId)) return;
+      const round = actualRound;
+      const current = latestState?.dialogue_timeline?.nodes?.find((node) => node.node_id === nodeId);
+      const cached = timelineNodeDetails.get(nodeId);
+      if (cached?.status === current?.status && cached?.ended_at === current?.ended_at) return;
+      timelineNodeDetailLoading.add(nodeId);
+      try {
+        const query = new URLSearchParams({ round: String(round), kind: "timeline_node", ref: nodeId });
+        const response = await fetch(`/api/live/detail?${query}`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const detail = await response.json();
+        if (actualRound !== round || detail.round !== round || detail.ref !== nodeId) return;
+        timelineNodeDetails.set(nodeId, detail.payload);
+        renderCurrentState({ preserveScroll: true });
+      } catch (error) {
+        statusLabel.textContent = `工具详情异常：${error.message}`;
+      } finally {
+        timelineNodeDetailLoading.delete(nodeId);
+      }
+    }
+
+    async function loadFrameDetail(frameId) {
+      if (!frameId || actualRound == null) return;
+      const round = actualRound;
+      const requestKey = `${round}:${frameId}`;
+      frameDetailRequestKey = requestKey;
+      statusLabel.textContent = "正在读取 Frame 详情";
+      try {
+        const query = new URLSearchParams({ round: String(round), kind: "frame", ref: frameId });
+        const response = await fetch(`/api/live/detail?${query}`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const detail = await response.json();
+        if (frameDetailRequestKey !== requestKey || actualRound !== round || detail.round !== round || detail.ref !== frameId) return;
+        frameDetail = detail.payload;
+        renderCurrentState({ scrollHighlight: !liveMode });
+      } catch (error) {
+        if (frameDetailRequestKey === requestKey) statusLabel.textContent = `Frame 详情异常：${error.message}`;
+      }
+    }
+
+    async function loadLegacyConversation(round) {
+      try {
+        const query = new URLSearchParams({ round: String(round), kind: "legacy_conversation" });
+        const response = await fetch(`/api/live/detail?${query}`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const detail = await response.json();
+        if (detail.round !== actualRound) return;
+        legacyConversation = detail.payload?.conversation || [];
+        renderCurrentState();
+      } catch (error) {
+        statusLabel.textContent = `旧轮卡片异常：${error.message}`;
+      }
     }
 
     async function loadRounds() {
@@ -1047,6 +1147,9 @@
           lastEventIndex = latestState.last_event_index;
         }
         renderCurrentState();
+        if (latestState.display_mode === "legacy" && !legacyConversation.length) {
+          loadLegacyConversation(actualRound);
+        }
         statusLabel.textContent = `已连接 ${new Date().toLocaleTimeString()}`;
       } catch (err) {
         statusLabel.textContent = `连接异常：${err.message}`;

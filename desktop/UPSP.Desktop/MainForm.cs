@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -9,6 +10,15 @@ internal sealed class MainForm : Form
 {
     private readonly DesktopBackend _backend;
     private readonly WebView2 _webView = new() { Dock = DockStyle.Fill };
+    private readonly Label _loadingSurface = new()
+    {
+        Dock = DockStyle.Fill,
+        BackColor = Color.FromArgb(5, 20, 18),
+        ForeColor = Color.FromArgb(139, 243, 230),
+        Font = new Font("Microsoft YaHei UI", 12, FontStyle.Regular),
+        Text = "正在启动 UPSP",
+        TextAlign = ContentAlignment.MiddleCenter,
+    };
     private readonly Icon? _appIcon;
     private readonly NotifyIcon _tray;
     private readonly ToolStripMenuItem _statusItem = new("当前状态：正在连接");
@@ -31,6 +41,8 @@ internal sealed class MainForm : Form
         MinimumSize = new Size(760, 560);
         BackColor = Color.FromArgb(5, 20, 18);
         Controls.Add(_webView);
+        Controls.Add(_loadingSurface);
+        _loadingSurface.BringToFront();
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("打开 UPSP", null, (_, _) => RestoreFromTray());
@@ -109,14 +121,41 @@ internal sealed class MainForm : Form
     {
         core.Settings.AreDevToolsEnabled = false;
         core.Settings.AreHostObjectsAllowed = false;
+        core.Settings.IsWebMessageEnabled = true;
         core.NavigationStarting += (_, args) =>
         {
             if (AllowedTopLevel(args.Uri))
             {
+                ShowLoading("正在读取本地界面");
                 return;
             }
             args.Cancel = true;
             OpenExternal(args.Uri);
+        };
+        core.NavigationCompleted += (_, args) =>
+        {
+            if (args.IsSuccess)
+            {
+                _loadingSurface.Visible = false;
+                return;
+            }
+            ShowLoading("本地界面读取失败，请退出后重试");
+        };
+        core.WebMessageReceived += async (_, args) =>
+        {
+            if (!IsBackendOrigin(args.Source) || !IsRestartRequest(args.WebMessageAsJson))
+            {
+                return;
+            }
+            try
+            {
+                await RestartBackendAsync();
+            }
+            catch (Exception exc)
+            {
+                DesktopLog.Write(exc);
+                ShowLoading("位格或分身切换失败，请退出后重试");
+            }
         };
         core.NewWindowRequested += (_, args) =>
         {
@@ -152,12 +191,43 @@ internal sealed class MainForm : Form
         };
     }
 
+    private void ShowLoading(string message)
+    {
+        _loadingSurface.Text = message;
+        _loadingSurface.Visible = true;
+        _loadingSurface.BringToFront();
+    }
+
+    private static bool IsRestartRequest(string message)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(message);
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Object
+                && root.EnumerateObject().Count() == 2
+                && root.TryGetProperty("schema_version", out var schema)
+                && schema.GetString() == "upsp_desktop_message.v1"
+                && root.TryGetProperty("command", out var command)
+                && command.GetString() == "restart_backend";
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private bool AllowedTopLevel(string value)
     {
         if (value == "about:blank")
         {
             return true;
         }
+        return IsBackendOrigin(value);
+    }
+
+    private bool IsBackendOrigin(string value)
+    {
         return Uri.TryCreate(value, UriKind.Absolute, out var uri)
             && uri.GetLeftPart(UriPartial.Authority).Equals(
                 _backend.Origin.GetLeftPart(UriPartial.Authority),
@@ -196,18 +266,7 @@ internal sealed class MainForm : Form
             }
             if (snapshot.RestartRequested && !_backendRestartInProgress)
             {
-                _backendRestartInProgress = true;
-                _statusItem.Text = "当前状态：正在切换位格或分身";
-                try
-                {
-                    await _backend.RestartAsync();
-                    _webView.CoreWebView2.Navigate(_backend.Origin.AbsoluteUri);
-                    _lastActive = false;
-                }
-                finally
-                {
-                    _backendRestartInProgress = false;
-                }
+                await RestartBackendAsync();
                 return;
             }
             _statusItem.Text = $"当前状态：{snapshot.DisplayText}";
@@ -230,6 +289,27 @@ internal sealed class MainForm : Form
         finally
         {
             Interlocked.Exchange(ref _statusRefreshInFlight, 0);
+        }
+    }
+
+    private async Task RestartBackendAsync()
+    {
+        if (_backendRestartInProgress)
+        {
+            return;
+        }
+        _backendRestartInProgress = true;
+        _statusItem.Text = "当前状态：正在切换位格或分身";
+        ShowLoading("正在切换位格或分身");
+        try
+        {
+            await _backend.RestartAsync();
+            _webView.CoreWebView2.Navigate(_backend.Origin.AbsoluteUri);
+            _lastActive = false;
+        }
+        finally
+        {
+            _backendRestartInProgress = false;
         }
     }
 

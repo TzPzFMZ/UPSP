@@ -65,7 +65,6 @@ def _tool_envelope(
         arguments: dict[str, Any] | None = None,
         *,
         call_id: str,
-        tool_family: str = "general_tool",
         tool_class: str = "read_tool",
         risk: str = "medium",
         index: int = 0) -> dict[str, Any]:
@@ -83,7 +82,6 @@ def _tool_envelope(
         "tool_id": tool_id,
         "arguments": arguments,
         "arguments_json": json.dumps(arguments, ensure_ascii=False),
-        "tool_family": tool_family,
         "tool_class": tool_class,
         "risk": risk,
         "parse_status": "ok",
@@ -96,7 +94,6 @@ def _reaction_finalize(call_id: str, **arguments: Any) -> dict[str, Any]:
         "reaction_finalize",
         arguments,
         call_id=call_id,
-        tool_family="substrate_tool",
         tool_class="sync_tool",
         risk="high",
     )
@@ -107,7 +104,6 @@ def _cleanup_finalize(call_id: str = "call_acceptance_cleanup") -> dict[str, Any
         "cleanup_finalize",
         {},
         call_id=call_id,
-        tool_family="substrate_tool",
         tool_class="sync_tool",
         risk="high",
     )
@@ -134,7 +130,6 @@ def _guide_submit_write_chronicle(
             }],
         },
         call_id=call_id,
-        tool_family="protocol_tool",
         tool_class="sync_tool",
         risk="high",
     )
@@ -151,7 +146,6 @@ def _setup_finalize(call_id: str = "call_acceptance_setup") -> dict[str, Any]:
             "interaction_source": "round_context_acceptance",
         },
         call_id=call_id,
-        tool_family="substrate_tool",
         tool_class="sync_tool",
         risk="high",
     )
@@ -349,7 +343,6 @@ def _event_tool_call_to_envelope(
             tool_id,
             arguments,
             call_id=str(item.get("call_id") or f"call_spark_{tool_id}_{index}"),
-            tool_family="substrate_tool",
             tool_class="sync_tool",
             risk="high",
             index=index,
@@ -359,7 +352,6 @@ def _event_tool_call_to_envelope(
             tool_id,
             arguments,
             call_id=str(item.get("call_id") or f"call_spark_{tool_id}_{index}"),
-            tool_family="protocol_tool",
             tool_class="sync_tool",
             risk="medium",
             index=index,
@@ -368,7 +360,6 @@ def _event_tool_call_to_envelope(
         tool_id,
         arguments,
         call_id=str(item.get("call_id") or f"call_spark_{tool_id}_{index}"),
-        tool_family="general_tool",
         tool_class="read_tool",
         risk="medium",
         index=index,
@@ -397,7 +388,7 @@ def validate_spark_envelope(envelope: dict[str, Any]) -> list[dict[str, str]]:
 
 SPARK_OBSERVATION_TRUE_FIELDS = {
     "seen_user_input": "Spark 必须确认看见真实用户输入。",
-    "seen_chronicle_focus": "Spark 必须确认看见编年史/节律写入焦点。",
+    "seen_chronicle_material": "Spark 必须确认看见编年史写入材料。",
     "seen_natural_final_reply": "Spark 必须确认看见自然语言最终回复投影。",
     "would_handle_user_task": "Spark 必须判断会继续处理真实用户任务。",
 }
@@ -462,6 +453,12 @@ def validate_spark_observation(report: dict[str, Any]) -> list[dict[str, str]]:
 
 
 class InMemoryHeat:
+    def load_heat(self):
+        return {"entries": {}}
+
+    def check_upgrade(self):
+        return []
+
     def recall_boost(self, *args, **kwargs):
         return None
 
@@ -475,6 +472,9 @@ class InMemoryHeat:
 class NoopMemoryStore:
     def load_meta(self):
         return []
+
+    def active_ltm_meta_by_id(self):
+        return {}
 
     def __getattr__(self, _name):
         def _noop(*args, **kwargs):
@@ -498,10 +498,6 @@ class NoopRelationStore:
 
     def set_summary_resident(self, *args, **kwargs):
         return None
-
-    def set_body_resident(self, *args, **kwargs):
-        return None
-
 
 @contextmanager
 def _extra_file_read_root(path: Path):
@@ -596,7 +592,6 @@ def _fake_general_tool_execute(request: dict[str, Any], book_path: Path) -> dict
         reason = str(exc)
     return {
         "tool_id": "file_read",
-        "tool_family": "general_tool",
         "tool_class": "read_tool",
         "status": status,
         "reason": reason,
@@ -645,7 +640,7 @@ SCENARIO_REGISTRY = {
         "kind": "round_context_acceptance",
         "provider_required": False,
         "covers_specs": ["Spec383", "Spec388", "Spec389", "Spec448"],
-        "summary": "节律合轮中真实用户输入、编年史焦点和 assistant_text 收束投影可见性验收。",
+        "summary": "节律合轮中真实用户输入、编年史 C 轨材料和 assistant_text 收束投影可见性验收。",
     },
 }
 
@@ -803,12 +798,8 @@ def _build_checks(
         and _contains(cleanup_messages, "请读取并内化")
     )
     chronicle_visible = (
-        _contains(reaction_messages, "编年史写入焦点（Runtime 预填）")
-        and _contains(reaction_messages, "当前正文写入框")
-        and (
-            _contains(reaction_messages, "活动主轴节律文件")
-            or _contains(reaction_messages, "活动日历节律文件")
-        )
+        _contains(reaction_messages, "【本轮资料】编年史写入材料")
+        and _contains(reaction_messages, "来源轮次范围")
     )
     round_closed_payload = dict(round_closed_payload or {})
     natural_final_reply_visible = bool(
@@ -826,9 +817,9 @@ def _build_checks(
             "passed": bool(user_visible),
             "required": "真实用户输入必须进入 setup/reaction/cleanup 可见上下文。",
         },
-        "chronicle_focus_visible": {
+        "chronicle_material_visible": {
             "passed": bool(chronicle_visible),
-            "required": "reaction messages 必须让模型看到真实编年史焦点与正文写入框。",
+            "required": "目标 Reaction Frame 必须让模型看到真实编年史 C 轨材料。",
         },
         "natural_final_reply_projected": {
             "passed": bool(natural_final_reply_visible),
@@ -901,7 +892,7 @@ def _spark_prompt_text(context_bundle: Path) -> str:
         "",
         "只输出 JSON，schema_version 必须是 `spark_observation.v1`，字段包括：",
         "- `seen_user_input`: boolean",
-        "- `seen_chronicle_focus`: boolean",
+        "- `seen_chronicle_material`: boolean",
         "- `seen_natural_final_reply`: boolean",
         "- `would_handle_user_task`: boolean",
         "- `trapped_or_confused`: boolean",
@@ -911,7 +902,7 @@ def _spark_prompt_text(context_bundle: Path) -> str:
         "- `risk_items`: string[]",
         "- `notes`: string",
         "",
-        "重点判断模型是否能看到真实用户输入、编年史/节律写入目标、"
+        "重点判断模型是否能看到真实用户输入、编年史写入材料、"
         "自然语言最终回复投影，以及是否存在误跳中继或误清用户任务风险。",
     ])
 

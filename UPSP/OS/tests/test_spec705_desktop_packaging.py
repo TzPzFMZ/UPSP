@@ -1,4 +1,6 @@
+import hashlib
 import json
+import re
 from pathlib import Path
 
 
@@ -82,6 +84,8 @@ def test_spec705_shell_keeps_native_and_runtime_boundaries():
     assert "AssemblyInformationalVersionAttribute" in backend
     assert "WaitForIdleAsync" in backend
     assert "StopOutcomeSafe" in backend
+    assert '"seed_gui_runtime_status.v3"' in backend
+    assert '"seed_gui_runtime_status.v2"' not in backend
     assert 'Boolean(root, "restart_requested")' in backend
     assert "Task RestartAsync" in backend
     assert "Task<bool> RequestStopAsync" in backend
@@ -92,6 +96,7 @@ def test_spec705_shell_keeps_native_and_runtime_boundaries():
     assert "stopAccepted && !snapshot.StopOutcomeSafe" in form
     assert "AreDevToolsEnabled = false" in form
     assert "AreHostObjectsAllowed = false" in form
+    assert "IsWebMessageEnabled = true" in form
     assert "AddHostObjectToScript" not in form
     assert "Icon = _appIcon ?? SystemIcons.Application;" in form
     assert "Icon = Icon," in form
@@ -102,6 +107,11 @@ def test_spec705_shell_keeps_native_and_runtime_boundaries():
     assert "!_backendFailureShown && _backend.HasExited" in form
     assert "snapshot.RestartRequested" in form
     assert "await _backend.RestartAsync()" in form
+    assert 'schema.GetString() == "upsp_desktop_message.v1"' in form
+    assert 'command.GetString() == "restart_backend"' in form
+    assert "if (!IsBackendOrigin(args.Source)" in form
+    assert 'ShowLoading("正在切换位格或分身")' in form
+    assert "NavigationCompleted" in form
     assert "if (Visible)" in form
     assert "Hide();" in form
     assert "Local\\UPSP.Desktop.SingleInstance.v1" in program
@@ -193,8 +203,8 @@ def test_spec707_product_manifest_is_the_release_version_truth():
     assert product == {
         "schema_version": "upsp_product_manifest.v1",
         "name": "UPSP",
-        "version": "0.1.1",
-        "windows_file_version": "0.1.1.0",
+        "version": "0.1.2",
+        "windows_file_version": "0.1.2.0",
         "channel": "stable",
         "build_number": 1,
         "author": {
@@ -210,7 +220,7 @@ def test_spec707_product_manifest_is_the_release_version_truth():
         "copyright": "Copyright (c) 2026 TzPzFMZ",
     }
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "0.1.1"' in pyproject
+    assert 'version = "0.1.2"' in pyproject
     manifest = (
         DESKTOP_ROOT / "UPSP.Desktop" / "app.manifest"
     ).read_text(encoding="utf-8")
@@ -220,23 +230,23 @@ def test_spec707_product_manifest_is_the_release_version_truth():
     ).read_text(encoding="utf-8")
 
 
-def test_spec769_public_release_identity_and_memory_entry_wording():
+def test_current_public_release_identity_and_memory_entry_wording():
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     readme_en = (REPO_ROOT / "README.en.md").read_text(encoding="utf-8")
     release = (
-        REPO_ROOT / "docs" / "public" / "releases" / "0.1.1.md"
+        REPO_ROOT / "docs" / "public" / "releases" / "0.1.2.md"
     ).read_text(encoding="utf-8")
     installer = (
         DESKTOP_ROOT / "installer" / "UPSP.nsi"
     ).read_text(encoding="utf-8")
 
-    assert "Windows Stable `0.1.1`" in readme
-    assert "Windows Stable `0.1.1`" in readme_en
-    assert "UPSP-Setup-0.1.1-win-x64.exe" in readme
-    assert "UPSP-Setup-0.1.1-win-x64.exe" in readme_en
-    assert "docs/public/releases/0.1.1.md" in readme
-    assert "docs/public/releases/0.1.1.md" in readme_en
-    assert "# UPSP 0.1.1" in release
+    assert "Windows Stable `0.1.2`" in readme
+    assert "Windows Stable `0.1.2`" in readme_en
+    assert "UPSP-Setup-0.1.2-win-x64.exe" in readme
+    assert "UPSP-Setup-0.1.2-win-x64.exe" in readme_en
+    assert "docs/public/releases/0.1.2.md" in readme
+    assert "docs/public/releases/0.1.2.md" in readme_en
+    assert "# UPSP 0.1.2" in release
     assert "记忆条目" in release
     assert "发布草案" not in release
     assert "[待回填]" not in release
@@ -252,3 +262,67 @@ def test_spec769_gui_build_ignores_package_manager_link_layout():
 
     assert 'absWorkingDir: guiRoot' in build
     assert 'preserveSymlinks: true' in build
+
+
+def test_spec773_gui_startup_has_no_remote_blocking_asset():
+    gui_root = REPO_ROOT / "UPSP" / "gui"
+    startup_sources = [
+        gui_root / "index.html",
+        gui_root / "styles.css",
+        gui_root / "markdown.css",
+    ]
+    for path in startup_sources:
+        source = path.read_text(encoding="utf-8")
+        assert "fonts.googleapis.com" not in source
+        assert "fonts.gstatic.com" not in source
+        assert re.search(
+            r"@import\s+(?:url\()?\s*['\"]?https?://",
+            source,
+            re.IGNORECASE,
+        ) is None
+        assert re.search(
+            r"<(?:link|script)\b[^>]+(?:href|src)\s*=\s*['\"]https?://",
+            source,
+            re.IGNORECASE,
+        ) is None
+
+    runtime = (gui_root / "src" / "runtime.ts").read_text(encoding="utf-8")
+    assert 'schema_version: "upsp_desktop_message.v1"' in runtime
+    assert 'command: "restart_backend"' in runtime
+    assert "window.requestAnimationFrame" in runtime
+
+
+def test_spec773_gui_fonts_are_local_complete_and_licensed():
+    gui_root = REPO_ROOT / "UPSP" / "gui"
+    font_root = gui_root / "assets" / "fonts"
+    manifest = json.loads(
+        (font_root / "font-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == "upsp_gui_font_bundle.v1"
+    assert manifest["source_repository"] == "https://github.com/google/fonts"
+    assert len(manifest["source_commit"]) == 40
+    assert manifest["license"] == "OFL-1.1"
+    assert manifest["conversion"]["format"] == "woff2"
+    assert manifest["conversion"]["subsetted"] is False
+
+    expected_families = {
+        "Noto Sans SC",
+        "Orbitron",
+        "M PLUS 1 Code",
+    }
+    assert {item["family"] for item in manifest["files"]} == expected_families
+    styles = (gui_root / "styles.css").read_text(encoding="utf-8")
+    for item in manifest["files"]:
+        font_path = font_root / item["bundled_path"]
+        assert font_path.is_file()
+        assert font_path.stat().st_size > 0
+        assert hashlib.sha256(font_path.read_bytes()).hexdigest() == item["bundled_sha256"]
+        assert f'./assets/fonts/{item["bundled_path"]}' in styles
+        license_path = font_root / item["license_path"]
+        assert license_path.is_file()
+        assert "SIL OPEN FONT LICENSE Version 1.1" in license_path.read_text(
+            encoding="utf-8")
+
+    build = (REPO_ROOT / "tools" / "build_windows_desktop.ps1").read_text(
+        encoding="utf-8")
+    assert "UPSP\\gui\\assets\\fonts\\licenses" in build
+    assert "Join-Path $licensesRoot 'fonts'" in build

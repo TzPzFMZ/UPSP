@@ -55,8 +55,6 @@ def _receipt(status, *, alert_type="", settle_status="", reason="",
              cleared_flags=None, fault_refs=None, next_attention=""):
     return {
         "tool_id": "alert_mode_settle",
-        "tool_family": "protocol_tool",
-        "tool_class": "sync_tool",
         "status": status,
         "source": "alert_mode_settle",
         "alert_type": alert_type,

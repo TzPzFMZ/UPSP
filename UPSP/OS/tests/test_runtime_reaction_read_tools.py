@@ -10,6 +10,108 @@ from engines.reaction_protocol_tool_execution import apply_corpus_read_requests
 
 
 class TestRuntimeReactionReadTools(RuntimeTestMixin):
+    def test_spec781_stateful_read_dedup_rechecks_current_resident_state(self):
+        from types import SimpleNamespace
+
+        from engines.reaction_tool_settlement import (
+            ReactionToolSettlementDispatcher,
+            _read_signature,
+        )
+
+        class ResidentStore:
+            def __init__(self):
+                self.items = set()
+
+            def contains(self, *, item_type, item_id, target_file=""):
+                return (item_type, item_id, target_file) in self.items
+
+        class RelationStore:
+            summary_resident = False
+
+            def load_registry(self):
+                return {"cards": [{
+                    "id": "REL-Codex",
+                    "summary_resident": self.summary_resident,
+                }]}
+
+        resident = ResidentStore()
+        relation = RelationStore()
+        runner = SimpleNamespace(
+            assembler=SimpleNamespace(),
+            resident_store=resident,
+            relation_store=relation,
+        )
+        dispatcher = ReactionToolSettlementDispatcher(runner)
+
+        memory_request = {
+            "tool_id": "memory_content_read",
+            "mem_id": "MEM-781READ",
+            "mount_mode": "resident",
+        }
+        memory_receipt = {
+            "tool_id": "memory_content_read",
+            "status": "accepted",
+            "mem_id": "MEM-781READ",
+            "mount_mode": "resident",
+            "protocol_read_signature": _read_signature(
+                "memory_content_read", memory_request),
+        }
+        executable, duplicates, _requests = (
+            dispatcher._filter_duplicate_protocol_reads(
+                "memory_content_read", [memory_request], [memory_receipt])
+        )
+        assert executable == [memory_request]
+        assert duplicates == []
+
+        resident.items.add(("memory", "MEM-781READ", ""))
+        executable, duplicates, _requests = (
+            dispatcher._filter_duplicate_protocol_reads(
+                "memory_content_read", [memory_request], [memory_receipt])
+        )
+        assert executable == []
+        assert duplicates[0]["reason"] == "duplicate_protocol_read_satisfied"
+
+        relation_request = {
+            "tool_id": "relation_read",
+            "card_id": "REL-Codex",
+            "summary": "resident",
+            "body": "resident",
+        }
+        relation_receipt = {
+            "tool_id": "relation_read",
+            "status": "accepted",
+            "card_id": "REL-Codex",
+            "summary_mode": "resident",
+            "body_mode": "resident",
+            "protocol_read_signature": _read_signature(
+                "relation_read", relation_request),
+        }
+        executable, duplicates, _requests = (
+            dispatcher._filter_duplicate_protocol_reads(
+                "relation_read", [relation_request], [relation_receipt])
+        )
+        assert executable == [relation_request]
+        assert duplicates == []
+
+        resident.items.add(("relation", "REL-Codex", ""))
+        relation.summary_resident = True
+        executable, duplicates, _requests = (
+            dispatcher._filter_duplicate_protocol_reads(
+                "relation_read", [relation_request], [relation_receipt])
+        )
+        assert executable == []
+        assert duplicates[0]["reason"] == "duplicate_protocol_read_satisfied"
+
+        failed_receipt = dict(memory_receipt, status="rejected")
+        resident.items.clear()
+        executable, duplicates, _requests = (
+            dispatcher._filter_duplicate_protocol_reads(
+                "memory_content_read", [memory_request], [failed_receipt])
+        )
+        assert executable == []
+        assert duplicates[0]["reason"] \
+            == "duplicate_protocol_read_failure_repeated"
+
     def test_spec724_ltm_mount_updates_its_recall_coordinates(self, tmp_path):
         rt = self._make_runtime(tmp_path)
         calls = []
@@ -78,7 +180,46 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
 
         assert calls == [("MEM-ABCDEF12", rt.sm.get_total_round())]
 
-    def test_natural_language_container_declaration_no_longer_creates_focus(
+    def test_spec781_resident_memory_recalls_without_training_preselection(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        monkeypatch.setattr(rt.assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(rt.assembler, "_build_high_freq", lambda *args, **kwargs: "")
+        monkeypatch.setattr(rt.assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(rt.assembler.popup, "read_popup", lambda: "")
+        rt.resident_store.add({
+            "item_type": "memory",
+            "item_id": "MEM-ABCDEF12",
+        })
+        calls = []
+
+        class MemoryStore:
+            @staticmethod
+            def list_entries():
+                return []
+
+        rt.memory_store = MemoryStore()
+
+        class MemoryRecall:
+            memory_store = rt.memory_store
+            heat = rt.heat
+
+            @staticmethod
+            def recall(mem_id, *, round_num=None, boosted_ids=None,
+                       reconsolidation_tracker=None):
+                calls.append((mem_id, round_num))
+                boosted_ids.add(mem_id)
+
+        rt.memory_recall = MemoryRecall()
+        rt.executor = ScriptedExecutor({"response": "done"})
+
+        result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
+
+        assert calls == [("MEM-ABCDEF12", rt.sm.get_total_round())]
+        assert result["_mounted_memories"] == []
+        assert result["_preselection_evidence"] == []
+
+    def test_natural_language_container_declaration_no_longer_creates_container(
             self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
         assembler = rt.assembler
@@ -94,12 +235,12 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
 
         assert result["_created_containers"] == []
-        assert rt.workbench.get("base.focus") is None
+        assert result["_created_containers"] == []
         assert result["_invalid_tool_requests"] == []
         assert result["_assistant_progress"] == []
         assert result["response"] == "new project: old natural language path"
 
-    def test_spec243_memory_container_create_protocol_tool_creates_focus_and_receipt(
+    def test_spec781_memory_container_create_creates_resident_container_and_receipt(
             self, tmp_path, monkeypatch):
         from data import container_store as cs
 
@@ -127,6 +268,12 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                     "access": "public",
                 }
 
+            def read_body_by_id(self, mem_id):
+                return {
+                    "body": "内容\nRuntime source",
+                    "meta": self.get_meta(mem_id),
+                }
+
             def update_linked_containers(
                     self, mem_id, operation, refs, current_overview=None):
                 return {
@@ -136,9 +283,21 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                     "current_overview": current_overview,
                 }
 
+            def snapshot_ltm_files(self):
+                return {}
+
+            def snapshot_stm_files(self):
+                return {}
+
+            def restore_ltm_files(self, _snapshot):
+                return None
+
+            def restore_stm_files(self, _snapshot):
+                return None
+
         rt.memory_store = DummyMemoryStore()
 
-        class ContainerFocusExecutor:
+        class ContainerCreateExecutor:
             def __init__(self):
                 self.calls = []
 
@@ -162,7 +321,7 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                             },
                             call_id="call_focus_create",
                             tool_family="protocol_tool",
-                            tool_class="focus_tool",
+                            tool_class="sync_tool",
                             risk="high",
                         )],
                     }
@@ -175,7 +334,7 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                     }
                 return {"response": "container focus observed", "tool_call_envelopes": []}
 
-        rt.executor = ContainerFocusExecutor()
+        rt.executor = ContainerCreateExecutor()
 
         result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
 
@@ -183,11 +342,17 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
             receipt for receipt in result["_protocol_tool_receipts"]
             if receipt.get("tool_id") == "memory_container_create"
         ]
-        assert any(receipt.get("status") == "applied" for receipt in receipts)
+        assert any(receipt.get("status") == "applied" for receipt in receipts), receipts
         applied = [receipt for receipt in receipts if receipt.get("status") == "applied"][0]
         container_id = applied["container_id"]
         assert result["_created_containers"] == [container_id]
-        assert rt.workbench.get("base.focus") == container_id
+        resident_items = rt.resident_store.load()["items"]
+        assert any(
+            item.get("item_type") == "container"
+            and item.get("item_id") == container_id
+            and item.get("target_file") == "plan.md"
+            for item in resident_items
+        )
         assert (tmp_path / "PRJ" / container_id / "registry.json").is_file()
         assert "initial verification content" in (
             tmp_path / "PRJ" / container_id / "plan.md"
@@ -198,12 +363,13 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         )
         assert applied.get("container_body_written") is True
         assert applied.get("memory_link_applied") is True
-        assert applied["tool_family"] == "protocol_tool"
-        assert applied["tool_class"] == "focus_tool"
+        assert applied["tool_class"] == "sync_tool"
+        assert applied["resident_persisted"] is True
+        assert applied["visibility_verified"] is False
         assert applied["call_id"] == "call_focus_create"
         assert "general_tool_result" not in str(receipts)
 
-    def test_spec078_tool_request_container_read_reads_without_focus_change(
+    def test_spec781_container_read_reads_and_persists_resident_target(
             self, tmp_path, monkeypatch):
         from data import container_store as cs
 
@@ -221,14 +387,14 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
 
         store = cs.ContainerStore()
-        project = store.create_focus_container("PRJ", "Spec 078", target_file="notes.md")
-        store.append_focus_content(
+        project = store.create_container("PRJ", "Spec 078", target_file="notes.md")
+        store.append_container_content(
             project["container_id"],
             "notes.md",
             "read-only verification",
             "container_read receipt body",
         )
-        rt.workbench.set("base.focus", "DC-OLD")
+        rt.container_store = store
 
         class ContainerReadExecutor:
             def __init__(self, container_id):
@@ -267,9 +433,12 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         accepted = [receipt for receipt in receipts if receipt.get("status") == "accepted"][0]
         assert "container_read receipt body" in accepted["content"]
         assert accepted["call_id"] == "call_container_read"
-        assert rt.workbench.get("base.focus") == "DC-OLD"
+        assert accepted["resident_persisted"] is True
+        assert (project["container_id"], "notes.md") in {
+            (item.get("item_id"), item.get("target_file"))
+            for item in rt.resident_store.load()["items"]
+        }
         assert result["_general_tool_results"] == []
-        assert "container_focus" not in str(result["_container_focus_declarations"])
 
     def test_spec220_memory_read_layer_enters_protocol_receipt_cache(
             self, tmp_path):
@@ -277,7 +446,6 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
 
         rt._write_protocol_tool_receipts([{
             "tool_id": "memory_content_read",
-            "tool_family": "protocol_tool",
             "tool_class": "read_tool",
             "status": "accepted",
             "source": "protocol_tool_request",
@@ -321,6 +489,13 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                 }
 
         store = DummyMemoryStore()
+        class DummyAssembler:
+            class ResidentStore:
+                def remove_matching(self, **_kwargs):
+                    return {"removed": True, "revision": 3}
+
+            resident_store = ResidentStore()
+
         receipts, mounts, unmounts = apply_memory_content_read_requests(
             [{
                 "tool_id": "memory_content_read",
@@ -352,7 +527,10 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                 "reason": "本轮不再需要正文",
             }],
             {"presence": {"confirmed_subjects": ["Codex"]}},
-            {"memory_store": DummyMemoryStore()},
+            {
+                "memory_store": DummyMemoryStore(),
+                "resident_store": DummyAssembler.resident_store,
+            },
         )
 
         assert receipts[0]["status"] == "accepted"
@@ -376,8 +554,6 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_inverted_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_domain_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_step_toolbelt_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda: "")
         monkeypatch.setattr(assembler, "_build_statusbar_with_relations", lambda *args, **kwargs: "")
 
         class DummyMemoryStore:
@@ -417,7 +593,7 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                 self.heat = memory_heat
 
             def recall(self, mem_id, *, round_num=None, boosted_ids=None,
-                       reconsolidation_tracker=None):
+                       reconsolidation_tracker=None, **_transaction):
                 self.heat.recall_boost(mem_id, round_num=round_num)
                 if isinstance(boosted_ids, set):
                     boosted_ids.add(mem_id)
@@ -500,7 +676,6 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         assert result["_protocol_tool_submissions"] == []
         receipt = result["_protocol_tool_receipts"][0]
         assert receipt["tool_id"] == "relation_read"
-        assert receipt["tool_family"] == "protocol_tool"
         assert receipt["tool_class"] == "read_tool"
         assert receipt["status"] == "rejected"
         assert receipt["reason"] == "relation_card_not_found"
@@ -624,7 +799,7 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         assert receipts[0]["status"] in {"accepted", "rejected"}
         assert receipts[0]["protocol_read_signature"]
 
-    def test_spec305_native_mount_cancel_clears_focus_and_records_receipt(
+    def test_spec781_native_mount_cancel_clears_resident_reference_and_records_receipt(
             self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
         assembler = rt.assembler
@@ -632,19 +807,27 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         monkeypatch.setattr(assembler, "_build_high_freq", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
-        rt.workbench.mount_focus("PRJ-305")
-
-        class DummyContainerStore:
-            def __init__(self):
-                self.focus_flags = {}
-
-            def set_container_focus(self, container_id, focus):
-                self.focus_flags[container_id] = bool(focus)
-
-            def resolve_container_type(self, container_id):
-                return str(container_id).split("-", 1)[0]
-
-        rt.container_store = DummyContainerStore()
+        resident_item = {
+            "item_type": "container",
+            "item_id": "PRJ-305",
+            "target_file": "plan.md",
+        }
+        preflight = rt.assembler.preflight_resident_add(
+            resident_item,
+            content_overrides={
+                ("container", "PRJ-305", "plan.md"): "resident body",
+            },
+        )
+        rt.assembler.resident_store.add(
+            resident_item,
+            candidate=preflight["document"],
+            expected_revision=preflight["expected_revision"],
+        )
+        monkeypatch.setattr(
+            assembler,
+            "_load_container_content",
+            lambda container_id, target_file=None: "resident body",
+        )
         helper = self
 
         rt.executor = ScriptedExecutor(
@@ -653,10 +836,11 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
                 "tool_call_envelopes": [helper._native_tool_envelope(
                     "mount_cancel",
                     {
-                        "mount_area": "focus",
+                        "mount_area": "resident_list",
                         "item_type": "container",
                         "item_id": "PRJ-305",
-                        "reason": "close focus",
+                        "target_file": "plan.md",
+                        "reason": "remove resident target",
                     },
                     call_id="call_mount_cancel",
                     tool_family="protocol_tool",
@@ -669,8 +853,7 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
 
         result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
 
-        assert rt.workbench.get("base.focus") is None
-        assert rt.container_store.focus_flags == {"PRJ-305": False}
+        assert rt.assembler.resident_store.load()["items"] == []
         receipt = result["_mount_cancel_receipts"][0]
         assert receipt["tool_id"] == "mount_cancel"
         assert receipt["status"] == "applied"
@@ -698,7 +881,6 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_inverted_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_domain_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_step_toolbelt_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_statusbar_with_relations", lambda *args, **kwargs: "")
 
         new_dirs = {prefix: str(tmp_path / prefix) for prefix in cs.PREFIX_TO_DIR}
@@ -707,8 +889,8 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
 
         store = cs.ContainerStore()
-        project = store.create_focus_container("DC", "Spec332", target_file="open.md")
-        store.append_focus_content(
+        project = store.create_container("DC", "Spec332", target_file="open.md")
+        store.append_container_content(
             project["container_id"],
             "open.md",
             "duplicate read",
@@ -760,6 +942,101 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         assert "工具循环警告" in second_call_text
         assert "不要原样重复调用" in second_call_text
 
+    def test_spec781_container_read_can_remount_after_resident_cancel(
+            self, tmp_path, monkeypatch):
+        from data import container_store as cs
+
+        rt = self._make_runtime(tmp_path)
+        assembler = rt.assembler
+        monkeypatch.setattr(assembler, "_cached_or_build", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_get_lately_entries", lambda *args, **kwargs: [])
+        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
+        monkeypatch.setattr(assembler, "_build_container_index", lambda: "")
+        monkeypatch.setattr(assembler, "_build_ltm_heat_index", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_stm_heat_index", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_keyword_index", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_association_index", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_relation_inverted_index", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_relation_domain_index", lambda *args, **kwargs: "")
+        monkeypatch.setattr(assembler, "_build_statusbar_with_relations", lambda *args, **kwargs: "")
+
+        new_dirs = {prefix: str(tmp_path / prefix) for prefix in cs.PREFIX_TO_DIR}
+        monkeypatch.setattr(cs, "PREFIX_TO_DIR", new_dirs)
+        monkeypatch.setattr(
+            cs, "CONTAINER_REGISTRY_JSON", str(tmp_path / "container_registry.json"))
+        monkeypatch.setattr(
+            cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
+
+        store = cs.ContainerStore()
+        project = store.create_container("DC", "Spec781 remount", target_file="open.md")
+        store.append_container_content(
+            project["container_id"],
+            "open.md",
+            "state-aware read",
+            "remount after cancel",
+        )
+        rt.container_store = store
+        helper = self
+
+        class ReadCancelReadExecutor:
+            def __init__(self, container_id):
+                self.container_id = container_id
+                self.calls = []
+
+            def call(self, step, system, messages):
+                self.calls.append(list(messages))
+                if len(self.calls) in {1, 3}:
+                    return {
+                        "response": "",
+                        "tool_call_envelopes": [helper._native_tool_envelope(
+                            "container_read",
+                            {
+                                "container_id": self.container_id,
+                                "target_file": "open.md",
+                                "reason": "read current container body",
+                            },
+                            call_id=f"call_container_read_{len(self.calls)}",
+                            tool_family="protocol_tool",
+                            tool_class="read_tool",
+                            risk="medium",
+                        )],
+                    }
+                if len(self.calls) == 2:
+                    return {
+                        "response": "",
+                        "tool_call_envelopes": [helper._native_tool_envelope(
+                            "mount_cancel",
+                            {
+                                "mount_area": "resident_list",
+                                "item_type": "container",
+                                "item_id": self.container_id,
+                                "target_file": "open.md",
+                                "reason": "cancel before remount",
+                            },
+                            call_id="call_container_cancel",
+                            tool_family="protocol_tool",
+                            tool_class="sync_tool",
+                            risk="medium",
+                        )],
+                    }
+                return {"response": "remounted", "tool_call_envelopes": []}
+
+        rt.executor = ReadCancelReadExecutor(project["container_id"])
+        result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
+
+        reads = result["_container_read_receipts"]
+        assert [item["status"] for item in reads] == ["accepted", "accepted"]
+        assert all(
+            item.get("reason") != "duplicate_protocol_read_satisfied"
+            for item in reads
+        )
+        assert result["_mount_cancel_receipts"][0]["status"] == "applied"
+        assert assembler.resident_store.contains(
+            item_type="container",
+            item_id=project["container_id"],
+            target_file="open.md",
+        )
+
     def test_spec734_three_duplicate_protocol_read_frames_block_next_retry(
             self, tmp_path, monkeypatch):
         from engines import reaction_tool_settlement as settlement
@@ -772,13 +1049,36 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
 
         def accepted_reads(requests, _modules):
+            assembler = _modules["assembler"]
+            for request in requests:
+                item = {
+                    "item_type": "container",
+                    "item_id": request["container_id"],
+                    "target_file": request["target_file"],
+                }
+                preflight = assembler.preflight_resident_add(
+                    item,
+                    content_overrides={
+                        (
+                            "container",
+                            request["container_id"],
+                            request["target_file"],
+                        ): "Spec734 resident body",
+                    },
+                )
+                assembler.resident_store.add(
+                    item,
+                    candidate=preflight["document"],
+                    expected_revision=preflight["expected_revision"],
+                )
             return ([{
                 "tool_id": "container_read",
-                "tool_family": "protocol_tool",
                 "tool_class": "read_tool",
                 "status": "accepted",
                 "source": "container_read",
                 "container_id": request["container_id"],
+                "target_file": request["target_file"],
+                "resident_persisted": True,
             } for request in requests], [])
 
         monkeypatch.setattr(
@@ -861,7 +1161,6 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_inverted_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_domain_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_step_toolbelt_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_statusbar_with_relations", lambda *args, **kwargs: "")
 
         helper = self

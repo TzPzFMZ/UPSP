@@ -148,7 +148,8 @@ class StatusBarBuilder:
                 })
         cards = projection.get("relation_cards") or []
         for index, card in enumerate(cards, 1):
-            state_tag = f" [{card.get('focus_type')}]" if card.get("focus_type") else ""
+            role = card.get("context_role") or card.get("focus_type")
+            state_tag = f" [{role}]" if role else ""
             summary = str(card.get("summary") or "").strip()
             suffix = f"最近：{summary}" if summary else "无最近交互"
             name = card.get("name") or card.get("id") or "?"

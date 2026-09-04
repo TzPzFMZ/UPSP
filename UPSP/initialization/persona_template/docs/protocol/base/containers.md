@@ -28,7 +28,7 @@ WB（工作台）是调度台非容器，不进 container_registry。
 
 ---
 
-## 二、注册表必选字段（8+1）
+## 二、注册表必选字段（8）
 
 ```json
 {
@@ -39,8 +39,7 @@ WB（工作台）是调度台非容器，不进 container_registry。
   "created_at": "2026-04-13T01:04:15+08:00",
   "updated_at": "2026-04-13T01:44:22+08:00",
   "entries": [],
-  "tags": [],
-  "focus": false
+  "tags": []
 }
 ```
 
@@ -54,7 +53,6 @@ WB（工作台）是调度台非容器，不进 container_registry。
 | updated_at | ISO8601+偏移 | 最近更新时间 |
 | entries | string[] | 关联记忆条目ID列表 |
 | tags | string[] | 语义标签 |
-| focus | boolean | 容器焦点机制标记（同时刻最多1个true） |
 
 字段英文化规范：字段名英文、系统字段值英文（status:"ongoing" 而非"继续"）、title等自然语言可用中文。
 
@@ -94,14 +92,14 @@ WB（工作台）是调度台非容器，不进 container_registry。
 | 参数 | 值 |
 |------|-----|
 | ID格式 | SKL-{category}-{skill-name} |
-| 当前字段 | id/type/prefix/name/title/status/category/created_at/updated_at/entries/tags/focus/linked_memories/path |
+| 当前字段 | id/type/prefix/name/title/status/category/created_at/updated_at/entries/tags/linked_memories/path |
 | 五分类 | habits / procedures / licenses / patterns / reflexes |
 | 文件结构 | registry.json + keywords.json + 各分类/{skill-name}/(card.md+changelog.md) |
 | 状态机 | active → expired → planned |
 | 当前创建分类 | procedures / patterns；licenses/habits/reflexes 只保留目录兼容，不开放创建 |
 | 创建入口 | 真实公共 MEM 回执后调用 memory_container_create(container_type=SKL, target_file=card.md) |
 | 排序字段 | Skills registry 当前顺序 |
-| 当前装配 | 只进技能/容器索引与明确 container_read/focus；不进定期层 |
+| 当前装配 | 进入技能/容器索引；`container_read` 后目标文件进入统一常驻正文；不进定期层 |
 
 Seed 不规定技能卡成熟度模板、自动采用结算或投影生命周期。`card.md` 保存当前可复用方法，`changelog.md` 保存通用写入账本；更细的技能代谢等待 Arbor 器官另行设计。
 
@@ -193,8 +191,8 @@ Seed 不规定技能卡成熟度模板、自动采用结算或投影生命周期
 | 场景 | 加载内容 | 触发条件 |
 |------|---------|---------|
 | 浏览容器 | 舱段一级视图（各容器概览+最新实例预览） | 皮层默认可见 |
-| 打开容器（有注册表） | 舱段二级视图（单容器全部条目索引）+ 按状态加载正文 | 只读用 `container_read`；需要改变 WB focus 时用 `container_focus` guide 后提交 `open` |
-| 打开容器（CHR/COR） | 列目录——文件夹本身就是索引 | 当前不走 `container_read` / `container_focus` 首批工具，后续另开专属只读面单 |
+| 读取容器（有注册表） | 舱段二级视图（单容器全部条目索引）+ 按状态加载正文 | 使用 `container_read`；成功后目标文件加入统一常驻清单，下一 Frame 读取完整当前真源 |
+| 浏览 CHR/COR | 列目录——文件夹本身就是索引 | 当前不作为普通 `container_read` 或同步写入目标，按各自归档流程处理 |
 
 ---
 

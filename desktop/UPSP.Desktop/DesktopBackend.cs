@@ -147,7 +147,7 @@ internal sealed class DesktopBackend : IDisposable
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync());
         var root = document.RootElement;
-        if (Text(root, "schema_version") != "seed_gui_runtime_status.v2")
+        if (Text(root, "schema_version") != "seed_gui_runtime_status.v3")
         {
             throw new InvalidOperationException("本地后端状态版本不受支持。");
         }

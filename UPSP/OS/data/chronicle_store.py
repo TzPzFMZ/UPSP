@@ -21,12 +21,14 @@ DDS §28 编年史 + §31 语料库
 
 所有清理由日历节律轮脚本执行，不调 LLM。
 """
+import hashlib
 import json
 import os
 from datetime import datetime, timedelta
 from paths import LTM_DIR
 from constants import local_now, local_fromtimestamp
 from errors import ReadError
+from data.atomic_write import atomic_write_text
 
 
 # ============================================================
@@ -101,14 +103,31 @@ class ChronicleStore:
     # 写入
     # ==============================================================
 
-    def write_entry(self, layer, content):
-        """写入一条编年史条目。layer: rhythms/daily/weekly/monthly/quarterly/yearly"""
-        layer_dir = os.path.join(self.chronicle_dir, layer)
-        os.makedirs(layer_dir, exist_ok=True)
+    @staticmethod
+    def _sha256_text(text):
+        return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
 
-        now = local_now()
+    @staticmethod
+    def _read_text(path):
+        if not os.path.isfile(path):
+            return ""
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                return handle.read()
+        except OSError as exc:
+            raise ReadError(path, cause=exc) from exc
+
+    def _target_path(self, layer, closed_at, round_num):
+        layer_dir = os.path.join(self.chronicle_dir, layer)
+        try:
+            now = datetime.fromisoformat(str(closed_at or ""))
+        except (TypeError, ValueError):
+            raise ValueError("chronicle_closed_at_invalid")
         if layer == "rhythms":
-            filename = f"R-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}.md"
+            filename = (
+                f"R-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
+                f"-R{int(round_num or 0):06d}.md"
+            )
         elif layer == "daily":
             filename = f"D-{now.strftime('%Y%m%d')}.md"
         elif layer == "weekly":
@@ -123,41 +142,13 @@ class ChronicleStore:
             filename = f"Y-{now.year}.md"
         else:
             filename = f"{layer}-{now.strftime('%Y%m%d%H%M%S')}.md"
+        path = os.path.abspath(os.path.join(layer_dir, filename))
+        root = os.path.abspath(self.chronicle_dir)
+        if os.path.commonpath([root, path]) != root:
+            raise ValueError("chronicle_target_outside_root")
+        return path
 
-        filepath = os.path.join(layer_dir, filename)
-        # 追加模式（日志/周志等同周期可能多次写入）
-        existing = ""
-        if os.path.isfile(filepath):
-            with open(filepath, "r", encoding="utf-8") as f:
-                existing = f.read()
-        with open(filepath, "w", encoding="utf-8") as f:
-            if existing:
-                f.write(existing.rstrip() + "\n\n")
-            f.write(content)
-
-        return filepath
-
-    def active_rhythm_path(self):
-        layer_dir = os.path.join(self.chronicle_dir, "rhythms")
-        os.makedirs(layer_dir, exist_ok=True)
-        return os.path.join(layer_dir, "R-active-main-axis.md")
-
-    def active_calendar_path(self, layer):
-        """返回当前日历节律层的活动写入框路径。"""
-        layer = str(layer or "").strip()
-        layer_dir = os.path.join(self.chronicle_dir, layer)
-        os.makedirs(layer_dir, exist_ok=True)
-        prefixes = {
-            "daily": "D",
-            "weekly": "W",
-            "monthly": "M",
-            "quarterly": "Q",
-            "yearly": "Y",
-        }
-        prefix = prefixes.get(layer, layer or "calendar")
-        return os.path.join(layer_dir, f"{prefix}-active-calendar.md")
-
-    def refresh_active_rhythm(
+    def build_rhythm_write_scope(
             self,
             *,
             round_num,
@@ -165,100 +156,384 @@ class ChronicleStore:
             state_sample=None,
             memory_stats=None,
             range_start_round=None,
-            range_start_time=None):
-        """刷新当前活动主轴节律文件；该文件自身承载范围与统计。"""
-        path = self.active_rhythm_path()
+            range_start_time=None,
+            guide_id=""):
+        """Freeze a main-axis Chronicle write without touching the target."""
         memory_stats = memory_stats or {}
-        weights = memory_stats.get("weights") or {}
         state_sample = state_sample or {}
-        lines = [
-            "# 活动主轴节律文件",
-            "",
-            f"range_start_round: {'' if range_start_round is None else range_start_round}",
-            f"range_start_time: {'' if range_start_time is None else range_start_time}",
-            f"range_end_round: {round_num}",
-            f"range_end_time: {closed_at}",
-            "",
-            "## 新增记忆统计",
-            f"新增记忆总数: {int(memory_stats.get('total', 0) or 0)}",
-            "权重分布:",
-        ]
-        for weight in ("F", "S", "A", "P"):
-            lines.append(f"- {weight}: {int(weights.get(weight, 0) or 0)}")
-        lines.extend([
-            "",
-            "## 状态样本",
-        ])
-        for key in sorted(state_sample):
-            lines.append(f"- {key}: {state_sample[key]}")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines).rstrip() + "\n")
-        return path
+        path = self._target_path("rhythms", closed_at, round_num)
+        existing = self._read_text(path)
+        scope = {
+            "schema_version": "chronicle_write_scope.v1",
+            "layer": "rhythms",
+            "title": "主轴节律记录",
+            "target_path": path,
+            "target_before_sha256": self._sha256_text(existing),
+            "round_num": int(round_num or 0),
+            "round_type": "rhythm",
+            "source_refs": [f"round:{int(round_num or 0)}"],
+            "range_start_round": range_start_round,
+            "range_start_time": range_start_time,
+            "range_end_round": int(round_num or 0),
+            "range_end_time": str(closed_at or ""),
+            "state_sample": dict(state_sample),
+            "memory_stats": dict(memory_stats),
+            "sources": [],
+            "guide_id": str(guide_id or "").strip(),
+        }
+        scope["scope_id"] = self._scope_id(scope)
+        return scope
 
-    def refresh_active_calendar(
+    def build_calendar_write_scope(
             self,
             *,
             layer,
             title,
             round_num,
             closed_at,
+            calendar_flag="",
             source_layer=None,
-            max_source_files=5):
-        """刷新当前活动日历节律写入框，供模型按 Runtime 焦点写正文。"""
+            max_source_files=5,
+            guide_id=""):
+        """Freeze one calendar Chronicle write without pre-writing a file."""
         layer = str(layer or "").strip()
         title = str(title or layer or "日历节律").strip()
-        path = self.active_calendar_path(layer)
         source_layer = str(source_layer or "").strip()
         source_paths = self.list_layer(source_layer, limit=max_source_files) if source_layer else []
-        source_parts = []
+        sources = []
         for source_path in source_paths:
-            try:
-                with open(source_path, "r", encoding="utf-8") as f:
-                    body = f.read().strip()
-            except OSError:
-                body = ""
+            body = self._read_text(source_path)
             if not body:
                 continue
-            source_parts.append(
-                f"### {os.path.basename(source_path)}\n{body[:4000]}"
-            )
-        lines = [
-            "# 活动日历节律文件",
-            "",
-            f"layer: {layer}",
-            f"title: {title}",
-            f"range_end_round: {round_num}",
-            f"range_end_time: {closed_at}",
-            f"source_layer: {source_layer}",
-            "",
-            "## 上游材料片段",
-        ]
-        if source_parts:
-            lines.append("\n\n".join(source_parts))
-        else:
-            lines.append("(当前没有可见上游材料；请基于本轮可见事实写入。)")
-        lines.extend([
-            "",
-            "## 本次写入正文",
-        ])
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines).rstrip() + "\n")
-        return path
+            sources.append({
+                "name": os.path.basename(source_path),
+                "path": os.path.abspath(source_path),
+                "sha256": self._sha256_text(body),
+                "content": body[:4000],
+            })
+        path = self._target_path(layer, closed_at, round_num)
+        existing = self._read_text(path)
+        flag = str(calendar_flag or "").strip()
+        scope = {
+            "schema_version": "chronicle_write_scope.v1",
+            "layer": layer,
+            "title": title,
+            "target_path": path,
+            "target_before_sha256": self._sha256_text(existing),
+            "round_num": int(round_num or 0),
+            "round_type": "rhythm",
+            "calendar_flag": flag,
+            "source_layer": source_layer,
+            "source_refs": [
+                f"calendar:{flag}",
+                f"round:{int(round_num or 0)}",
+            ],
+            "range_end_round": int(round_num or 0),
+            "range_end_time": str(closed_at or ""),
+            "state_sample": {},
+            "memory_stats": {},
+            "sources": sources,
+            "guide_id": str(guide_id or "").strip(),
+        }
+        scope["scope_id"] = self._scope_id(scope)
+        return scope
 
-    def write_focused_entry(self, focus, content):
-        """写入 Runtime 当前挂载的编年史焦点。"""
-        focus = focus or {}
-        path = str(focus.get("path") or "").strip()
-        layer = str(focus.get("layer") or "rhythms").strip()
-        if path:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "a", encoding="utf-8") as f:
-                if os.path.getsize(path) > 0:
-                    f.write("\n")
-                f.write(str(content or "").strip())
-                f.write("\n")
-            return path
-        return self.write_entry(layer, content)
+    @staticmethod
+    def _scope_id(scope):
+        """Identify the due item, not one transient attempt to settle it."""
+        calendar_flag = str(scope.get("calendar_flag") or "").strip()
+        guide_id = str(scope.get("guide_id") or "").strip()
+        if guide_id:
+            stable = {
+                "kind": "calendar" if calendar_flag else "rhythm",
+                "guide_id": guide_id,
+                "calendar_flag": calendar_flag,
+                "layer": scope.get("layer"),
+            }
+        elif calendar_flag:
+            stable = {
+                "kind": "calendar",
+                "layer": scope.get("layer"),
+                "calendar_flag": calendar_flag,
+                "target_name": os.path.basename(
+                    str(scope.get("target_path") or "")
+                ),
+            }
+        else:
+            stable = {
+                "kind": "rhythm",
+                "layer": scope.get("layer"),
+                "range_start_round": scope.get("range_start_round"),
+                "range_start_time": scope.get("range_start_time"),
+            }
+        digest = hashlib.sha256(json.dumps(
+            stable,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")).hexdigest()
+        return f"CWS-{digest[:16].upper()}"
+
+    @staticmethod
+    def _path_within(root, path):
+        root = os.path.normcase(os.path.realpath(os.path.abspath(root)))
+        candidate = os.path.normcase(os.path.realpath(os.path.abspath(path)))
+        try:
+            return os.path.commonpath([root, candidate]) == root
+        except ValueError:
+            return False
+
+    def _require_write_scope(self, scope):
+        if not isinstance(scope, dict) or scope.get(
+                "schema_version") != "chronicle_write_scope.v1":
+            raise ValueError("invalid_chronicle_write_scope")
+        for field in (
+            "scope_id",
+            "layer",
+            "title",
+            "target_path",
+            "target_before_sha256",
+        ):
+            if not str(scope.get(field) or "").strip():
+                raise ValueError(f"chronicle_write_scope_missing:{field}")
+        layer = str(scope.get("layer") or "").strip()
+        if layer not in CHRONICLE_RETENTION:
+            raise ValueError("chronicle_write_scope_layer_invalid")
+        target_path = str(scope.get("target_path") or "").strip()
+        layer_root = os.path.join(self.chronicle_dir, layer)
+        if (
+            not self._path_within(layer_root, target_path)
+            or os.path.normcase(os.path.realpath(os.path.dirname(target_path)))
+            != os.path.normcase(os.path.realpath(layer_root))
+        ):
+            raise ValueError("chronicle_write_scope_target_outside_layer")
+        digest = str(scope.get("target_before_sha256") or "").strip().lower()
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("chronicle_write_scope_target_sha_invalid")
+        round_num = scope.get("round_num")
+        if (
+            isinstance(round_num, bool)
+            or not isinstance(round_num, int)
+            or round_num < 0
+        ):
+            raise ValueError("chronicle_write_scope_round_invalid")
+        sources = scope.get("sources")
+        if not isinstance(sources, list):
+            raise ValueError("chronicle_write_scope_sources_invalid")
+        source_layer = str(scope.get("source_layer") or "").strip()
+        if source_layer and source_layer not in CHRONICLE_RETENTION:
+            raise ValueError("chronicle_write_scope_source_layer_invalid")
+        if sources and not source_layer:
+            raise ValueError("chronicle_write_scope_source_layer_missing")
+        source_root = (
+            os.path.join(self.chronicle_dir, source_layer)
+            if source_layer else self.chronicle_dir
+        )
+        for source in sources:
+            if not isinstance(source, dict):
+                raise ValueError("chronicle_write_scope_source_invalid")
+            if not str(source.get("path") or "").strip():
+                raise ValueError("chronicle_write_scope_source_path_missing")
+            source_path = str(source.get("path") or "").strip()
+            if (
+                not self._path_within(source_root, source_path)
+                or os.path.normcase(os.path.realpath(os.path.dirname(source_path)))
+                != os.path.normcase(os.path.realpath(source_root))
+            ):
+                raise ValueError("chronicle_write_scope_source_outside_layer")
+            source_sha = str(source.get("sha256") or "").strip().lower()
+            if len(source_sha) != 64 or any(
+                    char not in "0123456789abcdef" for char in source_sha):
+                raise ValueError("chronicle_write_scope_source_sha_invalid")
+        return scope
+
+    def render_write_scope_material(self, scope):
+        scope = self._require_write_scope(scope)
+        stats = scope.get("memory_stats") or {}
+        weights = stats.get("weights") or {}
+        sample = scope.get("state_sample") or {}
+        lines = [
+            "【本轮资料】编年史写入材料",
+            f"层级：{scope.get('layer')}",
+            f"标题：{scope.get('title') or ''}",
+            "来源轮次范围："
+            f"{scope.get('range_start_round', '')} → {scope.get('range_end_round', '')}",
+        ]
+        if stats:
+            lines.extend([
+                f"新增记忆总数：{int(stats.get('total', 0) or 0)}",
+                "权重分布：" + "，".join(
+                    f"{weight}={int(weights.get(weight, 0) or 0)}"
+                    for weight in ("F", "S", "A", "P")
+                ),
+            ])
+        if sample:
+            lines.append("状态样本：")
+            lines.extend(
+                f"- {key}: {sample[key]}" for key in sorted(sample)
+            )
+        sources = scope.get("sources") or []
+        lines.append("既有上游正文片段：")
+        if sources:
+            for source in sources:
+                lines.extend([
+                    f"### {source.get('name') or '上游记录'}",
+                    str(source.get("content") or "").strip(),
+                ])
+        else:
+            lines.append("（当前没有既有上游正文；请只使用本轮可见事实。）")
+        lines.append("请按当前节律指南提交自然语言正文；层级、路径与统计由 Runtime 结算。")
+        return {
+            "role": "user",
+            "kind": "material",
+            "interaction_source": "chronicle_write",
+            "source_block_id": f"chronicle:{scope.get('scope_id')}",
+            "title": "编年史写入材料",
+            "content": "\n".join(lines).rstrip(),
+        }
+
+    def commit_write_scope(self, scope, content):
+        """Atomically append the model body after revalidating the frozen scope."""
+        scope = self._require_write_scope(scope)
+        body = str(content or "").strip()
+        if not body:
+            raise ValueError("empty_chronicle_content")
+        path = str(scope.get("target_path") or "").strip()
+        if not path:
+            raise ValueError("chronicle_target_missing")
+        root = os.path.abspath(self.chronicle_dir)
+        target = os.path.abspath(path)
+        if os.path.commonpath([root, target]) != root:
+            raise ValueError("chronicle_target_outside_root")
+        existing = self._read_text(target)
+        scope_id = str(scope.get("scope_id") or "").strip()
+        if not scope_id:
+            raise ValueError("chronicle_scope_id_missing")
+        start = f"<!-- chronicle_write_scope:{scope_id} -->"
+        end = f"<!-- /chronicle_write_scope:{scope_id} -->"
+        if start in body or end in body:
+            raise ValueError("chronicle_scope_marker_in_content")
+        committed = self._find_committed_scope(
+            layer=str(scope.get("layer") or "").strip(),
+            start=start,
+            end=end,
+        )
+        if committed is not None:
+            committed_path, committed_body = committed
+            if committed_body == body:
+                return committed_path
+            raise ValueError("chronicle_scope_conflict")
+        for source in scope.get("sources") or []:
+            source_path = str(source.get("path") or "").strip()
+            if not source_path or self._sha256_text(
+                    self._read_text(source_path)) != str(
+                        source.get("sha256") or ""):
+                raise ValueError("chronicle_source_drift")
+        entry = self._render_scope_entry(scope, body, start, end)
+        if self._sha256_text(existing) != str(
+                scope.get("target_before_sha256") or ""):
+            raise ValueError("chronicle_target_drift")
+        updated = (
+            existing.rstrip() + "\n\n" + entry
+            if existing.strip() else entry
+        ).rstrip() + "\n"
+        existed_before = os.path.isfile(target)
+        try:
+            atomic_write_text(target, updated)
+            if self._read_text(target) != updated:
+                raise ValueError("chronicle_write_readback_mismatch")
+        except Exception:
+            try:
+                if existed_before:
+                    atomic_write_text(target, existing)
+                elif os.path.isfile(target):
+                    os.remove(target)
+            except Exception as rollback_exc:
+                raise RuntimeError(
+                    "chronicle_write_rollback_failed"
+                ) from rollback_exc
+            raise
+        return target
+
+    def _find_committed_scope(self, *, layer, start, end):
+        """Find one prior commit for a stable due item across retry Rounds."""
+        layer_dir = os.path.abspath(os.path.join(self.chronicle_dir, layer))
+        root = os.path.abspath(self.chronicle_dir)
+        if os.path.commonpath([root, layer_dir]) != root:
+            raise ValueError("chronicle_target_outside_root")
+        if not os.path.isdir(layer_dir):
+            return None
+        matches = []
+        for name in sorted(os.listdir(layer_dir)):
+            candidate = os.path.abspath(os.path.join(layer_dir, name))
+            if os.path.commonpath([layer_dir, candidate]) != layer_dir:
+                raise ValueError("chronicle_target_outside_root")
+            if not os.path.isfile(candidate):
+                continue
+            text = self._read_text(candidate)
+            lines = text.splitlines()
+            start_positions = [
+                index for index, line in enumerate(lines) if line == start
+            ]
+            end_positions = [
+                index for index, line in enumerate(lines) if line == end
+            ]
+            if not start_positions and not end_positions:
+                continue
+            if len(start_positions) != 1 or len(end_positions) != 1:
+                raise ValueError("chronicle_scope_conflict")
+            start_index = start_positions[0]
+            end_index = end_positions[0]
+            if end_index <= start_index:
+                raise ValueError("chronicle_scope_conflict")
+            section = lines[start_index + 1:end_index]
+            body_headers = [
+                index for index, line in enumerate(section) if line == "## 正文"
+            ]
+            if len(body_headers) != 1:
+                raise ValueError("chronicle_scope_conflict")
+            body = "\n".join(section[body_headers[0] + 1:]).strip()
+            matches.append((candidate, body))
+        if len(matches) > 1:
+            raise ValueError("chronicle_scope_conflict")
+        return matches[0] if matches else None
+
+    @staticmethod
+    def _render_scope_entry(scope, body, start, end):
+        stats = scope.get("memory_stats") or {}
+        weights = stats.get("weights") or {}
+        lines = [
+            start,
+            f"# {scope.get('title') or scope.get('layer') or '编年史'}",
+            "",
+            f"layer: {scope.get('layer')}",
+            f"range_start_round: {scope.get('range_start_round', '')}",
+            f"range_start_time: {scope.get('range_start_time', '')}",
+            f"range_end_round: {scope.get('range_end_round', '')}",
+            f"range_end_time: {scope.get('range_end_time', '')}",
+        ]
+        if stats:
+            lines.extend([
+                "",
+                "## 新增记忆统计",
+                f"新增记忆总数: {int(stats.get('total', 0) or 0)}",
+                "权重分布:",
+            ])
+            lines.extend(
+                f"- {weight}: {int(weights.get(weight, 0) or 0)}"
+                for weight in ("F", "S", "A", "P")
+            )
+        sample = scope.get("state_sample") or {}
+        if sample:
+            lines.extend(["", "## 状态样本"])
+            lines.extend(f"- {key}: {sample[key]}" for key in sorted(sample))
+        sources = scope.get("sources") or []
+        if sources:
+            lines.extend(["", "## 上游材料"])
+            lines.extend(f"- {item.get('name')}" for item in sources)
+        lines.extend(["", "## 正文", body, end])
+        return "\n".join(str(line) for line in lines).rstrip()
 
     # ==============================================================
     # 保留清理

@@ -16,6 +16,7 @@ from paths import (
     STM_CONTEXT_CACHE_DIR,
     STM_CONTEXT_NOW_CACHE_JSONL,
     STM_CONTEXT_LATELY_CACHE_JSONL,
+    STM_CTX_ROUND_DIR,
 )
 from schemas.context import context_safe_read_tool_result
 
@@ -38,6 +39,9 @@ class ContextStore:
     ACTIVE_CORPUS_META_SCHEMA = "active_corpus_meta.v1"
     NOW_CACHE_LIFECYCLE_SCHEMA = "now_cache_lifecycle.v1"
     CURRENT_CACHE_TRANSITION_SCHEMA = "current_cache_transition.v1"
+    REASONING_PROGRESS_REPAIR_CHECKPOINT_SCHEMA = (
+        "reasoning_progress_repair_checkpoint.v1"
+    )
 
     TEMPLATE_PLACEHOLDER_TOKENS = {
         "assistant_reply": {"assistant_reply"},
@@ -452,6 +456,357 @@ class ContextStore:
             consumer_frame_id="runtime:startup",
             duplicate_tail_only=True,
         )
+
+    @classmethod
+    def _reasoning_progress_candidate_key(cls, block):
+        loc = block.get("loc") if isinstance(block.get("loc"), dict) else {}
+        if (
+                str(block.get("role") or "") != "assistant"
+                or str(block.get("kind") or "") != "dialogue_progress"
+                or str(loc.get("step") or "") != "reaction"):
+            return None
+        text = str(block.get("text") or "")
+        block_id = str(block.get("id") or "")
+        try:
+            round_num = int(loc.get("round"))
+            iteration = int(loc.get("iter"))
+        except (TypeError, ValueError):
+            return None
+        if not block_id or not text or round_num < 1 or iteration < 1:
+            return None
+        return (
+            block_id,
+            round_num,
+            iteration,
+            cls._text_sha256(text),
+        )
+
+    @staticmethod
+    def _reasoning_progress_audit_proves(events, *, round_num, iteration, text):
+        frame_id = f"R{int(round_num):06d}:reaction:{int(iteration)}"
+        frame_events = [
+            event for event in events
+            if str(event.get("frame_id") or "") == frame_id
+        ]
+        completed = []
+        for event in frame_events:
+            if str(event.get("event_type") or "") != "llm_stream_done":
+                continue
+            payload = event.get("payload") if isinstance(
+                event.get("payload"), dict) else {}
+            if (
+                    str(payload.get("attempt_status") or "") == "completed"
+                    and int(payload.get("content_chars") or 0) == 0
+                    and int(payload.get("reasoning_chars") or 0) > 0):
+                completed.append(payload)
+        if len(completed) != 1:
+            return False
+        stream_id = str(completed[0].get("stream_id") or "")
+        reasoning_parts = []
+        content_parts = []
+        for event in frame_events:
+            payload = event.get("payload") if isinstance(
+                event.get("payload"), dict) else {}
+            if stream_id and str(payload.get("stream_id") or "") != stream_id:
+                continue
+            segments = payload.get("stream_segments")
+            if isinstance(segments, list):
+                for segment in segments:
+                    if not isinstance(segment, dict):
+                        continue
+                    delta = str(segment.get("delta") or "")
+                    channel = str(segment.get("channel") or "")
+                    if channel == "reasoning":
+                        reasoning_parts.append(delta)
+                    elif channel == "content":
+                        content_parts.append(delta)
+                continue
+            if "reasoning_delta" in payload:
+                reasoning_parts.append(str(payload.get("reasoning_delta") or ""))
+            if "content_delta" in payload:
+                content_parts.append(str(payload.get("content_delta") or ""))
+        reasoning = "".join(reasoning_parts)
+        if not reasoning or "".join(content_parts):
+            return False
+        if reasoning != text or len(reasoning) != int(
+                completed[0].get("reasoning_chars") or 0):
+            return False
+
+        raw_responses = []
+        parsed_progress = []
+        for event in frame_events:
+            payload = event.get("payload") if isinstance(
+                event.get("payload"), dict) else {}
+            event_type = str(event.get("event_type") or "")
+            if event_type == "llm_output_raw":
+                raw_responses.append(str(payload.get("response") or ""))
+            elif event_type == "llm_output_parsed":
+                reply = str(payload.get("assistant_reply") or "")
+                progress = str(payload.get("assistant_progress") or "")
+                if not reply:
+                    parsed_progress.append(progress)
+        return raw_responses == [text] and parsed_progress == [text]
+
+    def reasoning_progress_repair_checkpoint_path(self):
+        return os.path.join(
+            self._cache_dir(), "reasoning_progress_repair_checkpoint.json")
+
+    def _load_reasoning_progress_repair_checkpoint(self):
+        path = self.reasoning_progress_repair_checkpoint_path()
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                value = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ReadError(path, cause=exc) from exc
+        if value != {
+                "schema_version": self.REASONING_PROGRESS_REPAIR_CHECKPOINT_SCHEMA,
+                "repair_id": "spec772_reasoning_response_echo_v1",
+                "status": "complete",
+        }:
+            raise ReadError(
+                path, message="reasoning_progress_repair_checkpoint_invalid")
+        return value
+
+    def _write_reasoning_progress_repair_checkpoint(self):
+        path = self.reasoning_progress_repair_checkpoint_path()
+        value = {
+            "schema_version": self.REASONING_PROGRESS_REPAIR_CHECKPOINT_SCHEMA,
+            "repair_id": "spec772_reasoning_response_echo_v1",
+            "status": "complete",
+        }
+        self._write_json_atomic(path, value)
+        if self._load_reasoning_progress_repair_checkpoint() != value:
+            raise WriteError(
+                path, message="reasoning_progress_repair_checkpoint_verify_failed")
+
+    @staticmethod
+    def _read_reasoning_progress_audit_events(path, frame_ids):
+        """Read only proof-bearing events instead of decoding whole Round audits."""
+        event_types = {
+            "llm_stream_delta",
+            "llm_stream_done",
+            "llm_output_raw",
+            "llm_output_parsed",
+        }
+        events = []
+        frame_pattern = re.compile(r'"frame_id"\s*:\s*"([^"]+)"')
+        event_pattern = re.compile(r'"event_type"\s*:\s*"([^"]+)"')
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    frame_match = frame_pattern.search(line)
+                    if not frame_match or frame_match.group(1) not in frame_ids:
+                        continue
+                    event_match = event_pattern.search(line)
+                    if not event_match or event_match.group(1) not in event_types:
+                        continue
+                    event = json.loads(line)
+                    if (
+                            isinstance(event, dict)
+                            and str(event.get("frame_id") or "") in frame_ids
+                            and str(event.get("event_type") or "") in event_types):
+                        events.append(event)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ReadError(path, cause=exc) from exc
+        return events
+
+    def reconcile_reasoning_progress_on_startup(self, *, round_dir=None):
+        """Remove only cache records proven to be reasoning-channel echoes."""
+        round_dir = os.path.abspath(round_dir or STM_CTX_ROUND_DIR)
+        checkpoint_path = self.reasoning_progress_repair_checkpoint_path()
+        if os.path.isfile(checkpoint_path):
+            self._load_reasoning_progress_repair_checkpoint()
+            return {
+                "schema_version": "reasoning_progress_repair.v1",
+                "status": "noop",
+                "candidate_count": 0,
+                "proven_count": 0,
+                "unproven_count": 0,
+                "removed_block_ids": [],
+                "removed_active_corpus_ids": [],
+                "removed_raw_log_keys": [],
+                "source_files": [],
+                "before_sha256": {},
+                "after_sha256": {},
+                "compaction_debt_discarded": False,
+                "rollback_status": "not_required",
+                "checkpoint": "complete",
+            }
+        now_path = self._now_cache_jsonl()
+        lately_path = self._lately_cache_jsonl()
+        raw_path = self._raw_log_jsonl()
+        raw_md_path = self._raw_log_md()
+        debt_path = self.cache_compaction_debt_path()
+        now_blocks = self._current_now_blocks()
+        lately_blocks = self._current_lately_blocks()
+        raw_blocks = self._current_raw_log_blocks()
+
+        candidates = {}
+        for blocks in (now_blocks, lately_blocks, raw_blocks):
+            for block in blocks:
+                key = self._reasoning_progress_candidate_key(block)
+                if key is None:
+                    continue
+                item = candidates.setdefault(key, {"block": block})
+                if str(item["block"].get("text") or "") != str(
+                        block.get("text") or ""):
+                    raise ReadError(raw_path, message="reasoning_progress_candidate_conflict")
+
+        raw_key_owners = {}
+        for block in raw_blocks:
+            ref = block.get("ref") if isinstance(block.get("ref"), dict) else {}
+            raw_key = str(ref.get("raw_log_key") or "")
+            if not raw_key:
+                continue
+            identity = self._reasoning_progress_candidate_key(block)
+            prior = raw_key_owners.get(raw_key)
+            if raw_key in raw_key_owners and prior != identity:
+                raise ReadError(raw_path, message=f"reasoning_progress_raw_key_conflict:{raw_key}")
+            raw_key_owners[raw_key] = identity
+
+        candidates_by_round = {}
+        for key in candidates:
+            candidates_by_round.setdefault(key[1], set()).add(
+                f"R{int(key[1]):06d}:reaction:{int(key[2])}")
+        audits = {}
+        proven = set()
+        proven_raw_keys = set()
+        for key, item in candidates.items():
+            block = item["block"]
+            ref = block.get("ref") if isinstance(block.get("ref"), dict) else {}
+            raw_key = str(ref.get("raw_log_key") or "")
+            if not raw_key or raw_key_owners.get(raw_key) != key:
+                continue
+            _, round_num, iteration, _ = key
+            if round_num not in audits:
+                audit_path = os.path.join(round_dir, f"round_{round_num}.jsonl")
+                try:
+                    audits[round_num] = self._read_reasoning_progress_audit_events(
+                        audit_path, candidates_by_round[round_num])
+                except ReadError:
+                    # Broken or incomplete historical evidence cannot authorize
+                    # deletion; it must not make an otherwise usable persona
+                    # unready merely because a candidate looked suspicious.
+                    audits[round_num] = []
+            if self._reasoning_progress_audit_proves(
+                    audits[round_num],
+                    round_num=round_num,
+                    iteration=iteration,
+                    text=str(block.get("text") or "")):
+                proven.add(key)
+                proven_raw_keys.add(raw_key)
+
+        receipt = {
+            "schema_version": "reasoning_progress_repair.v1",
+            "status": "noop",
+            "candidate_count": len(candidates),
+            "proven_count": len(proven),
+            "unproven_count": len(candidates) - len(proven),
+            "removed_block_ids": [],
+            "removed_active_corpus_ids": [],
+            "removed_raw_log_keys": [],
+            "source_files": [],
+            "before_sha256": {},
+            "after_sha256": {},
+            "compaction_debt_discarded": False,
+            "rollback_status": "not_required",
+            "checkpoint": "pending",
+        }
+        if not proven:
+            self._write_reasoning_progress_repair_checkpoint()
+            receipt["checkpoint"] = "complete"
+            return receipt
+
+        def keep(block):
+            return self._reasoning_progress_candidate_key(block) not in proven
+
+        next_now = [block for block in now_blocks if keep(block)]
+        next_lately = [block for block in lately_blocks if keep(block)]
+        next_raw = [block for block in raw_blocks if keep(block)]
+        changed = {
+            now_path: len(next_now) != len(now_blocks),
+            lately_path: len(next_lately) != len(lately_blocks),
+            raw_path: len(next_raw) != len(raw_blocks),
+        }
+        if not any(changed.values()):
+            return receipt
+
+        open_debt = self.load_cache_compaction_debt()
+        paths = [
+            now_path,
+            lately_path,
+            raw_path,
+            raw_md_path,
+            debt_path,
+            checkpoint_path,
+        ]
+        snapshots = self._snapshot_text_files(paths)
+        before_sha = {
+            path: self._text_sha256(payload or "")
+            for path, payload in snapshots.items()
+        }
+        try:
+            self._write_jsonl_atomic(now_path, next_now)
+            self._write_jsonl_atomic(lately_path, next_lately)
+            self._write_jsonl_atomic(raw_path, next_raw)
+            atomic_write_text(
+                raw_md_path, self._render_raw_log_md(next_raw), newline="\n")
+            if open_debt:
+                self.clear_cache_compaction_debt()
+            self._write_reasoning_progress_repair_checkpoint()
+
+            if self._current_now_blocks() != next_now:
+                raise WriteError(now_path, message="reasoning_progress_now_verify_failed")
+            if self._current_lately_blocks() != next_lately:
+                raise WriteError(lately_path, message="reasoning_progress_lately_verify_failed")
+            if self._current_raw_log_blocks() != next_raw:
+                raise WriteError(raw_path, message="reasoning_progress_raw_verify_failed")
+            with open(raw_md_path, "r", encoding="utf-8", newline="") as handle:
+                if handle.read() != self._render_raw_log_md(next_raw):
+                    raise WriteError(
+                        raw_md_path, message="reasoning_progress_raw_md_verify_failed")
+            if open_debt and os.path.exists(debt_path):
+                raise WriteError(debt_path, message="reasoning_progress_debt_verify_failed")
+        except Exception:
+            try:
+                self._restore_text_files(snapshots)
+            except Exception as rollback_exc:
+                raise WriteError(
+                    raw_path,
+                    message=f"reasoning_progress_rollback_failed:{rollback_exc}",
+                ) from rollback_exc
+            raise
+
+        after_snapshots = self._snapshot_text_files(paths)
+        removed_blocks = [
+            item["block"] for key, item in candidates.items() if key in proven
+        ]
+        receipt.update({
+            "status": "repaired",
+            "removed_block_ids": sorted({
+                str(block.get("id") or "") for block in removed_blocks
+                if str(block.get("id") or "")
+            }),
+            "removed_active_corpus_ids": sorted({
+                str((block.get("ref") or {}).get("active_corpus_id") or "")
+                for block in removed_blocks
+                if str((block.get("ref") or {}).get("active_corpus_id") or "")
+            }),
+            "removed_raw_log_keys": sorted(proven_raw_keys),
+            "source_files": sorted(
+                path for path, did_change in changed.items() if did_change
+            ),
+            "before_sha256": before_sha,
+            "after_sha256": {
+                path: self._text_sha256(payload or "")
+                for path, payload in after_snapshots.items()
+            },
+            "compaction_debt_discarded": bool(open_debt),
+            "rollback_status": "not_needed",
+            "checkpoint": "complete",
+        })
+        self._last_cache_stats = self._empty_cache_stats()
+        return receipt
 
     def transition_current_cache(
             self,
@@ -983,8 +1338,23 @@ class ContextStore:
             return {"status": "rejected", "reason": "cache_compaction_v3_debt_missing"}
         batch = current_batch(debt)
         expected = {str(item.get("shard_id") or ""): item for item in batch}
+        remaining_ids = [
+            str(item.get("shard_id") or "") for item in pending_shards(debt)
+        ]
+
+        def reject(reason):
+            return {
+                "status": "rejected",
+                "reason": reason,
+                "completed_ids": [],
+                "remaining_ids": remaining_ids,
+                "rejected_results": [],
+                "rewrite_applied": False,
+                "compaction_id": debt.get("compaction_id"),
+            }
+
         if not isinstance(results, list) or not results:
-            return {"status": "rejected", "reason": "cache_compaction_results_required"}
+            return reject("cache_compaction_results_required")
         with open(self.cache_compaction_debt_path(), "r", encoding="utf-8") as handle:
             debt_text_before_batch = handle.read()
         submitted_ids = [
@@ -992,11 +1362,11 @@ class ContextStore:
             for item in results if isinstance(item, dict)
         ]
         if len(submitted_ids) != len(results) or len(submitted_ids) != len(set(submitted_ids)):
-            return {"status": "rejected", "reason": "cache_compaction_result_ids_invalid"}
+            return reject("cache_compaction_result_ids_invalid")
         if any(item not in expected for item in submitted_ids):
-            return {"status": "rejected", "reason": "cache_compaction_unknown_shard"}
+            return reject("cache_compaction_unknown_shard")
         if submitted_ids != list(expected)[:len(submitted_ids)]:
-            return {"status": "rejected", "reason": "cache_compaction_out_of_order"}
+            return reject("cache_compaction_out_of_order")
 
         accepted = []
         rejected = []
@@ -1424,18 +1794,6 @@ class ContextStore:
     @staticmethod
     def _lately_blocks_chars(blocks):
         return sum(len(str(block.get("text") or "")) for block in blocks or [])
-
-    @staticmethod
-    def _unique_text_list(values):
-        unique = []
-        seen = set()
-        for value in values or []:
-            token = str(value or "").strip()
-            if not token or token in seen:
-                continue
-            unique.append(token)
-            seen.add(token)
-        return unique
 
     def _sync_caches(self, entries, now_entries):
         _, now_entries = self._assign_active_corpus_metadata(
@@ -2344,34 +2702,6 @@ class ContextStore:
         elif clone.get("kind") in excluded_kinds:
             clone["ref"].pop("raw_log_key", None)
         return clone
-
-    def _mirror_lately_blocks_to_raw_log(self, blocks):
-        """raw_log 只镜像刚被 lately 接纳的语料块。"""
-        from data.chronicle_store import dedupe_corpus_records
-
-        existing = [
-            block for block in (
-                self._normalize_corpus_block(item)
-                for item in self._read_jsonl(self._raw_log_jsonl())
-            )
-            if block
-        ]
-        incoming = [
-            block for block in (
-                self._normalize_corpus_block(item)
-                for item in blocks or []
-                if (
-                    not self._is_compacted_summary(item)
-                    and item.get("kind") not in self._raw_log_excluded_kinds()
-                )
-            )
-            if block
-        ]
-        merged = dedupe_corpus_records(existing + incoming)
-        if merged == existing and os.path.isfile(self._raw_log_jsonl()):
-            return
-        self._write_jsonl_atomic(self._raw_log_jsonl(), merged)
-        atomic_write_text(self._raw_log_md(), self._render_raw_log_md(merged))
 
     def read_raw_log(self):
         path = self._raw_log_md()

@@ -1,9 +1,10 @@
-"""Seed 每轮唯一的主体状态结算入口。"""
+"""Seed Reaction 入口、Frame 与 idle timer 的主体状态结算。"""
 
 from copy import deepcopy
 from datetime import datetime
 import json
 import os
+import re
 
 from constants import local_now
 from constants import DYNAMIC_AXIS_KEYS, RELATION_AXIS_KEYS
@@ -19,10 +20,11 @@ from paths import STATE_SETTLEMENT_JOURNAL_JSON
 
 
 PLAN_SCHEMA = "state_settle_plan.v1"
-RECEIPT_SCHEMA = "state_settle_receipt.v1"
+RECEIPT_SCHEMA = "state_settle_receipt.v2"
 LOCAL_PLAN_SCHEMA = "state_settle_local_plan.v1"
 LOCAL_RECEIPT_SCHEMA = "state_settle_local_receipt.v1"
 LOCAL_TRANSACTION_SCHEMA = "state_settle_local_transaction.v1"
+ENTRY_PREPARATION_SCHEMA = "state_settle_entry_preparation.v1"
 
 
 class StateSettlementError(RuntimeError):
@@ -32,18 +34,19 @@ class StateSettlementError(RuntimeError):
 
 
 def _raise_settlement_error(round_store, round_num, settlement_id, cause,
-                            relation_receipts=None):
+                            relation_receipts=None, settlement_scope=None):
     receipt = {
         "schema_version": RECEIPT_SCHEMA,
         "status": "error",
         "settlement_id": settlement_id,
         "round": int(round_num),
+        "settlement_scope": settlement_scope or "legacy_round",
         "reason": f"{type(cause).__name__}:{cause}",
         "relations": list(relation_receipts or []),
     }
     try:
         round_store.append_event(
-            round_num, "state_settle_receipt", receipt, phase="cleanup")
+            round_num, "state_settle_receipt", receipt, phase="reaction")
     except Exception as audit_exc:
         receipt["audit_write_error"] = (
             f"{type(audit_exc).__name__}:{audit_exc}")
@@ -78,12 +81,15 @@ def _state_slice(state):
         "workhood_index": deepcopy(base.get("workhood_index", {})),
         "core_speed_wheel": deepcopy(base.get("core_speed_wheel", {})),
         "feeling_buffer": deepcopy(base.get("feeling_buffer", [])),
+        "feeling_settle_due": bool(
+            base.get("heartbeat_flags", {}).get("feeling_settle_due")
+        ),
         "next_settle_at": meta.get("next_settle_at"),
         "last_state_settlement_id": meta.get("last_state_settlement_id"),
     }
 
 
-def _apply_state_slice(state, values):
+def _apply_state_slice(state, values, *, clear_due=True):
     base = state.setdefault("base", {})
     meta = base.setdefault("meta", {})
     for key in (
@@ -94,7 +100,9 @@ def _apply_state_slice(state, values):
     meta["next_settle_at"] = values.get("next_settle_at")
     meta["last_state_settlement_id"] = values.get(
         "last_state_settlement_id")
-    base.setdefault("heartbeat_flags", {})["feeling_settle_due"] = False
+    flags = base.setdefault("heartbeat_flags", {})
+    if clear_due:
+        flags["feeling_settle_due"] = False
 
 
 def _existing_plan(round_store, round_num, settlement_id):
@@ -132,14 +140,24 @@ def _existing_receipt(round_store, round_num, settlement_id):
 
 def _build_plan(state, relation_store, round_num, round_type, receipts,
                 interactive_round, observed_at, settlement_id=None,
-                schema_version=PLAN_SCHEMA):
+                schema_version=PLAN_SCHEMA, settlement_scope="legacy_round",
+                settle_buffer=True, natural_return=True):
     settlement_id = settlement_id or f"SS-R{int(round_num):06d}"
     incoming = collect_receipt_effects(receipts, observed_at=observed_at)
-    due = settle_pending(
-        state.get("base", {}).get("feeling_buffer", []),
-        interactive_round=interactive_round,
-        observed_at=observed_at,
-    )
+    if settle_buffer:
+        due = settle_pending(
+            state.get("base", {}).get("feeling_buffer", []),
+            interactive_round=interactive_round,
+            observed_at=observed_at,
+        )
+    else:
+        due = {
+            "dynamic": {},
+            "relations": {},
+            "remaining": deepcopy(
+                state.get("base", {}).get("feeling_buffer", [])),
+            "settled": [],
+        }
     dynamic_deltas = dict(incoming["dynamic"])
     relation_deltas = deepcopy(incoming["relations"])
     _merge_axes(dynamic_deltas, due["dynamic"])
@@ -180,6 +198,7 @@ def _build_plan(state, relation_store, round_num, round_type, receipts,
         dynamic_deltas,
         core_pulls,
         relation_pulls,
+        natural_return=natural_return,
     )
     buffer_after = list(due["remaining"]) + list(incoming["pending"])
     workhood = compute_workhood(core_axes, dynamic_after)
@@ -194,15 +213,19 @@ def _build_plan(state, relation_store, round_num, round_type, receipts,
         "workhood_index": workhood,
         "core_speed_wheel": wheel,
         "feeling_buffer": buffer_after,
+        "feeling_settle_due": False if settle_buffer else bool(
+            base.get("heartbeat_flags", {}).get("feeling_settle_due")
+        ),
         "next_settle_at": earliest_settle_at(buffer_after),
         "last_state_settlement_id": settlement_id,
     }
-    _apply_state_slice(after_state, after_values)
+    _apply_state_slice(after_state, after_values, clear_due=settle_buffer)
     return {
         "schema_version": schema_version,
         "settlement_id": settlement_id,
         "round": int(round_num) if round_num is not None else None,
         "round_type": str(round_type),
+        "settlement_scope": settlement_scope,
         "interactive_round": bool(interactive_round),
         "observed_at": observed_at.isoformat(),
         "source_memory_ids": incoming["source_memory_ids"],
@@ -220,19 +243,21 @@ def _build_plan(state, relation_store, round_num, round_type, receipts,
 def _round_marker_number(marker):
     if not marker:
         return 0
-    if marker.startswith("SS-R") and marker[4:].isdigit():
-        return int(marker[4:])
+    match = re.fullmatch(r"SS-R(\d{6})(?:-E|-F\d{6})?", marker)
+    if match:
+        return int(match.group(1))
     if marker.startswith("SS-T") and marker[4:].isdigit():
         return 0
     raise ValueError(f"invalid_state_settlement_id:{marker}")
 
 
-def settle_state(state_store, relation_store, round_store, round_num,
-                 round_type, memory_write_receipts=None, user_input_text="",
-                 observed_at=None, external_interaction=None):
+def _settle_round_scope(state_store, relation_store, round_store, round_num,
+                        round_type, *, settlement_id, settlement_scope,
+                        memory_write_receipts=None, observed_at=None,
+                        external_interaction=False, settle_buffer=True,
+                        natural_return=True, prepared_plan=None):
     """计划先行，逐卡提交，最后一次性保存 state。"""
     observed_at = observed_at or local_now()
-    settlement_id = f"SS-R{int(round_num):06d}"
     try:
         local_journal = _read_local_journal(
             _local_journal_path(state_store, None))
@@ -244,7 +269,8 @@ def settle_state(state_store, relation_store, round_store, round_num,
             )
     except Exception as exc:
         _raise_settlement_error(
-            round_store, round_num, settlement_id, exc)
+            round_store, round_num, settlement_id, exc,
+            settlement_scope=settlement_scope)
     state = state_store.load()
     meta = state.get("base", {}).get("meta", {})
     marker = str(meta.get("last_state_settlement_id") or "")
@@ -258,13 +284,15 @@ def settle_state(state_store, relation_store, round_store, round_num,
         )
     except Exception as exc:
         _raise_settlement_error(
-            round_store, round_num, settlement_id, exc)
+            round_store, round_num, settlement_id, exc,
+            settlement_scope=settlement_scope)
     if current_round > int(round_num):
         try:
             existing = _existing_receipt(round_store, round_num, settlement_id)
         except Exception as exc:
             _raise_settlement_error(
-                round_store, round_num, settlement_id, exc)
+                round_store, round_num, settlement_id, exc,
+                settlement_scope=settlement_scope)
         if existing is not None:
             return existing
         _raise_settlement_error(
@@ -275,13 +303,15 @@ def settle_state(state_store, relation_store, round_store, round_num,
                 "stale_state_settlement_replay:"
                 f"requested={int(round_num)};current={current_round}"
             ),
+            settlement_scope=settlement_scope,
         )
     if marker == settlement_id:
         try:
             existing = _existing_receipt(round_store, round_num, settlement_id)
         except Exception as exc:
             _raise_settlement_error(
-                round_store, round_num, settlement_id, exc)
+                round_store, round_num, settlement_id, exc,
+                settlement_scope=settlement_scope)
         if existing is not None:
             return existing
         receipt = {
@@ -289,10 +319,11 @@ def settle_state(state_store, relation_store, round_store, round_num,
             "status": "already_applied",
             "settlement_id": settlement_id,
             "round": int(round_num),
+            "settlement_scope": settlement_scope,
         }
         try:
             round_store.append_event(
-                round_num, "state_settle_receipt", receipt, phase="cleanup")
+                round_num, "state_settle_receipt", receipt, phase="reaction")
         except Exception as exc:
             raise StateSettlementError({
                 **receipt,
@@ -301,19 +332,27 @@ def settle_state(state_store, relation_store, round_store, round_num,
             }) from exc
         return receipt
 
-    # Runtime 显式传入 trigger.messages 事实；None 只供旧的直接调用入口
-    # 兼容，不能把节律/中继内部文本误算成外部交互。
-    interactive_round = (
-        bool(external_interaction)
-        if external_interaction is not None
-        else bool(
-            round_type == "interactive"
-            and str(user_input_text or "").strip()
-        )
-    )
     relation_receipts = []
     try:
         plan = _existing_plan(round_store, round_num, settlement_id)
+        if prepared_plan is not None:
+            if not isinstance(prepared_plan, dict):
+                raise ValueError("state_settlement_prepared_plan_invalid")
+            if (
+                prepared_plan.get("schema_version") != PLAN_SCHEMA
+                or prepared_plan.get("settlement_id") != settlement_id
+                or prepared_plan.get("settlement_scope") != settlement_scope
+                or int(prepared_plan.get("round") or 0) != int(round_num)
+            ):
+                raise ValueError("state_settlement_prepared_plan_mismatch")
+            if plan is not None and plan != prepared_plan:
+                raise ValueError("state_settlement_prepared_plan_conflict")
+            if plan is None:
+                if _state_slice(state) != prepared_plan["state"]["before"]:
+                    raise ValueError("state_settlement_prepared_state_drift")
+                plan = prepared_plan
+                round_store.append_event(
+                    round_num, "state_settle_plan", plan, phase="reaction")
         if plan is None:
             plan = _build_plan(
                 state,
@@ -321,11 +360,15 @@ def settle_state(state_store, relation_store, round_store, round_num,
                 round_num,
                 round_type,
                 memory_write_receipts,
-                interactive_round,
+                bool(external_interaction),
                 observed_at,
+                settlement_id=settlement_id,
+                settlement_scope=settlement_scope,
+                settle_buffer=settle_buffer,
+                natural_return=natural_return,
             )
             round_store.append_event(
-                round_num, "state_settle_plan", plan, phase="cleanup")
+                round_num, "state_settle_plan", plan, phase="reaction")
 
         for relation_plan in plan.get("relations", []):
             relation_receipts.append(relation_store.apply_state_settlement(
@@ -337,7 +380,9 @@ def settle_state(state_store, relation_store, round_store, round_num,
 
         state_store.mutate(
             lambda after_state: _apply_state_slice(
-                after_state, plan["state"]["after"]
+                after_state,
+                plan["state"]["after"],
+                clear_due=settle_buffer,
             )
         )
     except Exception as exc:
@@ -347,6 +392,7 @@ def settle_state(state_store, relation_store, round_store, round_num,
             settlement_id,
             exc,
             relation_receipts,
+            settlement_scope=settlement_scope,
         )
 
     receipt = {
@@ -354,6 +400,7 @@ def settle_state(state_store, relation_store, round_store, round_num,
         "status": "applied",
         "settlement_id": settlement_id,
         "round": int(round_num),
+        "settlement_scope": settlement_scope,
         "source_memory_ids": list(plan.get("source_memory_ids") or []),
         "relations": relation_receipts,
         "before": plan["state"]["before"],
@@ -361,11 +408,163 @@ def settle_state(state_store, relation_store, round_store, round_num,
     }
     try:
         round_store.append_event(
-            round_num, "state_settle_receipt", receipt, phase="cleanup")
+            round_num, "state_settle_receipt", receipt, phase="reaction")
     except Exception as exc:
         _raise_settlement_error(
-            round_store, round_num, settlement_id, exc, relation_receipts)
+            round_store, round_num, settlement_id, exc, relation_receipts,
+            settlement_scope=settlement_scope)
     return receipt
+
+
+def prepare_reaction_entry(state_store, relation_store, round_store, round_num,
+                           round_type, *, external_interaction=False,
+                           observed_at=None):
+    """Freeze the entry plan without advancing state or writing Round audit."""
+    observed_at = observed_at or local_now()
+    settlement_id = f"SS-R{int(round_num):06d}-E"
+    try:
+        local_journal = _read_local_journal(
+            _local_journal_path(state_store, None))
+        if local_journal and local_journal.get("status") == "planned":
+            settle_due_state(
+                state_store,
+                relation_store,
+                observed_at=observed_at,
+            )
+        state = state_store.load()
+        meta = state.get("base", {}).get("meta", {})
+        marker = str(meta.get("last_state_settlement_id") or "")
+        existing = _existing_receipt(round_store, round_num, settlement_id)
+        current_round = max(
+            int(meta.get("total_round") or 0),
+            _round_marker_number(marker),
+        )
+        if current_round > int(round_num) and existing is None:
+            raise RuntimeError(
+                "stale_state_settlement_replay:"
+                f"requested={int(round_num)};current={current_round}"
+            )
+        plan = _existing_plan(round_store, round_num, settlement_id)
+        if existing is None and marker != settlement_id and plan is None:
+            plan = _build_plan(
+                state,
+                relation_store,
+                round_num,
+                round_type,
+                None,
+                bool(external_interaction),
+                observed_at,
+                settlement_id=settlement_id,
+                settlement_scope="reaction_entry",
+                settle_buffer=True,
+                natural_return=True,
+            )
+        preview_state = deepcopy(state)
+        if existing is None and marker != settlement_id and plan is not None:
+            _apply_state_slice(
+                preview_state,
+                plan["state"]["after"],
+                clear_due=True,
+            )
+        return {
+            "schema_version": ENTRY_PREPARATION_SCHEMA,
+            "settlement_id": settlement_id,
+            "round": int(round_num),
+            "settlement_scope": "reaction_entry",
+            "plan": plan,
+            "existing_receipt": existing,
+            "preview_state": preview_state,
+        }
+    except Exception as exc:
+        _raise_settlement_error(
+            round_store,
+            round_num,
+            settlement_id,
+            exc,
+            settlement_scope="reaction_entry",
+        )
+
+
+def commit_reaction_entry(state_store, relation_store, round_store, round_num,
+                          round_type, preparation):
+    """Commit a previously frozen entry plan at the provider-call boundary."""
+    if (
+        not isinstance(preparation, dict)
+        or preparation.get("schema_version") != ENTRY_PREPARATION_SCHEMA
+        or int(preparation.get("round") or 0) != int(round_num)
+        or preparation.get("settlement_id")
+        != f"SS-R{int(round_num):06d}-E"
+        or preparation.get("settlement_scope") != "reaction_entry"
+    ):
+        raise StateSettlementError({
+            "schema_version": RECEIPT_SCHEMA,
+            "status": "error",
+            "settlement_id": f"SS-R{int(round_num):06d}-E",
+            "round": int(round_num),
+            "settlement_scope": "reaction_entry",
+            "reason": "state_settlement_preparation_invalid",
+        })
+    existing = preparation.get("existing_receipt")
+    if isinstance(existing, dict):
+        return existing
+    plan = preparation.get("plan")
+    if isinstance(plan, dict) and str(plan.get("round_type")) != str(round_type):
+        raise StateSettlementError({
+            "schema_version": RECEIPT_SCHEMA,
+            "status": "error",
+            "settlement_id": f"SS-R{int(round_num):06d}-E",
+            "round": int(round_num),
+            "settlement_scope": "reaction_entry",
+            "reason": "state_settlement_preparation_round_type_mismatch",
+        })
+    if plan is None:
+        marker = str(state_store.get(
+            "base.meta.last_state_settlement_id", "") or "")
+        if marker != f"SS-R{int(round_num):06d}-E":
+            raise StateSettlementError({
+                "schema_version": RECEIPT_SCHEMA,
+                "status": "error",
+                "settlement_id": f"SS-R{int(round_num):06d}-E",
+                "round": int(round_num),
+                "settlement_scope": "reaction_entry",
+                "reason": "state_settlement_preparation_plan_missing",
+            })
+    observed_at = None
+    if isinstance(plan, dict) and plan.get("observed_at"):
+        observed_at = datetime.fromisoformat(str(plan["observed_at"]))
+    return _settle_round_scope(
+        state_store,
+        relation_store,
+        round_store,
+        round_num,
+        round_type,
+        settlement_id=f"SS-R{int(round_num):06d}-E",
+        settlement_scope="reaction_entry",
+        observed_at=observed_at,
+        settle_buffer=True,
+        natural_return=True,
+        prepared_plan=plan,
+    )
+
+
+def settle_reaction_frame(state_store, relation_store, round_store, round_num,
+                          round_type, frame_iteration, memory_write_receipts,
+                          *, observed_at=None):
+    return _settle_round_scope(
+        state_store,
+        relation_store,
+        round_store,
+        round_num,
+        round_type,
+        settlement_id=(
+            f"SS-R{int(round_num):06d}-F{int(frame_iteration):06d}"
+        ),
+        settlement_scope="reaction_frame",
+        memory_write_receipts=memory_write_receipts,
+        observed_at=observed_at,
+        settle_buffer=False,
+        natural_return=False,
+    )
 
 
 def _local_journal_path(state_store, journal_path):
@@ -453,6 +652,9 @@ def settle_due_state(state_store, relation_store, *, journal_path=None,
                 observed_at,
                 settlement_id=settlement_id,
                 schema_version=LOCAL_PLAN_SCHEMA,
+                settlement_scope="idle_timer",
+                settle_buffer=True,
+                natural_return=False,
             )
             if not plan.get("settled_buffer_entries"):
                 state_store.update_many({
@@ -512,7 +714,7 @@ def settle_due_state(state_store, relation_store, *, journal_path=None,
                 )
             state_store.mutate(
                 lambda after_state: _apply_state_slice(
-                    after_state, plan["state"]["after"]
+                    after_state, plan["state"]["after"], clear_due=True
                 )
             )
         else:
@@ -531,6 +733,7 @@ def settle_due_state(state_store, relation_store, *, journal_path=None,
             "status": "applied",
             "settlement_id": settlement_id,
             "source": "heartbeat_timer",
+            "settlement_scope": "idle_timer",
             "relations": relation_receipts,
             "before": plan["state"]["before"],
             "after": plan["state"]["after"],

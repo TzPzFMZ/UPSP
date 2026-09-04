@@ -19,7 +19,6 @@ _REACTION_EXECUTION_KEYS = (
     "general_tool_requests",
     "relation_card_declarations",
     "memory_write_declarations",
-    "memory_annotation_declarations",
     "memory_link_update_declarations",
     "memory_container_create_declarations",
     "memory_container_write_declarations",
@@ -28,7 +27,6 @@ _REACTION_EXECUTION_KEYS = (
     "chronicle_write_declarations",
     "alert_mode_settle_declarations",
     "fault_record_declarations",
-    "container_focus_declarations",
 )
 
 _PROBE_ACTIVE_FLAGS = {"user_message_waiting"}
@@ -158,8 +156,6 @@ def reject_reaction_execution_activity(
         parsed[key] = []
     parsed.setdefault("invalid_tool_requests", []).append({
         "tool_id": "single_round_probe",
-        "tool_family": "runtime_tool",
-        "tool_class": "runtime_guard",
         "status": "rejected",
         "source": "single_round_probe_policy",
         "reason": "single_round_probe_tool_forbidden",

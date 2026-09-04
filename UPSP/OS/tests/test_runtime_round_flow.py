@@ -11,6 +11,31 @@ from runtime_test_helpers import RuntimeTestMixin
 
 
 class TestRuntimeRoundFlow(RuntimeTestMixin):
+    @pytest.mark.parametrize(
+        ("result", "round_type", "expected"),
+        (
+            ({"response": "完成"}, "interactive", "natural_final"),
+            ({"_final_reply_done": True}, "rhythm", "natural_final"),
+            ({"_settlement_ledgers": [{"closeout_decision": "blocked"}]},
+             "interactive", "terminal_blocked"),
+            ({"_exit_signal": "continue_requested",
+              "_reaction_finalize_validated": True},
+             "relay", "continue_requested"),
+            ({"response": "partial", "_user_stop_requested": True},
+             "interactive", ""),
+            ({"response": "partial", "_provider_call_hard_stop": {"reason": "x"}},
+             "interactive", ""),
+            ({"response": "partial", "_required_context_failure": {"reason": "x"}},
+             "interactive", ""),
+            ({"response": "partial"}, "standby", ""),
+        ),
+    )
+    def test_spec786_terminal_memory_metabolism_boundary(
+            self, tmp_path, result, round_type, expected):
+        rt = self._make_runtime(tmp_path)
+        assert rt.reaction_metabolism.terminal_kind(
+            result, round_type=round_type) == expected
+
     @staticmethod
     def _prepare_cache_compaction_debt(rt, round_num):
         blocks = [{
@@ -115,7 +140,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             interaction_meta=self._confirmed_meta(),
             user_input_text="读书",
             setup_messages=[],
-            internal_handoff=[],
+            setup_facts=[],
         )
 
         monkeypatch.setattr(rt.setup_runner, "run", lambda context: setup_result)
@@ -225,7 +250,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
                 interaction_meta=self._confirmed_meta(),
                 user_input_text="请读取并内化这本书。",
                 setup_messages=[],
-                internal_handoff=[],
+            setup_facts=[],
             )
 
         def fake_cleanup(round_type, state, result, round_num, *args, **kwargs):
@@ -291,7 +316,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             interaction_meta=self._confirmed_meta(),
             user_input_text="请读取 DFT_AGENT_EVAL/agent_eval_tasks.md 并完成任务。",
             setup_messages=[],
-            internal_handoff=[],
+            setup_facts=[],
         )
         cleanup_calls = []
 
@@ -368,7 +393,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             interaction_meta=self._confirmed_meta(),
             user_input_text="请读取 agent_eval_tasks.md 并完成 12 项任务。",
             setup_messages=[],
-            internal_handoff=[],
+            setup_facts=[],
         )
 
         monkeypatch.setattr(rt.setup_runner, "run", lambda context: setup_result)
@@ -471,7 +496,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             interaction_meta=self._confirmed_meta(),
             user_input_text="现在状态如何？",
             setup_messages=[],
-            internal_handoff=[],
+            setup_facts=[],
         )
 
         monkeypatch.setattr(rt.setup_runner, "run", lambda context: setup_result)
@@ -536,7 +561,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             interaction_meta=self._confirmed_meta(),
             user_input_text="完成任务，无法访问时登记阻塞。",
             setup_messages=[],
-            internal_handoff=[],
+            setup_facts=[],
         )
         monkeypatch.setattr(rt.setup_runner, "run", lambda context: setup_result)
         monkeypatch.setattr(rt, "_run_reaction_loop", lambda *args, **kwargs: {
@@ -567,8 +592,11 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
 
         monkeypatch.setattr(rt, "_call_llm_with_round_audit", fake_cleanup_provider)
         monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            rt.reaction_metabolism,
+            "settle_terminal",
+            lambda *a, **kw: {"status": "applied"},
+        )
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "pause", lambda: None)
         monkeypatch.setattr(rt.hb, "resume", lambda: None)
@@ -617,7 +645,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             interaction_meta=self._confirmed_meta(),
             user_input_text="请读取 DFT_AGENT_EVAL/agent_eval_tasks.md 并完成任务。",
             setup_messages=[],
-            internal_handoff=[],
+            setup_facts=[],
         )
 
         monkeypatch.setattr(rt.setup_runner, "run", lambda context: setup_result)
@@ -675,7 +703,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             interaction_meta=self._confirmed_meta(),
             user_input_text="顺手再把输出报告改成中文摘要。",
             setup_messages=[],
-            internal_handoff=[],
+            setup_facts=[],
         )
 
         monkeypatch.setattr(rt.setup_runner, "run", lambda context: setup_result)
@@ -739,7 +767,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             interaction_meta=self._confirmed_meta(),
             user_input_text="",
             setup_messages=[],
-            internal_handoff=[],
+            setup_facts=[],
         )
 
         monkeypatch.setattr(rt.setup_runner, "run", lambda context: setup_result)
@@ -890,7 +918,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             interaction_meta=self._confirmed_meta(),
             user_input_text="",
             setup_messages=[],
-            internal_handoff=[],
+            setup_facts=[],
         )
         monkeypatch.setattr(rt.setup_runner, "run", lambda context: setup_result)
 

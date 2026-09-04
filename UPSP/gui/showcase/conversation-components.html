@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UPSP 对话组件实验台</title>
+  <link rel="stylesheet" href="./conversation-components.css?v=spec770-round-stream-3">
+</head>
+<body class="showcase-body" data-showcase-version="upsp_conversation_component_showcase.v1">
+  <main class="showcase-shell">
+    <header class="showcase-header">
+      <div>
+        <h1>对话组件实验台</h1>
+        <p>用同一条 Round 事件流逐项比较思考折叠、工具调用、处理状态与流式输出。</p>
+      </div>
+      <p class="showcase-boundary" role="note">设计演示 · 模拟数据 · 未连接 Runtime</p>
+    </header>
+
+    <section class="showcase-controls" aria-label="演示控制">
+      <label class="control-field" for="scenarioSelect">
+        <span>演示场景</span>
+        <select id="scenarioSelect"></select>
+      </label>
+      <div class="playback-controls" role="group" aria-label="播放控制">
+        <button id="playButton" type="button">播放</button>
+        <button id="pauseButton" type="button">暂停</button>
+        <button id="resetButton" type="button">重置</button>
+      </div>
+      <fieldset class="speed-controls">
+        <legend>播放速度</legend>
+        <label><input type="radio" name="speed" value="0.5">0.5×</label>
+        <label><input type="radio" name="speed" value="1" checked>1×</label>
+        <label><input type="radio" name="speed" value="2">2×</label>
+      </fieldset>
+      <div class="timeline-readout">
+        <span id="timelineStatus" role="status">等待播放</span>
+        <progress id="timelineProgress" value="0" max="1">0%</progress>
+      </div>
+    </section>
+
+    <nav class="showcase-tabs" role="tablist" aria-label="组件类别">
+      <button id="tab-thinking" type="button" role="tab" aria-selected="true" aria-controls="panel-thinking" tabindex="0" data-showcase-tab="thinking">思考折叠</button>
+      <button id="tab-tools" type="button" role="tab" aria-selected="false" aria-controls="panel-tools" tabindex="-1" data-showcase-tab="tools">工具调用</button>
+      <button id="tab-activity" type="button" role="tab" aria-selected="false" aria-controls="panel-activity" tabindex="-1" data-showcase-tab="activity">正在处理</button>
+      <button id="tab-streaming" type="button" role="tab" aria-selected="false" aria-controls="panel-streaming" tabindex="-1" data-showcase-tab="streaming">流式输出</button>
+      <button id="tab-combination" type="button" role="tab" aria-selected="false" aria-controls="panel-combination" tabindex="-1" data-showcase-tab="combination">组合预览</button>
+    </nav>
+
+    <section id="panel-thinking" class="showcase-panel" role="tabpanel" aria-labelledby="tab-thinking" data-showcase-panel="thinking">
+      <header class="panel-heading"><h2>思考折叠</h2><p>每个 provider reasoning 块独立呈现；不跨工具边界合并，也不推断内部语义。</p></header>
+      <div id="thinkingVariants" class="variant-grid"></div>
+    </section>
+
+    <section id="panel-tools" class="showcase-panel" role="tabpanel" aria-labelledby="tab-tools" data-showcase-panel="tools" hidden>
+      <header class="panel-heading"><h2>工具调用</h2><p>每个 call_id 都是独立组件，不再套一层总“工具轨迹”。</p></header>
+      <div id="toolVariants" class="variant-grid"></div>
+    </section>
+
+    <section id="panel-activity" class="showcase-panel" role="tabpanel" aria-labelledby="tab-activity" data-showcase-panel="activity" hidden>
+      <header class="panel-heading"><h2>正在处理</h2><p>让等待首字、思考、工具执行与组织回复拥有连续反馈。</p></header>
+      <div id="activityVariants" class="variant-grid"></div>
+    </section>
+
+    <section id="panel-streaming" class="showcase-panel" role="tabpanel" aria-labelledby="tab-streaming" data-showcase-panel="streaming" hidden>
+      <header class="panel-heading"><h2>流式输出</h2><p>轮中自然语言进展与最终回复是两个对象；三案只改变各自的增量释放策略。</p></header>
+      <div id="streamingVariants" class="variant-grid"></div>
+    </section>
+
+    <section id="panel-combination" class="showcase-panel" role="tabpanel" aria-labelledby="tab-combination" data-showcase-panel="combination" hidden>
+      <header class="panel-heading"><h2>组合预览</h2><p>四组均选择后，按发生顺序交错显示 reasoning、轮中进展、工具调用与最终回复。</p></header>
+      <div id="combinationMissing" class="combination-missing" role="status"></div>
+      <div id="combinationPreview" class="combination-preview" hidden></div>
+    </section>
+
+    <aside class="selection-console" aria-labelledby="selectionTitle">
+      <div>
+        <h2 id="selectionTitle">当前选型</h2>
+        <p id="selectionSummary">尚未选择任何方案。</p>
+      </div>
+      <div class="selection-actions">
+        <button id="clearSelectionButton" type="button">清空选择</button>
+        <button id="copySelectionButton" type="button" disabled>复制选择摘要</button>
+        <button id="exportSelectionButton" type="button" disabled>导出 JSON</button>
+      </div>
+      <p id="selectionFeedback" class="selection-feedback" role="status" aria-live="polite"></p>
+    </aside>
+  </main>
+  <script src="./conversation-components.js?v=spec770-round-stream-3"></script>
+</body>
+</html>

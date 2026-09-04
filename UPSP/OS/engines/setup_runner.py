@@ -19,6 +19,12 @@ from logic.relay_intent_pool import (
 )
 
 
+class SetupCacheWriteError(RuntimeError):
+    """Required Setup cache preparation failed before Reaction."""
+
+    round_failure_flag = "_setup_cache_write_failed"
+
+
 class SetupRunner(EngineComponent):
     def run(self, context):
         self._clear_stale_call_transients(context.round_num)
@@ -54,10 +60,6 @@ class SetupRunner(EngineComponent):
             if inherited_meta:
                 interaction_meta = inherited_meta
 
-        heartbeat_handoff = self._heartbeat_handoff_entries(
-            context.round_type,
-            context.flags,
-        )
         self._write_interaction_input(
             context.round_num,
             user_input_text,
@@ -90,10 +92,7 @@ class SetupRunner(EngineComponent):
             organ_runtime.begin_frame_materials(first_frame_ref)
             if organ_runtime is not None else ()
         )
-        assemble_kwargs = {
-            "internal_handoff": heartbeat_handoff,
-            "interaction_meta": interaction_meta,
-        }
+        assemble_kwargs = {"interaction_meta": interaction_meta}
         if not context.task_guidance_enabled:
             assemble_kwargs["task_guidance_enabled"] = False
         if material_inputs:
@@ -226,14 +225,14 @@ class SetupRunner(EngineComponent):
             interaction_meta=interaction_meta,
             user_input_text=user_input_text,
             setup_messages=messages,
-            internal_handoff=setup_facts,
+            setup_facts=setup_facts,
             frame_ref=frame_ref,
         )
 
     def commit(self, context, setup_result):
         self._write_setup_facts(
             context.round_num,
-            setup_result.internal_handoff,
+            setup_result.setup_facts,
         )
         if getattr(self, "assembler", None) is not None:
             self.assembler._current_interaction_meta = dict(
@@ -533,10 +532,6 @@ class SetupRunner(EngineComponent):
                 "unresolved": "未解析",
             }.get(text, text or "未解析")
 
-    def _heartbeat_handoff_entries(self, round_type, flags):
-            entry = self._build_heartbeat_handoff_entry(round_type, flags)
-            return [entry] if entry else []
-
     def _build_heartbeat_handoff_entry(self, round_type, flags):
             flags = flags or {}
             group_by_round_type = {
@@ -603,11 +598,8 @@ class SetupRunner(EngineComponent):
                     identity_status=entry["identity_status"],
                     interaction_source=entry["interaction_source"],
                 )
-            except Exception:
-                try:
-                    self.sm.set("base.meta.last_error", "心跳交接写入失败")
-                except Exception:
-                    pass
+            except Exception as exc:
+                self._raise_setup_cache_write_error("心跳交接写入失败", exc)
 
     def _write_relay_handoff_inputs(self, round_num, round_type, state):
             if str(round_type or "").strip().lower() != "relay":
@@ -643,11 +635,9 @@ class SetupRunner(EngineComponent):
                         intent.get("relay_intent_id"),
                         round_num=round_num,
                     )
-                except Exception:
-                    try:
-                        self.sm.set("base.meta.last_error", "relay_handoff 写入失败")
-                    except Exception:
-                        pass
+                except Exception as exc:
+                    self._raise_setup_cache_write_error(
+                        "relay_handoff 写入失败", exc)
 
     def _write_interaction_input(self, round_num, user_input_text, interaction_meta):
             content = str(user_input_text or "").strip()
@@ -662,11 +652,8 @@ class SetupRunner(EngineComponent):
                     step="setup",
                     **cache_interaction_meta(interaction_meta),
                 )
-            except Exception:
-                try:
-                    self.sm.set("base.meta.last_error", "本轮交互写入失败")
-                except Exception:
-                    pass
+            except Exception as exc:
+                self._raise_setup_cache_write_error("本轮交互写入失败", exc)
 
     def _write_setup_facts(self, round_num, entries):
             for entry in entries or []:
@@ -686,20 +673,33 @@ class SetupRunner(EngineComponent):
                         identity_status=entry.get("identity_status", "system"),
                         interaction_source=entry.get("interaction_source", "setup_finalize"),
                     )
-                except Exception:
-                    try:
-                        self.sm.set("base.meta.last_error", "setup_fact 写入失败")
-                    except Exception:
-                        pass
+                except Exception as exc:
+                    self._raise_setup_cache_write_error(
+                        "setup_fact 写入失败", exc)
+
+    def _raise_setup_cache_write_error(self, message, cause):
+        try:
+            self.sm.set("base.meta.last_error", message)
+        except Exception:
+            pass
+        raise SetupCacheWriteError(message) from cause
 
     def _clear_stale_call_transients(self, round_num):
         clearer = getattr(self.ctx_store, "clear_stale_call_transients", None)
         if not callable(clearer):
             return None
         try:
-            return clearer(round_num)
-        except Exception:
-            return None
+            receipt = clearer(round_num)
+        except Exception as exc:
+            self._raise_setup_cache_write_error("旧调用临时语料清理失败", exc)
+        if (
+                not isinstance(receipt, dict)
+                or str(receipt.get("status") or "").strip() != "applied"):
+            self._raise_setup_cache_write_error(
+                "旧调用临时语料清理失败",
+                RuntimeError("stale_call_transient_cleanup_not_applied"),
+            )
+        return receipt
 
     def _resolve_interaction_meta(self, state=None):
             """只读取 Runtime 真源；自然语言身份判断属于 setup LLM。"""

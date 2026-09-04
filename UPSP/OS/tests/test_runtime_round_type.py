@@ -774,3 +774,73 @@ class TestRuntimeRoundType(RuntimeTestMixin):
         assert "先执行交接里的第一动作" in ctx.entries[0]["content"]
         assert "continue_requested" in ctx.entries[0]["content"]
         assert "identity_timeout" not in ctx.entries[0]["content"]
+
+    @pytest.mark.parametrize("write_kind", [
+        "interaction", "heartbeat", "relay", "setup_fact",
+    ])
+    def test_spec776_setup_cache_write_failures_block_the_step(
+            self, tmp_path, monkeypatch, write_kind):
+        from engines import setup_runner as setup_runner_module
+
+        rt = self._make_runtime(tmp_path)
+
+        class FailingContext:
+            @staticmethod
+            def append_to_cache(*args, **kwargs):
+                raise OSError("disk unavailable")
+
+        rt.setup_runner.ctx_store = FailingContext()
+        if write_kind == "interaction":
+            invoke = lambda: rt.setup_runner._write_interaction_input(
+                776, "真实用户输入", {
+                    "interaction_object": "TzPz",
+                    "identity_status": "known",
+                    "interaction_source": "instance_selection",
+                })
+            expected = "本轮交互写入失败"
+        elif write_kind == "heartbeat":
+            invoke = lambda: rt.setup_runner._write_heartbeat_handoff(
+                776, "interactive", {"user_message_waiting": True})
+            expected = "心跳交接写入失败"
+        elif write_kind == "relay":
+            monkeypatch.setattr(
+                setup_runner_module,
+                "open_relay_intents",
+                lambda state: [{
+                    "relay_intent_id": "REL-776",
+                    "handoff_text": "继续执行上一轮真实任务。",
+                }],
+            )
+            invoke = lambda: rt.setup_runner._write_relay_handoff_inputs(
+                776, "relay", rt.sm.load())
+            expected = "relay_handoff 写入失败"
+        else:
+            invoke = lambda: rt.setup_runner._write_setup_facts(776, [{
+                "role": "system",
+                "content": "起手事实",
+            }])
+            expected = "setup_fact 写入失败"
+
+        with pytest.raises(RuntimeError, match=expected):
+            invoke()
+
+        assert rt.sm.get("base.meta.last_error") == expected
+
+    @pytest.mark.parametrize("mode", ["exception", "rejected"])
+    def test_spec776_stale_call_transient_cleanup_fails_closed(
+            self, tmp_path, mode):
+        rt = self._make_runtime(tmp_path)
+
+        class Context:
+            @staticmethod
+            def clear_stale_call_transients(round_num):
+                if mode == "exception":
+                    raise OSError("cache unreadable")
+                return {"status": "rejected", "reason": "invalid_round"}
+
+        rt.setup_runner.ctx_store = Context()
+
+        with pytest.raises(RuntimeError, match="旧调用临时语料清理失败"):
+            rt.setup_runner._clear_stale_call_transients(776)
+
+        assert rt.sm.get("base.meta.last_error") == "旧调用临时语料清理失败"

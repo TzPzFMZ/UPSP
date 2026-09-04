@@ -435,16 +435,32 @@ def test_spec744_mount_none_has_zero_recall_side_effects(recall_layout):
     _add_ltm(env, "Pinned", mem_id, weight=5)
     before = env["store"].snapshot_stm_files()
     before_ltm = env["store"].snapshot_ltm_files()
+    removed = []
+
+    class ResidentStore:
+        @staticmethod
+        def remove_matching(*, item_type, item_id, target_file=""):
+            removed.append((item_type, item_id, target_file))
+            return {"status": "applied", "revision": 1}
+
+    class Assembler:
+        resident_store = ResidentStore()
+
     receipts, mounts, unmounts = apply_memory_content_read_requests(
         [{"mem_id": mem_id, "mount_mode": "none"}],
         {"presence": {"confirmed_subjects": []}},
-        {"memory_store": env["store"], "memory_recall": _processor(env)},
+        {
+            "memory_store": env["store"],
+            "memory_recall": _processor(env),
+            "resident_store": Assembler.resident_store,
+        },
         round_num=52,
         memory_heat_boosted_ids=set(),
     )
     assert receipts[0]["status"] == "accepted"
     assert mounts == []
     assert unmounts == [mem_id]
+    assert removed == [("memory", mem_id, "")]
     assert env["store"].snapshot_stm_files() == before
     assert env["store"].snapshot_ltm_files() == before_ltm
 

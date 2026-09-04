@@ -122,8 +122,8 @@ def test_spec763_calendar_day_guide_aggregates_real_backend_path(
         def __init__(self):
             self.writes = []
 
-        def write_focused_entry(self, focus, content):
-            self.writes.append((dict(focus), content))
+        def commit_write_scope(self, scope, content):
+            self.writes.append((dict(scope), content))
             return str(tmp_path / "D-active-calendar.md")
 
     class StateStore:
@@ -175,7 +175,8 @@ def test_spec763_calendar_day_guide_aggregates_real_backend_path(
         evidence_context={
             "round_num": 650,
             "chronicle_store": chronicle,
-            "chronicle_focus": {
+            "chronicle_write_scope": {
+                "schema_version": "chronicle_write_scope.v1",
                 "layer": "daily",
                 "round_num": 650,
                 "round_type": "rhythm",
@@ -227,7 +228,7 @@ def test_spec763_calendar_day_maintenance_exception_is_not_swallowed(
     from logic.guide_submit import _apply_rhythm_guide_submission
 
     class ChronicleStore:
-        def write_focused_entry(self, focus, content):
+        def commit_write_scope(self, scope, content):
             return str(tmp_path / "D-active-calendar.md")
 
     def fail_maintenance(self, **kwargs):
@@ -250,7 +251,8 @@ def test_spec763_calendar_day_maintenance_exception_is_not_swallowed(
             evidence_context={
                 "round_num": 650,
                 "chronicle_store": ChronicleStore(),
-                "chronicle_focus": {
+                "chronicle_write_scope": {
+                    "schema_version": "chronicle_write_scope.v1",
                     "layer": "daily",
                     "round_num": 650,
                     "round_type": "rhythm",

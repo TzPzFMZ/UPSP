@@ -1,13 +1,15 @@
 """General tool dispatch helpers for reaction-loop external actions."""
 import hashlib
 import json
-import re
+import os
+from pathlib import Path
 
 from logic.execution_capability import check_general_tool_request
 from logic.execution_permission import (
     GUARDED,
     LIMITED_BLOCKED_TOOLS,
     load_execution_permission_level,
+    normalize_execution_permission_level,
 )
 from logic.file_read_window import (
     FILE_READ_BATCH_BUDGET_EXHAUSTED,
@@ -16,6 +18,7 @@ from logic.file_read_window import (
 )
 from logic.general_tools import (
     UNRESTRICTED_ALLOWED_ROOTS,
+    WORKSPACE_ROOT,
     execute_general_tool_call,
     format_general_tool_fact,
     format_general_tool_material_entry,
@@ -43,7 +46,24 @@ DUPLICATE_GENERAL_TOOL_REASONS = {
     WEB_BACKEND_EXHAUSTED_DUPLICATE,
 }
 
-SUCCESS_STATUSES = {"ok", "success", "accepted", "applied", "guide_loaded"}
+SUCCESS_STATUSES = {"ok", "success", "accepted", "applied", "completed", "guide_loaded"}
+
+DISPATCH_STAGE_CAPABILITY_GATE = "capability_gate"
+DISPATCH_STAGE_APPROVAL = "approval"
+DISPATCH_STAGE_FRAME_BUDGET = "frame_budget"
+DISPATCH_STAGE_HANDLER = "handler"
+DISPATCH_STAGE_DUPLICATE_GUARD = "duplicate_guard"
+DISPATCH_STAGES = {
+    DISPATCH_STAGE_CAPABILITY_GATE,
+    DISPATCH_STAGE_APPROVAL,
+    DISPATCH_STAGE_FRAME_BUDGET,
+    DISPATCH_STAGE_HANDLER,
+    DISPATCH_STAGE_DUPLICATE_GUARD,
+}
+APPROVAL_REJECTION_REASONS = {
+    "user_skipped_tool_approval",
+    "tool_approval_cancelled",
+}
 
 SIGNATURE_IGNORED_FIELDS = {
     "call_id",
@@ -56,7 +76,6 @@ SIGNATURE_IGNORED_FIELDS = {
     "risk",
     "risk_level",
     "source",
-    "tool_family",
     "tool_class",
     "active_backend",
     "backend_type",
@@ -74,8 +93,8 @@ SIGNATURE_FIELDS_BY_TOOL = {
         "root", "query", "file_pattern", "recursive", "case_sensitive",
         "context_lines", "max_results", "encoding",
     ),
-    "file_edit": ("path", "patch"),
-    "file_write": ("path", "content"),
+    "file_edit": ("path", "patch", "encoding"),
+    "file_write": ("path", "content", "encoding"),
     "web_fetch": (
         "url", "char_start", "find_text", "source_content_sha256",
     ),
@@ -93,17 +112,19 @@ SIGNATURE_FIELDS_BY_TOOL = {
 
 
 class GeneralToolDispatcher:
-    def __init__(self, load_guide_fn=None, execute_fn=None, approval_fn=None):
+    def __init__(
+            self, load_guide_fn=None, execute_fn=None, approval_fn=None,
+            action_recovery_store=None):
         self.load_guide_fn = load_guide_fn
         self.execute_fn = execute_fn or execute_general_tool_call
         self.approval_fn = approval_fn
+        self.action_recovery_store = action_recovery_store
 
     @staticmethod
     def _base_result(tool_id, status, source="general_tool_request", reason=""):
         meta = tool_metadata_for(tool_id)
         result = {
             "tool_id": tool_id,
-            "tool_family": meta.get("tool_family", ""),
             "tool_class": meta.get("tool_class", ""),
             "status": status,
             "source": source,
@@ -139,7 +160,48 @@ class GeneralToolDispatcher:
             traced.setdefault(key, value)
         return traced
 
-    def _execute_call(self, call, sandbox_grant=None):
+    @staticmethod
+    def _with_dispatch_stage(result, stage):
+        staged = dict(result or {})
+        staged["dispatch_stage"] = stage
+        return staged
+
+    @classmethod
+    def _dispatch_stage(cls, result):
+        result = result or {}
+        explicit = str(result.get("dispatch_stage") or "").strip()
+        if explicit:
+            return explicit if explicit in DISPATCH_STAGES else ""
+        reason = str(result.get("reason") or "").strip()
+        if isinstance(result.get("capability_gate"), dict):
+            return DISPATCH_STAGE_CAPABILITY_GATE
+        if reason == FILE_READ_BATCH_BUDGET_EXHAUSTED:
+            return DISPATCH_STAGE_FRAME_BUDGET
+        if reason in APPROVAL_REJECTION_REASONS:
+            return DISPATCH_STAGE_APPROVAL
+        if reason in DUPLICATE_GENERAL_TOOL_REASONS:
+            return DISPATCH_STAGE_DUPLICATE_GUARD
+        return DISPATCH_STAGE_HANDLER
+
+    @classmethod
+    def _prior_result_reusable(cls, result, execution_permission_level):
+        stage = cls._dispatch_stage(result)
+        if stage == DISPATCH_STAGE_HANDLER:
+            return True
+        return (
+            stage == DISPATCH_STAGE_APPROVAL
+            and execution_permission_level == GUARDED
+        )
+
+    @classmethod
+    def _reusable_prior_results(cls, prior_results, execution_permission_level):
+        return [
+            item for item in (prior_results or [])
+            if isinstance(item, dict)
+            and cls._prior_result_reusable(item, execution_permission_level)
+        ]
+
+    def _execute_call(self, call, sandbox_grant=None, action_recovery=None):
         if sandbox_grant:
             roots = sandbox_roots_for_tool(sandbox_grant, call.get("tool_id"))
             denied_roots = sandbox_denied_roots_for_tool(
@@ -147,7 +209,10 @@ class GeneralToolDispatcher:
             )
             if self.execute_fn is execute_general_tool_call:
                 return self.execute_fn(
-                    call, allowed_roots=roots, denied_roots=denied_roots
+                    call,
+                    allowed_roots=roots,
+                    denied_roots=denied_roots,
+                    action_recovery=action_recovery,
                 )
             try:
                 return self.execute_fn(
@@ -160,7 +225,9 @@ class GeneralToolDispatcher:
                     return self.execute_fn(call)
         if self.execute_fn is execute_general_tool_call:
             return self.execute_fn(
-                call, allowed_roots=UNRESTRICTED_ALLOWED_ROOTS
+                call,
+                allowed_roots=UNRESTRICTED_ALLOWED_ROOTS,
+                action_recovery=action_recovery,
             )
         try:
             return self.execute_fn(call, allowed_roots=UNRESTRICTED_ALLOWED_ROOTS)
@@ -214,6 +281,7 @@ class GeneralToolDispatcher:
             if decision == "skip" else "tool_approval_cancelled"
         )
         result = self._base_result(tool_id, "blocked", reason=reason)
+        result = self._with_dispatch_stage(result, DISPATCH_STAGE_APPROVAL)
         result["error_hint"] = {
             "kind": "permission_security",
             "retry": "after_new_authorization",
@@ -264,10 +332,26 @@ class GeneralToolDispatcher:
 
     @staticmethod
     def _canonical_shell_command(command):
-        text = str(command or "").strip()
-        text = re.sub(r"\s+", " ", text)
-        text = re.sub(r"\s+2\s*>\s*&\s*1\s*$", "", text, flags=re.IGNORECASE)
-        return text
+        return str(command or "").strip()
+
+    @staticmethod
+    def _canonical_shell_cwd(cwd, sandbox_grant=None):
+        roots = sandbox_roots_for_tool(
+            sandbox_grant, "shell_command") if sandbox_grant else ()
+        base = Path(roots[0] if roots else WORKSPACE_ROOT)
+        raw = str(cwd or "").strip().strip("`").strip('"').strip("'")
+        path = Path(raw) if raw else base
+        if not path.is_absolute():
+            path = base / path
+        return os.path.normcase(str(path.resolve())).replace("\\", "/")
+
+    @classmethod
+    def _normalize_effect_identity(cls, tool_id, request, sandbox_grant=None):
+        normalized = dict(request or {})
+        if tool_id == "shell_command":
+            normalized["cwd"] = cls._canonical_shell_cwd(
+                normalized.get("cwd"), sandbox_grant)
+        return normalized
 
     @classmethod
     def _signature_payload(cls, tool_id, request):
@@ -280,6 +364,8 @@ class GeneralToolDispatcher:
                     continue
                 if tool_id == "shell_command" and key == "command":
                     values[key] = cls._canonical_shell_command(value)
+                elif tool_id == "shell_command" and key == "cwd":
+                    values[key] = cls._canonical_shell_cwd(value)
                 else:
                     values[key] = cls._canonical_value(value)
             return {"tool_id": tool_id, "arguments": values}
@@ -353,14 +439,24 @@ class GeneralToolDispatcher:
         decorated["duplicate_guard_payload"] = guard_payload
         return decorated
 
-    @staticmethod
-    def _find_prior_duplicate(signature, prior_results):
-        for item in prior_results or []:
-            if not isinstance(item, dict):
-                continue
-            if item.get("tool_signature") == signature:
-                return item
-        return None
+    @classmethod
+    def _find_prior_duplicate(cls, signature, prior_results):
+        matches = [
+            item for item in (prior_results or [])
+            if isinstance(item, dict)
+            and item.get("tool_signature") == signature
+        ]
+        handler_matches = [
+            item for item in matches
+            if cls._dispatch_stage(item) == DISPATCH_STAGE_HANDLER
+        ]
+        if handler_matches:
+            successful = [
+                item for item in handler_matches
+                if str(item.get("status") or "").strip() in SUCCESS_STATUSES
+            ]
+            return (successful or handler_matches)[-1]
+        return matches[-1] if matches else None
 
     @staticmethod
     def _find_prior_duplicates(signature, prior_results):
@@ -409,6 +505,7 @@ class GeneralToolDispatcher:
         else:
             reason = DUPLICATE_TOOL_FAILURE_REPEATED
         result = cls._base_result(tool_id, "rejected", reason=reason)
+        result["dispatch_stage"] = DISPATCH_STAGE_DUPLICATE_GUARD
         result["tool_signature"] = signature
         result["tool_signature_payload"] = cls._signature_payload(
             tool_id, request or {}
@@ -448,6 +545,7 @@ class GeneralToolDispatcher:
         sandbox_grant,
         path_alias_info,
         file_read_batch,
+        runtime_context,
     ):
         if file_read_batch.exhausted_for(tool_id):
             result = self._base_result(
@@ -455,6 +553,7 @@ class GeneralToolDispatcher:
                 "rejected",
                 reason=file_read_batch.exhaustion_reason,
             )
+            result["dispatch_stage"] = DISPATCH_STAGE_FRAME_BUDGET
             result.update(file_read_batch.rejection_details())
         else:
             call = self._request_with_runtime_context(
@@ -462,7 +561,21 @@ class GeneralToolDispatcher:
                 tool_id,
                 file_read_batch.context_for(tool_id),
             )
-            result = self._execute_call(call, sandbox_grant=sandbox_grant)
+            action_recovery = None
+            if self.action_recovery_store is not None:
+                action_recovery = {
+                    "store": self.action_recovery_store,
+                    "request_sha256": signature,
+                    "runtime_context": dict(runtime_context or {}),
+                    "call_id": str(request.get("call_id") or ""),
+                }
+            result = self._execute_call(
+                call,
+                sandbox_grant=sandbox_grant,
+                action_recovery=action_recovery,
+            )
+            result = self._with_dispatch_stage(
+                result, DISPATCH_STAGE_HANDLER)
         result = self._with_trace(result, request)
         result = self._with_path_alias_info(result, path_alias_info)
         result = self._decorate_signatures(result, tool_id, request, signature)
@@ -471,6 +584,9 @@ class GeneralToolDispatcher:
     def handle_requests(self, requests, active_guides, prior_results=None, runtime_context=None):
         results = []
         known_results = list(prior_results or [])
+        frozen_recovery = (runtime_context or {}).get("action_recovery_results")
+        if requests and isinstance(frozen_recovery, list):
+            known_results.extend(frozen_recovery)
         file_read_batch = FileReadBatchBudget(runtime_context)
         sandbox_grant = load_sandbox_grant()
         execution_permission_level = (
@@ -481,6 +597,8 @@ class GeneralToolDispatcher:
             or getattr(self, "execution_permission_level", None)
             or load_execution_permission_level()
         )
+        execution_permission_level = normalize_execution_permission_level(
+            execution_permission_level)
         for request in requests or []:
             if isinstance(request, dict):
                 raw_tool_id = request.get("tool_id", "")
@@ -489,35 +607,35 @@ class GeneralToolDispatcher:
                 request = {"tool_id": raw_tool_id}
             tool_id = normalize_tool_id(raw_tool_id)
             meta = tool_metadata_for(tool_id)
-            if not meta or meta.get("tool_family") != "general_tool":
-                results.append(self._with_trace(
-                    self._base_result(
+            if not meta or meta.get("execution_route") != "host_dispatch":
+                results.append(self._with_dispatch_stage(
+                    self._with_trace(self._base_result(
                         tool_id,
                         "rejected",
                         reason="unknown_general_tool",
-                    ),
-                    request,
+                    ), request),
+                    DISPATCH_STAGE_CAPABILITY_GATE,
                 ))
                 continue
             if meta.get("status") != "enabled":
-                results.append(self._with_trace(
-                    self._base_result(
+                results.append(self._with_dispatch_stage(
+                    self._with_trace(self._base_result(
                         tool_id,
                         "rejected",
                         reason="general_tool_not_enabled",
-                    ),
-                    request,
+                    ), request),
+                    DISPATCH_STAGE_CAPABILITY_GATE,
                 ))
                 continue
             backend_issue = self._backend_readiness_issue(tool_id)
             if backend_issue:
-                results.append(self._with_trace(
-                    self._base_result(
+                results.append(self._with_dispatch_stage(
+                    self._with_trace(self._base_result(
                         tool_id,
                         "rejected",
                         reason=backend_issue,
-                    ),
-                    request,
+                    ), request),
+                    DISPATCH_STAGE_CAPABILITY_GATE,
                 ))
                 continue
             request, path_alias_info = normalize_sandbox_tool_path_alias(
@@ -525,40 +643,9 @@ class GeneralToolDispatcher:
                 tool_id,
                 request,
             )
+            request = self._normalize_effect_identity(
+                tool_id, request, sandbox_grant)
             signature = self._request_signature(tool_id, request)
-            duplicate = self._find_prior_duplicate(signature, known_results)
-            if duplicate:
-                web_skip_backend_ids = self._web_duplicate_retry_skip_ids(
-                    tool_id,
-                    signature,
-                    known_results,
-                )
-                if web_skip_backend_ids:
-                    request = dict(request)
-                    request["_web_skip_backend_ids"] = web_skip_backend_ids
-                else:
-                    duplicate_for_result = duplicate
-                    if web_backend_ids_for_tool(tool_id):
-                        prior_duplicates = self._find_prior_duplicates(
-                            signature,
-                            known_results,
-                        )
-                        duplicate_for_result = (
-                            prior_duplicates[-1] if prior_duplicates else duplicate
-                        )
-                    result = self._with_trace(
-                        self._duplicate_result(
-                            tool_id,
-                            duplicate_for_result,
-                            signature,
-                            request=request,
-                        ),
-                        request,
-                    )
-                    result = self._with_path_alias_info(result, path_alias_info)
-                    results.append(result)
-                    known_results.append(result)
-                    continue
             decision = check_general_tool_request(
                 request,
                 phase="reaction",
@@ -573,6 +660,7 @@ class GeneralToolDispatcher:
                     reason=decision.get("reason") or "capability_denied",
                 )
                 result["capability_gate"] = decision
+                result["dispatch_stage"] = DISPATCH_STAGE_CAPABILITY_GATE
                 for key, value in (decision.get("details") or {}).items():
                     if key not in result and value not in (None, ""):
                         result[key] = value
@@ -587,6 +675,34 @@ class GeneralToolDispatcher:
                 results.append(result)
                 known_results.append(results[-1])
                 continue
+            reusable_results = self._reusable_prior_results(
+                known_results,
+                execution_permission_level,
+            )
+            duplicate = self._find_prior_duplicate(signature, reusable_results)
+            if duplicate:
+                web_skip_backend_ids = self._web_duplicate_retry_skip_ids(
+                    tool_id,
+                    signature,
+                    reusable_results,
+                )
+                if web_skip_backend_ids:
+                    request = dict(request)
+                    request["_web_skip_backend_ids"] = web_skip_backend_ids
+                else:
+                    result = self._with_trace(
+                        self._duplicate_result(
+                            tool_id,
+                            duplicate,
+                            signature,
+                            request=request,
+                        ),
+                        request,
+                    )
+                    result = self._with_path_alias_info(result, path_alias_info)
+                    results.append(result)
+                    known_results.append(result)
+                    continue
             if (
                     execution_permission_level == GUARDED
                     and tool_id in LIMITED_BLOCKED_TOOLS):
@@ -607,6 +723,7 @@ class GeneralToolDispatcher:
                 sandbox_grant,
                 path_alias_info,
                 file_read_batch,
+                runtime_context,
             )
             results.append(result)
             known_results.append(result)

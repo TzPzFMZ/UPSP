@@ -30,25 +30,21 @@ UPSP 的固定运行不是普通 skill，也不是任意 OS 脚本拼接。当�
 
 ---
 
-## 三、工具族与工作流
+## 三、工具姿态与工作流
 
-工具族决定工具碰触边界：
-
-| tool_family | 中文名 | 典型位置 |
-|-------------|--------|----------|
-| protocol_tool | 协议工具 | 协议工作流内，操作 UPSP 内环境 |
-| general_tool | 通用工具 | 接触外部文件、网页、shell、连接器、子 agent |
-| substrate_tool | 基座工具 | runtime、heartbeat、context assembler、迁移脚本、测试门禁 |
-
-工具姿态决定注意力与焦点：
+模型只看三种工具姿态；宿主分发由注册表中的隐藏 `execution_route` 决定：
 
 | tool_class | 中文名 | 工作流含义 |
 |------------|--------|------------|
-| focus_tool | 焦点工具 | 单步单焦点，表示注意力独占或高副作用操作位；`container_focus` 改 WB focus；`memory_container_create/write` 写容器正文并更新 MEM 引用关系；旧 `memory_link_update add/set` 不再是正常挂接路径 |
-| sync_tool | 同步工具 | 不占焦点，结构化声明，脚本串行校验落盘 |
-| read_tool | 只读工具 | 不写目标边界，只做资料语料或只读装配 |
+| read_tool | 读工具 | 请求读取；允许 Runtime 执行该读取已规定的召回、加热、续期和常驻生命周期 |
+| sync_tool | 同步工具 | 修改位格内部环境；结构化声明，处理器串行校验并以事务落盘 |
+| action_tool | 行动工具 | 操作宿主或外部环境，受权限、审批和 sandbox grant 约束 |
 
-LLM 只声明 `tool_id`。工具族、工具姿态、风险、handler 和 result_kind 由注册表查出。不要要求 LLM 先声明工具族再声明子工具。
+隐藏 `execution_route=internal_processor|host_dispatch|substrate` 只供 Runtime 路由，不进入模型参数。多个合法同步工具可以同 Frame 分别结算。
+
+LLM 只声明 `tool_id`。工具姿态、风险、handler 和 result_kind 由注册表查出。不要要求 LLM 先声明内部执行接线再声明工具。
+
+容器创建与续写是位格内同步事务：`memory_container_create` 原子创建正文、挂接与常驻引用；`memory_container_write` 只写本 Frame 起点已经装配的目标。已有容器应先用 `container_read` 读取并登记常驻，下一 Frame 看见完整正文后再续写；同一 response 刚读取或创建的目标不能立即取得写权。
 
 ---
 
@@ -65,9 +61,9 @@ Spec134 之后，反应步工具入口可以由 provider-native tool calling 承
 
 ---
 
-## 五、通用工具外部行动总线
+## 五、宿主工具执行总线
 
-`general_tool` 是 UPSP 的外部行动权工具族，不等于 MCP。MCP、connector、plugin、adapter 与 Python handler 只是执行后端。Spec 069 开通 `file_read`，Spec 070 以 `public_web_read` 开通 `web_fetch/web_search`，Spec 071 以 `workspace_patch_allowlist` 开通 `file_edit/file_write`，Spec 072 以 `workspace_shell_allowlist` 开通 `shell_command`，Spec 073 以 `subagent_task_scope` 开通 `subagent_dispatch`，Spec339 开通旧 `file_search`；Spec752 将搜索拆为路径发现 `file_glob` 与字面正文检索 `file_grep`。Spec756 恢复 `shell_command`：limited 不导出、guarded 逐次审批、unlimited 直接执行；grant 只限制工具导出与初始 cwd，不是子进程文件系统沙箱。
+`host_dispatch` 是 Runtime 的宿主执行接线，不是模型可见工具姿态，也不等于 MCP。MCP、connector、plugin、adapter 与 Python handler 只是可替换的执行后端。Spec 069 开通 `file_read`，Spec 070 以 `public_web_read` 开通 `web_fetch/web_search`，Spec 071 以 `workspace_patch_allowlist` 开通 `file_edit/file_write`，Spec 072 以 `workspace_shell_allowlist` 开通 `shell_command`，Spec 073 以 `subagent_task_scope` 开通 `subagent_dispatch`，Spec339 开通旧 `file_search`；Spec752 将搜索拆为路径发现 `file_glob` 与字面正文检索 `file_grep`。Spec756 恢复 `shell_command`：limited 不导出、guarded 逐次审批、unlimited 直接执行；grant 只限制工具导出与初始 cwd，不是子进程文件系统沙箱。
 
 通用工具独立链路为：
 
@@ -76,13 +72,13 @@ Spec134 之后，反应步工具入口可以由 provider-native tool calling 承
 3. `general_tool_call`：门禁放行后，Runtime 根据注册表 `backend_candidates / active_backend` 取出当前 `backend_type / handler / permission_scope`，形成内部执行对象。
 4. `general_tool_result`：脚本返回结构化结果，供下一次反应迭代读取；执行事实写成 `kind=tool_fact`，只读正文/候选内容写成 `kind=material` 或既有 CONTENT 挂载。
 
-`general_tool_result` 不叫 `protocol_tool_receipt`，也不进入 `tool_transaction_audit`。`backend_type=python/adapter/mcp/connector/plugin` 只表示执行后端，不改变工具族身份。`file_read/file_glob/file_grep` 受 read allowlist 约束，并可通过 `persona://` 观察全部 PID 的公共数据；私密、凭据和 `.git` 仍拒绝。`file_glob` 只匹配文件名；`file_grep` 只做字面正文检索，覆盖不完整或一次零命中不得声称不存在。三者的大正文或候选资料不拼入 `tool_fact`。泛用读取记忆文件是无生命周期副作用的 `raw_inspection`；真实召回仍走 `memory_content_read`。`file_edit/file_write`、Shell cwd/显式目标和子 agent `write_scope` 都拒绝 persona 真源。其余 web、shell 与子 agent 风险门保持原合同。
+`general_tool_result` 不叫 `protocol_tool_receipt`，也不进入 `tool_transaction_audit`。`backend_type=python/adapter/mcp/connector/plugin` 只表示执行后端，不改变模型可见的 read/action 姿态。`file_read/file_glob/file_grep` 受 read allowlist 约束，并可通过 `persona://` 观察全部 PID 的公共数据；私密、凭据和 `.git` 仍拒绝。`file_glob` 只匹配文件名；`file_grep` 只做字面正文检索，覆盖不完整或一次零命中不得声称不存在。三者的大正文或候选资料不拼入 `tool_fact`。泛用读取记忆文件是无生命周期副作用的 `raw_inspection`；真实召回仍走 `memory_content_read`。`file_edit/file_write`、Shell cwd/显式目标和子 agent `write_scope` 都拒绝 persona 真源。其余 web、shell 与子 agent 风险门保持原合同。
 
 ---
 
 ## 六、工具事务验账边界
 
-`tool_transaction_audit` 是 `substrate_tool / sync_tool / audit / high`。它由 Runtime 在协议工具 processor 全部完成后执行，检查 native projection / processor / receipt 是否闭合；输出写入 `round_{N}.jsonl` 的 `runtime_audit` 事件。
+`tool_transaction_audit` 是 Runtime 内部基座审计。它在协议工具 processor 全部完成后检查 native projection / processor / receipt 是否闭合；输出写入 `round_{N}.jsonl` 的 `runtime_audit` 事件，不作为模型工具导出。
 
 开发与发布验收由宿主直接执行 pytest、schema、编码和一致性审计，并保存命令输出、Spec verification receipt 与已有 Runtime／persona 证据。当前不把这些外部检查包装成 Runtime 工具，也不生成独立 `validation_audit.jsonl`。
 

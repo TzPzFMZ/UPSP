@@ -145,7 +145,6 @@ def settle_relay_intent(sm, request, *, round_num):
     pool = list(_load_pool(sm))
     base = {
         "tool_id": "relay_intent_settle",
-        "tool_family": "protocol_tool",
         "protocol_tool_receipt": True,
         "relay_intent_id": intent_id,
         "status_requested": status,
@@ -191,7 +190,6 @@ def settle_open_relay_intents(sm, *, status, round_num, note="", source="runtime
     if final_status not in SETTLED_STATUSES:
         return {
             "tool_id": "relay_intent_settle",
-            "tool_family": "protocol_tool",
             "protocol_tool_receipt": True,
             "status": "rejected",
             "reason": "invalid_relay_intent_status",
@@ -219,7 +217,6 @@ def settle_open_relay_intents(sm, *, status, round_num, note="", source="runtime
     _store_pool(sm, pool)
     return {
         "tool_id": "relay_intent_settle",
-        "tool_family": "protocol_tool",
         "protocol_tool_receipt": True,
         "status": "applied",
         "reason": "open_relay_intents_settled",

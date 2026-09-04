@@ -87,8 +87,6 @@
       "level": "awake",
       "entered_at": null
     },
-    "focus": null,
-    "old_focus": null,
     "runtime": {
       "phase": "idle",
       "standby_countdown": 0,

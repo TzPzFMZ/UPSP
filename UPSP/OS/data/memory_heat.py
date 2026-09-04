@@ -97,7 +97,7 @@ class MemoryHeat:
         return changed
 
     # ==============================================================
-    # 热度衰减（每轮善后步后调用）
+    # 热度衰减（合法 Reaction 语义终态调用）
     # ==============================================================
 
     def tick_decay(self, round_num=None):
@@ -256,27 +256,9 @@ class MemoryHeat:
     # ==============================================================
 
 
-    # ==============================================================
-    # 遗忘分流查询
-    # ==============================================================
-
-
     def remove_entry(self, mem_id):
         """从 heat.json 中删除条目"""
         heat = self.load_heat()
         if mem_id in heat.get("entries", {}):
             del heat["entries"][mem_id]
             self.save_heat(heat)
-
-    def has_pending_degrade(self):
-        """检查是否有需主动唤醒处理的未入库降格条目（心跳用）"""
-        heat = self.load_heat()
-        try:
-            from data.memory_store import MemoryStore, memory_is_admitted
-            meta = MemoryStore().active_ltm_meta_by_id()
-        except Exception:
-            return False
-        for mem_id, info in heat.get("entries", {}).items():
-            if info.get("degrade") and not memory_is_admitted(meta.get(mem_id)):
-                return True
-        return False

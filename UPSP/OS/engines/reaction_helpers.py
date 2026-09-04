@@ -37,7 +37,6 @@ def reaction_identity_has_blocked_activity(parsed_reaction):
         "general_tool_requests",
         "relation_card_declarations",
         "memory_write_declarations",
-        "memory_annotation_declarations",
         "memory_link_update_declarations",
         "memory_container_create_declarations",
         "memory_container_write_declarations",
@@ -46,7 +45,6 @@ def reaction_identity_has_blocked_activity(parsed_reaction):
         "chronicle_write_declarations",
         "alert_mode_settle_declarations",
         "fault_record_declarations",
-        "container_focus_declarations",
     )
     return any(parsed_reaction.get(key) for key in blocked_keys)
 
@@ -117,7 +115,6 @@ def reaction_loop_has_other_activity(parsed_reaction):
         "tool_summaries",
         "relation_card_declarations",
         "memory_write_declarations",
-        "memory_annotation_declarations",
         "memory_link_update_declarations",
         "memory_container_create_declarations",
         "memory_container_write_declarations",
@@ -126,7 +123,6 @@ def reaction_loop_has_other_activity(parsed_reaction):
         "chronicle_write_declarations",
         "alert_mode_settle_declarations",
         "fault_record_declarations",
-        "container_focus_declarations",
     )
     return any(parsed_reaction.get(key) for key in activity_keys)
 
@@ -138,7 +134,6 @@ def reaction_loop_has_protocol_submission_activity(parsed_reaction):
         "protocol_tool_submissions",
         "relation_card_declarations",
         "memory_write_declarations",
-        "memory_annotation_declarations",
         "memory_link_update_declarations",
         "memory_container_create_declarations",
         "memory_container_write_declarations",
@@ -147,7 +142,6 @@ def reaction_loop_has_protocol_submission_activity(parsed_reaction):
         "chronicle_write_declarations",
         "alert_mode_settle_declarations",
         "fault_record_declarations",
-        "container_focus_declarations",
     )
     return any(parsed_reaction.get(key) for key in submission_keys)
 
@@ -398,6 +392,7 @@ def _format_task_guide_fact(receipt, fact_context=None):
     task_completion = receipt.get("task_completion")
     task_update = receipt.get("task_update")
     pending_input_update = receipt.get("pending_input_update")
+    task_plan_revision = receipt.get("task_plan_revision")
     submissions = _guide_submissions(receipt)
     option_ids = _submission_option_ids(submissions)
     if isinstance(task_completion, dict):
@@ -412,6 +407,14 @@ def _format_task_guide_fact(receipt, fact_context=None):
     elif isinstance(pending_input_update, dict):
         title = "本轮任务输入整合事实"
         status_line = "清单状态：已处理 pending input 更新。"
+    elif isinstance(task_plan_revision, dict):
+        title = "本轮任务计划修订事实"
+        action = str(task_plan_revision.get("action") or "").strip()
+        status_line = (
+            "清单状态：工作计划结构已更新。"
+            if action == "applied" else
+            "清单状态：提交与当前工作计划一致，无需改写。"
+        )
     elif isinstance(task_update, dict):
         title = "本轮任务清单更新事实"
         status_line = "清单状态：已更新 task guide 进度。"
@@ -422,6 +425,10 @@ def _format_task_guide_fact(receipt, fact_context=None):
     if status_line:
         lines.append(status_line)
     _append_task_guide_snapshot(lines, task_id, guide)
+    if isinstance(task_plan_revision, dict):
+        _append_fact_line(lines, "修订动作", task_plan_revision.get("action"))
+        _append_fact_line(lines, "修订前 SHA-256", task_plan_revision.get("before_sha256"))
+        _append_fact_line(lines, "修订后 SHA-256", task_plan_revision.get("after_sha256"))
     if not guide:
         if isinstance(task_update, dict):
             _append_records(
@@ -880,13 +887,14 @@ def format_protocol_tool_fact(receipt, fact_context=None):
             lines.extend(_memory_body_too_long_fact_lines(reason, receipt))
         elif tool_id == "memory_write" and reason in SUBJECT_RESOLUTION_REASONS:
             lines.extend(_memory_subject_fact_lines(reason, receipt))
-        elif tool_id == "chronicle_write" and reason == "no_active_chronicle_focus":
+        elif tool_id == "chronicle_write" and reason == (
+                "no_active_chronicle_write_scope"):
             call_id = _fact_value(receipt.get("call_id"))
             lines.append("工具：chronicle_write。")
             if call_id:
                 lines.append(f"调用编号：{call_id}。")
-            lines.append("失败原因：no_active_chronicle_focus。")
-            lines.append("当前没有编年史写入焦点；不要重复提交当前编年 guide 选项。")
+            lines.append("失败原因：no_active_chronicle_write_scope。")
+            lines.append("当前没有编年史写入事务范围；不要重复提交当前编年 guide 选项。")
             lines.append(
                 "请消费已有工具事实并继续推进；完成时直接自然语言回复用户，"
                 "需要跨轮继续才调用 reaction_finalize(handoff_text)。"
@@ -897,7 +905,6 @@ def format_protocol_tool_fact(receipt, fact_context=None):
     if str(receipt.get("reason") or "") in {
             "duplicate_protocol_read_satisfied",
             "duplicate_protocol_read_failure_repeated",
-            "duplicate_container_focus_satisfied",
     }:
         lines.append("重复命中：本轮已有同一协议工具结果。")
         duplicate_of = _fact_value(receipt.get("duplicate_of_call_id"))
@@ -1072,7 +1079,6 @@ def format_native_tool_failure_feedback(item, reason):
         "web_backend_exhausted_duplicate",
         "duplicate_protocol_read_satisfied",
         "duplicate_protocol_read_failure_repeated",
-        "duplicate_container_focus_satisfied",
     }
     lines = [
         "- kind: native_tool_result",
@@ -1125,7 +1131,6 @@ def native_tool_visible_label(tool_id):
         "file_edit": "文件编辑工具",
         "shell_command": "shell 命令工具",
         "subagent_dispatch": "子 agent 调度工具",
-        "container_focus": "容器焦点工具",
         "container_read": "容器读取工具",
         "memory_write": "记忆写入工具",
     }
@@ -1167,6 +1172,16 @@ def _candidate_keywords_list_example(raw_value):
 def native_tool_feedback_action(reason, item):
     """按失败原因给出下一迭代动作提示。"""
     field = str(item.get("field") or "").strip()
+    if reason == "shell_backend_unavailable":
+        return "stop_shell_calls_and_report_host_capability", [
+            "当前宿主没有已验收的 Shell 后端；停止继续调用 shell_command。",
+            "不要通过改写命令或反复重试猜测方言；如实报告宿主能力缺失，并使用已导出的其他工具继续可完成部分。",
+        ]
+    if reason == "shell_multiline_unsupported":
+        return "rewrite_shell_as_single_line", [
+            "shell_command 只接受单行 command；不要用换行拼接多条命令。",
+            "需要多步且前项失败即停止时改用 &&；复杂流程先写入显式脚本文件，再以单行命令执行。",
+        ]
     if str(item.get("tool_id") or "").strip() == "memory_write" and reason in SUBJECT_RESOLUTION_REASONS:
         submitted, confirmed = _memory_subject_values(item)
         candidate = relation_public_name(_fact_value(item.get("subject")))
@@ -1322,17 +1337,6 @@ def native_tool_feedback_action(reason, item):
             "当前 URL 或查询的已知网页后端都已经失败；原样重试不会产生新证据。",
             "请换 URL、换搜索词、换非网页证据来源，或自然说明当前无法继续的真实原因。",
         ]
-    if reason == "duplicate_container_focus_satisfied":
-        return "consume_existing_focus_or_finalize", [
-            "本轮同一容器焦点已经打开成功；不要重复调用 container_focus.open。",
-            "请使用当前已可见的 WB focus 继续 memory_container_write；完成时直接自然语言回复用户。",
-        ]
-    if reason == "focus_tool_iteration_conflict":
-        accepted = safe_feedback_value(item.get("accepted_focus_tool")) or "另一个焦点工具"
-        return "wait_next_frame_single_focus_tool", [
-            f"本帧已经接受 `{accepted}`；当前焦点工具调用已被拒绝，没有执行。",
-            "每个 provider Frame/反应迭代最多一个焦点工具。等待回执后，下一帧只提交一个焦点工具。",
-        ]
     if reason in {"native_argument_schema_missing", "native_protocol_write_not_enabled"}:
         return "stop_or_retry_with_valid_tool", [
             "停止调用未开通或缺少运行时契约的工具，改用当前已导出的 provider-native 工具。"
@@ -1418,7 +1422,7 @@ def _upgrade_mount_request(existing, incoming):
 
 
 def merge_mount_requests(existing, additions):
-    """合并挂载请求并按 type/ids/mode 去重。"""
+    """合并挂载请求；容器的目标文件是挂载身份的一部分。"""
     merged = []
     seen = {}
     for item in list(existing or []) + list(additions or []):
@@ -1428,7 +1432,17 @@ def merge_mount_requests(existing, additions):
             str(item.get("type") or ""),
             str(item.get("ids") or ""),
             str(item.get("mode") or ""),
+            str(item.get("target_file") or ""),
         )
+        # Setup-era requests may identify a container without the resolved
+        # target file.  The first full read enriches that same request; later
+        # explicit files of the same container remain independent mounts.
+        generic_key = key[:3] + ("",)
+        if key[0] == "container" and key[3] and generic_key in seen:
+            index = seen.pop(generic_key)
+            merged[index] = _upgrade_mount_request(merged[index], item)
+            seen[key] = index
+            continue
         if key in seen:
             index = seen[key]
             merged[index] = _upgrade_mount_request(merged[index], item)
@@ -1460,6 +1474,49 @@ def remove_memory_mount_requests(existing, mem_ids):
         updated["ids"] = ", ".join(kept)
         remaining_mounts.append(updated)
     return remaining_mounts
+
+
+def remove_mount_requests(existing, removals):
+    """Remove typed round-local mounts; container target may narrow one file."""
+    normalized = []
+    for removal in removals or []:
+        if not isinstance(removal, dict):
+            continue
+        normalized.append((
+            str(removal.get("item_type") or "").strip(),
+            str(removal.get("item_id") or "").strip(),
+            str(removal.get("target_file") or "").strip(),
+        ))
+    if not normalized:
+        return list(existing or [])
+    remaining = []
+    for item in existing or []:
+        if not isinstance(item, dict):
+            remaining.append(item)
+            continue
+        mount_type = str(item.get("type") or "").strip()
+        target_file = str(item.get("target_file") or "").strip()
+        ids = [
+            part.strip()
+            for part in str(item.get("ids") or "").split(",")
+            if part.strip()
+        ]
+        kept = []
+        for item_id in ids:
+            matched = any(
+                removal_type == mount_type
+                and removal_id == item_id
+                and (not removal_target or removal_target == target_file)
+                for removal_type, removal_id, removal_target in normalized
+            )
+            if not matched:
+                kept.append(item_id)
+        if not kept:
+            continue
+        updated = dict(item)
+        updated["ids"] = ", ".join(kept)
+        remaining.append(updated)
+    return remaining
 
 
 def append_reaction_loop_handoff_to_messages(messages, reaction_loop, targets=None):

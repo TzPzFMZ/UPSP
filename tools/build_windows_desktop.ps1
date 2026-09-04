@@ -204,6 +204,8 @@ $guiLicensesRoot = Join-Path $licensesRoot 'gui'
 New-Item -ItemType Directory -Force -Path $guiLicensesRoot | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $licensesRoot 'LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $licensesRoot
+$fontLicensesRoot = Join-Path $repoRoot 'UPSP\gui\assets\fonts\licenses'
+Copy-ProductionTree $fontLicensesRoot (Join-Path $licensesRoot 'fonts')
 $guiRoot = Join-Path $repoRoot 'UPSP\gui'
 $guiLockPath = Join-Path $guiRoot 'package-lock.json'
 Copy-Item -LiteralPath $guiLockPath -Destination (Join-Path $guiLicensesRoot 'package-lock.json')
@@ -271,6 +273,85 @@ $payloadTools = Join-Path $payloadRoot 'tools'
 New-Item -ItemType Directory -Force -Path $payloadTools | Out-Null
 foreach ($name in @('serve_seed_gui.py', 'serve_round_live.py', 'upsp_cli.py')) {
     Copy-Item -LiteralPath (Join-Path $repoRoot "tools\$name") -Destination (Join-Path $payloadTools $name)
+}
+
+# This smoke is part of the Windows payload contract and must also run with
+# -SkipTests. It imports the copied production handler with the bundled Python.
+$payloadPython = Join-Path $pythonRoot 'python.exe'
+$shellSmokeRoot = Join-Path $workRoot 'shell-smoke'
+$shellSmokeScript = Join-Path $workRoot 'shell-smoke.py'
+if (Test-Path -LiteralPath $shellSmokeRoot) {
+    Remove-Item -LiteralPath $shellSmokeRoot -Recurse -Force
+}
+$shellSmoke = @'
+import sys
+from pathlib import Path
+
+program_os = Path(sys.argv[1]).resolve()
+smoke_root = Path(sys.argv[2]).resolve()
+cwd = smoke_root / "shell smoke 中文"
+cwd.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, str(program_os))
+
+from logic.general_tools import execute_general_tool_call
+
+
+def run(command):
+    return execute_general_tool_call(
+        {
+            "tool_id": "shell_command",
+            "command": command,
+            "purpose": "desktop payload shell smoke",
+            "cwd": str(cwd),
+            "timeout_ms": 10000,
+        },
+        allowed_roots=[smoke_root],
+    )
+
+
+def require(condition, reason):
+    if not condition:
+        raise RuntimeError(reason)
+
+
+echo = run("echo UPSP_SHELL_SMOKE")
+require(echo.get("status") == "ok", "echo_failed")
+require("UPSP_SHELL_SMOKE" in echo.get("stdout", ""), "echo_output_missing")
+require(echo.get("shell_backend") == "windows_cmd_v1", "backend_mismatch")
+require(echo.get("shell_dialect") == "windows_cmd", "dialect_mismatch")
+
+nested = run("cmd /c ver")
+require(nested.get("status") == "ok", "nested_cmd_failed")
+require("Windows" in nested.get("stdout", ""), "nested_cmd_output_missing")
+
+powershell = run('powershell -NoProfile -Command "Write-Output \'UPSP_PS_SMOKE\'"')
+require(powershell.get("status") == "ok", "powershell_failed")
+require("UPSP_PS_SMOKE" in powershell.get("stdout", ""), "powershell_output_missing")
+
+streams = run("echo UPSP_STDOUT_SMOKE & echo UPSP_STDERR_SMOKE 1>&2")
+require(streams.get("status") == "ok", "stream_split_failed")
+require("UPSP_STDOUT_SMOKE" in streams.get("stdout", ""), "stdout_missing")
+require("UPSP_STDERR_SMOKE" not in streams.get("stdout", ""), "stderr_leaked_stdout")
+require("UPSP_STDERR_SMOKE" in streams.get("stderr", ""), "stderr_missing")
+require("UPSP_STDOUT_SMOKE" not in streams.get("stderr", ""), "stdout_leaked_stderr")
+
+nonzero = run("exit /b 7")
+require(nonzero.get("status") == "failed", "nonzero_status_mismatch")
+require(nonzero.get("reason") == "nonzero_exit", "nonzero_reason_mismatch")
+require(nonzero.get("exit_code") == 7, "nonzero_exit_code_mismatch")
+'@
+try {
+    [System.IO.File]::WriteAllText($shellSmokeScript, $shellSmoke, [System.Text.UTF8Encoding]::new($false))
+    & $payloadPython -I -X utf8 $shellSmokeScript $programOs $shellSmokeRoot
+    if ($LASTEXITCODE -ne 0) { throw 'payload_shell_backend_smoke_failed' }
+}
+finally {
+    if (Test-Path -LiteralPath $shellSmokeRoot) {
+        Remove-Item -LiteralPath $shellSmokeRoot -Recurse -Force
+    }
+    if (Test-Path -LiteralPath $shellSmokeScript) {
+        Remove-Item -LiteralPath $shellSmokeScript -Force
+    }
 }
 
 $head = (& git -C $repoRoot rev-parse HEAD).Trim()

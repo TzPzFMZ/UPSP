@@ -52,22 +52,22 @@ FIELDS = {
     "base.dynamic_axes.safety.value":   ("int|float", "§4", "logic/state_settlement.py 每轮结算"),
 
     # --- comfort_zone（DDS §7.3）---
-    "base.comfort_zone.valence":  ("int", "§7.3", "logic/comfort_zone.py 每轮善后步"),
-    "base.comfort_zone.arousal":  ("int", "§7.3", "logic/comfort_zone.py 每轮善后步"),
-    "base.comfort_zone.focus":    ("int", "§7.3", "logic/comfort_zone.py 每轮善后步"),
-    "base.comfort_zone.mood":     ("int", "§7.3", "logic/comfort_zone.py 每轮善后步"),
-    "base.comfort_zone.humor":    ("int", "§7.3", "logic/comfort_zone.py 每轮善后步"),
-    "base.comfort_zone.safety":   ("int", "§7.3", "logic/comfort_zone.py 每轮善后步"),
+    "base.comfort_zone.valence":  ("int", "§7.3", "logic/comfort_zone.py Reaction入口"),
+    "base.comfort_zone.arousal":  ("int", "§7.3", "logic/comfort_zone.py Reaction入口"),
+    "base.comfort_zone.focus":    ("int", "§7.3", "logic/comfort_zone.py Reaction入口"),
+    "base.comfort_zone.mood":     ("int", "§7.3", "logic/comfort_zone.py Reaction入口"),
+    "base.comfort_zone.humor":    ("int", "§7.3", "logic/comfort_zone.py Reaction入口"),
+    "base.comfort_zone.safety":   ("int", "§7.3", "logic/comfort_zone.py Reaction入口"),
 
     # --- core_speed_wheel（DDS §8.5）---
     "base.core_speed_wheel.current": ("int", "§8.5", "logic/workhood.py 工化指数变化时"),
     "base.core_speed_wheel.max":     ("int", "§8.5", "logic/workhood.py 工化指数变化时"),
 
     # --- workhood_index（DDS §8）---
-    "base.workhood_index.value":            ("float", "§8", "logic/workhood.py 每轮善后步"),
-    "base.workhood_index.self_reference":   ("float", "§8", "logic/workhood.py 每轮善后步"),
-    "base.workhood_index.self_reflection":  ("float", "§8", "logic/workhood.py 每轮善后步"),
-    "base.workhood_index.autonomy":         ("float", "§8", "logic/workhood.py 每轮善后步"),
+    "base.workhood_index.value":            ("float", "§8", "logic/workhood.py Reaction代谢"),
+    "base.workhood_index.self_reference":   ("float", "§8", "logic/workhood.py Reaction代谢"),
+    "base.workhood_index.self_reflection":  ("float", "§8", "logic/workhood.py Reaction代谢"),
+    "base.workhood_index.autonomy":         ("float", "§8", "logic/workhood.py Reaction代谢"),
 
     # --- activity_mode（DDS §3）---
     "base.activity_mode": ("str", "§3", "engines/runtime.py 轮类型决定"),
@@ -104,13 +104,10 @@ FIELDS = {
     "base.runtime.relay_intent_seq": ("int", "§23", "logic/relay_intent_pool.py 中继意图稳定序列"),
     "base.runtime.work_intent_debt": ("dict", "§34", "logic/work_intent_debt.py legacy 任务入口债务状态；只读/清理"),
 
-    # --- focus（DDS §25 WB焦点）---
-    "base.focus":         ("str|None", "§25", "data/container_store.py mount_focus"),
-    "base.old_focus":     ("str|None", "§25", "data/container_store.py unmount_focus"),
 
     # --- heartbeat_flags（DDS §23.5）---
     "base.heartbeat_flags.fatigue_expired":       ("bool", "§23.5", "暂停系统预留；Seed 固定 false"),
-    "base.heartbeat_flags.feeling_settle_due":    ("bool", "§23.5", "heartbeat 置位，Runtime 本地结算或 Round cleanup 消费"),
+    "base.heartbeat_flags.feeling_settle_due":    ("bool", "§23.5", "heartbeat 置位，由下一真实 Reaction 入口或 idle timer 消费"),
     "base.heartbeat_flags.api_degraded":          ("bool", "§23.5", "engines/heartbeat.py tick"),
     "base.heartbeat_flags.process_down":          ("bool", "§23.5", "Arbor 外部器官健康预留；Seed 固定 false"),
     "base.heartbeat_flags.user_message_waiting":  ("bool", "§23.5", "engines/heartbeat.py tick"),

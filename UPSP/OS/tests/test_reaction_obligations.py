@@ -47,38 +47,34 @@ def test_spec202_memory_write_opens_route_obligation():
     assert ledger["pending_resolution_result"] == "open"
 
 
-def test_spec202_container_focus_opens_link_and_future_jump_obligations():
+def test_spec781_container_create_closes_route_and_opens_future_check():
     from logic.reaction_obligations import ReactionObligationTracker
 
     tracker = ReactionObligationTracker()
     tracker.observe_receipts([
         _receipt("memory_write", mem_id="MEM-1"),
         _receipt(
-            "container_focus",
-            action="create",
+            "memory_container_create",
             container_type="PRJ",
             container_id="PRJ-1",
+            mem_id="MEM-1",
         ),
     ])
 
-    assert tracker.pending_types() == [
-        "container_link_pending",
-        "future_jump_pending",
-    ]
+    assert tracker.pending_types() == ["future_jump_pending"]
     assert tracker.pending[0]["target_refs"] == ["PRJ-1"]
-    assert tracker.pending[1]["target_refs"] == ["PRJ-1"]
 
 
-def test_spec202_memory_link_update_closes_container_link():
+def test_spec781_container_write_has_no_redundant_link_obligation():
     from logic.reaction_obligations import ReactionObligationTracker
 
     tracker = ReactionObligationTracker()
     tracker.observe_receipts([
         _receipt(
-            "container_focus",
-            action="write",
+            "memory_container_write",
             container_type="DC",
             container_id="DC-1",
+            mem_id="MEM-1",
         ),
         _receipt(
             "memory_link_update",
@@ -90,59 +86,50 @@ def test_spec202_memory_link_update_closes_container_link():
     assert tracker.pending_types() == ["future_jump_pending"]
 
 
-def test_spec202_future_container_requires_unskippable_anchor_link():
+def test_spec781_future_container_closes_future_check_atomically():
     from logic.reaction_obligations import ReactionObligationTracker
 
     tracker = ReactionObligationTracker()
     tracker.observe_receipts([
         _receipt(
-            "container_focus",
-            action="write",
+            "memory_container_write",
             container_type="DC",
             container_id="DC-1",
+            mem_id="MEM-1",
         ),
         _receipt(
-            "container_focus",
-            action="write",
+            "memory_container_create",
             container_type="FUT",
             container_id="FUT-plans-1",
+            mem_id="MEM-FUT",
         ),
     ])
 
-    assert tracker.pending_types() == [
-        "container_link_pending",
-        "future_anchor_pending",
-    ]
-    future_anchor = tracker.pending[1]
-    assert future_anchor["skippable"] is False
-    assert future_anchor["target_refs"] == ["FUT-plans-1"]
-    assert future_anchor["required_refs"] == ["FUT-plans-1", "DC-1"]
+    assert tracker.pending_types() == []
 
     result = tracker.validate_closeout_form(_closeout_form(
-        memory_reason="本轮只有容器写入，FUT 锚点仍待处理。",
-        pending_status="deferred",
-        pending_reason="暂不处理",
+        memory_reason="容器事务已同时闭合正文和记忆链接。",
+        pending_status="none",
     ))
-    assert result["blocked"] is True
-    assert "future_anchor_pending" in result["reasons"][0]
+    assert result["blocked"] is False
 
 
-def test_spec202_future_anchor_memory_and_multi_link_close_anchor():
+def test_spec781_future_container_receipt_does_not_create_anchor_debt():
     from logic.reaction_obligations import ReactionObligationTracker
 
     tracker = ReactionObligationTracker()
     tracker.observe_receipts([
         _receipt(
-            "container_focus",
-            action="write",
+            "memory_container_write",
             container_type="PRJ",
             container_id="PRJ-1",
+            mem_id="MEM-1",
         ),
         _receipt(
-            "container_focus",
-            action="write",
+            "memory_container_write",
             container_type="FUT",
             container_id="FUT-plans-1",
+            mem_id="MEM-FUT",
         ),
         _receipt("memory_write", mem_id="MEM-FUT"),
         _receipt(
@@ -350,29 +337,29 @@ def test_spec340_many_memory_route_pending_warns_to_stop_new_memory_writes():
     assert "reaction_finalize" not in prompt
 
 
-def test_spec340_unskippable_pending_keeps_hard_block_language():
+def test_spec781_atomic_future_container_does_not_leave_hard_block_language():
     from logic.reaction_obligations import ReactionObligationTracker
 
     tracker = ReactionObligationTracker()
     tracker.observe_receipts([
         _receipt(
-            "container_focus",
-            action="write",
+            "memory_container_write",
             container_type="DC",
             container_id="DC-1",
+            mem_id="MEM-1",
         ),
         _receipt(
-            "container_focus",
-            action="write",
+            "memory_container_write",
             container_type="FUT",
             container_id="FUT-1",
+            mem_id="MEM-FUT",
         ),
     ])
 
     prompt = tracker.render_prompt()
 
-    assert "必须收束" in prompt
-    assert "处理不可跳过项" in prompt
+    assert "必须收束" not in prompt
+    assert "处理不可跳过项" not in prompt
 
 
 def test_spec272_closeout_form_generates_settlement_ledger_from_receipts():

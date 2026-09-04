@@ -2,13 +2,18 @@
 import copy
 import json
 
-from logic.protocol_tools import TOOL_DEFINITIONS, normalize_tool_id, tool_metadata_for
+from logic.protocol_tools import (
+    TOOL_DEFINITIONS,
+    normalize_tool_id,
+    tool_metadata_for,
+)
 from logic.execution_permission import (
     DEFAULT_LEVEL as DEFAULT_EXECUTION_PERMISSION_LEVEL,
     normalize_execution_permission_level,
     tool_allowed_by_execution_permission,
 )
 from logic.runtime_channels import STEP_TERMINAL_TOOLS, STEP_TERMINAL_TOOL_IDS
+from logic.shell_backend import resolve_shell_backend, shell_model_contract
 
 
 ENVELOPE_SCHEMA_VERSION = "tool_call_envelope.v1"
@@ -21,7 +26,6 @@ ANTHROPIC_FLAT_REACTION_FINALIZE_FIELDS = {
 }
 
 SUPPORTED_NATIVE_PROTOCOL_WRITE_TOOLS = {
-    "container_focus",
     "guide_submit",
     "memory_container_create",
     "memory_container_write",
@@ -34,7 +38,6 @@ SUPPORTED_NATIVE_PROTOCOL_WRITE_TOOLS = {
 RETIRED_NATIVE_PROTOCOL_GUIDE_REQUEST_TOOL = "protocol_tool_guide_request"
 
 NATIVE_PROTOCOL_DECLARATION_FIELDS = {
-    "container_focus": "container_focus_declarations",
     "guide_submit": "guide_submit_requests",
     "memory_container_create": "memory_container_create_declarations",
     "memory_container_write": "memory_container_write_declarations",
@@ -297,13 +300,13 @@ TOOL_ARGUMENT_SCHEMAS = {
             "单条提交快捷方式：按当前清单说明填写；多余顶层键会并入 fields 后校验。"
         ),
         "evidence_refs": _string_array("可选证据引用；具体要求看当前清单顶部说明。"),
-        "reason": _string("可选简短原因。"),
+        "reason": _string("可选简短原因；当前清单若选择 revise_task_plan，则此字段必填并说明结构变化原因。"),
         "submissions": _with_description(_object_array({
             "item_id": _string("当前清单显示的 item_id。"),
             "option_id": _string("当前清单显示的 option_id。"),
             "fields": _freeform_object("按当前清单说明填写。"),
             "evidence_refs": _string_array("可选证据引用。"),
-            "reason": _string("可选简短原因。"),
+            "reason": _string("可选简短原因；revise_task_plan 必填。"),
         }, required=("item_id", "option_id")), "批量提交同一 guide 的多条状态或证据；与顶层单条快捷字段二选一。"),
     }, required=("guide_id",)),
     "cleanup_finalize": _closed_parameters({
@@ -325,14 +328,6 @@ TOOL_ARGUMENT_SCHEMAS = {
             "evidence_refs": _string_array("支撑 kept/added 的本轮真实证据引用；dropped 可留空。"),
             "drop_reason": _string("仅 action=dropped 时填写丢弃原因；其他动作留空。"),
         }), "对当前默契候选逐项保留、丢弃或新增；只处理当前可见候选与证据。"),
-        "lately_compression": _with_description(_object({
-            "action": _enum(
-                ("keep", "replace", "drop"),
-                "keep=保留冻结候选原文；replace=用 replacement_text 替换；drop=整段丢弃。",
-            ),
-            "replacement_text": _string("仅 action=replace 时填写候选的语义压缩正文；禁止截断或补造。"),
-            "reason": _string("为什么保留、替换或丢弃这个冻结候选。"),
-        }), "仅当 Runtime 提供最近缓存压缩候选时填写；无候选时留空对象。"),
     }),
     "file_read": _closed_parameters({
         "path": _string("要读取的文件路径；有工程 grant 时必须位于 read_paths，未提供 grant 时受当前用户普通文件权限与 Runtime 保护路径门限制。"),
@@ -395,11 +390,11 @@ TOOL_ARGUMENT_SCHEMAS = {
     }, required=("query",)),
     "shell_command": _closed_parameters({
         "command": _string(
-            "要执行的 Windows shell 命令；默认不是 Bash，不能使用 python - <<'PY' 这类 POSIX here-doc。"
-            "多行 Python 优先用 file_write 写临时 .py 后执行，或使用 PowerShell here-string 管道。"
+            "要执行的宿主 Shell 命令；活动导出会补充当前已验收 backend 与 dialect，"
+            "Runtime 不自动翻译其他 Shell 方言。"
         ),
         "purpose": _string("为什么需要执行该命令；必须说明具体验证、诊断或生成目的。"),
-        "cwd": _string("命令初始工作目录；有工程 grant 时必须位于 task_root/shell_cwd 授权范围。grant 不限制命令中的其他路径，子进程仍拥有当前 Windows 用户权限。"),
+        "cwd": _string("命令初始工作目录；有工程 grant 时必须位于 task_root/shell_cwd 授权范围。grant 不限制命令中的其他路径，子进程仍拥有当前宿主用户权限。"),
         "timeout_ms": _integer("可选超时毫秒数；Runtime 会限制到允许范围，不用于启动常驻后台服务。"),
         "reason": _string("可选补充依据；purpose 已说清时留空。"),
     }, required=("command", "purpose")),
@@ -491,22 +486,23 @@ TOOL_ARGUMENT_SCHEMAS = {
     }, required=("container_id",)),
     "mount_cancel": _closed_parameters({
         "mount_area": _enum((
-            "focus",
             "resident_list",
             "instant_list",
-        ), "取消区域：focus=WB 当前焦点；resident_list=驻留列表；instant_list=本轮临时列表。不会删除源正文或通用工具结果。"),
+        ), "取消区域：resident_list=跨轮常驻引用；instant_list=本轮临时挂载。不会删除源正文或通用工具结果。"),
         "item_type": _enum((
             "auto",
             "memory",
             "container",
             "relation",
-            "relation_summary",
-        ), "对象类型：auto=由 item_id 推断；memory=记忆；container=容器；relation=关系正文；relation_summary=关系摘要。focus 取消可省略。"),
+        ), "对象类型：auto=由 item_id 推断；memory=记忆；container=容器；relation=关系正文。关系摘要常驻由 relation_read(summary=none) 取消。"),
         "item_id": _string(
-            "要取消的稳定对象 ID；mount_area=focus 时可留空，表示当前 WB focus。"
+            "要取消的稳定对象 ID。"
+        ),
+        "target_file": _string(
+            "仅 item_type=container 时可选；填写则只取消该目标文件，留空则取消该容器的全部常驻目标。"
         ),
         "reason": _string("为什么取消该挂载。"),
-    }, required=("mount_area",)),
+    }, required=("mount_area", "item_id")),
     "relay_intent_settle": _closed_parameters({
         "relay_intent_id": _string("要结算的中继意图 ID。"),
         "status": _enum((
@@ -576,15 +572,15 @@ TOOL_ARGUMENT_SCHEMAS = {
             "通常填写真实 MEM-*。仅当同一 Frame 的 guide_submit 正在成功结算记忆写入重写时，"
             "可填 PENDING 引用该 Frame 最后一个成功写入的记忆；Runtime 会在容器处理前解析。"
         ),
-        "container_id": _string("本迭代入口已可见的 WB focus 容器。"),
-        "target_file": _container_target_file_enum("按当前 focus 容器类型选择"),
+        "container_id": _string("本 Frame 起点已在 CONTENT 中可见的容器 ID。"),
+        "target_file": _container_target_file_enum("本 Frame 起点已可见的具体容器目标文件"),
         "title": _string("本段容器正文标题。"),
         "container_body": _string(
-            "写入当前 focus 的连续关系正文；必须基于已可见 focus 投影和本轮 MEM 引用源，"
+            "写入当前可见目标的连续关系正文；必须基于本 Frame 起点已装配的完整容器正文和本轮 MEM 引用源，"
             "写清本节点相对既有链的真实变化，不因同批写入机械追加。"
         ),
         "current_overview": _string("MEM 当前在该容器中的位置概况，<=128字，需含 container_id。"),
-        "reason": _string("为什么把该 MEM 挂接写入当前 focus 容器。"),
+        "reason": _string("为什么把该 MEM 挂接写入这个已可见容器目标。"),
     }, required=(
         "mem_id",
         "container_id",
@@ -621,14 +617,6 @@ TOOL_ARGUMENT_SCHEMAS = {
         "summary": _string("可选短摘要；不得替代正文读取纪律。"),
         "reason": _string("为什么本次关系卡写入有必要。"),
     }),
-    "container_focus": _protocol_write_parameters({
-        "action": _enum(("open", "close", "restore"), "open=打开指定容器；close=关闭指定或当前焦点；restore=恢复 Runtime 保存的最近焦点。"),
-        "container_id": _string(
-            "open 或 close 时必须填写容器索引中真实列出的具体容器编号；"
-            "EC、DC、PRJ、SKL、FUT 只是容器类型，不能当成容器编号；restore 可留空。"
-        ),
-        "reason": _string("为什么要调整 WB focus。"),
-    }, required=("action",)),
 }
 
 
@@ -765,8 +753,6 @@ def apply_native_tool_calls_to_parsed_reaction(
     for field in NATIVE_PROTOCOL_DECLARATION_FIELDS.values():
         parsed[field] = []
     valid_request_seen = False
-    focus_tool_seen = None
-
     for envelope in sorted(envelopes or [], key=lambda item: item.get("index", 0)):
         if not isinstance(envelope, dict):
             continue
@@ -781,8 +767,9 @@ def apply_native_tool_calls_to_parsed_reaction(
             ))
             continue
         request = _request_from_envelope(envelope)
-        family = envelope.get("tool_family") or request.get("tool_family")
-        if family == "general_tool":
+        route = tool_metadata_for(envelope.get("tool_id", "")).get(
+            "execution_route", "")
+        if route == "host_dispatch":
             validation_error = _native_argument_validation_error(envelope)
             if validation_error:
                 parsed["invalid_tool_requests"].append(_invalid_request_from_envelope(
@@ -794,7 +781,7 @@ def apply_native_tool_calls_to_parsed_reaction(
             parsed["general_tool_requests"].append(request)
             valid_request_seen = True
             continue
-        if family == "protocol_tool":
+        if route == "internal_processor":
             if tool_metadata_for(envelope.get("tool_id", "")).get("status") == "disabled":
                 parsed["invalid_tool_requests"].append(_invalid_request_from_envelope(
                     envelope,
@@ -811,19 +798,10 @@ def apply_native_tool_calls_to_parsed_reaction(
                         details=validation_error,
                     ))
                     continue
-                if envelope.get("tool_class") == "focus_tool":
-                    if focus_tool_seen:
-                        parsed["invalid_tool_requests"].append(_invalid_request_from_envelope(
-                            envelope,
-                            reason="focus_tool_iteration_conflict",
-                            details={"accepted_focus_tool": focus_tool_seen},
-                        ))
-                        continue
-                    focus_tool_seen = tool_id
                 _append_native_protocol_submission(parsed, envelope)
                 valid_request_seen = True
                 continue
-            if envelope.get("tool_class") in {"sync_tool", "focus_tool"}:
+            if envelope.get("tool_class") == "sync_tool":
                 parsed["invalid_tool_requests"].append(_invalid_request_from_envelope(
                     envelope,
                     reason="native_protocol_write_not_enabled",
@@ -842,7 +820,7 @@ def apply_native_tool_calls_to_parsed_reaction(
             continue
         parsed["invalid_tool_requests"].append(_invalid_request_from_envelope(
             envelope,
-            reason="unsupported_tool_family",
+            reason="unsupported_execution_route",
         ))
 
     if valid_request_seen:
@@ -1083,11 +1061,6 @@ def _project_cleanup_finalize(arguments):
             dict(item) for item in arguments.get("connection_bridges") or []
             if isinstance(item, dict)
         ],
-        "lately_compression": (
-            dict(arguments.get("lately_compression"))
-            if isinstance(arguments.get("lately_compression"), dict)
-            else {}
-        ),
         "state_updates": [],
         "archive_title": "",
         "archive_subject": None,
@@ -1195,7 +1168,7 @@ def _build_envelope(
     tool_id = normalize_tool_id(raw_name)
     arguments, arguments_json, argument_status = _parse_arguments(
         raw_call.get("arguments", "{}"))
-    meta = tool_metadata_for(tool_id) or _native_only_tool_metadata(tool_id)
+    meta = tool_metadata_for(tool_id)
     parse_status = _parse_status(tool_id, meta, argument_status)
     response_id = str((response_data or {}).get("id") or "")
     call_id = str(raw_call.get("call_id") or "")
@@ -1203,7 +1176,6 @@ def _build_envelope(
         call_id = f"{provider}:{response_id or 'response'}:{index}:{tool_id or 'unknown'}"
     raw_provider_item_id = str(raw_call.get("provider_item_id") or "")
     provider_item_id = raw_provider_item_id or call_id
-    tool_family = meta.get("tool_family", "")
     tool_class = meta.get("tool_class", "")
     envelope = {
         "schema_version": ENVELOPE_SCHEMA_VERSION,
@@ -1218,8 +1190,8 @@ def _build_envelope(
         "tool_id": tool_id,
         "arguments": arguments,
         "arguments_json": arguments_json,
-        "tool_family": tool_family,
         "tool_class": tool_class,
+        "execution_route": meta.get("execution_route", ""),
         "risk": meta.get("risk", ""),
         "parse_status": parse_status,
         "requires_guide": False,
@@ -1240,7 +1212,6 @@ def _request_from_envelope(envelope):
     request = dict(envelope.get("arguments") or {})
     for key in (
             "tool_id",
-            "tool_family",
             "tool_class",
             "risk",
             "source",
@@ -1256,10 +1227,14 @@ def _request_from_envelope(envelope):
 
 
 def _is_native_protocol_write(envelope):
+    tool_id = normalize_tool_id(envelope.get("tool_id", ""))
+    metadata = tool_metadata_for(tool_id)
+    route = metadata.get("execution_route")
+    tool_class = metadata.get("tool_class")
     return (
-        envelope.get("tool_family") == "protocol_tool"
-        and envelope.get("tool_class") in {"sync_tool", "focus_tool"}
-        and envelope.get("tool_id") in SUPPORTED_NATIVE_PROTOCOL_WRITE_TOOLS
+        route == "internal_processor"
+        and tool_class == "sync_tool"
+        and tool_id in SUPPORTED_NATIVE_PROTOCOL_WRITE_TOOLS
     )
 
 
@@ -1439,7 +1414,6 @@ def _invalid_request_from_envelope(envelope, reason=None, details=None):
     item = {}
     for key in (
             "tool_id",
-            "tool_family",
             "tool_class",
             "risk",
             "source",
@@ -1454,7 +1428,7 @@ def _invalid_request_from_envelope(envelope, reason=None, details=None):
     item["reason"] = reason or envelope.get("parse_status") or "invalid_tool_call"
     for key in (
             "field", "expected", "actual", "actual_value_preview",
-            "accepted_focus_tool"):
+            ):
         value = (details or {}).get(key)
         if value not in (None, "", []):
             item[key] = value
@@ -1472,7 +1446,6 @@ def _text_requests_retired_by_native_mode(protocol_requests, general_requests):
         meta = tool_metadata_for(tool_id)
         invalids.append({
             "tool_id": tool_id,
-            "tool_family": meta.get("tool_family", request.get("tool_family", "")),
             "tool_class": meta.get("tool_class", request.get("tool_class", "")),
             "risk": meta.get("risk", request.get("risk", "")),
             "reason": "native_tool_call_required",
@@ -1504,21 +1477,9 @@ def _parse_status(tool_id, meta, argument_status):
         return "ok"
     if not tool_id or not meta:
         return "unknown_tool_id"
-    if meta.get("tool_family") == "substrate_tool":
-        return "unsupported_tool_family"
+    if meta.get("execution_route") == "substrate":
+        return "unsupported_execution_route"
     return "ok"
-
-
-def _native_only_tool_metadata(tool_id):
-    if normalize_tool_id(tool_id) != RETIRED_NATIVE_PROTOCOL_GUIDE_REQUEST_TOOL:
-        return {}
-    return {
-        "tool_family": "runtime_tool",
-        "tool_class": "guide_request",
-        "domain": "protocol",
-        "risk": "medium",
-        "status": "enabled",
-    }
 
 
 def _is_exportable_tool(
@@ -1538,9 +1499,11 @@ def _is_exportable_tool(
         return tool_id in step_terminal_tools
     if not include_standard_tools:
         return False
-    if not meta or meta.get("tool_family") == "substrate_tool":
+    if not meta or meta.get("execution_route") == "substrate":
         return False
-    if meta.get("tool_family") == "general_tool":
+    if tool_id == "shell_command" and not resolve_shell_backend().available:
+        return False
+    if meta.get("execution_route") == "host_dispatch":
         return (
             meta.get("status") == "enabled"
             and tool_allowed_by_execution_permission(
@@ -1551,7 +1514,7 @@ def _is_exportable_tool(
                 ),
             )
         )
-    if meta.get("tool_family") == "protocol_tool":
+    if meta.get("execution_route") == "internal_processor":
         if meta.get("status") == "disabled":
             return False
         if meta.get("tool_class") == "read_tool":
@@ -1606,12 +1569,10 @@ def _memory_write_tool_description():
 
 
 REACTION_TOOL_DESCRIPTIONS = {
-    "container_focus": (
-        "焦点工具：打开、关闭或恢复 WB 当前容器。每个 provider Frame/反应迭代最多调用一个焦点工具；"
-        "不得与 memory_container_create 或 memory_container_write 同帧批量提交。"
-        "先提交本工具，读取回执后再在下一帧继续其他焦点操作。"
+    "container_read": (
+        "只读工具：按真实 container_id 读取容器正文，可选目标文件与行/字符范围；"
+        "成功读取后该目标文件进入跨轮常驻清单，下一帧装配完整最新正文。"
     ),
-    "container_read": "只读工具：按真实 container_id 读取容器正文，可选目标文件与行/字符范围；不改变 WB focus。",
     "corpus_read": "只读工具：按当前可见 corpus_id 读取轮中进展语料；不写入或挂载。",
     "file_edit": (
         "高风险文件编辑；受限档调用后由 Runtime 在 handler 前审批，放行档直接执行。"
@@ -1619,7 +1580,11 @@ REACTION_TOOL_DESCRIPTIONS = {
         "必填 path/patch/purpose；新建或整文件覆盖用 file_write。"
         "越权、位格真源、Git/密钥、未跟踪目标或无效 patch 由 Runtime 拒绝；仅 status=ok 证明生效。"
     ),
-    "guide_submit": "同步工具：按当前 guide_id/条目坐标提交清单状态或证据；只以处理器回执为准。",
+    "guide_submit": (
+        "同步工具：按当前 guide_id/条目坐标提交清单；只以处理器回执为准。"
+        "任务计划可用 revise_task_plan 替换显示允许的完整结构片段，必须给外层 reason；"
+        "它不更新 status/evidence_refs，完成与验收仍使用 update_task_status。"
+    ),
     "index_view": (
         "只读工具：分页查看指定记忆、技能、关联或关系索引；不搜索记忆正文，"
         "也不提供容器注册表。需要按问题检索 LTM 时使用 memory_search。"
@@ -1630,24 +1595,22 @@ REACTION_TOOL_DESCRIPTIONS = {
         "本工具不召回、不重建STM、不加热、不续期、不更新调用坐标或挂载。"
     ),
     "memory_container_create": (
-        "焦点工具：以真实 MEM-* 为引用源新建 DC/EC/PRJ/SKL/FUT 容器、写首段正文并替换 WB focus；"
+        "同步工具：以真实 MEM-* 为引用源新建 DC/EC/PRJ/SKL/FUT 容器并写首段正文；"
         "仅同一 Frame 的记忆写入重写指南成功结算时可用 PENDING 指向该 Frame 最后一个新记忆；"
         "仅在永久合同的持久关系条件成立且没有可复用的同类型同职责容器时新建；"
         "DC 与 EC 分别独立判断，PRJ/FUT 不替代同时成立的 DC/EC；"
         "同一主题或 MEM 的不同持久职责可以由不同类型容器共同承接；"
         "SKL 只开放 procedures/patterns 源技能；"
-        "每个 provider Frame/反应迭代最多调用一个焦点工具，不得与 container_focus 或 memory_container_write 同帧批量提交；"
-        "读取回执后再在下一帧继续其他焦点操作；"
+        "成功后目标文件自动进入跨轮常驻清单，并从下一帧可见；"
         "成功回执才证明创建。"
     ),
     "memory_container_write": (
-        "焦点工具：把真实 MEM-* 挂接写入当前已可见 WB focus 容器并更新概况；"
+        "同步工具：把真实 MEM-* 挂接写入本帧入口已装配的容器目标文件并更新概况；"
         "仅同一 Frame 的记忆写入重写指南成功结算时可用 PENDING 指向该 Frame 最后一个新记忆；"
         "仅续写已有持久关系；DC 与 EC 分别独立判断，PRJ/FUT 不替代同时成立的 DC/EC；"
         "不因同批记忆或标题相似机械追加；"
-        "每个 provider Frame/反应迭代最多调用一个焦点工具，不得与 container_focus 或 memory_container_create 同帧批量提交；"
-        "读取回执后再在下一帧继续其他焦点操作；"
-        "无 focus 或失败回执不得声称写入。"
+        "同一帧刚读取或创建的容器尚未进入本次输入，须到下一帧可见后再续写；"
+        "不可见或失败回执不得声称写入。"
     ),
     "memory_content_read": (
         "只读：按 LTM-first 读取 MEM-*。若 Setup 已把该记忆正文放入当前 CONTENT，直接使用，"
@@ -1668,7 +1631,7 @@ REACTION_TOOL_DESCRIPTIONS = {
         "文件有首条条目时才创建，不改 memory subject，只以处理器回执为准。"
     ),
     "mount_cancel": (
-        "同步工具：仅取消 focus/resident_list/instant_list 挂载；"
+        "同步工具：仅取消 resident_list/instant_list 挂载；"
         "不删除源记忆、容器、关系或通用工具结果。"
     ),
     "relation_card_write": (
@@ -1760,17 +1723,18 @@ def _tool_schema(tool_id, meta, active_protocol_tool_guides=None):
             "搜索结果不是网页正文；需要正文时继续调用 web_fetch。"
         )
     elif tool_id == "shell_command":
+        contract = shell_model_contract()
         description = (
-            "Windows shell 工具；受限档调用后由 Runtime 在 handler 前审批，放行档直接执行。"
+            "宿主 Shell 工具；受限档调用后由 Runtime 在 handler 前审批，放行档直接执行。"
             "Runtime 校验请求与初始 cwd，并限制超时和输出；不会按命令关键词判断风险。"
-            "sandbox grant 不是进程级文件系统沙箱，命令及其子进程拥有当前 Windows 用户权限。"
+            "sandbox grant 不是进程级文件系统沙箱，命令及其子进程拥有当前宿主用户权限。"
+            + contract["description"]
         )
     elif tool_id in REACTION_TOOL_DESCRIPTIONS:
         description = REACTION_TOOL_DESCRIPTIONS[tool_id]
     else:
         description = (
             f"UPSP工具 {tool_id}；"
-            f"family={meta.get('tool_family', '')}；"
             f"class={meta.get('tool_class', '')}；"
             f"domain={meta.get('domain', '')}；"
             f"risk={meta.get('risk', '')}。"
@@ -1778,6 +1742,12 @@ def _tool_schema(tool_id, meta, active_protocol_tool_guides=None):
     parameters = copy.deepcopy(
         TOOL_ARGUMENT_SCHEMAS.get(tool_id, _closed_parameters({}))
     )
+    if tool_id == "shell_command":
+        contract = shell_model_contract()
+        parameters["properties"]["command"]["description"] = (
+            "要执行的宿主 Shell 命令；Runtime 不翻译其他 Shell 方言。"
+            + contract["description"]
+        )
     return {
         "name": tool_id,
         "description": description,

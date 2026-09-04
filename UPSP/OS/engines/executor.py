@@ -188,7 +188,77 @@ class CircuitBreaker:
         return True  # half_open 放行一次试试
 
 
-class OpenAIChatSSEAccumulator:
+class _StreamSegmentAccumulator:
+    """Keep provider-visible text deltas in their original arrival order."""
+
+    def _init_stream_segments(self):
+        self._stream_segments = []
+        self._emitted_stream_segments = 0
+        self._stream_tool_boundaries = []
+        self._emitted_stream_tool_boundaries = 0
+        self._stream_tool_boundary_keys = set()
+        self._stream_segment_sequence = 0
+        self._stream_segment_key = None
+
+    def _record_stream_segment(self, channel, value, provider_block=None):
+        if value in (None, ""):
+            return
+        block = dict(provider_block or {})
+        key = (str(channel), json.dumps(block, sort_keys=True, default=str))
+        if key != self._stream_segment_key:
+            self._stream_segment_sequence += 1
+            self._stream_segment_key = key
+        self._stream_segments.append({
+            "segment_id": f"seg-{self._stream_segment_sequence:04d}",
+            "sequence": self._stream_segment_sequence,
+            "channel": str(channel),
+            "provider_block": block,
+            "delta": str(value),
+        })
+
+    def _record_stream_tool_boundary(
+            self,
+            boundary_key,
+            *,
+            tool_id="",
+            call_id="",
+            provider_block=None):
+        key = str(boundary_key or "").strip()
+        if not key or key in self._stream_tool_boundary_keys:
+            return
+        self._stream_tool_boundary_keys.add(key)
+        self._stream_segment_sequence += 1
+        self._stream_segment_key = None
+        self._stream_tool_boundaries.append({
+            "boundary_id": f"tool-{self._stream_segment_sequence:04d}",
+            "sequence": self._stream_segment_sequence,
+            "tool_id": str(tool_id or ""),
+            "call_id": str(call_id or ""),
+            "provider_block": dict(provider_block or {}),
+        })
+
+    def _stream_segment_delta(self):
+        items = self._stream_segments[self._emitted_stream_segments:]
+        self._emitted_stream_segments = len(self._stream_segments)
+        return [dict(item) for item in items]
+
+    def _stream_tool_boundary_delta(self):
+        items = self._stream_tool_boundaries[
+            self._emitted_stream_tool_boundaries:]
+        self._emitted_stream_tool_boundaries = len(
+            self._stream_tool_boundaries)
+        return [dict(item) for item in items]
+
+    def _append_stream_projection(self, payload):
+        stream_segments = self._stream_segment_delta()
+        if stream_segments:
+            payload["stream_segments"] = stream_segments
+        tool_boundaries = self._stream_tool_boundary_delta()
+        if tool_boundaries:
+            payload["stream_tool_boundaries"] = tool_boundaries
+
+
+class OpenAIChatSSEAccumulator(_StreamSegmentAccumulator):
     """Accumulate OpenAI-compatible chat SSE chunks into one completion."""
 
     def __init__(self):
@@ -206,6 +276,7 @@ class OpenAIChatSSEAccumulator:
         self._tool_calls = {}
         self._emitted_content_chars = 0
         self._emitted_reasoning_chars = 0
+        self._init_stream_segments()
 
     def add_chunk(self, chunk):
         if not isinstance(chunk, dict):
@@ -214,7 +285,7 @@ class OpenAIChatSSEAccumulator:
         usage = chunk.get("usage")
         if isinstance(usage, dict):
             self.usage = dict(usage)
-        for choice in chunk.get("choices") or []:
+        for choice_position, choice in enumerate(chunk.get("choices") or []):
             if not isinstance(choice, dict):
                 continue
             finish_reason = choice.get("finish_reason")
@@ -226,11 +297,31 @@ class OpenAIChatSSEAccumulator:
             role = delta.get("role")
             if role:
                 self.role = str(role)
-            self._append_text(delta.get("content"), self.content_parts)
-            self._append_text(delta.get("reasoning_content"), self.reasoning_parts)
-            self._append_text(delta.get("refusal"), self.refusal_parts)
+            choice_index = choice.get("index", choice_position)
+            for field, value in delta.items():
+                if field == "content":
+                    self._append_text(value, self.content_parts)
+                    self._record_stream_segment(
+                        "content", value,
+                        {"choice_index": choice_index, "field": field},
+                    )
+                elif field == "reasoning_content":
+                    self._append_text(value, self.reasoning_parts)
+                    self._record_stream_segment(
+                        "reasoning", value,
+                        {"choice_index": choice_index, "field": field},
+                    )
+                elif field == "refusal":
+                    self._append_text(value, self.refusal_parts)
+                    self._record_stream_segment(
+                        "content", value,
+                        {"choice_index": choice_index, "field": field},
+                    )
             for tool_call in delta.get("tool_calls") or []:
-                self._add_tool_call_delta(tool_call)
+                self._add_tool_call_delta(
+                    tool_call,
+                    choice_index=choice_index,
+                )
 
     def _update_top_level(self, chunk):
         if chunk.get("id"):
@@ -252,7 +343,7 @@ class OpenAIChatSSEAccumulator:
         if text:
             parts.append(text)
 
-    def _add_tool_call_delta(self, tool_call):
+    def _add_tool_call_delta(self, tool_call, *, choice_index=None):
         if not isinstance(tool_call, dict):
             return
         try:
@@ -279,6 +370,15 @@ class OpenAIChatSSEAccumulator:
             slot["function"]["name"] = str(function.get("name"))
         if function.get("arguments") is not None:
             slot["function"]["arguments"] += str(function.get("arguments"))
+        self._record_stream_tool_boundary(
+            f"openai_chat:{choice_index}:{index}",
+            tool_id=slot["function"].get("name"),
+            call_id=slot.get("id"),
+            provider_block={
+                "choice_index": choice_index,
+                "tool_call_index": index,
+            },
+        )
 
     def summary(self, *, include_delta=False):
         content = "".join(self.content_parts) + "".join(self.refusal_parts)
@@ -305,6 +405,7 @@ class OpenAIChatSSEAccumulator:
                 payload["content_delta"] = content_delta
             if reasoning_delta:
                 payload["reasoning_delta"] = reasoning_delta
+            self._append_stream_projection(payload)
             self._emitted_content_chars = len(content)
             self._emitted_reasoning_chars = len(reasoning)
         return payload
@@ -366,7 +467,7 @@ class OpenAIChatSSEAccumulator:
         return calls
 
 
-class OpenAIResponsesSSEAccumulator:
+class OpenAIResponsesSSEAccumulator(_StreamSegmentAccumulator):
     """Accumulate Responses API SSE events into one response object."""
 
     def __init__(self):
@@ -378,6 +479,7 @@ class OpenAIResponsesSSEAccumulator:
         self._emitted_content_chars = 0
         self._emitted_reasoning_chars = 0
         self.finish_reason = None
+        self._init_stream_segments()
 
     def add_event(self, event):
         if not isinstance(event, dict):
@@ -388,19 +490,64 @@ class OpenAIResponsesSSEAccumulator:
             self.response.update(response)
             if response.get("status"):
                 self.finish_reason = response.get("status")
-        if event_type == "response.output_item.added":
-            self._store_item(event.get("output_index"), event.get("item"))
-        elif event_type == "response.output_item.done":
-            self._store_item(event.get("output_index"), event.get("item"), replace=True)
+        if event_type in {"response.output_item.added", "response.output_item.done"}:
+            item = event.get("item") or {}
+            if isinstance(item, dict) and item.get("type") == "function_call":
+                self._record_stream_tool_boundary(
+                    f"openai_responses:{event.get('output_index')}:{item.get('id') or item.get('call_id')}",
+                    tool_id=item.get("name"),
+                    call_id=item.get("call_id") or item.get("id"),
+                    provider_block={
+                        "output_index": event.get("output_index"),
+                        "item_id": item.get("id"),
+                        "event_type": event_type,
+                    },
+                )
+            self._store_item(
+                event.get("output_index"),
+                event.get("item"),
+                replace=event_type == "response.output_item.done",
+            )
         elif event_type == "response.output_text.delta":
             self._append(event.get("delta"), self.content_parts)
+            self._record_stream_segment("content", event.get("delta"), {
+                "output_index": event.get("output_index"),
+                "item_id": event.get("item_id"),
+                "content_index": event.get("content_index"),
+                "event_type": event_type,
+            })
         elif event_type == "response.refusal.delta":
             self._append(event.get("delta"), self.refusal_parts)
-        elif event_type == "response.reasoning_text.delta":
+            self._record_stream_segment("content", event.get("delta"), {
+                "output_index": event.get("output_index"),
+                "item_id": event.get("item_id"),
+                "content_index": event.get("content_index"),
+                "event_type": event_type,
+            })
+        elif event_type in {
+                "response.reasoning_text.delta",
+                "response.reasoning_summary_text.delta"}:
             self._append(event.get("delta"), self.reasoning_parts)
+            self._record_stream_segment("reasoning", event.get("delta"), {
+                "output_index": event.get("output_index"),
+                "item_id": event.get("item_id"),
+                "content_index": event.get("content_index"),
+                "summary_index": event.get("summary_index"),
+                "event_type": event_type,
+            })
         elif event_type == "response.function_call_arguments.delta":
             slot = self._item_slot(event.get("output_index"), event.get("item_id"))
             slot["type"] = "function_call"
+            self._record_stream_tool_boundary(
+                f"openai_responses:{event.get('output_index')}:{event.get('item_id')}",
+                tool_id=slot.get("name"),
+                call_id=slot.get("call_id") or slot.get("id"),
+                provider_block={
+                    "output_index": event.get("output_index"),
+                    "item_id": event.get("item_id"),
+                    "event_type": event_type,
+                },
+            )
             slot["arguments"] = str(slot.get("arguments") or "") + str(event.get("delta") or "")
         return event_type == "response.completed"
 
@@ -469,6 +616,7 @@ class OpenAIResponsesSSEAccumulator:
                 payload["content_delta"] = content_delta
             if reasoning_delta:
                 payload["reasoning_delta"] = reasoning_delta
+            self._append_stream_projection(payload)
             self._emitted_content_chars = len(content)
             self._emitted_reasoning_chars = len(reasoning)
         return payload
@@ -493,7 +641,7 @@ class OpenAIResponsesSSEAccumulator:
         return response
 
 
-class AnthropicMessagesSSEAccumulator:
+class AnthropicMessagesSSEAccumulator(_StreamSegmentAccumulator):
     """Accumulate Anthropic Messages SSE events into one message."""
 
     def __init__(self):
@@ -503,6 +651,7 @@ class AnthropicMessagesSSEAccumulator:
         self.usage = {}
         self._emitted_content_chars = 0
         self._emitted_reasoning_chars = 0
+        self._init_stream_segments()
 
     def add_event(self, event):
         if not isinstance(event, dict):
@@ -514,8 +663,30 @@ class AnthropicMessagesSSEAccumulator:
             for index, block in enumerate(self.message.get("content") or []):
                 if isinstance(block, dict):
                     self.blocks[index] = dict(block)
+                    if block.get("type") == "tool_use":
+                        self._record_stream_tool_boundary(
+                            f"anthropic:{index}:{block.get('id')}",
+                            tool_id=block.get("name"),
+                            call_id=block.get("id"),
+                            provider_block={
+                                "block_index": index,
+                                "event_type": event_type,
+                            },
+                        )
         elif event_type == "content_block_start":
-            self.blocks[self._index(event)] = dict(event.get("content_block") or {})
+            index = self._index(event)
+            block = dict(event.get("content_block") or {})
+            self.blocks[index] = block
+            if block.get("type") == "tool_use":
+                self._record_stream_tool_boundary(
+                    f"anthropic:{index}:{block.get('id')}",
+                    tool_id=block.get("name"),
+                    call_id=block.get("id"),
+                    provider_block={
+                        "block_index": index,
+                        "event_type": event_type,
+                    },
+                )
         elif event_type == "content_block_delta":
             self._add_delta(self._index(event), event.get("delta") or {})
         elif event_type == "message_delta":
@@ -541,12 +712,29 @@ class AnthropicMessagesSSEAccumulator:
         if delta_type == "text_delta":
             slot["type"] = slot.get("type") or "text"
             slot["text"] = str(slot.get("text") or "") + str(delta.get("text") or "")
+            self._record_stream_segment(
+                "content", delta.get("text"),
+                {"block_index": index, "delta_type": delta_type},
+            )
         elif delta_type == "input_json_delta":
             slot["type"] = "tool_use"
+            self._record_stream_tool_boundary(
+                f"anthropic:{index}:{slot.get('id')}",
+                tool_id=slot.get("name"),
+                call_id=slot.get("id"),
+                provider_block={
+                    "block_index": index,
+                    "delta_type": delta_type,
+                },
+            )
             slot["_input_json"] = str(slot.get("_input_json") or "") + str(delta.get("partial_json") or "")
         elif delta_type == "thinking_delta":
             slot["type"] = slot.get("type") or "thinking"
             slot["thinking"] = str(slot.get("thinking") or "") + str(delta.get("thinking") or "")
+            self._record_stream_segment(
+                "reasoning", delta.get("thinking"),
+                {"block_index": index, "delta_type": delta_type},
+            )
         elif delta_type == "signature_delta":
             slot["signature"] = str(slot.get("signature") or "") + str(delta.get("signature") or "")
 
@@ -597,6 +785,7 @@ class AnthropicMessagesSSEAccumulator:
                 payload["content_delta"] = content_delta
             if reasoning_delta:
                 payload["reasoning_delta"] = reasoning_delta
+            self._append_stream_projection(payload)
             self._emitted_content_chars = len(content)
             self._emitted_reasoning_chars = len(reasoning)
         return payload
@@ -2673,7 +2862,8 @@ class APIExecutor:
                 execution_permission_level=execution_permission_level,
             )
         from logic.single_round_probe_policy import filter_provider_tool_schemas
-        return filter_provider_tool_schemas(step, schemas)
+        schemas = filter_provider_tool_schemas(step, schemas)
+        return schemas
 
     @staticmethod
     def _native_tool_schema_name(tool):
@@ -2789,9 +2979,17 @@ class APIExecutor:
 
         parts = []
         for item in response_data.get("output", []) or []:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
             for content in item.get("content", []) or []:
                 if isinstance(content, dict):
-                    text = content.get("text") or content.get("refusal")
+                    content_type = str(content.get("type") or "")
+                    if content_type in {"output_text", "text"}:
+                        text = content.get("text")
+                    elif content_type == "refusal":
+                        text = content.get("refusal")
+                    else:
+                        text = None
                     if text:
                         parts.append(str(text))
                 elif isinstance(content, str):

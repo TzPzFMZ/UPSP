@@ -1,7 +1,6 @@
 import os
 import sys
 import json
-from pathlib import Path
 
 import pytest
 
@@ -22,22 +21,22 @@ class TestMemoryEntryToolBoundaries:
     def test_spec054_handoff_and_heartbeat_tool_boundaries(self):
         from logic import protocol_tools
 
-        assert protocol_tools.tool_metadata_for("setup_handoff")["tool_family"] == "substrate_tool"
+        assert protocol_tools.tool_metadata_for("setup_handoff")["execution_route"] == "substrate"
         assert protocol_tools.tool_class_for("setup_handoff") == "sync_tool"
-        assert protocol_tools.tool_metadata_for("reaction_loop")["tool_family"] == "substrate_tool"
+        assert protocol_tools.tool_metadata_for("reaction_loop")["execution_route"] == "substrate"
         assert protocol_tools.tool_class_for("reaction_loop") == "sync_tool"
-        assert protocol_tools.tool_metadata_for("cleanup_handoff")["tool_family"] == "substrate_tool"
+        assert protocol_tools.tool_metadata_for("cleanup_handoff")["execution_route"] == "substrate"
         assert protocol_tools.tool_class_for("cleanup_handoff") == "sync_tool"
         assert protocol_tools.tool_metadata_for("internal_handoff_route") == {}
-        assert protocol_tools.tool_metadata_for("heartbeat_restart")["tool_family"] == "substrate_tool"
+        assert protocol_tools.tool_metadata_for("heartbeat_restart")["execution_route"] == "substrate"
         assert protocol_tools.tool_class_for("heartbeat_restart") == "sync_tool"
         assert protocol_tools.tool_metadata_for("cache_compact") == {}
         assert protocol_tools.tool_class_for("cache_compact") == ""
-        assert protocol_tools.tool_metadata_for("connection_material_settle")["tool_family"] == "substrate_tool"
+        assert protocol_tools.tool_metadata_for("connection_material_settle")["execution_route"] == "substrate"
         assert protocol_tools.tool_class_for("connection_material_settle") == "sync_tool"
-        assert protocol_tools.tool_metadata_for("tacit_material_settle")["tool_family"] == "substrate_tool"
+        assert protocol_tools.tool_metadata_for("tacit_material_settle")["execution_route"] == "substrate"
         assert protocol_tools.tool_class_for("tacit_material_settle") == "sync_tool"
-        assert protocol_tools.tool_metadata_for("association_count_update")["tool_family"] == "substrate_tool"
+        assert protocol_tools.tool_metadata_for("association_count_update")["execution_route"] == "substrate"
         assert protocol_tools.tool_class_for("association_count_update") == "sync_tool"
         assert protocol_tools.tool_metadata_for("heartbeat_settle") == {}
         assert protocol_tools.tool_class_for("heartbeat_settle") == ""
@@ -46,15 +45,15 @@ class TestMemoryEntryToolBoundaries:
         from logic import protocol_tools
 
         expected = {
-            "setup_mount_apply": ("substrate_tool", "read_tool", "context"),
-            "setup_security_gate": ("substrate_tool", "sync_tool", "security"),
-            "setup_handoff": ("substrate_tool", "sync_tool", "setup"),
-            "standby_setup_handoff": ("substrate_tool", "sync_tool", "setup"),
+            "setup_mount_apply": ("substrate", "read_tool", "context"),
+            "setup_security_gate": ("substrate", "sync_tool", "security"),
+            "setup_handoff": ("substrate", "sync_tool", "setup"),
+            "standby_setup_handoff": ("substrate", "sync_tool", "setup"),
         }
 
-        for tool_id, (family, tool_class, domain) in expected.items():
+        for tool_id, (route, tool_class, domain) in expected.items():
             meta = protocol_tools.tool_metadata_for(tool_id)
-            assert meta["tool_family"] == family
+            assert meta["execution_route"] == route
             assert meta["tool_class"] == tool_class
             assert meta["domain"] == domain
 
@@ -63,55 +62,29 @@ class TestMemoryEntryToolBoundaries:
 
         meta = protocol_tools.tool_metadata_for("tool_transaction_audit")
 
-        assert meta["tool_family"] == "substrate_tool"
+        assert meta["execution_route"] == "substrate"
         assert meta["tool_class"] == "sync_tool"
         assert meta["domain"] == "audit"
         assert meta["risk"] == "high"
         assert meta["result_kind"] == "round_snapshot_runtime"
 
-    def test_substrate_tool_python_metadata_matches_tools_md_table(self):
+    def test_tool_metadata_uses_hidden_routes_and_three_model_postures(self):
         from logic import protocol_tools
 
-        repo_root = Path(__file__).resolve().parents[3]
-        tools_md = (
-            repo_root
-            / "UPSP"
-            / "initialization" / "persona_template"
-            / "docs"
-            / "protocol"
-            / "base"
-            / "tools.md"
-        )
-        text = tools_md.read_text(encoding="utf-8")
-        section = text.split("## substrate 工具索引", 1)[1].split(
-            "## CONTENT / 焦点写入", 1
-        )[0]
-        rows = {}
-        for line in section.splitlines():
-            stripped = line.strip()
-            if not stripped.startswith("| ") or stripped.startswith("|---"):
-                continue
-            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-            if cells[0] == "tool_id":
-                continue
-            rows[cells[0]] = {
-                "tool_family": cells[2],
-                "tool_class": cells[3],
-                "domain": cells[4],
-                "risk": cells[5],
-            }
-
-        substrate_rows = {
-            tool_id: meta
-            for tool_id, meta in protocol_tools.TOOL_DEFINITIONS.items()
-            if meta.get("tool_family") == "substrate_tool"
+        routes = {
+            meta.get("execution_route")
+            for meta in protocol_tools.TOOL_DEFINITIONS.values()
         }
-        assert set(rows) == set(substrate_rows)
-        for tool_id, meta in substrate_rows.items():
-            assert rows[tool_id]["tool_family"] == meta["tool_family"]
-            assert rows[tool_id]["tool_class"] == meta["tool_class"]
-            assert rows[tool_id]["domain"] == meta["domain"]
-            assert rows[tool_id]["risk"] == meta["risk"]
+        postures = {
+            meta.get("tool_class")
+            for meta in protocol_tools.TOOL_DEFINITIONS.values()
+        }
+        assert routes == {"internal_processor", "host_dispatch", "substrate"}
+        assert postures == {"read_tool", "sync_tool", "action_tool"}
+        assert all(
+            "tool_family" not in meta
+            for meta in protocol_tools.TOOL_DEFINITIONS.values()
+        )
 
     def test_spec067_audit_tool_transactions_reports_ok_for_closed_chain(self):
         from logic.tool_transaction_audit import audit_tool_transactions
@@ -122,21 +95,18 @@ class TestMemoryEntryToolBoundaries:
             receipts=[
                 {
                     "tool_id": "memory_write",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "status": "guide_loaded",
                     "source": "protocol_tool_request",
                 },
                 {
                     "tool_id": "memory_write",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "status": "submission_received",
                     "source": "memory_write_declaration",
                 },
                 {
                     "tool_id": "memory_write",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "status": "applied",
                     "source": "memory_write_declaration",
@@ -147,8 +117,8 @@ class TestMemoryEntryToolBoundaries:
         )
 
         assert report["tool_id"] == "tool_transaction_audit"
-        assert report["tool_family"] == "substrate_tool"
         assert report["tool_class"] == "sync_tool"
+        assert report["execution_route"] == "substrate"
         assert report["status"] == "ok"
         assert report["issues"] == []
         assert report["counts"]["submissions"] == 1
@@ -162,14 +132,12 @@ class TestMemoryEntryToolBoundaries:
             receipts=[
                 {
                     "tool_id": "memory_write",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "status": "guide_loaded",
                     "source": "protocol_tool_request",
                 },
                 {
                     "tool_id": "memory_write",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "status": "submission_received",
                     "source": "memory_write_declaration",
@@ -190,14 +158,12 @@ class TestMemoryEntryToolBoundaries:
             receipts=[
                 {
                     "tool_id": "guide_submit",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "status": "submission_received",
                     "source": "guide_submit",
                 },
                 {
                     "tool_id": "guide_submit",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "status": "accepted",
                     "source": "guide_submit",
@@ -219,14 +185,12 @@ class TestMemoryEntryToolBoundaries:
                 receipts=[
                     {
                         "tool_id": "relation_card_write",
-                        "tool_family": "protocol_tool",
                         "tool_class": "sync_tool",
                         "status": "submission_received",
                         "source": "relation_card_declaration",
                     },
                     {
                         "tool_id": "relation_card_write",
-                        "tool_family": "protocol_tool",
                         "tool_class": "sync_tool",
                         "status": terminal_status,
                         "source": "relation_card_declaration",
@@ -247,14 +211,12 @@ class TestMemoryEntryToolBoundaries:
             receipts=[
                 {
                     "tool_id": "relay_intent_settle",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "status": "submission_received",
                     "source": "relay_intent_settle",
                 },
                 {
                     "tool_id": "relay_intent_settle",
-                    "tool_family": "protocol_tool",
                     "tool_class": "sync_tool",
                     "status": "not_found",
                     "source": "relay_intent_settle",
@@ -277,15 +239,13 @@ class TestMemoryEntryToolBoundaries:
             receipts=[
                 {
                     "tool_id": "cache_compact",
-                    "tool_family": "substrate_tool",
                     "tool_class": "sync_tool",
                     "status": "rejected_missing_guide",
                     "source": "cache_compact",
                 },
                 {
                     "tool_id": "memory_write",
-                    "tool_family": "substrate_tool",
-                    "tool_class": "sync_tool",
+                    "tool_class": "read_tool",
                     "status": "submission_received",
                     "source": "memory_write_declaration",
                 },
@@ -306,12 +266,10 @@ class TestMemoryEntryToolBoundaries:
             invalid_requests=[
                 {
                     "tool_id": "cache_compact",
-                    "tool_family": "substrate_tool",
                     "reason": "unsupported_tool_family",
                 },
                 {
                     "tool_id": "not_a_real_tool",
-                    "tool_family": "",
                     "reason": "unknown_tool_id",
                 },
             ],
@@ -422,7 +380,9 @@ class TestMemoryEntryToolBoundaries:
         assert not hasattr(protocol_tools, "load_protocol_tool_guide")
         assert "tool_id: heartbeat_settle" not in tools_doc
         assert "heartbeat_settlement_table" not in tools_doc
-        assert "| heartbeat_tick | 心跳检测基座能力 | substrate_tool | sync_tool" in tools_doc
+        heartbeat = protocol_tools.tool_metadata_for("heartbeat_tick")
+        assert heartbeat["execution_route"] == "substrate"
+        assert heartbeat["tool_class"] == "sync_tool"
         assert "心跳轮" not in tools_doc
         assert "心跳 tick" not in tools_doc
 
@@ -447,7 +407,9 @@ class TestMemoryEntryToolBoundaries:
         assert not hasattr(protocol_tools, "load_protocol_tool_guide")
         assert "fault_record" not in exported
         assert "| fault_record | sync_tool | fault" not in tools_doc
-        assert "退役的 `chronicle_write`、`alert_mode_settle`、`fault_record`" in tools_doc
+        assert "`01_tool_header` 是唯一活动工具清单" in tools_doc
+        assert "chronicle_write" not in tools_doc
+        assert "alert_mode_settle" not in tools_doc
 
     def test_spec060_apply_fault_record_declaration(self):
         from logic.fault_record import apply_fault_record_declarations
@@ -489,8 +451,6 @@ class TestMemoryEntryToolBoundaries:
 
         assert receipts == [{
             "tool_id": "fault_record",
-            "tool_family": "protocol_tool",
-            "tool_class": "sync_tool",
             "status": "applied",
             "source": "fault_record_table",
             "fault_type": "tool_failure",
@@ -577,7 +537,7 @@ class TestMemoryEntryToolBoundaries:
         )
 
         assert receipts[0]["tool_id"] == "memory_content_read"
-        assert receipts[0]["tool_class"] == "read_tool"
+        assert "tool_class" not in receipts[0]
         assert receipts[0]["status"] == "accepted"
         assert receipts[0]["body"] == "BODYBODYBODYBODY"
         assert receipts[0]["read_mode"] == "partial"
@@ -769,7 +729,7 @@ class TestMemoryEntryToolBoundaries:
 
         assert receipts[0]["status"] == "invalid_pending_mem_id"
 
-    def test_memory_link_update_add_and_set_are_retired(self):
+    def test_memory_link_update_schema_only_accepts_remove(self):
         from logic.memory_link_update import apply_memory_link_update_declarations
 
         class DummyMemoryStore:
@@ -787,15 +747,15 @@ class TestMemoryEntryToolBoundaries:
             [base],
             data_modules={"memory_store": DummyMemoryStore()},
         )
-        assert receipts[0]["status"] == "rejected"
-        assert receipts[0]["reason"] == "retired_use_memory_container_create_or_write"
+        assert receipts[0]["status"] == "error"
+        assert receipts[0]["reason"] == "invalid_operation"
 
         receipts = apply_memory_link_update_declarations(
             [dict(base, operation="set", current_overview="DC-12：旧 set 路径")],
             data_modules={"memory_store": DummyMemoryStore()},
         )
-        assert receipts[0]["status"] == "rejected"
-        assert receipts[0]["reason"] == "retired_use_memory_container_create_or_write"
+        assert receipts[0]["status"] == "error"
+        assert receipts[0]["reason"] == "invalid_operation"
 
     def test_memory_link_update_remove_preserves_historical_repair_path(self):
         from logic.memory_link_update import apply_memory_link_update_declarations
@@ -836,8 +796,8 @@ class TestMemoryEntryToolBoundaries:
             data_modules={"memory_store": store},
         )
 
-        assert receipts[0]["status"] == "rejected"
-        assert receipts[0]["reason"] == "retired_use_memory_container_create_or_write"
+        assert receipts[0]["status"] == "error"
+        assert receipts[0]["reason"] == "invalid_operation"
         assert receipts[1]["status"] == "applied"
         assert receipts[1]["current_overview"] == "保留旧概况"
         assert store.calls == [("MEM-041000AA", "remove", ["DC-12"], None)]
@@ -879,38 +839,6 @@ class TestMemoryEntryToolBoundaries:
 
         assert receipts[0]["status"] == "feature_deferred"
         assert receipts[0]["reason"] == "feature_deferred"
-
-    def test_annotation_update_rejects_private_memory_when_subject_absent(self):
-        from logic.memory_annotation import apply_memory_annotation_declarations
-
-        class DummyMemoryStore:
-            def get_meta(self, mem_id):
-                return {
-                    "id": mem_id,
-                    "access": "private",
-                    "subject": "FMZ",
-                    "linked_containers": ["DC-1"],
-                }
-
-            def private_subjects_for_memory(self, mem_id):
-                return ["TzPz"]
-
-            def update_annotation(self, *args, **kwargs):
-                raise AssertionError("private memory must not be updated")
-
-        receipts = apply_memory_annotation_declarations(
-            [{
-                "mem_id": "MEM-041000AA",
-                "annotation_kind": "bridge",
-                "annotation": "Needs care",
-                "container_refs": ["DC-1"],
-                "reason": "private target",
-            }],
-            {"memory_store": DummyMemoryStore()},
-            state={"presence": {"confirmed_subjects": []}},
-        )
-
-        assert receipts[0]["status"] == "private_memory_not_visible"
 
     def test_private_memory_does_not_create_reconsolidation_candidate(self):
         from logic.memory_reconsolidation import reconsolidation_candidate

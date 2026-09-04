@@ -331,7 +331,7 @@ def build_graph(repo_root: str | Path | None = None) -> dict[str, Any]:
         issues.append({
             "id": "reaction_relation_keyword_overlap",
             "severity": "red",
-            "message": "relation.md 仍由场景层触发进入 reaction；当前应作为固定层关系契约，不再按“关系焦点”场景驱动。",
+            "message": "relation.md 仍由场景层触发进入 reaction；当前应作为固定层关系契约，不再按关系场景临时驱动。",
             "source": "rules_registry.json + rules fixed-layer migration",
             "file": "protocol/base/relation.md",
             "step": "reaction",

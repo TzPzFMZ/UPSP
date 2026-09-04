@@ -1,13 +1,19 @@
 import type {
   AboutPayload,
+  CallFrame,
   DepositionDetailPayload,
   DepositionIndexPayload,
   DepositionItem,
   DepositionKind,
+  DialogueNode,
   JsonObject,
   LiveEventsPayload,
+  LiveDetailKind,
+  LiveDetailPayload,
   LivePayload,
   LiveState,
+  LedgerItem,
+  ConversationCard,
   ModelContextResolution,
   PageId,
   PermissionLevel,
@@ -58,6 +64,7 @@ import {
 
 let contextPrefixDiffController: AbortController | null = null;
 const depositionDetailRequests = new Map<string, Promise<boolean>>();
+const LIVE_PROJECTION_RETRY_DELAY_MS = 5_000;
 
 class RuntimeRequestError extends Error {
   status: number;
@@ -116,6 +123,7 @@ function runtimeProjectionAdvanced(): boolean {
 export function refreshRuntimeUi(): void {
   const key = JSON.stringify([
     runtimeProjection.host,
+    runtimeProjection.hostSession,
     runtimeProjection.round,
     runtimeProjection.live?.last_event_index || 0,
     runtimeProjection.live?.round_lifecycle?.state || "",
@@ -124,6 +132,15 @@ export function refreshRuntimeUi(): void {
     runtimeProjection.status?.stage || "",
     runtimeProjection.status?.stop_requested || false,
     runtimeProjection.status?.can_stop || false,
+    runtimeProjection.status?.pending_tool_approval?.approval_id || "",
+    runtimeProjection.status?.interrupted_recovery?.pending || false,
+    runtimeProjection.status?.interrupted_recovery?.round || 0,
+    runtimeProjection.status?.interrupted_recovery?.applied_unregistered || 0,
+    runtimeProjection.status?.interrupted_recovery?.applied_registered || 0,
+    runtimeProjection.status?.interrupted_recovery?.not_applied || 0,
+    runtimeProjection.status?.interrupted_recovery?.known_result || 0,
+    runtimeProjection.status?.interrupted_recovery?.conflict || 0,
+    runtimeProjection.status?.interrupted_recovery?.outcome_unknown || 0,
     runtimeProjection.status?.cli?.data?.round_type || "",
     (runtimeProjection.status?.cli?.data?.active_flags || []).join(","),
     runtimeProjection.sending,
@@ -131,10 +148,14 @@ export function refreshRuntimeUi(): void {
     taskProjection.relayPending,
     runtimeProjection.awaitingProjection,
     runtimeProjection.error,
+    runtimeProjection.liveError,
+    runtimeProjection.liveErrorEventIndex,
     runtimeProjection.sendFeedback,
     runtimeProjection.exportFeedback,
     runtimeProjection.conversationHistoryVersion,
     runtimeProjection.conversationHistoryError,
+    runtimeProjection.conversationHistoryHasMore,
+    runtimeProjection.conversationHistoryLoading,
   ]);
   if (key === runtimeProjection.renderKey) {
     renderComposerState();
@@ -152,7 +173,7 @@ export function refreshRuntimeUi(): void {
 }
 
 function validateLiveState(statePayload: LiveState | null): void {
-  if (statePayload !== null && statePayload?.schema_version !== "round_live_state.v2") {
+  if (statePayload !== null && statePayload?.schema_version !== "round_live_state.v3") {
     throw new Error("round_live_state_schema_mismatch");
   }
 }
@@ -167,7 +188,7 @@ function selectedContextDiffRef(): { round: number; frameId: string } | null {
   const live = round === runtimeProjection.round
     ? runtimeProjection.live
     : runtimeProjection.conversationRounds.get(round) || null;
-  const frames = live?.call_frames || [];
+  const frames = live?.frame_catalog || [];
   const frame = state.selectedContextFrame === null
     ? frames.at(-1)
     : frames.find((item) => item.frame_id === state.selectedContextFrame);
@@ -248,6 +269,284 @@ export async function pollContextPrefixDiffForSelection(
   }
 }
 
+function liveForRound(round: number): LiveState | null {
+  return round === runtimeProjection.round
+    ? runtimeProjection.live
+    : runtimeProjection.conversationRounds.get(round) || null;
+}
+
+function detailKey(round: number, ref: string): string {
+  return `${round}:${ref}`;
+}
+
+async function fetchLiveDetail(kind: LiveDetailKind, round: number, ref = ""): Promise<LiveDetailPayload> {
+  const query = new URLSearchParams({ kind, round: String(round) });
+  if (ref) query.set("ref", ref);
+  const payload = await fetchRuntimeJson<LiveDetailPayload>(`./api/live/detail?${query.toString()}`);
+  if (payload.schema_version !== "round_live_detail.v1" || payload.kind !== kind || payload.round !== round) {
+    throw new Error("round_live_detail_schema_mismatch");
+  }
+  if (ref && payload.ref !== ref) throw new Error("round_live_detail_ref_mismatch");
+  return payload;
+}
+
+export async function loadLegacyCards(round: number): Promise<void> {
+  if (runtimeProjection.legacyCards.has(round) || runtimeProjection.legacyCardsLoading.has(round)) return;
+  const generation = runtimeProjection.detailGeneration;
+  runtimeProjection.legacyCardsLoading.add(round);
+  runtimeProjection.legacyCardsErrors.delete(round);
+  refreshRuntimeUi();
+  try {
+    const detail = await fetchLiveDetail("legacy_conversation", round);
+    if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return;
+    const body = jsonObject(detail.payload);
+    if (!Array.isArray(body.conversation)) throw new Error("legacy_conversation_detail_invalid");
+    runtimeProjection.legacyCards.set(round, body.conversation as ConversationCard[]);
+  } catch (error: unknown) {
+    if (generation === runtimeProjection.detailGeneration) {
+      const failure = errorView(error);
+      runtimeProjection.legacyCardsErrors.set(round, failure.code || failure.message);
+    }
+  } finally {
+    if (generation === runtimeProjection.detailGeneration) {
+      runtimeProjection.legacyCardsLoading.delete(round);
+      runtimeProjection.conversationHistoryVersion += 1;
+      refreshRuntimeUi();
+    }
+  }
+}
+
+export async function loadLedgerItems(round: number): Promise<void> {
+  if (runtimeProjection.ledgerItems.has(round) || runtimeProjection.ledgerItemsLoading.has(round)) return;
+  const generation = runtimeProjection.detailGeneration;
+  runtimeProjection.ledgerItemsLoading.add(round);
+  runtimeProjection.ledgerItemsErrors.delete(round);
+  refreshRuntimeUi();
+  try {
+    const detail = await fetchLiveDetail("ledger", round);
+    if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return;
+    const body = jsonObject(detail.payload);
+    if (!Array.isArray(body.items)) throw new Error("ledger_detail_invalid");
+    runtimeProjection.ledgerItems.set(round, body.items as LedgerItem[]);
+  } catch (error: unknown) {
+    if (generation === runtimeProjection.detailGeneration) {
+      const failure = errorView(error);
+      runtimeProjection.ledgerItemsErrors.set(round, failure.code || failure.message);
+    }
+  } finally {
+    if (generation === runtimeProjection.detailGeneration) {
+      runtimeProjection.ledgerItemsLoading.delete(round);
+      runtimeProjection.conversationHistoryVersion += 1;
+      refreshRuntimeUi();
+    }
+  }
+}
+
+export async function fetchLedgerEventCard(round: number, eventRef: string): Promise<ConversationCard | null> {
+  const generation = runtimeProjection.detailGeneration;
+  const detail = await fetchLiveDetail("event", round, eventRef);
+  if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return null;
+  const body = jsonObject(detail.payload);
+  const cards = Array.isArray(body.cards) ? body.cards as ConversationCard[] : [];
+  const event = jsonObject(body.event);
+  if (cards.length) {
+    const sections = cards.map((card) => {
+      const title = String(card.title || card.type || "event");
+      const content = String(card.content_md || card.content_raw || card.content || "");
+      return `## ${title}\n\n${content}`;
+    });
+    sections.push(`## ${t("原始 JSON")}\n\n\`\`\`json\n${JSON.stringify(event, null, 2)}\n\`\`\``);
+    return {
+      ...cards[0],
+      title: String(event.event_type || cards[0].title || "event"),
+      content_md: sections.join("\n\n"),
+      content_raw: JSON.stringify(event, null, 2),
+    };
+  }
+  return {
+    event_index: Number(event.event_index || eventRef),
+    event_type: String(event.event_type || "event"),
+    phase: String(event.phase || "round"),
+    frame_id: String(event.frame_id || ""),
+    recorded_at: String(event.recorded_at || ""),
+    title: String(event.event_type || "event"),
+    type: "event",
+    content_md: `\`\`\`json\n${JSON.stringify(event, null, 2)}\n\`\`\``,
+  };
+}
+
+export async function loadFrameDetail(round: number, frameId: string, { force = false } = {}): Promise<void> {
+  const key = detailKey(round, frameId);
+  if (!force && runtimeProjection.frameDetail?.round === round && runtimeProjection.frameDetail.frameId === frameId) return;
+  if (runtimeProjection.frameDetailLoading === key) return;
+  const generation = runtimeProjection.detailGeneration;
+  runtimeProjection.frameDetail = null;
+  runtimeProjection.frameDetailLoading = key;
+  runtimeProjection.frameDetailError = "";
+  refreshRuntimeUi();
+  try {
+    const detail = await fetchLiveDetail("frame", round, frameId);
+    if (
+      generation !== runtimeProjection.detailGeneration
+      || runtimeProjection.frameDetailLoading !== key
+      || !liveForRound(round)
+    ) return;
+    const frame = detail.payload as CallFrame;
+    if (!frame || frame.frame_id !== frameId) throw new Error("frame_detail_invalid");
+    runtimeProjection.frameDetail = { round, frameId, frame };
+  } catch (error: unknown) {
+    if (
+      generation === runtimeProjection.detailGeneration
+      && runtimeProjection.frameDetailLoading === key
+    ) {
+      const failure = errorView(error);
+      runtimeProjection.frameDetailError = failure.code || failure.message;
+    }
+  } finally {
+    if (generation === runtimeProjection.detailGeneration && runtimeProjection.frameDetailLoading === key) {
+      runtimeProjection.frameDetailLoading = "";
+      runtimeProjection.conversationHistoryVersion += 1;
+      refreshRuntimeUi();
+    }
+  }
+}
+
+export async function loadTimelineNodeDetail(round: number, nodeId: string): Promise<void> {
+  const key = detailKey(round, nodeId);
+  const current = liveForRound(round)?.dialogue_timeline?.nodes.find((node) => node.node_id === nodeId);
+  const cached = runtimeProjection.timelineNodeDetails.get(key);
+  if (
+    cached
+    && cached.status === current?.status
+    && cached.ended_at === current?.ended_at
+    && cached.approval_decision === current?.approval_decision
+  ) return;
+  if (runtimeProjection.timelineNodeLoading.has(key)) return;
+  const generation = runtimeProjection.detailGeneration;
+  runtimeProjection.timelineNodeLoading.add(key);
+  runtimeProjection.timelineNodeErrors.delete(key);
+  refreshRuntimeUi();
+  try {
+    const detail = await fetchLiveDetail("timeline_node", round, nodeId);
+    if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return;
+    const node = detail.payload as DialogueNode;
+    if (!node || node.node_id !== nodeId) throw new Error("timeline_node_detail_invalid");
+    runtimeProjection.timelineNodeDetails.set(key, node);
+  } catch (error: unknown) {
+    if (generation === runtimeProjection.detailGeneration) {
+      const failure = errorView(error);
+      runtimeProjection.timelineNodeErrors.set(key, failure.code || failure.message);
+    }
+  } finally {
+    if (generation === runtimeProjection.detailGeneration) {
+      runtimeProjection.timelineNodeLoading.delete(key);
+      runtimeProjection.conversationHistoryVersion += 1;
+      refreshRuntimeUi();
+    }
+  }
+}
+
+function refreshAdvancedRoundDetails(round: number, live: LiveState | null): void {
+  const reloadLedger = runtimeProjection.ledgerItems.delete(round);
+  runtimeProjection.ledgerItemsErrors.delete(round);
+  const currentNodes = new Map(
+    (live?.dialogue_timeline?.nodes || []).map((node) => [node.node_id, node]),
+  );
+  const reloadNodeIds: string[] = [];
+  for (const [key, cached] of runtimeProjection.timelineNodeDetails) {
+    if (!key.startsWith(`${round}:`)) continue;
+    const current = currentNodes.get(cached.node_id);
+    if (
+      current
+      && current.status === cached.status
+      && current.ended_at === cached.ended_at
+      && current.approval_decision === cached.approval_decision
+    ) continue;
+    runtimeProjection.timelineNodeDetails.delete(key);
+    runtimeProjection.timelineNodeErrors.delete(key);
+    if (current?.detail_ref && state.conversationDisclosure.get(current.node_id) === true) {
+      reloadNodeIds.push(current.node_id);
+    }
+  }
+  const ledgerVisible = state.activePage === "audit"
+    || (state.activePage === "run" && ["tools", "receipts"].includes(getActivePageTab("run")));
+  if (reloadLedger && ledgerVisible) void loadLedgerItems(round);
+  for (const nodeId of reloadNodeIds) void loadTimelineNodeDetail(round, nodeId);
+}
+
+export function loadSelectedRuntimeDetails(pageId: PageId, tabId = ""): void {
+  const selectedRound = pageId === "audit"
+    ? state.selectedLedgerRound
+    : pageId === "context"
+      ? state.selectedContextRound
+      : state.selectedTaskRound;
+  const round = selectedRound ?? runtimeProjection.round ?? runtimeProjection.conversationRoundOrder.at(-1) ?? null;
+  if (round === null) return;
+  const live = liveForRound(round);
+  if (!live) return;
+  if (pageId === "audit" || (pageId === "run" && ["tools", "receipts"].includes(tabId))) {
+    void loadLedgerItems(round);
+  }
+  if (pageId !== "context" && !(pageId === "run" && tabId === "tools")) return;
+  const selectedFrameId = pageId === "context" ? state.selectedContextFrame : state.selectedTaskFrame;
+  const frames = live.frame_catalog || [];
+  const frame = selectedFrameId === null
+    ? frames.at(-1)
+    : frames.find((item) => item.frame_id === selectedFrameId);
+  if (frame) void loadFrameDetail(round, frame.frame_id);
+}
+
+function clearLiveDetails(): void {
+  runtimeProjection.detailGeneration += 1;
+  runtimeProjection.legacyCards.clear();
+  runtimeProjection.legacyCardsLoading.clear();
+  runtimeProjection.legacyCardsErrors.clear();
+  runtimeProjection.ledgerItems.clear();
+  runtimeProjection.ledgerItemsLoading.clear();
+  runtimeProjection.ledgerItemsErrors.clear();
+  runtimeProjection.frameDetail = null;
+  runtimeProjection.frameDetailLoading = "";
+  runtimeProjection.frameDetailError = "";
+  runtimeProjection.timelineNodeDetails.clear();
+  runtimeProjection.timelineNodeLoading.clear();
+  runtimeProjection.timelineNodeErrors.clear();
+}
+
+function clearRoundProjectionForIdentityMutation(): void {
+  clearLiveDetails();
+  state.conversationStickToBottom = true;
+  runtimeProjection.hostSession = "";
+  runtimeProjection.live = null;
+  runtimeProjection.round = null;
+  runtimeProjection.conversationRounds.clear();
+  runtimeProjection.conversationRoundOrder = [];
+  runtimeProjection.conversationHistoryInitialized = false;
+  runtimeProjection.conversationHistoryLatest = null;
+  runtimeProjection.conversationHistoryHasMore = false;
+  runtimeProjection.conversationHistoryLoading = false;
+  runtimeProjection.conversationHistoryError = "";
+  runtimeProjection.liveError = "";
+  runtimeProjection.liveErrorEventIndex = 0;
+  runtimeProjection.liveRetryAfter = 0;
+  runtimeProjection.fullRefreshNeeded = true;
+  state.selectedTaskRound = null;
+  state.selectedTaskFrame = null;
+  state.selectedContextRound = null;
+  state.selectedContextFrame = null;
+  state.selectedLedgerRound = null;
+}
+
+function requestDesktopBackendRestart(): void {
+  const webview = (window as Window & {
+    chrome?: { webview?: { postMessage: (message: unknown) => void } };
+  }).chrome?.webview;
+  if (!webview) return;
+  window.requestAnimationFrame(() => webview.postMessage({
+    schema_version: "upsp_desktop_message.v1",
+    command: "restart_backend",
+  }));
+}
+
 function cacheLatestConversation(round: number | null, liveState: LiveState | null): void {
   if (round === null || !Number.isInteger(round) || !liveState) return;
   runtimeProjection.conversationRounds.set(round, liveState);
@@ -260,6 +559,8 @@ function cacheLatestConversation(round: number | null, liveState: LiveState | nu
 }
 
 async function syncConversationHistory({ force = false }: { force?: boolean } = {}): Promise<void> {
+  if (runtimeProjection.conversationHistoryLoading) return;
+  const generation = runtimeProjection.detailGeneration;
   const latestRound = runtimeProjection.round;
   cacheLatestConversation(latestRound, runtimeProjection.live);
   if (
@@ -270,8 +571,11 @@ async function syncConversationHistory({ force = false }: { force?: boolean } = 
 
   runtimeProjection.conversationHistoryInitialized = true;
   runtimeProjection.conversationHistoryLatest = latestRound;
+  runtimeProjection.conversationHistoryLoading = true;
+  refreshRuntimeUi();
   try {
     const payload = await fetchRuntimeJson<RoundListPayload>("./api/rounds");
+    if (generation !== runtimeProjection.detailGeneration) return;
     if (!Array.isArray(payload.rounds)) throw new Error("round_list_schema_mismatch");
     const roundIds = [...new Set(payload.rounds
       .map((item) => Number(item.round))
@@ -286,22 +590,34 @@ async function syncConversationHistory({ force = false }: { force?: boolean } = 
     [...runtimeProjection.conversationRounds.keys()].forEach((round) => {
       if (!retained.has(round)) runtimeProjection.conversationRounds.delete(round);
     });
-    const missing = roundIds.filter((round) => !runtimeProjection.conversationRounds.has(round));
+    const missing = roundIds
+      .filter((round) => !runtimeProjection.conversationRounds.has(round))
+      .sort((left, right) => right - left);
     const failed: Array<{ round: number; error: unknown }> = [];
-    await Promise.all(missing.map(async (round) => {
+    for (const round of force ? missing.slice(0, 2) : []) {
       try {
         const roundPayload = await fetchRuntimeJson<LivePayload>(`./api/live/state?round=${round}`);
+        if (generation !== runtimeProjection.detailGeneration) return;
         validateLiveState(roundPayload.state || null);
         if (Number(roundPayload.round) !== round || !roundPayload.state) {
           throw new Error("round_history_projection_mismatch");
         }
         runtimeProjection.conversationRounds.set(round, roundPayload.state);
+        if (roundPayload.state.display_mode === "legacy") void loadLegacyCards(round);
+        runtimeProjection.conversationRoundOrder = roundIds.filter(
+          (item) => runtimeProjection.conversationRounds.has(item),
+        );
+        runtimeProjection.conversationHistoryVersion += 1;
+        refreshRuntimeUi();
       } catch (error) {
         failed.push({ round, error });
       }
-    }));
+    }
     runtimeProjection.conversationRoundOrder = roundIds.filter(
       (round) => runtimeProjection.conversationRounds.has(round),
+    );
+    runtimeProjection.conversationHistoryHasMore = roundIds.some(
+      (round) => !runtimeProjection.conversationRounds.has(round),
     );
     if (state.selectedLedgerRound !== null && !retained.has(state.selectedLedgerRound)) {
       state.selectedLedgerRound = null;
@@ -317,9 +633,17 @@ async function syncConversationHistory({ force = false }: { force?: boolean } = 
       ? t("较早对话未完全载入")
       : "";
   } catch (error) {
-    runtimeProjection.conversationHistoryError = t("较早对话未完全载入");
+    if (generation === runtimeProjection.detailGeneration) {
+      runtimeProjection.conversationHistoryError = t("较早对话未完全载入");
+    }
+  } finally {
+    if (generation === runtimeProjection.detailGeneration) {
+      runtimeProjection.conversationHistoryLoading = false;
+    }
   }
-  runtimeProjection.conversationHistoryVersion += 1;
+  if (generation === runtimeProjection.detailGeneration) {
+    runtimeProjection.conversationHistoryVersion += 1;
+  }
 }
 
 async function fetchFullLiveProjection(): Promise<{ round: number | null; state: LiveState | null }> {
@@ -332,7 +656,7 @@ async function fetchLiveProjection(forceFull = false): Promise<{ round: number |
   if (forceFull || runtimeProjection.fullRefreshNeeded) return fetchFullLiveProjection();
   const after = Number(runtimeProjection.live?.last_event_index || 0);
   const payload = await fetchRuntimeJson<LiveEventsPayload>(`./api/live/events?round=latest&after=${after}`);
-  if (payload.schema_version !== "round_live_events.v1") {
+  if (payload.schema_version !== "round_live_events.v2") {
     throw new Error("round_live_events_schema_mismatch");
   }
   const nextRound = payload.round ?? null;
@@ -351,27 +675,104 @@ export function pollRuntime({ forceFull = false, ignoreVisibility = false }: { f
     return polling.runtime;
   }
   const request = (async () => {
-    const previousRound = runtimeProjection.round;
-    const previousEventIndex = Number(
-      runtimeProjection.live?.last_event_index || 0,
-    );
+    let requestGeneration = runtimeProjection.detailGeneration;
+    let status: RuntimeStatus;
     try {
-      const [status, livePayload] = await Promise.all([
-        fetchRuntimeJson<RuntimeStatus>("./api/runtime/status"),
-        fetchLiveProjection(forceFull),
-      ]);
-      if (status.schema_version !== "seed_gui_runtime_status.v2") {
+      status = await fetchRuntimeJson<RuntimeStatus>("./api/runtime/status");
+      if (status.schema_version !== "seed_gui_runtime_status.v3") {
         throw new Error("runtime_status_schema_mismatch");
       }
-      runtimeProjection.host = "connected";
-      runtimeProjection.status = status;
-      runtimeProjection.live = livePayload.state;
-      runtimeProjection.round = livePayload.round;
-      runtimeProjection.error = "";
-      runtimeProjection.fullRefreshNeeded = false;
-      const liveAdvanced = previousRound !== livePayload.round
-        || previousEventIndex !== Number(livePayload.state?.last_event_index || 0);
-      await syncConversationHistory();
+    } catch (error: unknown) {
+      if (requestGeneration !== runtimeProjection.detailGeneration) return false;
+      const failure = errorView(error);
+      runtimeProjection.host = "error";
+      runtimeProjection.status = null;
+      runtimeProjection.liveError = "";
+      runtimeProjection.liveErrorEventIndex = 0;
+      runtimeProjection.liveRetryAfter = 0;
+      runtimeProjection.fullRefreshNeeded = true;
+      runtimeProjection.error = `${t("宿主状态读取失败")}：${failure.code || failure.message || "unknown"}`;
+      refreshRuntimeUi();
+      return true;
+    }
+    if (requestGeneration !== runtimeProjection.detailGeneration) return false;
+
+    const nextHostSession = status.host_session || "";
+    const identityChanged = Boolean(
+      runtimeProjection.hostSession
+      && runtimeProjection.hostSession !== nextHostSession,
+    );
+    if (identityChanged) {
+      clearRoundProjectionForIdentityMutation();
+      requestGeneration = runtimeProjection.detailGeneration;
+    }
+    runtimeProjection.hostSession = nextHostSession;
+    const activeRound = status.current_round !== null
+      && status.current_round !== undefined
+      && Number.isInteger(Number(status.current_round))
+      ? Number(status.current_round)
+      : null;
+    if (
+      !identityChanged
+      && activeRound !== null
+      && runtimeProjection.round !== null
+      && activeRound !== runtimeProjection.round
+    ) {
+      cacheLatestConversation(runtimeProjection.round, runtimeProjection.live);
+      clearLiveDetails();
+      requestGeneration = runtimeProjection.detailGeneration;
+      runtimeProjection.live = null;
+      runtimeProjection.round = activeRound;
+      runtimeProjection.liveError = "";
+      runtimeProjection.liveErrorEventIndex = 0;
+      runtimeProjection.liveRetryAfter = 0;
+      runtimeProjection.fullRefreshNeeded = true;
+    }
+    runtimeProjection.host = "connected";
+    runtimeProjection.status = status;
+    runtimeProjection.error = "";
+
+    let liveAdvanced = false;
+    let liveSucceeded = false;
+    const retryDue = Date.now() >= runtimeProjection.liveRetryAfter;
+    if (forceFull || !runtimeProjection.liveError || retryDue) {
+      const previousRound = runtimeProjection.round;
+      const previousEventIndex = Number(
+        runtimeProjection.live?.last_event_index || 0,
+      );
+      try {
+        const livePayload = await fetchLiveProjection(
+          forceFull || Boolean(runtimeProjection.liveError),
+        );
+        if (requestGeneration !== runtimeProjection.detailGeneration) return false;
+        if (activeRound !== null && livePayload.round !== activeRound) {
+          throw new Error("round_live_status_projection_mismatch");
+        }
+        runtimeProjection.live = livePayload.state;
+        runtimeProjection.round = livePayload.round;
+        runtimeProjection.liveError = "";
+        runtimeProjection.liveErrorEventIndex = 0;
+        runtimeProjection.liveRetryAfter = 0;
+        runtimeProjection.fullRefreshNeeded = false;
+        liveAdvanced = previousRound !== livePayload.round
+          || previousEventIndex !== Number(livePayload.state?.last_event_index || 0);
+        liveSucceeded = true;
+      } catch (error: unknown) {
+        if (requestGeneration !== runtimeProjection.detailGeneration) return false;
+        const failure = errorView(error);
+        runtimeProjection.liveError = `${t("实时投影读取失败")}：${failure.code || failure.message || "unknown"}`;
+        runtimeProjection.liveErrorEventIndex = Number(
+          runtimeProjection.live?.last_event_index || 0,
+        );
+        runtimeProjection.liveRetryAfter = Date.now() + LIVE_PROJECTION_RETRY_DELAY_MS;
+        runtimeProjection.fullRefreshNeeded = true;
+      }
+    }
+    if (liveSucceeded && liveAdvanced && runtimeProjection.round !== null) {
+      refreshAdvancedRoundDetails(runtimeProjection.round, runtimeProjection.live);
+    }
+    if (liveSucceeded) {
+      void syncConversationHistory().then(() => refreshRuntimeUi());
       if (liveAdvanced) {
         await pollTaskProjection({ force: true, ignoreVisibility: true });
       }
@@ -379,14 +780,19 @@ export function pollRuntime({ forceFull = false, ignoreVisibility = false }: { f
         runtimeProjection.awaitingProjection = false;
         runtimeProjection.submitBaseline = null;
       }
-    } catch (error: unknown) {
-      const failure = errorView(error);
-      runtimeProjection.host = "error";
-      runtimeProjection.status = null;
-      runtimeProjection.fullRefreshNeeded = true;
-      runtimeProjection.error = `${t("宿主状态读取失败")}：${failure.code || failure.message || "unknown"}`;
     }
     refreshRuntimeUi();
+    const visibleRound = runtimeProjection.round;
+    if (
+      visibleRound !== null
+      && runtimeProjection.live?.display_mode === "legacy"
+      && !runtimeProjection.legacyCards.has(visibleRound)
+      && !runtimeProjection.legacyCardsLoading.has(visibleRound)
+    ) {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(
+        () => void loadLegacyCards(visibleRound),
+      ));
+    }
     return true;
   })();
   polling.runtime = request.finally(() => {
@@ -900,47 +1306,6 @@ export function pollDeposition({ force = false, ignoreVisibility = false }: { fo
   return polling.deposition;
 }
 
-export async function submitContainerFocus(action: string, containerId: string): Promise<void> {
-  const mutation = depositionProjection.focusMutation;
-  if (mutation.pending) return;
-  mutation.pending = true;
-  mutation.feedback = "";
-  renderStage("containers");
-  try {
-    const payload = await fetchRuntimeJson<{ schema_version: string; submission_source: string; receipt?: import("./contracts").ContainerFocusReceipt }>("./api/container/focus", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, container_id: containerId }),
-    });
-    if (payload.schema_version !== "seed_gui_container_focus_result.v1"
-        || payload.submission_source !== "seed_gui"
-        || payload.receipt?.tool_id !== "container_focus"
-        || payload.receipt?.status !== "applied") {
-      throw new Error("container_focus_receipt_mismatch");
-    }
-    mutation.receipt = payload.receipt;
-    mutation.feedback = `已由 processor ${payload.receipt.action}：${payload.receipt.container_id || "无目标"}。`;
-    await pollDeposition({ force: true, ignoreVisibility: true });
-  } catch (error: unknown) {
-    const failure = errorView(error);
-    const receipt = jsonObject(failure.payload.receipt);
-    if (receipt.tool_id === "container_focus") {
-      mutation.receipt = receipt as import("./contracts").ContainerFocusReceipt;
-    }
-    const labels = {
-      400: t("焦点参数无效"),
-      403: t("请求来源被拒绝"),
-      404: t("容器不存在"),
-      409: t("焦点状态冲突或已有写入在途"),
-      503: t("本地焦点处理器不可用"),
-    };
-    mutation.feedback = `${labels[failure.status as keyof typeof labels] || t("焦点变更失败")}：${failure.code || failure.message}`;
-  } finally {
-    mutation.pending = false;
-    if (state.activePage === "containers") renderStage("containers");
-  }
-}
-
 function confirmUnlimitedPermission(permissionLevel: PermissionLevel): boolean {
   if (permissionLevel !== "unlimited" || runtimeProjection.unlimitedConfirmed) return true;
   const confirmed = window.confirm(t("放行权限会允许副作用工具直接执行。仅确认当前页面会话使用放行权限？"));
@@ -1236,9 +1601,13 @@ export async function submitInstanceMutation(
     if (receipt.schema_version !== "seed_gui_instance_mutation_receipt.v1") {
       throw new Error("instance_mutation_receipt_mismatch");
     }
+    clearRoundProjectionForIdentityMutation();
     if (receipt.restart_required === true) {
       runtimeProjection.sendFeedback = t("正在切换位格或分身");
+      refreshRuntimeUi();
+      requestDesktopBackendRestart();
     } else {
+      refreshRuntimeUi();
       await pollPersonaCatalog({ force: true });
     }
   } catch (error: unknown) {
@@ -1351,6 +1720,11 @@ export async function retryProjection(target: string): Promise<void> {
     refreshRuntimeUi();
     return;
   }
+  if (target === "live") {
+    runtimeProjection.liveRetryAfter = 0;
+    await pollRuntime({ forceFull: true, ignoreVisibility: true });
+    return;
+  }
   if (target === "runtime") {
     await Promise.all([
       pollRuntime({ forceFull: true, ignoreVisibility: true }),
@@ -1368,65 +1742,32 @@ export async function retryProjection(target: string): Promise<void> {
   }
 }
 
-function evidenceExportPayload(): { round: number; payload: JsonObject } | null {
+function evidenceExportRound(): number | null {
   const selectedRound = state.selectedLedgerRound ?? runtimeProjection.round;
   const live = selectedRound === runtimeProjection.round
     ? runtimeProjection.live
     : selectedRound == null ? null : runtimeProjection.conversationRounds.get(selectedRound) || null;
-  if (!live || selectedRound == null) return null;
-  return {
-    round: selectedRound,
-    payload: {
-      schema_version: "seed_gui_evidence_export.v1",
-      exported_at: new Date().toISOString(),
-      source: {
-        projection_schema: live.schema_version,
-        round: selectedRound,
-        last_event_index: Number(live.last_event_index || 0),
-        host: "127.0.0.1",
-      },
-      runtime_projection: {
-        schema_version: live.schema_version,
-        round: selectedRound,
-        last_event_index: Number(live.last_event_index || 0),
-        latest_frame_id: live.latest_frame_id || "",
-        statusbar_projection: live.statusbar_projection || null,
-        round_lifecycle: live.round_lifecycle || null,
-        call_frames: (live.call_frames || []).map((frame) => ({
-          frame_id: frame.frame_id || "",
-          round: frame.round ?? selectedRound,
-          label: frame.label || "",
-          phase: frame.phase || "",
-          iteration: frame.iteration ?? null,
-          call_channel: frame.call_channel || "",
-          event_start_index: frame.event_start_index ?? null,
-          event_end_index: frame.event_end_index ?? null,
-          layer_source: frame.layer_source || "",
-          historical: Boolean(frame.historical),
-        })),
-        context_panes: live.context_panes || [],
-        conversation: live.conversation || [],
-        manifest: live.manifest || {},
-      },
-      task_projection: taskProjection.data,
-      deposition_index: depositionProjection.index,
-    },
-  };
+  return live && selectedRound != null ? selectedRound : null;
 }
 
-export function exportCurrentEvidence(): void {
-  const evidence = evidenceExportPayload();
-  if (!evidence) {
+export async function exportCurrentEvidence(): Promise<void> {
+  const round = evidenceExportRound();
+  if (round === null) {
     runtimeProjection.exportFeedback = t("没有可导出的真实轮次投影。");
     renderStageAndFocus("audit", "[data-export-evidence]");
     return;
   }
   try {
-    const body = `${JSON.stringify(evidence.payload, null, 2)}\n`;
+    const detail = await fetchLiveDetail("evidence", round);
+    const payload = jsonObject(detail.payload);
+    payload.exported_at = new Date().toISOString();
+    payload.task_projection = taskProjection.data;
+    payload.deposition_index = depositionProjection.index;
+    const body = `${JSON.stringify(payload, null, 2)}\n`;
     const url = URL.createObjectURL(new Blob([body], { type: "application/json;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `upsp-seed-round-${String(evidence.round).padStart(6, "0")}-evidence.json`;
+    link.download = `upsp-seed-round-${String(round).padStart(6, "0")}-evidence.json`;
     document.body.append(link);
     link.click();
     link.remove();

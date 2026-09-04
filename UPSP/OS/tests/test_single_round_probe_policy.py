@@ -54,7 +54,6 @@ def test_spec609_probe_rejects_unadvertised_reaction_tool_call(monkeypatch) -> N
         "response": "",
         "tool_call_envelopes": [{
             "tool_id": "memory_write",
-            "tool_family": "protocol_tool",
             "tool_class": "write_tool",
             "call_id": "call_forbidden_memory",
             "source": "provider_tool_call",

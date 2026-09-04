@@ -5,6 +5,7 @@ import os
 
 from assembly.context import ContextAssembler
 from data.alert_store import AlertStore
+from data.action_recovery_store import ActionRecoveryStore
 from data.config_store import ConfigStore
 from data.connectivity_store import ConnectivityStore
 from data.context_store import ContextStore
@@ -15,6 +16,7 @@ from data.memory_index import MemoryIndex
 from data.memory_store import MemoryStore
 from data.prompt_cache_telemetry import total_input_tokens
 from data.relation_store import RelationStore
+from data.resident_list_store import ResidentListStore
 from data.state_backup_store import StateBackupStore
 from data.state_store import StateStore
 from data.workbench import WorkbenchStore
@@ -33,6 +35,7 @@ from logic.interaction_meta import (
     switch_interaction_relation,
 )
 from logic.memory_recall import MemoryRecallProcessor
+from logic.focus_retirement_migration import migrate_focus_retirement
 from logic.state_settlement import StateSettlementError, settle_due_state
 
 
@@ -54,6 +57,8 @@ class RuntimeServices:
     memory_index: MemoryIndex
     container_store: ContainerStore
     relation_store: RelationStore
+    resident_store: ResidentListStore
+    action_recovery_store: ActionRecoveryStore
     protocol_tool_dispatcher: ProtocolToolDispatcher
     general_tool_dispatcher: GeneralToolDispatcher
     memory_recall: object = None
@@ -66,7 +71,8 @@ class RuntimeServices:
                alert_store=None, connectivity_store=None, workbench_store=None,
                dream_store=None,
                state_backup_store=None, memory_store=None, memory_index=None,
-               container_store=None, relation_store=None):
+               container_store=None, relation_store=None, resident_store=None,
+               action_recovery_store=None):
         sm = state_store or StateStore()
         heat = heat or MemoryHeat()
         cfg = config_store or ConfigStore()
@@ -112,6 +118,42 @@ class RuntimeServices:
         )
         if isinstance(executor, APIExecutor) and hasattr(executor, "bind_context_dir"):
             executor.bind_context_dir(getattr(assembler, "_context_dir", None))
+        assembler_resident_store = getattr(assembler, "resident_store", None)
+        if (
+            resident_store is not None
+            and assembler_resident_store is not None
+            and resident_store is not assembler_resident_store
+        ):
+            raise ValueError("resident_store_injection_conflict")
+        resolved_resident_store = (
+            resident_store
+            or assembler_resident_store
+            or ResidentListStore(os.path.join(
+                (
+                    getattr(assembler, "_context_dir", None)
+                    or os.path.join(
+                        os.path.dirname(
+                            str(getattr(sm, "path", "") or STATE_JSON)),
+                        "STM",
+                        "context",
+                    )
+                ),
+                "resident_list.json",
+            ))
+        )
+        assembler.resident_store = resolved_resident_store
+        context_dir = os.path.abspath(
+            getattr(assembler, "_context_dir", None)
+            or os.path.join(
+                os.path.dirname(str(getattr(sm, "path", "") or STATE_JSON)),
+                "STM",
+                "context",
+            )
+        )
+        resolved_action_recovery_store = action_recovery_store or ActionRecoveryStore(
+            os.path.join(context_dir, "action_recovery_pending.json"),
+        )
+        resolved_action_recovery_store.load()
         services = cls(
             sm=sm,
             heat=heat,
@@ -133,15 +175,36 @@ class RuntimeServices:
             relation_store=(
                 relation_store if relation_store is not None else RelationStore()
             ),
+            resident_store=resolved_resident_store,
+            action_recovery_store=resolved_action_recovery_store,
             protocol_tool_dispatcher=ProtocolToolDispatcher(),
-            general_tool_dispatcher=GeneralToolDispatcher(),
+            general_tool_dispatcher=GeneralToolDispatcher(
+                action_recovery_store=resolved_action_recovery_store),
         )
+        # Context indexes must observe the same Runtime stores.  Falling back to
+        # path-global stores here can read or normalize another active persona.
+        assembler.memory_heat = services.heat
+        assembler.memory_store = services.memory_store
+        assembler.container_store = services.container_store
+        assembler.relation_store = services.relation_store
         services.state_backup_store = state_backup_store or services.default_state_backup_store()
         services.memory_recall = MemoryRecallProcessor(
             memory_store=services.memory_store,
             heat=services.heat,
+            assembler=services.assembler,
         )
         return services
+
+    def migrate_focus_retirement_on_startup(self):
+        receipt = migrate_focus_retirement(
+            state_store=self.sm,
+            workbench=self.workbench,
+            container_store=self.container_store,
+            relation_store=self.relation_store,
+            resident_store=self.resident_store,
+            assembler=self.assembler,
+        )
+        return receipt
 
     def audit_params(self):
         return self.cfg.get_audit_params()
@@ -164,6 +227,9 @@ class RuntimeServices:
 
     def reconcile_context_cache_lifecycle_on_startup(self):
         return self.ctx_store.reconcile_now_cache_lifecycle_on_startup()
+
+    def reconcile_reasoning_progress_on_startup(self):
+        return self.ctx_store.reconcile_reasoning_progress_on_startup()
 
     def set_local_default_relation(self, card_id):
         return set_local_default_relation(self.sm, self.relation_store, card_id)

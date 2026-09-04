@@ -49,6 +49,10 @@ def test_spec758_real_recall_registers_one_round_local_guide(recall_layout):
     assert "memory_reconsolidation_due" in guide
     assert "submit_memory_reconsolidations" in guide
     assert mem_id in guide
+    assert (
+        f'"mem_id":"{mem_id}","semantic_content"'
+    ) in guide
+    assert '"final_keywords"' in guide
 
 
 @pytest.mark.parametrize(
@@ -368,6 +372,8 @@ def test_spec758_changed_source_and_extra_fields_remain_pending(recall_layout):
     )
 
     assert extra["reason"] == "memory_reconsolidation_fields_invalid"
+    assert extra["completed_ids"] == []
+    assert extra["remaining_ids"] == [mem_id]
     assert changed["status"] == "rejected"
     assert "memory_reconsolidation_source_changed" in (
         changed["backend_receipts"][0]["reason"]

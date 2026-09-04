@@ -505,6 +505,70 @@ class TestStateStore:
         assert "stm_degrade_pending" not in migrated
         assert "evolution_pending" not in migrated
 
+    def test_spec776_state_migration_holds_lock_through_read_modify_save(
+            self, tmp_path, monkeypatch):
+        from data import state_store as state_store_module
+        from data.state_store import StateStore
+        from schemas.state import default_state
+
+        path = tmp_path / "state.json"
+        state = default_state()
+        flags = state["base"]["heartbeat_flags"]
+        flags.pop("memory_compression_due")
+        flags["stm_degrade_pending"] = True
+        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+        entered_read = threading.Event()
+        release_read = threading.Event()
+        original_load = state_store_module.json.load
+        first_read = True
+
+        def controlled_load(handle):
+            nonlocal first_read
+            if first_read:
+                first_read = False
+                entered_read.set()
+                assert release_read.wait(timeout=2)
+            return original_load(handle)
+
+        monkeypatch.setattr(state_store_module.json, "load", controlled_load)
+        errors = []
+
+        def migrate():
+            try:
+                StateStore(str(path)).migrate_memory_compression_flags()
+            except Exception as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+
+        writer_done = threading.Event()
+
+        def write_new_state():
+            try:
+                StateStore(str(path)).update_many({
+                    "base.meta.total_round": 776,
+                })
+            except Exception as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+            finally:
+                writer_done.set()
+
+        migration_thread = threading.Thread(target=migrate)
+        writer_thread = threading.Thread(target=write_new_state)
+        migration_thread.start()
+        assert entered_read.wait(timeout=2)
+        writer_thread.start()
+        assert not writer_done.wait(timeout=0.05)
+        release_read.set()
+        migration_thread.join(timeout=2)
+        writer_thread.join(timeout=2)
+
+        assert errors == []
+        final = StateStore(str(path)).load()
+        assert final["base"]["meta"]["total_round"] == 776
+        final_flags = final["base"]["heartbeat_flags"]
+        assert final_flags["memory_compression_due"] is False
+        assert "stm_degrade_pending" not in final_flags
+
     def test_load_backfills_unbound_interaction_anchor_without_guessing(self, tmp_path):
         from data.state_store import StateStore
         from errors import ReadError
@@ -549,9 +613,9 @@ class TestStateStore:
         state["base"]["daily_round"] = "不变"
         state["base"]["context_cache"]["near_cache_expired"] = True
         state["base"]["context_cache"]["remote_cache_expired"] = True
-        state["base"].pop("focus")
-        state["base"].pop("old_focus")
-        state["base"].pop("feeling_buffer")
+        state["base"].pop("focus", None)
+        state["base"].pop("old_focus", None)
+        state["base"].pop("feeling_buffer", None)
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
         with pytest.raises(ReadError):
@@ -1031,6 +1095,18 @@ class TestStateStoreContinued:
 # ============================================================
 
 class TestRoundSnapshotStore:
+    def test_spec773_round_start_marks_new_timeline_format(self, tmp_path):
+        from data.round_snapshot_store import RoundSnapshotStore
+
+        store = RoundSnapshotStore(str(tmp_path / "context"))
+        store.start_round(773, "interactive")
+
+        started = store.read_events(773)[0]
+        assert started["event_type"] == "round_started"
+        assert started["payload"]["dialogue_projection_schema"] == (
+            "round_dialogue_timeline.v1"
+        )
+
     def test_provider_request_snapshot_keeps_numeric_context_window(self, tmp_path):
         from data.round_snapshot_store import RoundSnapshotStore
 
@@ -2048,6 +2124,19 @@ class TestMemoryStore:
         assert body_line in projected
         assert "\n关联容器：DC-1" not in projected
 
+        annotation_line = "注释：这句话属于记忆正文，不是历史结构字段"
+        projected = ms.project_memory_body(
+            "\n".join([
+                "## MEM-00001001",
+                "注释：应被隐藏的历史结构注释",
+                "**内容**（≤2048字）：第一段",
+                annotation_line,
+            ]),
+            repeated,
+        )
+        assert annotation_line in projected
+        assert "应被隐藏的历史结构注释" not in projected
+
     def test_mark_private_moves_body_preserves_subject_and_creates_file_lazily(
             self, tmp_path, monkeypatch):
         from data import memory_store as ms
@@ -2452,23 +2541,6 @@ class TestMemoryHeat:
         monkeypatch.setattr(mh, "HEAT_JSON", str(heat_path))
         assert not hasattr(mh.MemoryHeat(), "mark_stored")
 
-    def test_has_pending_degrade(self, tmp_path, monkeypatch):
-        from data import memory_heat as mh
-        from data.memory_store import MemoryStore
-        monkeypatch.setattr(mh, "HEAT_JSON", str(tmp_path / "heat.json"))
-        monkeypatch.setattr(
-            MemoryStore,
-            "active_ltm_meta_by_id",
-            lambda _self: {"MEM-PEND01": {"stored_at": ""}},
-        )
-        store = mh.MemoryHeat()
-        store.get_entry("MEM-PEND01")
-        # 手动标记为 degrade
-        heat = store.load_heat()
-        heat["entries"]["MEM-PEND01"]["degrade"] = True
-        store.save_heat(heat)
-        assert store.has_pending_degrade() is True
-
     def test_spec746_admission_checks_use_canonical_ltm_meta(
             self, tmp_path, monkeypatch):
         from data import memory_heat as mh
@@ -2490,7 +2562,7 @@ class TestMemoryHeat:
         store.set_entry(mem_id, heat)
 
         assert store.check_upgrade() == []
-        assert store.has_pending_degrade() is False
+        assert not hasattr(store, "has_pending_degrade")
 
     def test_no_tmp_left_behind(self, tmp_path, monkeypatch):
         from data import memory_heat as mh
@@ -2511,21 +2583,14 @@ class TestMemoryHeat:
 # ============================================================
 
 class TestMemoryIndex:
-    def test_add_and_lookup_stm(self, tmp_path, monkeypatch):
-        from data import memory_index as mi
-        monkeypatch.setattr(mi, "KEYWORDS_JSON", str(tmp_path / "keywords.json"))
-
-        store = mi.MemoryIndex()
-        store.add_stm_keywords("MEM-IDX001", ["位格", "主体", "记忆"])
-        index = store.load_index()["index"]
-        assert all("MEM-IDX001" in index[key] for key in ("位格", "主体", "记忆"))
-
     def test_remove_stm_entry(self, tmp_path, monkeypatch):
         from data import memory_index as mi
         monkeypatch.setattr(mi, "KEYWORDS_JSON", str(tmp_path / "keywords.json"))
 
         store = mi.MemoryIndex()
-        store.add_stm_keywords("MEM-RM001", ["测试"])
+        data = store.load_index()
+        data["index"] = {"测试": ["MEM-RM001"]}
+        store.save_index(data)
         store.remove_stm_entry("MEM-RM001")
         assert "MEM-RM001" not in store.load_index()["index"]
 
@@ -2664,7 +2729,7 @@ class TestContainerStore:
         for prefix in ("DC", "EC", "PRJ", "SKL", "FUT"):
             assert (tmp_path / prefix).is_dir()
 
-    def test_spec077_container_focus_create_prj_keeps_type_registry_clean(self, tmp_path, monkeypatch):
+    def test_spec781_container_create_prj_keeps_type_registry_clean(self, tmp_path, monkeypatch):
         from data import container_store as cs
 
         new_dirs = {prefix: str(tmp_path / prefix) for prefix in cs.PREFIX_TO_DIR}
@@ -2673,9 +2738,9 @@ class TestContainerStore:
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
 
         store = cs.ContainerStore()
-        result = store.create_focus_container(
+        result = store.create_container(
             "PRJ",
-            "Spec 077 容器焦点",
+            "Spec781 项目容器",
             target_file="plan.md",
             anchor_refs=[],
         )
@@ -2696,7 +2761,9 @@ class TestContainerStore:
     def test_spec293_memory_container_create_rejects_long_overview_before_prj_dir(
             self, tmp_path, monkeypatch):
         from data import container_store as cs
+        from data.resident_list_store import ResidentListStore
         from data.workbench import WorkbenchStore
+        from assembly.context import ContextAssembler
         from logic.memory_container_tools import apply_memory_container_create_declarations
 
         class MemoryStore:
@@ -2708,6 +2775,10 @@ class TestContainerStore:
         monkeypatch.setattr(cs, "CONTAINER_REGISTRY_JSON", str(tmp_path / "container_registry.json"))
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
         store = cs.ContainerStore()
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=ResidentListStore(str(tmp_path / "resident.json")),
+        )
 
         receipts = apply_memory_container_create_declarations([{
             "mem_id": "MEM-SPEC293",
@@ -2720,14 +2791,15 @@ class TestContainerStore:
         }], modules={
             "memory_store": MemoryStore(),
             "container_store": store,
-            "workbench_store": WorkbenchStore(str(tmp_path / "workbench")),
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
         }, round_num=293)
 
         assert receipts[0]["status"] == "rejected"
         assert receipts[0]["reason"] == "current_overview_too_long"
         assert not any((tmp_path / "PRJ").glob("PRJ-*"))
 
-    def test_spec077_container_focus_append_and_future_registry(self, tmp_path, monkeypatch):
+    def test_spec781_container_append_and_future_registry_has_no_focus_field(self, tmp_path, monkeypatch):
         from data import container_store as cs
 
         new_dirs = {prefix: str(tmp_path / prefix) for prefix in cs.PREFIX_TO_DIR}
@@ -2736,13 +2808,13 @@ class TestContainerStore:
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
 
         store = cs.ContainerStore()
-        fut = store.create_focus_container(
+        fut = store.create_container(
             "FUT",
             "未来二段跳",
             target_file="plans.md",
             anchor_refs=["MEM-FUT"],
         )
-        store.append_focus_content(
+        store.append_container_content(
             fut["container_id"],
             "plans.md",
             "后续计划",
@@ -2754,7 +2826,7 @@ class TestContainerStore:
         assert fut["container_id"].startswith("FUT-plans-")
         assert "为 Future 二段跳保留入口" in plans_md.read_text(encoding="utf-8")
         assert registry["items"][0]["id"] == fut["container_id"]
-        assert registry["items"][0]["focus"] is False
+        assert "focus" not in registry["items"][0]
         assert "FUT-plans-" in (tmp_path / "index.md").read_text(encoding="utf-8")
 
     def test_spec267_container_write_updates_index_meta_and_registry_ledger(self, tmp_path, monkeypatch):
@@ -2766,7 +2838,7 @@ class TestContainerStore:
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
 
         store = cs.ContainerStore()
-        created = store.create_focus_container(
+        created = store.create_container(
             "DC",
             "Spec267 容器账本",
             target_file="open.md",
@@ -2775,7 +2847,7 @@ class TestContainerStore:
         )
         container_id = created["container_id"]
 
-        store.append_focus_content(
+        store.append_container_content(
             container_id,
             "open.md",
             "本轮容器写入",
@@ -2812,7 +2884,7 @@ class TestContainerStore:
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
 
         store = cs.ContainerStore()
-        created = store.create_focus_container(
+        created = store.create_container(
             "SKL",
             "Ponytail 最小代码原则",
             target_file="card.md",
@@ -2821,7 +2893,7 @@ class TestContainerStore:
             skill_category="procedures",
             skill_name="ponytail-minimal-code",
         )
-        store.append_focus_content(
+        store.append_container_content(
             created["container_id"],
             "card.md",
             "使用原则",
@@ -2829,7 +2901,7 @@ class TestContainerStore:
             mem_id="MEM-649",
             round_num=649,
         )
-        store.append_focus_content(
+        store.append_container_content(
             created["container_id"],
             "card.md",
             "复核原则",
@@ -2837,7 +2909,6 @@ class TestContainerStore:
             mem_id="MEM-649",
             round_num=650,
         )
-        store.set_container_focus(created["container_id"], True)
         read = store.read_container_content(created["container_id"], "card.md")
 
         skill_dir = tmp_path / "SKL" / "procedures" / "ponytail-minimal-code"
@@ -2854,7 +2925,7 @@ class TestContainerStore:
         assert entry["category"] == "procedures"
         assert entry["linked_memories"] == ["MEM-649"]
         assert entry["entries"][0]["target_file"] == "card.md"
-        assert entry["focus"] is True
+        assert "focus" not in entry
         assert created["container_id"] in (tmp_path / "SKL" / "index.md").read_text(encoding="utf-8")
         assert created["container_id"] in (tmp_path / "index.md").read_text(encoding="utf-8")
 
@@ -2868,17 +2939,17 @@ class TestContainerStore:
         store = cs.ContainerStore()
 
         with pytest.raises(ValueError, match="invalid_skill_category"):
-            store.create_focus_container(
+            store.create_container(
                 "SKL", "不得创建习惯投影", target_file="card.md",
                 skill_category="habits", skill_name="format-check",
             )
         with pytest.raises(ValueError, match="invalid_skill_name"):
-            store.create_focus_container(
+            store.create_container(
                 "SKL", "非法名称", target_file="card.md",
                 skill_category="patterns", skill_name="Bad Name",
             )
         with pytest.raises(ValueError, match="invalid_skill_name"):
-            store.create_focus_container(
+            store.create_container(
                 "SKL", "大写名称", target_file="card.md",
                 skill_category="patterns", skill_name="BadName",
             )
@@ -2887,10 +2958,29 @@ class TestContainerStore:
     def test_spec649_memory_container_create_returns_skill_receipt(
             self, tmp_path, monkeypatch):
         from data import container_store as cs
-        from data.workbench import WorkbenchStore
+        from data.resident_list_store import ResidentListStore
+        from assembly.context import ContextAssembler
         from logic import memory_container_tools as tools
 
         class MemoryStore:
+            def read_body_by_id(self, mem_id):
+                return {
+                    "body": "内容\n外部技能内化来源",
+                    "meta": {"id": mem_id, "access": "public"},
+                }
+
+            def snapshot_ltm_files(self):
+                return {}
+
+            def snapshot_stm_files(self):
+                return {}
+
+            def restore_ltm_files(self, _snapshot):
+                return None
+
+            def restore_stm_files(self, _snapshot):
+                return None
+
             def update_linked_containers(
                     self, mem_id, operation, container_ids, current_overview=""):
                 assert operation == "add"
@@ -2905,6 +2995,10 @@ class TestContainerStore:
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
         monkeypatch.setattr(tools, "memory_visible_to_state", lambda *args: True)
         store = cs.ContainerStore()
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=ResidentListStore(str(tmp_path / "resident.json")),
+        )
 
         receipts = tools.apply_memory_container_create_declarations([{
             "mem_id": "MEM-649",
@@ -2919,7 +3013,8 @@ class TestContainerStore:
         }], modules={
             "memory_store": MemoryStore(),
             "container_store": store,
-            "workbench_store": WorkbenchStore(str(tmp_path / "workbench")),
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
         }, round_num=649)
 
         receipt = receipts[0]
@@ -2940,15 +3035,15 @@ class TestContainerStore:
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
 
         store = cs.ContainerStore()
-        prj = store.create_focus_container("PRJ", "Spec 078", target_file="notes.md")
-        store.append_focus_content(
+        prj = store.create_container("PRJ", "Spec 078", target_file="notes.md")
+        store.append_container_content(
             prj["container_id"],
             "notes.md",
             "只读验证",
             "container_read 应该读到项目笔记内容。",
         )
-        fut = store.create_focus_container("FUT", "未来验证", target_file="predictions.md")
-        store.append_focus_content(
+        fut = store.create_container("FUT", "未来验证", target_file="predictions.md")
+        store.append_container_content(
             fut["container_id"],
             "predictions.md",
             "预测验证",
@@ -2982,12 +3077,45 @@ class TestContainerStore:
         monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
 
         store = cs.ContainerStore()
-        prj = store.create_focus_container("PRJ", "Spec 078", target_file="plan.md")
+        prj = store.create_container("PRJ", "Spec 078", target_file="plan.md")
 
         with pytest.raises(ValueError, match="invalid_target_file"):
             store.read_container_content(prj["container_id"], target_file="open.md")
         with pytest.raises(ValueError, match="unsupported_container_type"):
             store.read_container_content("IMM-001", target_file="active.md")
+
+    def test_spec783_future_id_cannot_read_or_write_another_category_file(
+            self, tmp_path, monkeypatch):
+        from data import container_store as cs
+
+        new_dirs = {prefix: str(tmp_path / prefix) for prefix in cs.PREFIX_TO_DIR}
+        monkeypatch.setattr(cs, "PREFIX_TO_DIR", new_dirs)
+        monkeypatch.setattr(
+            cs, "CONTAINER_REGISTRY_JSON", str(tmp_path / "container_registry.json"))
+        monkeypatch.setattr(cs, "LTM_INDEX_MD", str(tmp_path / "index.md"), raising=False)
+
+        store = cs.ContainerStore()
+        prediction = store.create_container(
+            "FUT", "未来预测", target_file="predictions.md")
+        objective = store.create_container(
+            "FUT", "未来目标", target_file="objectives.md")
+        store.append_container_content(
+            objective["container_id"], "objectives.md", "目标", "原始目标正文")
+        objective_path = tmp_path / "FUT" / "objectives.md"
+        before = objective_path.read_bytes()
+        registry_path = tmp_path / "FUT" / "registry.json"
+        registry_before = registry_path.read_bytes()
+
+        with pytest.raises(ValueError, match="container_target_mismatch"):
+            store.read_container_content(
+                prediction["container_id"], target_file="objectives.md")
+        with pytest.raises(ValueError, match="container_target_mismatch"):
+            store.append_container_content(
+                prediction["container_id"], "objectives.md", "错误", "不得写入")
+
+        assert objective_path.read_bytes() == before
+        assert registry_path.read_bytes() == registry_before
+        assert "不得写入" not in objective_path.read_text(encoding="utf-8")
 
 
 # ============================================================
@@ -3671,16 +3799,16 @@ class TestWorkbenchStore:
         assert store.load_status()["base"]["instance_id"] == "WB-main"
         assert not root.exists()
 
-    def test_focus_is_written_to_workbench_status(self, tmp_path):
+    def test_spec781_workbench_has_no_active_focus_fields_or_mutators(self, tmp_path):
         from data.workbench import WorkbenchStore
 
         store = WorkbenchStore(str(tmp_path / "workbench"))
-        store.mount_focus("DC-001")
-        assert store.get("base.focus") == "DC-001"
-
-        store.unmount_focus()
-        assert store.get("base.focus") is None
-        assert store.get("base.old_focus") == "DC-001"
+        base = store.load_status()["base"]
+        assert "focus" not in base
+        assert "old_focus" not in base
+        assert not hasattr(store, "mount_focus")
+        assert not hasattr(store, "unmount_focus")
+        assert not hasattr(store, "restore_focus")
 
     def test_status_json_with_utf8_bom_is_readable(self, tmp_path):
         from data.workbench import WorkbenchStore

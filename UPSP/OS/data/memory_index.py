@@ -48,20 +48,6 @@ class MemoryIndex:
     # STM 倒排操作
     # ==============================================================
 
-    def add_stm_keywords(self, mem_id, keywords):
-        """为 STM 条目添加关键词映射"""
-        data = self.load_index()
-        index = data.setdefault("index", {})
-        for kw in keywords:
-            kw = kw.strip()
-            if not kw:
-                continue
-            if kw not in index:
-                index[kw] = []
-            if mem_id not in index[kw]:
-                index[kw].append(mem_id)
-        self.save_index(data)
-
     def remove_stm_entry(self, mem_id):
         """从倒排索引中移除 STM 条目"""
         data = self.load_index()

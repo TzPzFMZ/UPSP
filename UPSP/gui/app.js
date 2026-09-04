@@ -122,8 +122,8 @@
          * Adds texts to the output stream
          *
          * @param {string} text */
-        addText(text10) {
-          this.buffer += escapeHTML(text10);
+        addText(text11) {
+          this.buffer += escapeHTML(text11);
         }
         /**
          * Adds a node open to the output stream (if needed)
@@ -245,11 +245,11 @@
         /**
          * @param {string} text
          */
-        addText(text10) {
-          if (text10 === "") {
+        addText(text11) {
+          if (text11 === "") {
             return;
           }
-          this.add(text10);
+          this.add(text11);
         }
         /** @param {string} scope */
         startScope(scope) {
@@ -1078,11 +1078,11 @@
                 continue;
               }
               const klass = language2.classNameAliases[scope[i2]] || scope[i2];
-              const text10 = match[i2];
+              const text11 = match[i2];
               if (klass) {
-                emitKeyword(text10, klass);
+                emitKeyword(text11, klass);
               } else {
-                modeBuffer = text10;
+                modeBuffer = text11;
                 processKeywords();
                 modeBuffer = "";
               }
@@ -1392,8 +1392,8 @@
             }
           }
           node2 = element6;
-          const text10 = node2.textContent;
-          const result = language2 ? highlight2(text10, { language: language2, ignoreIllegals: true }) : highlightAuto(text10);
+          const text11 = node2.textContent;
+          const result = language2 ? highlight2(text11, { language: language2, ignoreIllegals: true }) : highlightAuto(text11);
           element6.innerHTML = result.value;
           element6.dataset.highlighted = "yes";
           updateClassName(element6, language2, result.language);
@@ -1409,7 +1409,7 @@
               relevance: result.secondBest.relevance
             };
           }
-          fire("after:highlightElement", { el: element6, result, text: text10 });
+          fire("after:highlightElement", { el: element6, result, text: text11 });
         }
         function configure2(userOptions) {
           options = inherit(options, userOptions);
@@ -1814,6 +1814,8 @@
     "\u6B63\u5728\u8BF7\u6C42\u505C\u6B62": "Requesting stop",
     "\u6B63\u5728\u505C\u6B62\u751F\u6210": "Stopping generation",
     "\u6B63\u5728\u672C\u5730\u5584\u540E": "Finishing local cleanup",
+    "\u672C\u5730\u7ED3\u7B97": "Local settlement",
+    "\u672C\u5730\u7ED3\u7B97\u4E0D\u53EF\u4E2D\u65AD": "Local settlement cannot be interrupted",
     "\u5DF2\u8BF7\u6C42\u505C\u6B62\uFF1B\u5C06\u5B8C\u6210\u672C\u5730\u4FDD\u5B58\u4E0E\u7ED3\u7B97": "Stop requested; local save and settlement will finish",
     "\u5F53\u524D\u6CA1\u6709\u6B63\u5728\u6267\u884C\u7684\u8F6E\u6B21": "No round is currently running",
     "\u505C\u6B62\u5931\u8D25": "Stop failed",
@@ -1994,7 +1996,7 @@
     "\u6700\u8FD1\u7F13\u5B58\u88C1\u526A\u91CF": "Recent-cache trim size",
     "\u5B9A\u671F\u8BB0\u5FC6\u6761\u76EE\u4E0A\u9650": "Periodic memory item limit",
     "\u9AD8\u9891\u5F15\u7528\u7A97\u53E3": "High-frequency reference window",
-    "\u5173\u7CFB\u7126\u70B9\u69FD\u4F4D": "Relation focus slots",
+    "\u5173\u7CFB\u5728\u573A\u69FD\u4F4D": "Relation context slots",
     "\u5BB9\u5668\u7D22\u5F15\u663E\u793A\u91CF": "Container index display limit",
     "\u957F\u671F\u8BB0\u5FC6\u70ED\u5EA6\u663E\u793A\u91CF": "LTM heat display limit",
     "\u77ED\u671F\u8BB0\u5FC6\u70ED\u5EA6\u663E\u793A\u91CF": "STM heat display limit",
@@ -2042,7 +2044,7 @@
     "\u76F4\u63A5\u7F16\u8F91\u73B0\u6709\u6A21\u578B\u7AEF\u70B9\u3001\u9636\u6BB5\u8DEF\u7531\u4E0E\u5BB9\u707E\u53C2\u6570\u3002\u9875\u9762\u5728\u6CA1\u6709\u6A21\u578B\u670D\u52A1\u65F6\u4E5F\u80FD\u8BFB\u53D6\u548C\u4FDD\u5B58\u3002": "Edit the existing model endpoints, call-stage routing, and failover settings directly. This page remains readable and writable without a model service.",
     "\u8C03\u7528\u9636\u6BB5\u8DEF\u7531": "Call-stage routing",
     "\u8FDE\u63A5\u4E0E\u5BB9\u707E\u9AD8\u7EA7\u8BBE\u7F6E": "Advanced connectivity and failover settings",
-    "\u8C03\u6574\u5F53\u524D\u7F13\u5B58\u3001\u6700\u8FD1\u7F13\u5B58\u3001\u5B9A\u671F\u5C42\u3001\u9AD8\u9891\u5C42\u548C\u5173\u7CFB\u7126\u70B9\u7684\u5BB9\u91CF\u8FB9\u754C\u3002": "Adjust capacity boundaries for current cache, recent cache, periodic layer, high-frequency layer, and relation focus.",
+    "\u8C03\u6574\u5F53\u524D\u7F13\u5B58\u3001\u6700\u8FD1\u7F13\u5B58\u3001\u5B9A\u671F\u5C42\u3001\u9AD8\u9891\u5C42\u548C\u5173\u7CFB\u5728\u573A\u6295\u5F71\u7684\u5BB9\u91CF\u8FB9\u754C\u3002": "Adjust capacity boundaries for current cache, recent cache, periodic layer, high-frequency layer, and relation context.",
     "\u5F53\u524D\u7F13\u5B58": "Current cache",
     "\u5F53\u524D\u8F6E\u7684\u9AD8\u6CE8\u610F\u529B\u5185\u5BB9\u5BB9\u91CF\u3002": "Capacity for high-attention content in the current round.",
     "\u6700\u8FD1\u7F13\u5B58": "Recent cache",
@@ -2051,8 +2053,8 @@
     "\u5B9A\u671F\u8BB0\u5FC6\u6295\u5F71\u7684\u5185\u5BB9\u4E0A\u9650\u3002": "Content limit for periodic memory projections.",
     "\u9AD8\u9891\u5C42": "High-frequency layer",
     "\u9AD8\u9891\u7D22\u5F15\u4E0E\u5F15\u7528\u7A97\u53E3\u7684\u663E\u793A\u8FB9\u754C\u3002": "Display boundaries for high-frequency indexes and reference windows.",
-    "\u5173\u7CFB\u7126\u70B9": "Relation focus",
-    "\u6BCF\u8F6E\u53EF\u88C5\u914D\u7684\u5173\u7CFB\u7126\u70B9\u69FD\u4F4D\u3002": "Relation-focus slots available to each round.",
+    "\u5173\u7CFB\u5728\u573A\u6295\u5F71": "Relation context",
+    "\u6BCF\u8F6E\u53EF\u88C5\u914D\u7684\u5173\u7CFB\u5728\u573A\u69FD\u4F4D\u3002": "Relation-context slots available to each round.",
     "\u7D22\u5F15\u663E\u793A\u4E0A\u9650": "Index display limits",
     "\u6B63\u5728\u8BFB\u53D6\u672C\u673A\u8BBE\u7F6E": "Loading local settings",
     "\u8BBE\u7F6E\u6682\u4E0D\u53EF\u7528": "Settings are unavailable",
@@ -2154,7 +2156,6 @@
     "\u4E2D\u7EE7\u610F\u56FE": "Relay intents",
     "\u4E2D\u7EE7\u610F\u56FE\u5E8F\u53F7": "Relay intent sequence",
     "\u5DE5\u4F5C\u610F\u56FE\u503A\u52A1": "Work-intent debt",
-    "\u4E0A\u4E00\u4E2A\u7126\u70B9": "Previous focus",
     "\u75B2\u52B3\u8FC7\u671F": "Fatigue expired",
     "\u611F\u53D7\u5F85\u7ED3\u7B97": "Feeling settlement due",
     "API \u964D\u7EA7": "API degraded",
@@ -2220,6 +2221,9 @@
     "\u754C\u9762\u4E0E\u8BED\u8A00": "Interface and language",
     "\u6253\u5F00\u5F53\u524D\u9875\u8BF4\u660E": "Open page manual",
     "\u5173\u95ED\u5F53\u524D\u7CFB\u7EDF\u7A97": "Close system window",
+    "\u8C03\u6574\u7CFB\u7EDF\u7A97\u4E0E\u5BF9\u8BDD\u533A\u5BBD\u5EA6": "Resize system window and conversation",
+    "\u7CFB\u7EDF\u7A97\u5BBD\u5EA6\uFF1A{value}%": "System window width: {value}%",
+    "\u62D6\u62FD\u8C03\u6574\u5BBD\u5EA6\uFF0C\u53CC\u51FB\u6062\u590D\u4E00\u534A": "Drag to resize; double-click to restore half width",
     "\u7A97\u53E3\u63A7\u5236": "Window controls",
     "\u5F53\u524D\u7CFB\u7EDF\u5185\u90E8\u6807\u7B7E": "Current page tabs",
     "\u9759\u6001\u8BBE\u8BA1\u9875\uFF5C\u5C1A\u672A\u63A5\u5165\u8FD0\u884C\u65F6": "Static design page | Runtime not connected",
@@ -2230,8 +2234,12 @@
     "\u5C1A\u65E0\u8F6E\u6B21": "No round",
     "\u5BBF\u4E3B\u5DF2\u8FDE\u63A5\uFF0C\u7B49\u5F85\u771F\u5B9E\u4E8B\u4EF6": "Host connected; waiting for real events",
     "\u5C1A\u65E0\u771F\u5B9E\u5BF9\u8BDD\u4E8B\u4EF6\u3002": "No real conversation events yet.",
+    "\u8F93\u5165\u5185\u5BB9\u540E\uFF0C\u771F\u5B9E\u4E8B\u4EF6\u4F1A\u6309\u53D1\u751F\u987A\u5E8F\u663E\u793A\u5728\u8FD9\u91CC\u3002": "After you send a message, real events will appear here in the order they occur.",
+    "\u6062\u590D\u672C\u5730\u5BBF\u4E3B\u540E\uFF0C\u8FD9\u91CC\u4F1A\u7EE7\u7EED\u8BFB\u53D6\u5F53\u524D\u5206\u8EAB\u7684\u771F\u5B9E\u5BF9\u8BDD\u3002": "When the local host reconnects, this view will resume reading the active instance's real conversation.",
     "\u672C\u5730\u5BBF\u4E3B\u672A\u8FDE\u63A5\u3002": "Local host disconnected.",
     "\u8F83\u65E9\u5BF9\u8BDD\u672A\u5B8C\u5168\u8F7D\u5165": "Earlier conversation did not fully load",
+    "\u52A0\u8F7D\u8F83\u65E9\u5BF9\u8BDD": "Load earlier conversation",
+    "\u6B63\u5728\u8F7D\u5165\u8F83\u65E9\u5BF9\u8BDD": "Loading earlier conversation",
     "\u91CD\u8BD5": "Retry",
     "\u4F60": "You",
     "\u5DE5\u5177\u8F68\u8FF9 \xB7 {count} \u6B21\u8C03\u7528": "Tool trace \xB7 {count} calls",
@@ -2246,6 +2254,27 @@
     "\u6267\u884C\u5DE5\u5177\u8C03\u7528": "Execute tool call",
     "\u8F93\u51FA\u4E2D\u65AD": "Output interrupted",
     "\u5DF2\u505C\u6B62": "Stopped",
+    "\u8FDB\u884C\u4E2D": "In progress",
+    "\u6267\u884C\u4E2D": "Running",
+    "\u7B49\u5F85\u5BA1\u6279": "Awaiting approval",
+    "\u5DF2\u5B8C\u6210": "Completed",
+    "\u6210\u529F": "Success",
+    "\u5931\u8D25": "Failed",
+    "\u5DF2\u62D2\u7EDD": "Rejected",
+    "\u8F93\u51FA\u672A\u91C7\u7528": "Output not adopted",
+    "\u672A\u5339\u914D\u7ED3\u679C": "Unmatched result",
+    "\u5DF2\u8BB0\u5F55": "Recorded",
+    "\u601D\u8003\u7247\u6BB5": "Reasoning segment",
+    "\u601D\u8003": "Reasoning",
+    "\u8F93\u51FA": "Output",
+    "\u5BA1\u6279": "Approval",
+    "\u7B49\u5F85": "Waiting",
+    "\u8F6E\u4E2D\u8FDB\u5C55": "Round progress",
+    "\u5931\u8D25\u72B6\u6001": "Failure state",
+    "\u8C03\u7528\u53C2\u6570": "Call arguments",
+    "\u6267\u884C\u7ED3\u679C": "Execution result",
+    "\u8FED\u4EE3": "Iteration",
+    "\u79D2": "s",
     "\u91CD\u65B0\u8FDE\u63A5": "Reconnect",
     "\u91CD\u65B0\u8BFB\u53D6": "Reload",
     "\u6B63\u5728\u8BFB\u53D6\u6C89\u6DC0\u771F\u6E90": "Loading source stores",
@@ -2296,6 +2325,12 @@
     "\u4E0E {frame} \u6BD4\u8F83\uFF1A\u516C\u5171\u524D\u7F00 {bytes} \u5B57\u8282\uFF08{ratio}\uFF09\uFF1B\u76EE\u6807 {pane}{block}\uFF1B\u53D8\u5316\u7C7B\u578B {change}\u3002\u8BF7\u6C42\u4F53\u524D\u7F00\u4E0D\u7B49\u540C\u4E8E provider \u5B9E\u9645\u7F13\u5B58\u547D\u4E2D\u3002": "Compared with {frame}: common prefix {bytes} bytes ({ratio}); target {pane}{block}; change type {change}. A request-body prefix is not proof of an actual provider cache hit.",
     "\u7A7A\u5C42": "Empty layer",
     "\u5DE5\u5177\u8BE6\u60C5\u76EE\u5F55": "Tool details",
+    "\u5C55\u5F00\u540E\u8BFB\u53D6\u5DE5\u5177\u8BE6\u60C5": "Open to load tool details",
+    "\u6B63\u5728\u8BFB\u53D6\u5DE5\u5177\u8BE6\u60C5": "Loading tool details",
+    "\u6B63\u5728\u8BFB\u53D6\u6700\u8FD1\u5BF9\u8BDD": "Loading recent conversation",
+    "\u4E0A\u4E0B\u6587\u8BE6\u60C5\u8BFB\u53D6\u5931\u8D25": "Failed to load context details",
+    "\u6B63\u5728\u8BFB\u53D6\u6240\u9009 Frame": "Loading selected Frame",
+    "\u8BF7\u9009\u62E9 Frame \u8BFB\u53D6\u4E0A\u4E0B\u6587\u8BE6\u60C5": "Select a Frame to load context details",
     "\u67E5\u770B\u8BE6\u60C5": "View details",
     "\u5DE5\u5177\u8C03\u7528\u603B\u89C8": "Tool call summary",
     "\u5F53\u524D\u5E27\u6B21": "Current frame",
@@ -2349,6 +2384,7 @@
     "\u5584\u540E": "Cleanup",
     "\u6B63\u5728\u8BFB\u53D6\u8BB0\u5FC6\u6761\u76EE\u6B63\u6587\u2026": "Loading memory entry\u2026",
     "\u6B63\u5728\u8BFB\u53D6\u6B63\u6587\u2026": "Loading content\u2026",
+    "\u8BFB\u53D6\u4E8B\u4EF6\u8BE6\u60C5\u5931\u8D25": "Failed to load event details",
     "\u6B63\u5728\u8BFB\u53D6\u672C\u5730\u540C\u6E90\u624B\u518C\u2026": "Loading local manual\u2026",
     "\u6B63\u5728\u8BFB\u53D6\u767B\u8BB0\u6B63\u6587\u2026": "Loading registered document\u2026",
     "\u8BFB\u53D6\u5931\u8D25": "Load failed",
@@ -2389,16 +2425,15 @@
     "\u900F\u660E\u5EA6": "Opacity",
     "\u80CC\u666F\u900F\u660E\u5EA6": "Background alpha",
     "\u5BBF\u4E3B\u72B6\u6001\u8BFB\u53D6\u5931\u8D25": "Failed to read host status",
+    "\u5B9E\u65F6\u6295\u5F71\u8BFB\u53D6\u5931\u8D25": "Failed to read the live projection",
+    "\u5BF9\u8BDD\u6295\u5F71\u6682\u4E0D\u53EF\u7528\uFF0CRuntime \u4ECD\u5728\u8FD0\u884C": "The conversation projection is unavailable; Runtime is still running",
+    "\u66F4\u65B0\u505C\u5728\u4E8B\u4EF6": "Updates stopped at event",
     "\u4EFB\u52A1\u771F\u8D26\u8BFB\u53D6\u5931\u8D25": "Failed to read task ledger",
     "\u534F\u8BAE\u76EE\u5F55\u8BFB\u53D6\u5931\u8D25": "Failed to read protocol catalog",
     "\u8BE6\u60C5\u8BFB\u53D6\u5931\u8D25": "Failed to read details",
     "\u6C89\u6DC0\u7D22\u5F15\u8BFB\u53D6\u5931\u8D25": "Failed to read deposition index",
-    "\u7126\u70B9\u53C2\u6570\u65E0\u6548": "Invalid focus parameters",
     "\u8BF7\u6C42\u6765\u6E90\u88AB\u62D2\u7EDD": "Request origin rejected",
     "\u5BB9\u5668\u4E0D\u5B58\u5728": "Container not found",
-    "\u7126\u70B9\u72B6\u6001\u51B2\u7A81\u6216\u5DF2\u6709\u5199\u5165\u5728\u9014": "Focus conflict or another write is in progress",
-    "\u672C\u5730\u7126\u70B9\u5904\u7406\u5668\u4E0D\u53EF\u7528": "Local focus processor unavailable",
-    "\u7126\u70B9\u53D8\u66F4\u5931\u8D25": "Focus change failed",
     "\u5B8C\u6574\u6743\u9650\u4F1A\u5141\u8BB8\u8FD0\u884C\u65F6\u4F7F\u7528 unrestricted \u5DE5\u5177\u3002\u4EC5\u786E\u8BA4\u5F53\u524D\u9875\u9762\u4F1A\u8BDD\u4F7F\u7528\u5B8C\u6574\u6743\u9650\uFF1F": "Full permission allows the runtime to use unrestricted tools. Confirm full permission for this page session only?",
     "\u8BF7\u8F93\u5165\u975E\u7A7A\u6D88\u606F\u3002": "Enter a non-empty message.",
     "\u6D88\u606F\u8D85\u8FC7 1 MiB\u3002": "Message exceeds 1 MiB.",
@@ -2426,13 +2461,13 @@
     "\u624B\u518C": "Manual",
     "\u4EC0\u4E48\u662F UPSP": "What Is UPSP?",
     "\u4E09\u6B65\u8F6E": "Three-Step Round",
-    "\u5185\u5BB9\u7A97\u53E3\u4E09\u901A\u9053": "Three Content Channels",
+    "\u5185\u5BB9\u7A97\u53E3\u4E24\u79CD\u6302\u8F7D": "Two Content Mount Modes",
     "\u5DE5\u4F5C\u5BB9\u5668": "Work Containers",
     "Base \u4E32\u884C\u6A21\u578B\u8DEF\u7531": "Base Serial Model Routing",
     "UPSP \u57FA\u672C\u89E3\u91CA": "UPSP basics",
     "\u8D77\u624B / \u53CD\u5E94 / \u5584\u540E": "Setup / reaction / cleanup",
     "\u5E38\u9A7B\u5C42\u81F3\u5F39\u7A97\u5C42": "Permanent through popup layers",
-    "\u7126\u70B9 / \u5E38\u9A7B / \u5373\u65F6": "Focus / resident / instant",
+    "\u5E38\u9A7B / \u5373\u65F6": "Resident / instant",
     "MEM \u4E0D\u662F\u666E\u901A\u5BB9\u5668": "MEM is not a conventional container",
     "\u8FA9\u8BC1\u94FE / \u4E8B\u4EF6\u94FE / \u9879\u76EE / \u6280\u80FD": "DC / EC / PRJ / SKL",
     "\u52A8\u6001\u8D26\u672C / \u89C4\u5219 / \u6587\u6863": "Runtime ledger / rules / documents",
@@ -2500,6 +2535,7 @@
     "ID\u3001\u6807\u9898\u3001\u6807\u7B7E\u6216\u5BB9\u5668": "ID, title, tag, or container",
     "\u8BB0\u5FC6\u6761\u76EE\u5217\u8868": "Memory entry list",
     "\u6CA1\u6709\u8BB0\u5FC6\u6761\u76EE": "No memory entries",
+    "\u7EE7\u7EED\u4EA4\u4E92": "Continue the conversation",
     "\u5F53\u524D\u67E5\u8BE2\u6CA1\u6709\u5339\u914D\u6761\u76EE\u3002": "No entries match the current query.",
     "\u8BE5\u5C42\u5F53\u524D\u6CA1\u6709\u53EF\u6295\u5F71\u7684\u8BB0\u5FC6\u6761\u76EE\uFF1B\u9690\u79C1\u6761\u76EE\u4E0D\u4F1A\u663E\u793A\u3002": "No memory entries are projected in this layer; private entries are never shown.",
     "STM \u8870\u51CF\u4E2D": "STM decaying",
@@ -2527,24 +2563,16 @@
     "\u6295\u5165": "Investment",
     "\u5766\u8BDA": "Honesty",
     "\u5171\u632F": "Resonance",
-    "\u53D7\u63A7\u7126\u70B9": "Controlled focus",
     "\u5F53\u524D": "Current",
     "\u4E0A\u4E00\u4E2A": "Previous",
-    "\u5173\u95ED\u5F53\u524D\u7126\u70B9": "Close current focus",
-    "\u6062\u590D\u4E3A\u5F53\u524D\u7126\u70B9": "Restore as current focus",
-    "\u6253\u5F00\u4E3A\u5F53\u524D\u7126\u70B9": "Open as current focus",
-    "\u6062\u590D\u4E0A\u4E00\u4E2A\u7126\u70B9 \xB7 {id}": "Restore previous focus \xB7 {id}",
-    "\u52A8\u4F5C\u7ECF\u65E2\u6709\u5BB9\u5668\u7126\u70B9\u5904\u7406\u5668\u63D0\u4EA4\uFF1B\u754C\u9762\u7B49\u5F85\u771F\u6E90\u91CD\u8BFB\u540E\u518D\u66F4\u65B0\u3002": "The action uses the existing container-focus processor; the interface updates only after re-reading source state.",
     "\u5DF2\u767B\u8BB0\u5BB9\u5668\u5217\u8868": "Registered containers",
     "\u5019\u9009\u5BB9\u5668\u672A\u63A5\u5165": "Candidate containers not connected",
     "\u6CA1\u6709 {prefix} \u5BB9\u5668": "No {prefix} containers",
     "\u5F53\u524D\u767B\u8BB0\u8868\u6CA1\u6709\u8BE5\u7C7B\u578B\u5B9E\u4F8B\uFF0C\u8FD9\u662F\u6B63\u5E38\u7A7A\u6001\u3002": "The registry has no instances of this type; this is a valid empty state.",
     "\u53EA\u8BFB\u53D6\u6B63\u5F0F\u767B\u8BB0\u8868\u5B9E\u4F8B\uFF1B\u5019\u9009\u96C6\u5408\u4ECD\u4FDD\u6301\u5EF6\u671F\u3002": "Only registered instances are read; candidate collections remain deferred.",
     "\u72B6\u6001": "Status",
-    "\u7126\u70B9": "Focus",
     "\u76EE\u6807": "Target",
-    "\u5F53\u524D\u7126\u70B9": "Current focus",
-    "\u672A\u805A\u7126": "Not focused",
+    "\u4E13\u6CE8\u5EA6": "Focus level",
     "\u672A\u77E5": "Unknown",
     "\u8BFB\u53D6\u4E2D": "Loading",
     "\u5BB9\u5668\u6B63\u6587\u4E3A\u7A7A\u3002": "Container content is empty.",
@@ -2686,6 +2714,9 @@
     "\u6A21\u578B\u670D\u52A1\u672A\u5728\u5141\u8BB8\u65F6\u95F4\u5185\u5EFA\u7ACB\u54CD\u5E94\u3001\u8FD4\u56DE\u9996\u5B57\u6216\u7EE7\u7EED\u6D41\u5F0F\u8F93\u51FA\u3002": "The model service did not connect, return its first chunk, or continue streaming within the allowed time.",
     "\u8BF7\u68C0\u67E5\u7F51\u7EDC\u548C\u4E0A\u6E38\u8D1F\u8F7D\u540E\u91CD\u8BD5\uFF1B\u6301\u7EED\u53D1\u751F\u65F6\u518D\u8C03\u6574\u5BF9\u5E94\u8D85\u65F6\u914D\u7F6E\u3002": "Check the network and upstream load, then retry. Adjust the matching timeout only if this persists.",
     "\u6A21\u578B\u670D\u52A1\u8FDE\u63A5\u4E2D\u65AD": "Model service connection was interrupted",
+    "\u4E0A\u6B21\u4EFB\u52A1\u610F\u5916\u4E2D\u65AD\uFF0C\u4E0B\u4E00\u6761\u6D88\u606F\u5C06\u5148\u6838\u5BF9\u73B0\u573A": "The previous task was interrupted. Your next message will reconcile the recorded state first.",
+    "\u5DF2\u786E\u5B9A\u52A8\u4F5C": "Determined actions",
+    "\u53D7\u963B\u6216\u7ED3\u679C\u4E0D\u786E\u5B9A\u52A8\u4F5C": "Blocked or uncertain actions",
     "\u8FDE\u63A5\u5DF2\u7ECF\u5EFA\u7ACB\uFF0C\u4F46\u5728\u54CD\u5E94\u5B8C\u6210\u524D\u88AB\u8FDC\u7AEF\u6216\u7F51\u7EDC\u4E2D\u65AD\u3002": "The connection was established but the remote service or network closed it before the response completed.",
     "\u8BF7\u68C0\u67E5\u7F51\u7EDC\u4E0E\u4E2D\u8F6C\u7AD9\u65E5\u5FD7\u540E\u91CD\u8BD5\u3002": "Check the network and relay logs, then retry.",
     "\u6A21\u578B\u670D\u52A1\u9274\u6743\u5931\u8D25": "Model service authentication failed",
@@ -2759,9 +2790,9 @@
     return value === "zh-CN" || value === "en-US" ? value : systemLocale(languages);
   }
   function t(key2, values = {}) {
-    let text10 = activeLocale === "zh-CN" ? key2 : english[key2];
-    for (const [name, value] of Object.entries(values)) text10 = text10.replaceAll("{".concat(name, "}"), String(value));
-    return text10;
+    let text11 = activeLocale === "zh-CN" ? key2 : english[key2];
+    for (const [name, value] of Object.entries(values)) text11 = text11.replaceAll("{".concat(name, "}"), String(value));
+    return text11;
   }
   function applyStaticTranslations(root6 = document) {
     root6.querySelectorAll("[data-i18n]").forEach((element6) => {
@@ -2887,10 +2918,14 @@
   var runtimePages = /* @__PURE__ */ new Set(["run", "persona", "mem", "relations", "containers", "context", "audit", "settings"]);
   var runtimeProjection = {
     host: "connecting",
+    hostSession: "",
     status: null,
     live: null,
     round: null,
     error: "",
+    liveError: "",
+    liveErrorEventIndex: 0,
+    liveRetryAfter: 0,
     sendFeedback: "",
     exportFeedback: "",
     sending: false,
@@ -2909,6 +2944,21 @@
     conversationHistoryLatest: null,
     conversationHistoryError: "",
     conversationHistoryVersion: 0,
+    conversationHistoryHasMore: false,
+    conversationHistoryLoading: false,
+    detailGeneration: 0,
+    legacyCards: /* @__PURE__ */ new Map(),
+    legacyCardsLoading: /* @__PURE__ */ new Set(),
+    legacyCardsErrors: /* @__PURE__ */ new Map(),
+    ledgerItems: /* @__PURE__ */ new Map(),
+    ledgerItemsLoading: /* @__PURE__ */ new Set(),
+    ledgerItemsErrors: /* @__PURE__ */ new Map(),
+    frameDetail: null,
+    frameDetailLoading: "",
+    frameDetailError: "",
+    timelineNodeDetails: /* @__PURE__ */ new Map(),
+    timelineNodeLoading: /* @__PURE__ */ new Set(),
+    timelineNodeErrors: /* @__PURE__ */ new Map(),
     contextPrefixDiff: null,
     contextPrefixDiffKey: "",
     contextPrefixDiffLoading: false,
@@ -2919,11 +2969,6 @@
     details: { memory: {}, container: {}, relation: {} },
     pendingDetails: /* @__PURE__ */ new Set(),
     detailErrors: {},
-    focusMutation: {
-      pending: false,
-      feedback: "",
-      receipt: null
-    },
     periodicMutation: {
       pending: false,
       memId: "",
@@ -3024,8 +3069,10 @@
     overviewCollapsed: true,
     overviewSectionsCollapsed: /* @__PURE__ */ new Set(),
     conversationDisclosure: /* @__PURE__ */ new Map(),
+    conversationStickToBottom: true,
     navCollapseLocked: localStorage.getItem("upsp.v4.navCollapseLocked") === "1",
     systemWindowOpen: false,
+    systemWindowRatio: 0.5,
     globalSettingsOpen: false,
     globalSettingsTab: "models",
     editingConnectionId: null,
@@ -3068,7 +3115,9 @@
     navLockToggle: requiredElement("#navLockToggle"),
     pageCode: requiredElement("#pageCode"),
     pageTitle: requiredElement("#pageTitle"),
+    mainStage: requiredElement("#mainStage"),
     stagePage: requiredElement("#stagePage"),
+    systemWindowSplitter: requiredElement("#systemWindowSplitter"),
     overviewContent: requiredElement("#overviewContent"),
     overviewPane: requiredElement("#overviewPane"),
     chatThread: requiredElement("#chatThread"),
@@ -3097,6 +3146,204 @@
     ledgerFrame: requiredElement("#ledgerFrame"),
     ledgerSettlement: requiredElement("#ledgerSettlement")
   };
+
+  // src/system-window-split-model.ts
+  var SYSTEM_WINDOW_RATIO_STORAGE_KEY = "upsp.v5.systemWindowRatio";
+  var DEFAULT_SYSTEM_WINDOW_RATIO = 0.5;
+  var MIN_SYSTEM_WINDOW_RATIO = 0.3;
+  var MAX_SYSTEM_WINDOW_RATIO = 0.7;
+  var MIN_SYSTEM_WINDOW_PX = 480;
+  var MIN_DIALOGUE_PX = 520;
+  var STAGE_RESERVED_PX = 24;
+  function clamp(value, minimum, maximum) {
+    return Math.min(maximum, Math.max(minimum, value));
+  }
+  function parseStoredSystemWindowRatio(value) {
+    if (value == null || value.trim() === "") return DEFAULT_SYSTEM_WINDOW_RATIO;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= MIN_SYSTEM_WINDOW_RATIO && parsed <= MAX_SYSTEM_WINDOW_RATIO ? parsed : DEFAULT_SYSTEM_WINDOW_RATIO;
+  }
+  function computeSystemWindowSplitGeometry(stageWidth, desiredRatio) {
+    const availableWidth = Math.max(0, stageWidth - STAGE_RESERVED_PX);
+    let minRatio = MIN_SYSTEM_WINDOW_RATIO;
+    let maxRatio = MAX_SYSTEM_WINDOW_RATIO;
+    if (availableWidth < MIN_SYSTEM_WINDOW_PX + MIN_DIALOGUE_PX) {
+      minRatio = DEFAULT_SYSTEM_WINDOW_RATIO;
+      maxRatio = DEFAULT_SYSTEM_WINDOW_RATIO;
+    } else {
+      minRatio = Math.max(minRatio, MIN_SYSTEM_WINDOW_PX / availableWidth);
+      maxRatio = Math.min(maxRatio, 1 - MIN_DIALOGUE_PX / availableWidth);
+      if (minRatio > maxRatio) {
+        minRatio = DEFAULT_SYSTEM_WINDOW_RATIO;
+        maxRatio = DEFAULT_SYSTEM_WINDOW_RATIO;
+      }
+    }
+    const normalizedDesired = clamp(
+      Number.isFinite(desiredRatio) ? desiredRatio : DEFAULT_SYSTEM_WINDOW_RATIO,
+      MIN_SYSTEM_WINDOW_RATIO,
+      MAX_SYSTEM_WINDOW_RATIO
+    );
+    const effectiveRatio = clamp(normalizedDesired, minRatio, maxRatio);
+    return {
+      availableWidth,
+      effectiveRatio,
+      minRatio,
+      maxRatio,
+      systemWidth: Math.round(availableWidth * effectiveRatio)
+    };
+  }
+  function systemWindowRatioFromPointer(stageWidth, systemWidth) {
+    const geometry = computeSystemWindowSplitGeometry(stageWidth, DEFAULT_SYSTEM_WINDOW_RATIO);
+    const availableWidth = Math.max(1, geometry.availableWidth);
+    return clamp(systemWidth / availableWidth, geometry.minRatio, geometry.maxRatio);
+  }
+  function systemWindowRatioFromKey(geometry, key2, shiftKey) {
+    const step = shiftKey ? 0.1 : 0.02;
+    let next = null;
+    if (key2 === "ArrowLeft") next = geometry.effectiveRatio - step;
+    if (key2 === "ArrowRight") next = geometry.effectiveRatio + step;
+    if (key2 === "Home") next = geometry.minRatio;
+    if (key2 === "End") next = geometry.maxRatio;
+    return next == null ? null : clamp(next, geometry.minRatio, geometry.maxRatio);
+  }
+
+  // src/system-window-split.ts
+  var DESKTOP_QUERY = "(min-width: 761px)";
+  var dragState = null;
+  var deferredRender = null;
+  var initialized = false;
+  var resizeObserver = null;
+  function isDesktopSplitAvailable() {
+    return window.matchMedia(DESKTOP_QUERY).matches;
+  }
+  function persistRatio() {
+    try {
+      localStorage.setItem(SYSTEM_WINDOW_RATIO_STORAGE_KEY, String(state.systemWindowRatio));
+    } catch {
+    }
+  }
+  function setDragging(active) {
+    els.app.classList.toggle("system-split-dragging", active);
+    els.systemWindowSplitter.classList.toggle("dragging", active);
+  }
+  function updateAccessibility(geometry) {
+    const splitter = els.systemWindowSplitter;
+    const minimum = Math.round(geometry.minRatio * 100);
+    const maximum = Math.round(geometry.maxRatio * 100);
+    const current = Math.round(geometry.effectiveRatio * 100);
+    splitter.setAttribute("aria-valuemin", String(minimum));
+    splitter.setAttribute("aria-valuemax", String(maximum));
+    splitter.setAttribute("aria-valuenow", String(current));
+    splitter.setAttribute("aria-valuetext", t("\u7CFB\u7EDF\u7A97\u5BBD\u5EA6\uFF1A{value}%", { value: current }));
+    splitter.title = t("\u62D6\u62FD\u8C03\u6574\u5BBD\u5EA6\uFF0C\u53CC\u51FB\u6062\u590D\u4E00\u534A");
+  }
+  function applySystemWindowSplit() {
+    const geometry = computeSystemWindowSplitGeometry(
+      els.mainStage.getBoundingClientRect().width,
+      state.systemWindowRatio
+    );
+    els.app.style.setProperty("--system-window-width", "".concat(geometry.systemWidth, "px"));
+    const visible = state.systemWindowOpen && isDesktopSplitAvailable() && geometry.availableWidth > 0;
+    els.systemWindowSplitter.hidden = !visible;
+    els.systemWindowSplitter.tabIndex = visible ? 0 : -1;
+    updateAccessibility(geometry);
+    if (!visible && dragState) cancelDrag();
+    return geometry;
+  }
+  function ratioFromDrag(clientX) {
+    if (!dragState) return state.systemWindowRatio;
+    const stage = els.mainStage.getBoundingClientRect();
+    const systemWidth = dragState.initialSystemWidth + clientX - dragState.startClientX;
+    return systemWindowRatioFromPointer(stage.width, systemWidth);
+  }
+  function applyPointerRatio(clientX) {
+    state.systemWindowRatio = ratioFromDrag(clientX);
+    applySystemWindowSplit();
+  }
+  function deferSystemWindowRender(render4) {
+    if (!dragState) return false;
+    deferredRender = render4;
+    return true;
+  }
+  function flushDeferredRender() {
+    const render4 = deferredRender;
+    deferredRender = null;
+    render4?.();
+  }
+  function finishDrag(pointerId, persist) {
+    if (!dragState || dragState.pointerId !== pointerId) return;
+    const initialRatio = dragState.initialRatio;
+    dragState = null;
+    if (els.systemWindowSplitter.hasPointerCapture(pointerId)) {
+      els.systemWindowSplitter.releasePointerCapture(pointerId);
+    }
+    if (!persist) state.systemWindowRatio = initialRatio;
+    setDragging(false);
+    applySystemWindowSplit();
+    if (persist) persistRatio();
+    flushDeferredRender();
+  }
+  function cancelDrag() {
+    if (!dragState) return;
+    finishDrag(dragState.pointerId, false);
+  }
+  function handlePointerDown(event) {
+    if (event.button !== 0 || els.systemWindowSplitter.hidden) return;
+    event.preventDefault();
+    const geometry = applySystemWindowSplit();
+    dragState = {
+      pointerId: event.pointerId,
+      initialRatio: state.systemWindowRatio,
+      initialSystemWidth: geometry.systemWidth,
+      startClientX: event.clientX
+    };
+    els.systemWindowSplitter.setPointerCapture(event.pointerId);
+    setDragging(true);
+  }
+  function handlePointerMove(event) {
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    applyPointerRatio(event.clientX);
+  }
+  function resetSystemWindowRatio() {
+    state.systemWindowRatio = DEFAULT_SYSTEM_WINDOW_RATIO;
+    try {
+      localStorage.removeItem(SYSTEM_WINDOW_RATIO_STORAGE_KEY);
+    } catch {
+    }
+    applySystemWindowSplit();
+  }
+  function handleKeyDown(event) {
+    const geometry = applySystemWindowSplit();
+    const next = systemWindowRatioFromKey(geometry, event.key, event.shiftKey);
+    if (next == null) return;
+    event.preventDefault();
+    state.systemWindowRatio = next;
+    persistRatio();
+    applySystemWindowSplit();
+  }
+  function initSystemWindowSplit() {
+    if (initialized) return;
+    initialized = true;
+    try {
+      state.systemWindowRatio = parseStoredSystemWindowRatio(
+        localStorage.getItem(SYSTEM_WINDOW_RATIO_STORAGE_KEY)
+      );
+    } catch {
+      state.systemWindowRatio = DEFAULT_SYSTEM_WINDOW_RATIO;
+    }
+    const splitter = els.systemWindowSplitter;
+    splitter.addEventListener("pointerdown", handlePointerDown);
+    splitter.addEventListener("pointermove", handlePointerMove);
+    splitter.addEventListener("pointerup", (event) => finishDrag(event.pointerId, true));
+    splitter.addEventListener("pointercancel", (event) => finishDrag(event.pointerId, false));
+    splitter.addEventListener("lostpointercapture", (event) => finishDrag(event.pointerId, false));
+    splitter.addEventListener("dblclick", resetSystemWindowRatio);
+    splitter.addEventListener("keydown", handleKeyDown);
+    resizeObserver = new ResizeObserver(() => window.requestAnimationFrame(applySystemWindowSplit));
+    resizeObserver.observe(els.mainStage);
+    applySystemWindowSplit();
+  }
 
   // node_modules/highlight.js/es/languages/bash.js
   function bash(hljs) {
@@ -7365,6 +7612,33 @@
       aliases: ["yml"],
       contains: MODES4
     };
+  }
+
+  // src/conversation-scroll.ts
+  function updateConversationStickyState(container, state2) {
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    state2.conversationStickToBottom = distanceFromBottom <= 24;
+  }
+  function scrollConversationToBottomIfSticky(container, state2) {
+    if (state2.conversationStickToBottom) container.scrollTop = container.scrollHeight;
+  }
+  function mutateScrollLayout(container, element6, mutate, shouldStickToBottom) {
+    if (!container) {
+      mutate();
+      return;
+    }
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const atBottom = distanceFromBottom <= 24;
+    const containerTop = container.getBoundingClientRect().top;
+    const before = element6.getBoundingClientRect();
+    const aboveViewport = before.bottom <= containerTop + 1;
+    const oldHeight = element6.offsetHeight;
+    mutate();
+    window.requestAnimationFrame(() => {
+      const stickToBottom = shouldStickToBottom ? shouldStickToBottom() : atBottom;
+      if (stickToBottom) container.scrollTop = container.scrollHeight;
+      else if (aboveViewport) container.scrollTop += element6.offsetHeight - oldHeight;
+    });
   }
 
   // node_modules/unist-util-is/lib/index.js
@@ -17532,10 +17806,10 @@
         if (!node2.properties.className.includes(name)) {
           node2.properties.className.unshift(name);
         }
-        const text10 = toText(node2, { whitespace: "pre" });
+        const text11 = toText(node2, { whitespace: "pre" });
         let result;
         try {
-          result = lang ? lowlight.highlight(lang, text10, { prefix }) : lowlight.highlightAuto(text10, { prefix, subset });
+          result = lang ? lowlight.highlight(lang, text11, { prefix }) : lowlight.highlightAuto(text11, { prefix, subset });
         } catch (error) {
           const cause = (
             /** @type {Error} */
@@ -19274,7 +19548,7 @@
     "'": "&#x27;"
   };
   var ESCAPE_REGEX = /[&><"']/g;
-  var escape = (text10) => String(text10).replace(ESCAPE_REGEX, (match) => ESCAPE_LOOKUP[match]);
+  var escape = (text11) => String(text11).replace(ESCAPE_REGEX, (match) => ESCAPE_LOOKUP[match]);
   var getBaseElem = (group) => {
     if (group.type === "ordgroup") {
       if (group.body.length === 1) {
@@ -20149,7 +20423,7 @@
     "\xEC": "\u0131\u0300"
   };
   var SymbolNode = class {
-    constructor(text10, height, depth, italic2, skew, width, classes, style2) {
+    constructor(text11, height, depth, italic2, skew, width, classes, style2) {
       this.text = void 0;
       this.height = void 0;
       this.depth = void 0;
@@ -20159,7 +20433,7 @@
       this.maxFontSize = void 0;
       this.classes = void 0;
       this.style = void 0;
-      this.text = text10;
+      this.text = text11;
       this.height = height || 0;
       this.depth = depth || 0;
       this.italic = italic2 || 0;
@@ -23547,25 +23821,25 @@
   var makeOrd = function makeOrd2(group, options) {
     var type = group.type === "mathord" ? "mathord" : "textord";
     var mode = group.mode;
-    var text10 = group.text;
+    var text11 = group.text;
     var classes = ["mord"];
     var font = options.font, fontFamily = options.fontFamily, fontWeight = options.fontWeight, fontShape = options.fontShape;
     var useFont = mode === "math" || mode === "text" && !!font;
     var fontOrFamily = useFont ? font : fontFamily;
     var wideFontName = "";
     var wideFontClass = "";
-    if (text10.charCodeAt(0) === 55349) {
-      var wideCharData = wideCharacterFont(text10);
+    if (text11.charCodeAt(0) === 55349) {
+      var wideCharData = wideCharacterFont(text11);
       wideFontName = wideCharData.font;
       wideFontClass = wideCharData[mode + "Class"];
     }
     if (wideFontName) {
-      return makeSymbol(text10, wideFontName, mode, options, classes.concat(wideFontClass));
+      return makeSymbol(text11, wideFontName, mode, options, classes.concat(wideFontClass));
     } else if (fontOrFamily) {
       var fontName;
       var fontClasses;
       if (fontOrFamily === "boldsymbol") {
-        var fontData = boldSymbol(text10, mode, type);
+        var fontData = boldSymbol(text11, mode, type);
         fontName = fontData.fontName;
         fontClasses = [fontData.fontClass];
       } else if (useFont) {
@@ -23575,29 +23849,29 @@
         fontName = retrieveTextFontName(fontFamily, fontWeight, fontShape);
         fontClasses = [fontFamily, fontWeight, fontShape];
       }
-      if (lookupSymbol(text10, fontName, mode).metrics) {
-        return makeSymbol(text10, fontName, mode, options, classes.concat(fontClasses));
-      } else if (Object.prototype.hasOwnProperty.call(ligatures, text10) && fontName.slice(0, 10) === "Typewriter") {
+      if (lookupSymbol(text11, fontName, mode).metrics) {
+        return makeSymbol(text11, fontName, mode, options, classes.concat(fontClasses));
+      } else if (Object.prototype.hasOwnProperty.call(ligatures, text11) && fontName.slice(0, 10) === "Typewriter") {
         var parts = [];
-        for (var i2 = 0; i2 < text10.length; i2++) {
-          parts.push(makeSymbol(text10[i2], fontName, mode, options, classes.concat(fontClasses)));
+        for (var i2 = 0; i2 < text11.length; i2++) {
+          parts.push(makeSymbol(text11[i2], fontName, mode, options, classes.concat(fontClasses)));
         }
         return makeFragment(parts);
       }
     }
     if (type === "mathord") {
-      return makeSymbol(text10, "Math-Italic", mode, options, classes.concat(["mathnormal"]));
+      return makeSymbol(text11, "Math-Italic", mode, options, classes.concat(["mathnormal"]));
     } else if (type === "textord") {
-      var _font = symbols[mode][text10] && symbols[mode][text10].font;
+      var _font = symbols[mode][text11] && symbols[mode][text11].font;
       if (_font === "ams") {
         var _fontName = retrieveTextFontName("amsrm", fontWeight, fontShape);
-        return makeSymbol(text10, _fontName, mode, options, classes.concat("amsrm", fontWeight, fontShape));
+        return makeSymbol(text11, _fontName, mode, options, classes.concat("amsrm", fontWeight, fontShape));
       } else if (_font === "main" || !_font) {
         var _fontName2 = retrieveTextFontName("textrm", fontWeight, fontShape);
-        return makeSymbol(text10, _fontName2, mode, options, classes.concat(fontWeight, fontShape));
+        return makeSymbol(text11, _fontName2, mode, options, classes.concat(fontWeight, fontShape));
       } else {
         var _fontName3 = retrieveTextFontName(_font, fontWeight, fontShape);
-        return makeSymbol(text10, _fontName3, mode, options, classes.concat(_fontName3, fontWeight, fontShape));
+        return makeSymbol(text11, _fontName3, mode, options, classes.concat(_fontName3, fontWeight, fontShape));
       }
     } else {
       throw new Error("unexpected type: " + type + " in makeOrd");
@@ -24301,11 +24575,11 @@
       }
       for (var i2 = 0; i2 < this.children.length; i2++) {
         if (this.children[i2] instanceof TextNode && this.children[i2 + 1] instanceof TextNode) {
-          var text10 = this.children[i2].toText() + this.children[++i2].toText();
+          var text11 = this.children[i2].toText() + this.children[++i2].toText();
           while (this.children[i2 + 1] instanceof TextNode) {
-            text10 += this.children[++i2].toText();
+            text11 += this.children[++i2].toText();
           }
-          node2.appendChild(new TextNode(text10).toNode());
+          node2.appendChild(new TextNode(text11).toNode());
         } else {
           node2.appendChild(this.children[i2].toNode());
         }
@@ -24342,9 +24616,9 @@
     }
   };
   var TextNode = class {
-    constructor(text10) {
+    constructor(text11) {
       this.text = void 0;
-      this.text = text10;
+      this.text = text11;
     }
     /**
      * Converts the text node into a DOM text node.
@@ -24430,12 +24704,12 @@
   };
   var noVariantSymbols = /* @__PURE__ */ new Set(["\\imath", "\\jmath"]);
   var rowLikeTypes = /* @__PURE__ */ new Set(["mrow", "mtable"]);
-  var makeText = function makeText2(text10, mode, options) {
+  var makeText = function makeText2(text11, mode, options) {
     var _options$fontFamily, _options$font;
-    if (symbols[mode][text10] && symbols[mode][text10].replace && text10.charCodeAt(0) !== 55349 && !(Object.prototype.hasOwnProperty.call(ligatures, text10) && ((options == null || (_options$fontFamily = options.fontFamily) == null ? void 0 : _options$fontFamily.slice(4, 6)) === "tt" || (options == null || (_options$font = options.font) == null ? void 0 : _options$font.slice(4, 6)) === "tt"))) {
-      text10 = symbols[mode][text10].replace;
+    if (symbols[mode][text11] && symbols[mode][text11].replace && text11.charCodeAt(0) !== 55349 && !(Object.prototype.hasOwnProperty.call(ligatures, text11) && ((options == null || (_options$fontFamily = options.fontFamily) == null ? void 0 : _options$fontFamily.slice(4, 6)) === "tt" || (options == null || (_options$font = options.font) == null ? void 0 : _options$font.slice(4, 6)) === "tt"))) {
+      text11 = symbols[mode][text11].replace;
     }
-    return new TextNode(text10);
+    return new TextNode(text11);
   };
   var makeRow = function makeRow2(body3) {
     if (body3.length === 1) {
@@ -24487,18 +24761,18 @@
     if (mathVariant) {
       return typeof mathVariant === "function" ? mathVariant(group) : mathVariant;
     }
-    var text10 = group.text;
-    if (noVariantSymbols.has(text10)) {
+    var text11 = group.text;
+    if (noVariantSymbols.has(text11)) {
       return null;
     }
-    if (symbols[mode][text10]) {
-      var replacement = symbols[mode][text10].replace;
+    if (symbols[mode][text11]) {
+      var replacement = symbols[mode][text11].replace;
       if (replacement) {
-        text10 = replacement;
+        text11 = replacement;
       }
     }
     var fontName = fontMap[font].fontName;
-    if (getCharacterMetrics(text10, fontName, mode)) {
+    if (getCharacterMetrics(text11, fontName, mode)) {
       return fontMap[font].variant;
     }
     return null;
@@ -25905,21 +26179,21 @@
         number2 += node2.text;
       }
       var code4 = parseInt(number2);
-      var text10;
+      var text11;
       if (isNaN(code4)) {
         throw new ParseError("\\@char has non-numeric argument " + number2);
       } else if (code4 < 0 || code4 >= 1114111) {
         throw new ParseError("\\@char with invalid code point " + number2);
       } else if (code4 <= 65535) {
-        text10 = String.fromCharCode(code4);
+        text11 = String.fromCharCode(code4);
       } else {
         code4 -= 65536;
-        text10 = String.fromCharCode((code4 >> 10) + 55296, (code4 & 1023) + 56320);
+        text11 = String.fromCharCode((code4 >> 10) + 55296, (code4 & 1023) + 56320);
       }
       return {
         type: "textord",
         mode: parser2.mode,
-        text: text10
+        text: text11
       };
     }
   });
@@ -26206,8 +26480,8 @@
     span.depth += shift;
   };
   var makeSmallDelim = function makeSmallDelim2(delim, style2, center, options, mode, classes) {
-    var text10 = makeSymbol(delim, "Main-Regular", mode, options);
-    var span = styleWrap(text10, style2, options, classes);
+    var text11 = makeSymbol(delim, "Main-Regular", mode, options);
+    var span = styleWrap(text11, style2, options, classes);
     if (center) {
       centerSpan(span, options, style2);
     }
@@ -27265,20 +27539,20 @@
   };
   var Token = class _Token {
     // used in \noexpand
-    constructor(text10, loc) {
+    constructor(text11, loc) {
       this.text = void 0;
       this.loc = void 0;
       this.noexpand = void 0;
       this.treatAsRelax = void 0;
-      this.text = text10;
+      this.text = text11;
       this.loc = loc;
     }
     /**
      * Given a pair of tokens (this and endToken), compute a `Token` encompassing
      * the whole input range enclosed by these two.
      */
-    range(endToken, text10) {
-      return new _Token(text10, SourceLocation.range(this, endToken));
+    range(endToken, text11) {
+      return new _Token(text11, SourceLocation.range(this, endToken));
     }
   };
   function getHLines(parser2) {
@@ -30377,17 +30651,17 @@
       return makeOrd(group, options);
     },
     mathmlBuilder(group, options) {
-      var text10 = makeText(group.text, group.mode, options);
+      var text11 = makeText(group.text, group.mode, options);
       var variant = getVariant(group, options) || "normal";
       var node2;
       if (group.mode === "text") {
-        node2 = new MathNode("mtext", [text10]);
+        node2 = new MathNode("mtext", [text11]);
       } else if (/[0-9]/.test(group.text)) {
-        node2 = new MathNode("mn", [text10]);
+        node2 = new MathNode("mn", [text11]);
       } else if (group.text === "\\prime") {
-        node2 = new MathNode("mo", [text10]);
+        node2 = new MathNode("mo", [text11]);
       } else {
-        node2 = new MathNode("mi", [text10]);
+        node2 = new MathNode("mi", [text11]);
       }
       if (variant !== defaultVariant[node2.type]) {
         node2.setAttribute("mathvariant", variant);
@@ -30601,11 +30875,11 @@
       throw new ParseError("\\verb ended by end of line instead of matching delimiter");
     },
     htmlBuilder(group, options) {
-      var text10 = makeVerb(group);
+      var text11 = makeVerb(group);
       var body3 = [];
       var newOptions = options.havingStyle(options.style.text());
-      for (var i2 = 0; i2 < text10.length; i2++) {
-        var c2 = text10[i2];
+      for (var i2 = 0; i2 < text11.length; i2++) {
+        var c2 = text11[i2];
         if (c2 === "~") {
           c2 = "\\textasciitilde";
         }
@@ -30614,8 +30888,8 @@
       return makeSpan(["mord", "text"].concat(newOptions.sizingClasses(options)), tryCombineChars(body3), newOptions);
     },
     mathmlBuilder(group, options) {
-      var text10 = new TextNode(makeVerb(group));
-      var node2 = new MathNode("mtext", [text10]);
+      var text11 = new TextNode(makeVerb(group));
+      var node2 = new MathNode("mtext", [text11]);
       node2.setAttribute("mathvariant", "monospace");
       return node2;
     }
@@ -30670,8 +30944,8 @@
       if (match === null || match.index !== pos) {
         throw new ParseError("Unexpected character: '" + input[pos] + "'", new Token(input[pos], new SourceLocation(this, pos, pos + 1)));
       }
-      var text10 = match[6] || match[3] || (match[2] ? "\\ " : " ");
-      if (this.catcodes[text10] === 14) {
+      var text11 = match[6] || match[3] || (match[2] ? "\\ " : " ");
+      if (this.catcodes[text11] === 14) {
         var nlIndex = input.indexOf("\n", this.tokenRegex.lastIndex);
         if (nlIndex === -1) {
           this.tokenRegex.lastIndex = input.length;
@@ -30681,7 +30955,7 @@
         }
         return this.lex();
       }
-      return new Token(text10, new SourceLocation(this, pos, this.tokenRegex.lastIndex));
+      return new Token(text11, new SourceLocation(this, pos, this.tokenRegex.lastIndex));
     }
   };
   var Namespace = class {
@@ -32359,12 +32633,12 @@
      * Checks a result to make sure it has the right type, and throws an
      * appropriate error otherwise.
      */
-    expect(text10, consume) {
+    expect(text11, consume) {
       if (consume === void 0) {
         consume = true;
       }
-      if (this.fetch().text !== text10) {
-        throw new ParseError("Expected '" + text10 + "', got '" + this.fetch().text + "'", this.fetch());
+      if (this.fetch().text !== text11) {
+        throw new ParseError("Expected '" + text11 + "', got '" + this.fetch().text + "'", this.fetch());
       }
       if (consume) {
         this.consume();
@@ -32545,13 +32819,13 @@
      * Converts the textual input of an unsupported command into a text node
      * contained within a color node whose color is determined by errorColor
      */
-    formatUnsupportedCmd(text10) {
+    formatUnsupportedCmd(text11) {
       var textordArray = [];
-      for (var i2 = 0; i2 < text10.length; i2++) {
+      for (var i2 = 0; i2 < text11.length; i2++) {
         textordArray.push({
           type: "textord",
           mode: "text",
-          text: text10[i2]
+          text: text11[i2]
         });
       }
       var textNode = {
@@ -32975,11 +33249,11 @@
      */
     parseGroup(name, breakOnTokenText) {
       var firstToken = this.fetch();
-      var text10 = firstToken.text;
+      var text11 = firstToken.text;
       var result;
-      if (text10 === "{" || text10 === "\\begingroup") {
+      if (text11 === "{" || text11 === "\\begingroup") {
         this.consume();
-        var groupEnd = text10 === "{" ? "}" : "\\endgroup";
+        var groupEnd = text11 === "{" ? "}" : "\\endgroup";
         this.gullet.beginGroup();
         var expression = this.parseExpression(false, groupEnd);
         var lastToken = this.fetch();
@@ -32994,15 +33268,15 @@
           // which doesn't affect spacing in math mode, i.e., is transparent.
           // https://tex.stackexchange.com/questions/1930/when-should-one-
           // use-begingroup-instead-of-bgroup
-          semisimple: text10 === "\\begingroup" || void 0
+          semisimple: text11 === "\\begingroup" || void 0
         };
       } else {
         result = this.parseFunction(breakOnTokenText, name) || this.parseSymbol();
-        if (result == null && text10[0] === "\\" && !Object.prototype.hasOwnProperty.call(implicitCommands, text10)) {
+        if (result == null && text11[0] === "\\" && !Object.prototype.hasOwnProperty.call(implicitCommands, text11)) {
           if (this.settings.throwOnError) {
-            throw new ParseError("Undefined control sequence: " + text10, firstToken);
+            throw new ParseError("Undefined control sequence: " + text11, firstToken);
           }
-          result = this.formatUnsupportedCmd(text10);
+          result = this.formatUnsupportedCmd(text11);
           this.consume();
         }
       }
@@ -33065,10 +33339,10 @@
      */
     parseSymbol() {
       var nucleus = this.fetch();
-      var text10 = nucleus.text;
-      if (/^\\verb[^a-zA-Z]/.test(text10)) {
+      var text11 = nucleus.text;
+      if (/^\\verb[^a-zA-Z]/.test(text11)) {
         this.consume();
-        var arg = text10.slice(5);
+        var arg = text11.slice(5);
         var star = arg.charAt(0) === "*";
         if (star) {
           arg = arg.slice(1);
@@ -33084,27 +33358,27 @@
           star
         };
       }
-      if (Object.prototype.hasOwnProperty.call(unicodeSymbols, text10[0]) && !symbols[this.mode][text10[0]]) {
+      if (Object.prototype.hasOwnProperty.call(unicodeSymbols, text11[0]) && !symbols[this.mode][text11[0]]) {
         if (this.settings.strict && this.mode === "math") {
-          this.settings.reportNonstrict("unicodeTextInMathMode", 'Accented Unicode text character "' + text10[0] + '" used in math mode', nucleus);
+          this.settings.reportNonstrict("unicodeTextInMathMode", 'Accented Unicode text character "' + text11[0] + '" used in math mode', nucleus);
         }
-        text10 = unicodeSymbols[text10[0]] + text10.slice(1);
+        text11 = unicodeSymbols[text11[0]] + text11.slice(1);
       }
-      var match = combiningDiacriticalMarksEndRegex.exec(text10);
+      var match = combiningDiacriticalMarksEndRegex.exec(text11);
       if (match) {
-        text10 = text10.substring(0, match.index);
-        if (text10 === "i") {
-          text10 = "\u0131";
-        } else if (text10 === "j") {
-          text10 = "\u0237";
+        text11 = text11.substring(0, match.index);
+        if (text11 === "i") {
+          text11 = "\u0131";
+        } else if (text11 === "j") {
+          text11 = "\u0237";
         }
       }
       var symbol;
-      if (symbols[this.mode][text10]) {
-        if (this.settings.strict && this.mode === "math" && extraLatin.includes(text10)) {
-          this.settings.reportNonstrict("unicodeTextInMathMode", 'Latin-1/Unicode text character "' + text10[0] + '" used in math mode', nucleus);
+      if (symbols[this.mode][text11]) {
+        if (this.settings.strict && this.mode === "math" && extraLatin.includes(text11)) {
+          this.settings.reportNonstrict("unicodeTextInMathMode", 'Latin-1/Unicode text character "' + text11[0] + '" used in math mode', nucleus);
         }
-        var group = symbols[this.mode][text10].group;
+        var group = symbols[this.mode][text11].group;
         var loc = SourceLocation.range(nucleus);
         var s2;
         if (isAtom(group)) {
@@ -33113,30 +33387,30 @@
             mode: this.mode,
             family: group,
             loc,
-            text: text10
+            text: text11
           };
         } else {
           s2 = {
             type: group,
             mode: this.mode,
             loc,
-            text: text10
+            text: text11
           };
         }
         symbol = s2;
-      } else if (text10.charCodeAt(0) >= 128) {
+      } else if (text11.charCodeAt(0) >= 128) {
         if (this.settings.strict) {
-          if (!supportedCodepoint(text10.charCodeAt(0))) {
-            this.settings.reportNonstrict("unknownSymbol", 'Unrecognized Unicode character "' + text10[0] + '"' + (" (" + text10.charCodeAt(0) + ")"), nucleus);
+          if (!supportedCodepoint(text11.charCodeAt(0))) {
+            this.settings.reportNonstrict("unknownSymbol", 'Unrecognized Unicode character "' + text11[0] + '"' + (" (" + text11.charCodeAt(0) + ")"), nucleus);
           } else if (this.mode === "math") {
-            this.settings.reportNonstrict("unicodeTextInMathMode", 'Unicode text character "' + text10[0] + '" used in math mode', nucleus);
+            this.settings.reportNonstrict("unicodeTextInMathMode", 'Unicode text character "' + text11[0] + '" used in math mode', nucleus);
           }
         }
         symbol = {
           type: "textord",
           mode: "text",
           loc: SourceLocation.range(nucleus),
-          text: text10
+          text: text11
         };
       } else {
         return null;
@@ -36369,12 +36643,12 @@
     let subexit = state2.enter("label");
     const tracker = state2.createTracker(info);
     let value = tracker.move("[");
-    const text10 = state2.containerPhrasing(node2, {
+    const text11 = state2.containerPhrasing(node2, {
       before: value,
       after: "]",
       ...tracker.current()
     });
-    value += tracker.move(text10 + "][");
+    value += tracker.move(text11 + "][");
     subexit();
     const stack = state2.stack;
     state2.stack = [];
@@ -36387,7 +36661,7 @@
     subexit();
     state2.stack = stack;
     exit3();
-    if (type === "full" || !text10 || text10 !== reference) {
+    if (type === "full" || !text11 || text11 !== reference) {
       value += tracker.move(reference + "]");
     } else if (type === "shortcut") {
       value = value.slice(0, -1);
@@ -37452,7 +37726,7 @@
     let index2 = -1;
     let open2;
     let group;
-    let text10;
+    let text11;
     let openingSequence;
     let closingSequence;
     let use;
@@ -37490,7 +37764,7 @@
               },
               end
             };
-            text10 = {
+            text11 = {
               type: use > 1 ? "strongText" : "emphasisText",
               start: {
                 ...events[open2][1].end
@@ -37518,9 +37792,9 @@
             if (events[open2][1].end.offset - events[open2][1].start.offset) {
               nextEvents = push(nextEvents, [["enter", events[open2][1], context], ["exit", events[open2][1], context]]);
             }
-            nextEvents = push(nextEvents, [["enter", group, context], ["enter", openingSequence, context], ["exit", openingSequence, context], ["enter", text10, context]]);
+            nextEvents = push(nextEvents, [["enter", group, context], ["enter", openingSequence, context], ["exit", openingSequence, context], ["enter", text11, context]]);
             nextEvents = push(nextEvents, resolveAll(context.parser.constructs.insideSpan.null, events.slice(open2 + 1, index2), context));
-            nextEvents = push(nextEvents, [["exit", text10, context], ["enter", closingSequence, context], ["exit", closingSequence, context], ["exit", group, context]]);
+            nextEvents = push(nextEvents, [["exit", text11, context], ["enter", closingSequence, context], ["exit", closingSequence, context], ["exit", group, context]]);
             if (events[index2][1].end.offset - events[index2][1].start.offset) {
               offset = 2;
               nextEvents = push(nextEvents, [["enter", events[index2][1], context], ["exit", events[index2][1], context]]);
@@ -38990,7 +39264,7 @@
     let contentEnd = events.length - 2;
     let contentStart = 3;
     let content3;
-    let text10;
+    let text11;
     if (events[contentStart][1].type === "whitespace") {
       contentStart += 2;
     }
@@ -39006,13 +39280,13 @@
         start: events[contentStart][1].start,
         end: events[contentEnd][1].end
       };
-      text10 = {
+      text11 = {
         type: "chunkText",
         start: events[contentStart][1].start,
         end: events[contentEnd][1].end,
         contentType: "text"
       };
-      splice(events, contentStart, contentEnd - contentStart + 1, [["enter", content3, context], ["enter", text10, context], ["exit", text10, context], ["exit", content3, context]]);
+      splice(events, contentStart, contentEnd - contentStart + 1, [["enter", content3, context], ["enter", text11, context], ["exit", text11, context], ["exit", content3, context]]);
     }
     return events;
   }
@@ -39902,7 +40176,7 @@
         ...events[close2][1].end
       }
     };
-    const text10 = {
+    const text11 = {
       type: "labelText",
       start: {
         ...events[open2 + offset + 2][1].end
@@ -39913,9 +40187,9 @@
     };
     media = [["enter", group, context], ["enter", label, context]];
     media = push(media, events.slice(open2 + 1, open2 + offset + 3));
-    media = push(media, [["enter", text10, context]]);
+    media = push(media, [["enter", text11, context]]);
     media = push(media, resolveAll(context.parser.constructs.insideSpan.null, events.slice(open2 + offset + 4, close2 - 3), context));
-    media = push(media, [["exit", text10, context], events[close2 - 2], events[close2 - 1], ["exit", label, context]]);
+    media = push(media, [["exit", text11, context], events[close2 - 2], events[close2 - 1], ["exit", label, context]]);
     media = push(media, events.slice(close2 + 1));
     media = push(media, [["exit", group, context]]);
     splice(events, open2, events.length, media);
@@ -40295,7 +40569,7 @@
   function resolveToSetextUnderline(events, context) {
     let index2 = events.length;
     let content3;
-    let text10;
+    let text11;
     let definition3;
     while (index2--) {
       if (events[index2][0] === "enter") {
@@ -40304,7 +40578,7 @@
           break;
         }
         if (events[index2][1].type === "paragraph") {
-          text10 = index2;
+          text11 = index2;
         }
       } else {
         if (events[index2][1].type === "content") {
@@ -40324,9 +40598,9 @@
         ...events[events.length - 1][1].end
       }
     };
-    events[text10][1].type = "setextHeadingText";
+    events[text11][1].type = "setextHeadingText";
     if (definition3) {
-      events.splice(text10, 0, ["enter", heading3, context]);
+      events.splice(text11, 0, ["enter", heading3, context]);
       events.splice(definition3 + 1, 0, ["exit", events[content3][1], context]);
       events[content3][1].end = {
         ...events[definition3][1].end
@@ -40691,17 +40965,17 @@
                 start: Object.assign({}, events[open2][1].start),
                 end: Object.assign({}, events[index2][1].end)
               };
-              const text10 = {
+              const text11 = {
                 type: "strikethroughText",
                 start: Object.assign({}, events[open2][1].end),
                 end: Object.assign({}, events[index2][1].start)
               };
-              const nextEvents = [["enter", strikethrough2, context], ["enter", events[open2][1], context], ["exit", events[open2][1], context], ["enter", text10, context]];
+              const nextEvents = [["enter", strikethrough2, context], ["enter", events[open2][1], context], ["exit", events[open2][1], context], ["enter", text11, context]];
               const insideSpan2 = context.parser.constructs.insideSpan.null;
               if (insideSpan2) {
                 splice(nextEvents, nextEvents.length, 0, resolveAll(insideSpan2, events.slice(open2 + 1, index2), context));
               }
-              splice(nextEvents, nextEvents.length, 0, [["exit", text10, context], ["enter", events[index2][1], context], ["exit", events[index2][1], context], ["exit", strikethrough2, context]]);
+              splice(nextEvents, nextEvents.length, 0, [["exit", text11, context], ["enter", events[index2][1], context], ["exit", events[index2][1], context], ["exit", strikethrough2, context]]);
               splice(events, open2 - 1, index2 - open2 + 3, nextEvents);
               index2 = open2 + nextEvents.length - 2;
               break;
@@ -42098,10 +42372,10 @@
     function initializeText(effects) {
       const self2 = this;
       const constructs2 = this.parser.constructs[field];
-      const text10 = effects.attempt(constructs2, start2, notText);
+      const text11 = effects.attempt(constructs2, start2, notText);
       return start2;
       function start2(code4) {
-        return atBreak(code4) ? text10(code4) : notText(code4);
+        return atBreak(code4) ? text11(code4) : notText(code4);
       }
       function notText(code4) {
         if (code4 === null) {
@@ -42115,7 +42389,7 @@
       function data(code4) {
         if (atBreak(code4)) {
           effects.exit("data");
-          return text10(code4);
+          return text11(code4);
         }
         effects.consume(code4);
         return data;
@@ -43145,7 +43419,7 @@
       const siblings2 = node2.children;
       let tail = siblings2[siblings2.length - 1];
       if (!tail || tail.type !== "text") {
-        tail = text10();
+        tail = text11();
         tail.position = {
           start: point3(token.start),
           // @ts-expect-error: we’ll add `end` later.
@@ -43390,7 +43664,7 @@
         children: []
       };
     }
-    function text10() {
+    function text11() {
       return {
         type: "text",
         value: ""
@@ -43673,13 +43947,13 @@
 
   // node_modules/mdast-util-to-hast/lib/handlers/inline-code.js
   function inlineCode2(state2, node2) {
-    const text10 = { type: "text", value: node2.value.replace(/\r?\n|\r/g, " ") };
-    state2.patch(node2, text10);
+    const text11 = { type: "text", value: node2.value.replace(/\r?\n|\r/g, " ") };
+    state2.patch(node2, text11);
     const result = {
       type: "element",
       tagName: "code",
       properties: {},
-      children: [text10]
+      children: [text11]
     };
     state2.patch(node2, result);
     return state2.applyData(node2, result);
@@ -45937,6 +46211,7 @@
   var htmlCache = /* @__PURE__ */ new Map();
   var documentPrefixes = /* @__PURE__ */ new Map();
   var approvedImageDocuments = /* @__PURE__ */ new Set();
+  var markdownStickResolvers = /* @__PURE__ */ new WeakMap();
   var imageLoads = /* @__PURE__ */ new Map();
   var mermaidRenders = /* @__PURE__ */ new Map();
   var documentSequence = 0;
@@ -46072,7 +46347,7 @@
       ]);
     }
     if (!rows.length) return source2;
-    const cell2 = (text10) => text10.replaceAll("|", "\\|");
+    const cell2 = (text11) => text11.replaceAll("|", "\\|");
     const table2 = [
       "| ".concat(t("\u5B57\u6BB5"), " | ").concat(t("\u5185\u5BB9"), " |"),
       "| --- | --- |",
@@ -46127,23 +46402,6 @@
   function markdownDocument(target) {
     return target.closest(".md-document[data-markdown-document-id]");
   }
-  function scrollMutation(container, element6, mutate) {
-    if (!container) {
-      mutate();
-      return;
-    }
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    const atBottom = distanceFromBottom <= 24;
-    const containerTop = container.getBoundingClientRect().top;
-    const before = element6.getBoundingClientRect();
-    const aboveViewport = before.bottom <= containerTop + 1;
-    const oldHeight = element6.offsetHeight;
-    mutate();
-    window.requestAnimationFrame(() => {
-      if (atBottom) container.scrollTop = container.scrollHeight;
-      else if (aboveViewport) container.scrollTop += element6.offsetHeight - oldHeight;
-    });
-  }
   function preloadImage(url) {
     const existing = imageLoads.get(url);
     if (existing) return existing;
@@ -46160,7 +46418,7 @@
     imageLoads.set(url, request);
     return request;
   }
-  async function loadImage(button, scrollContainer) {
+  async function loadImage(button, scrollContainer, shouldStickToBottom) {
     if (button.dataset.markdownImageLoading === "true") return;
     const image3 = remoteImage(button.dataset.markdownImageUrl);
     if (!image3) return;
@@ -46178,14 +46436,14 @@
       rendered.width = size.width;
       rendered.height = size.height;
       rendered.src = image3.url;
-      scrollMutation(scrollContainer, button, () => button.replaceWith(rendered));
+      mutateScrollLayout(scrollContainer, button, () => button.replaceWith(rendered), shouldStickToBottom);
     } catch {
       button.dataset.markdownImageLoading = "false";
       if (status) status.textContent = t("\u52A0\u8F7D\u5931\u8D25\uFF0C\u70B9\u51FB\u91CD\u8BD5 \xB7 {domain}", { domain: image3.domain });
     }
   }
-  function loadDocumentImages(documentRoot, scrollContainer) {
-    documentRoot.querySelectorAll("button.md-image-placeholder[data-markdown-image-url]").forEach((button) => void loadImage(button, scrollContainer));
+  function loadDocumentImages(documentRoot, scrollContainer, shouldStickToBottom) {
+    documentRoot.querySelectorAll("button.md-image-placeholder[data-markdown-image-url]").forEach((button) => void loadImage(button, scrollContainer, shouldStickToBottom));
   }
   function loadMermaidModule() {
     if (mermaidModule) return mermaidModule;
@@ -46211,24 +46469,24 @@
     mermaidRenders.set(key2, request);
     return request;
   }
-  async function renderMermaid(figure, documentId, position3, source2, scrollContainer) {
+  async function renderMermaid(figure, documentId, position3, source2, scrollContainer, shouldStickToBottom) {
     try {
       const svg3 = await mermaidHtml(documentId, position3, source2);
       if (!figure.isConnected) return;
-      scrollMutation(scrollContainer, figure, () => {
+      mutateScrollLayout(scrollContainer, figure, () => {
         figure.dataset.mermaidState = "ready";
         figure.innerHTML = svg3;
-      });
+      }, shouldStickToBottom);
     } catch {
       if (!figure.isConnected) return;
-      scrollMutation(scrollContainer, figure, () => {
+      mutateScrollLayout(scrollContainer, figure, () => {
         figure.dataset.mermaidState = "error";
         figure.innerHTML = '<p class="md-mermaid-status">'.concat(t("\u56FE\u8868\u6E32\u67D3\u5931\u8D25\uFF0C\u5DF2\u4FDD\u7559\u6E90\u7801\u3002"), "</p><pre><code>").concat(escapeHtml(source2), "</code></pre>");
-      });
+      }, shouldStickToBottom);
       enhanceCodeBlocks(figure);
     }
   }
-  function enhanceMermaid(documentRoot, scrollContainer) {
+  function enhanceMermaid(documentRoot, scrollContainer, shouldStickToBottom) {
     const documentId = documentRoot.dataset.markdownDocumentId || "markdown";
     documentRoot.querySelectorAll("pre > code.language-mermaid").forEach((code4, position3) => {
       const pre = code4.parentElement;
@@ -46239,7 +46497,7 @@
       figure.dataset.mermaidState = "loading";
       figure.innerHTML = '<p class="md-mermaid-status">'.concat(t("\u6B63\u5728\u6E32\u67D3\u56FE\u8868\u2026"), "</p>");
       pre.replaceWith(figure);
-      void renderMermaid(figure, documentId, position3, source2, scrollContainer);
+      void renderMermaid(figure, documentId, position3, source2, scrollContainer, shouldStickToBottom);
     });
   }
   function enhanceTables(documentRoot) {
@@ -46297,14 +46555,15 @@
       enhanceCodeBlocks(section);
     });
   }
-  function hydrateMarkdownDocuments(root6, scrollContainer = null) {
+  function hydrateMarkdownDocuments(root6, scrollContainer = null, shouldStickToBottom) {
     root6.querySelectorAll(".md-document[data-markdown-document-id]").forEach((documentRoot) => {
+      if (shouldStickToBottom) markdownStickResolvers.set(documentRoot, shouldStickToBottom);
       enhanceTables(documentRoot);
       enhanceLinks(documentRoot);
-      enhanceMermaid(documentRoot, scrollContainer);
+      enhanceMermaid(documentRoot, scrollContainer, shouldStickToBottom);
       enhanceCodeBlocks(documentRoot);
       if (approvedImageDocuments.has(documentRoot.dataset.markdownDocumentId || "")) {
-        loadDocumentImages(documentRoot, scrollContainer);
+        loadDocumentImages(documentRoot, scrollContainer, shouldStickToBottom);
       }
     });
   }
@@ -46321,15 +46580,15 @@
         const documentId = documentRoot2.dataset.markdownDocumentId || "";
         approvedImageDocuments.add(documentId);
         const scrollContainer = documentRoot2.closest(".chat-thread, .manual-body, .chat-tool-code, .runtime-context-workspace article");
-        loadDocumentImages(documentRoot2, scrollContainer);
+        loadDocumentImages(documentRoot2, scrollContainer, markdownStickResolvers.get(documentRoot2));
         return;
       }
       const copyButton = target.closest("button[data-markdown-copy], button[data-markdown-document-copy]");
       if (!copyButton) return;
       const documentRoot = copyButton.matches("[data-markdown-document-copy]") ? copyButton.closest(".chat-bubble")?.querySelector(".md-document[data-markdown-document-id]") : null;
-      const text10 = documentRoot ? htmlCache.get(documentRoot.dataset.markdownDocumentId || "")?.source || "" : copyButton.closest("pre")?.querySelector("code")?.textContent || "";
-      if (!text10) return;
-      navigator.clipboard.writeText(text10).then(() => {
+      const text11 = documentRoot ? htmlCache.get(documentRoot.dataset.markdownDocumentId || "")?.source || "" : copyButton.closest("pre")?.querySelector("code")?.textContent || "";
+      if (!text11) return;
+      navigator.clipboard.writeText(text11).then(() => {
         copyButton.textContent = t("\u5DF2\u590D\u5236");
         window.setTimeout(() => {
           copyButton.textContent = t("\u590D\u5236");
@@ -46343,15 +46602,644 @@
     });
   }
 
+  // src/conversation-timeline.ts
+  var smoothStates = /* @__PURE__ */ new Map();
+  var smoothTimer = 0;
+  var elapsedTimer = 0;
+  var visibilityBound = false;
+  var fontReadyBound = false;
+  function text10(value) {
+    return String(value ?? "");
+  }
+  function formatJson(value) {
+    if (value === void 0 || value === null || value === "") return t("\u65E0");
+    if (typeof value === "string") return value;
+    return JSON.stringify(value, null, 2);
+  }
+  function phaseLabel(value) {
+    if (value === "setup") return t("\u8D77\u624B");
+    if (value === "cleanup") return t("\u5584\u540E");
+    if (value === "reaction" || value === "final_reply") return t("\u53CD\u5E94");
+    return value ? runtimeTerm(value) : t("\u8F6E\u6B21");
+  }
+  function statusLabel(value) {
+    const labels = {
+      active: t("\u8FDB\u884C\u4E2D"),
+      running: t("\u6267\u884C\u4E2D"),
+      pending_approval: t("\u7B49\u5F85\u5BA1\u6279"),
+      completed: t("\u5DF2\u5B8C\u6210"),
+      success: t("\u6210\u529F"),
+      failed: t("\u5931\u8D25"),
+      rejected: t("\u5DF2\u62D2\u7EDD"),
+      not_adopted: t("\u8F93\u51FA\u672A\u91C7\u7528"),
+      interrupted: t("\u8F93\u51FA\u4E2D\u65AD"),
+      stopped: t("\u5DF2\u505C\u6B62"),
+      skipped: t("\u5DF2\u8DF3\u8FC7"),
+      unmatched_result: t("\u672A\u5339\u914D\u7ED3\u679C")
+    };
+    return labels[value] || value || t("\u5DF2\u8BB0\u5F55");
+  }
+  function eventTime(value) {
+    const date = new Date(value || "");
+    if (Number.isNaN(date.getTime())) return "";
+    return new Intl.DateTimeFormat(state.locale === "en-US" ? "en-US" : "zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    }).format(date);
+  }
+  function eventDuration(node2) {
+    const started = Date.parse(node2.started_at || "");
+    const ended = Date.parse(node2.ended_at || "");
+    if (!Number.isFinite(started) || !Number.isFinite(ended) || ended < started) return "";
+    return "".concat(((ended - started) / 1e3).toFixed(1), "s");
+  }
+  function activityLabel(activity) {
+    const labels = {
+      connecting: t("\u8FDE\u63A5"),
+      reasoning: t("\u601D\u8003"),
+      output: t("\u8F93\u51FA"),
+      tool: t("\u5DE5\u5177"),
+      approval: t("\u5BA1\u6279"),
+      waiting: t("\u7B49\u5F85"),
+      completed: t("\u5DF2\u5B8C\u6210"),
+      stopped: t("\u5DF2\u505C\u6B62"),
+      failed: t("\u5931\u8D25"),
+      local_settlement: t("\u672C\u5730\u7ED3\u7B97")
+    };
+    return labels[text10(activity?.activity)] || text10(activity?.activity) || t("\u7B49\u5F85");
+  }
+  function projectedActivity(round, activity, activeRound) {
+    const status = runtimeProjection.status;
+    if (!activeRound || activity?.terminal !== true || status?.stage !== "cleanup_local" || Number(status.current_round) !== round) return activity;
+    return {
+      ...activity,
+      phase: "cleanup",
+      activity: "local_settlement",
+      terminal: false,
+      round_ended_at: ""
+    };
+  }
+  function orderedNodes(live) {
+    const timeline = live.dialogue_timeline;
+    if (timeline?.schema_version !== "round_dialogue_timeline.v1") return [];
+    const byId = new Map(timeline.nodes.map((node2) => [node2.node_id, node2]));
+    return timeline.order.map((nodeId) => byId.get(nodeId)).filter((node2) => Boolean(node2));
+  }
+  function reconcileChildren(parent, order2, selector) {
+    const retained = new Set(order2);
+    parent.querySelectorAll(":scope > ".concat(selector)).forEach((element6) => {
+      const key2 = element6.dataset.timelineKey || "";
+      if (!retained.has(key2)) {
+        smoothStates.delete(key2);
+        element6.remove();
+      }
+    });
+    order2.forEach((key2) => {
+      const child = parent.querySelector(":scope > ".concat(selector, '[data-timeline-key="').concat(CSS.escape(key2), '"]'));
+      if (child) parent.appendChild(child);
+    });
+  }
+  function nodeRoot(rail, node2) {
+    const existing = rail.querySelector(':scope > [data-timeline-key="'.concat(CSS.escape(node2.node_id), '"]'));
+    if (existing) return existing;
+    const element6 = document.createElement(node2.type === "reasoning" || node2.type === "tool" ? "details" : "article");
+    element6.dataset.timelineKey = node2.node_id;
+    element6.dataset.dialogueNodeId = node2.node_id;
+    element6.className = "dialogue-node dialogue-".concat(node2.type);
+    rail.appendChild(element6);
+    return element6;
+  }
+  function metadata(node2) {
+    const parts = [phaseLabel(node2.phase)];
+    if (node2.iteration !== void 0 && node2.iteration !== null) parts.push("".concat(t("\u8FED\u4EE3"), " ").concat(node2.iteration));
+    parts.push(statusLabel(node2.status));
+    const recordedAt = eventTime(node2.started_at);
+    const duration = eventDuration(node2);
+    if (recordedAt) parts.push(recordedAt);
+    if (duration) parts.push(duration);
+    return parts.join(" \xB7 ");
+  }
+  function setPlainBody(root6, source2, className = "dialogue-text") {
+    let body3 = root6.querySelector(":scope > .".concat(className));
+    if (!body3) {
+      body3 = document.createElement("div");
+      body3.className = className;
+      root6.appendChild(body3);
+    }
+    if (body3.dataset.renderMode !== "plain") {
+      body3.replaceChildren();
+      body3.dataset.renderMode = "plain";
+    }
+    return body3;
+  }
+  function settleMarkdown(root6, node2, source2) {
+    let body3 = root6.querySelector(":scope > .dialogue-text");
+    if (!body3) {
+      body3 = document.createElement("div");
+      body3.className = "dialogue-text";
+      root6.appendChild(body3);
+    }
+    if (body3.dataset.renderMode === "markdown" && body3.dataset.source === source2) return;
+    smoothStates.delete(node2.node_id);
+    body3.dataset.renderMode = "markdown";
+    body3.dataset.source = source2;
+    body3.innerHTML = renderMarkdownDocument("dialogue-".concat(node2.node_id), source2);
+    hydrateMarkdownDocuments(body3, els.chatThread, () => state.conversationStickToBottom);
+  }
+  function prefersReducedMotion() {
+    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  }
+  function smoothText(root6, node2, source2) {
+    const body3 = setPlainBody(root6, source2);
+    let smooth = smoothStates.get(node2.node_id);
+    if (!smooth || smooth.element !== body3 || !source2.startsWith(smooth.displayed)) {
+      smooth = {
+        element: body3,
+        displayed: source2.startsWith(body3.textContent || "") ? body3.textContent || "" : source2,
+        target: source2,
+        deadline: performance.now() + 1500
+      };
+      smoothStates.set(node2.node_id, smooth);
+    }
+    const targetChanged = smooth.target !== source2;
+    smooth.target = source2;
+    if (targetChanged) smooth.deadline = performance.now() + 1500;
+    body3.dataset.source = source2;
+    body3.textContent = smooth.displayed;
+    ensureSmoothTimer();
+  }
+  function scrollConversationToBottomIfSticky2() {
+    scrollConversationToBottomIfSticky(els.chatThread, state);
+  }
+  function flushSmoothStates() {
+    let changed = false;
+    smoothStates.forEach((smooth) => {
+      changed = changed || smooth.displayed !== smooth.target;
+      smooth.displayed = smooth.target;
+      smooth.element.textContent = smooth.target;
+    });
+    if (smoothTimer) window.clearInterval(smoothTimer);
+    smoothTimer = 0;
+    if (changed) scrollConversationToBottomIfSticky2();
+  }
+  function ensureSmoothTimer() {
+    if (smoothTimer || document.hidden || prefersReducedMotion()) {
+      if (document.hidden || prefersReducedMotion()) flushSmoothStates();
+      return;
+    }
+    smoothTimer = window.setInterval(() => {
+      let pending = false;
+      let changed = false;
+      smoothStates.forEach((smooth, key2) => {
+        if (!smooth.element.isConnected) {
+          smoothStates.delete(key2);
+          return;
+        }
+        const backlog = smooth.target.length - smooth.displayed.length;
+        if (backlog <= 0) return;
+        const remainingTicks = Math.max(1, Math.ceil((smooth.deadline - performance.now()) / 40));
+        const take = Math.max(1, Math.ceil(backlog / remainingTicks));
+        smooth.displayed = smooth.target.slice(0, smooth.displayed.length + take);
+        smooth.element.textContent = smooth.displayed;
+        changed = true;
+        pending = pending || smooth.displayed !== smooth.target;
+      });
+      if (changed) scrollConversationToBottomIfSticky2();
+      if (!pending) {
+        window.clearInterval(smoothTimer);
+        smoothTimer = 0;
+      }
+    }, 40);
+  }
+  function updateUser(root6, node2) {
+    root6.className = "dialogue-node dialogue-user chat-bubble user";
+    let who = root6.querySelector(":scope > b");
+    if (!who) {
+      who = document.createElement("b");
+      root6.appendChild(who);
+    }
+    who.textContent = t("\u4F60");
+    const body3 = setPlainBody(root6, node2.content_raw || "");
+    body3.textContent = node2.content_raw || "";
+  }
+  function updateReasoning(root6, node2, isLatest, ordinal) {
+    root6.className = "dialogue-node dialogue-reasoning status-".concat(node2.status);
+    let summary = root6.querySelector(":scope > summary");
+    if (!summary) {
+      summary = document.createElement("summary");
+      root6.appendChild(summary);
+    }
+    summary.textContent = "".concat(t("\u601D\u8003\u7247\u6BB5"), " ").concat(ordinal, " \xB7 ").concat(metadata(node2));
+    const disclosure = state.conversationDisclosure.get(node2.node_id);
+    root6.open = disclosure === void 0 ? node2.status === "active" && isLatest : disclosure;
+    const body3 = setPlainBody(root6, node2.content_raw || "", "dialogue-reasoning-body");
+    body3.textContent = node2.content_raw || "";
+  }
+  function updateMessage(root6, node2, smooth) {
+    root6.className = "dialogue-node dialogue-".concat(node2.type, " chat-bubble system status-").concat(node2.status);
+    let head2 = root6.querySelector(":scope > .dialogue-node-head");
+    if (!head2) {
+      head2 = document.createElement("div");
+      head2.className = "dialogue-node-head";
+      root6.prepend(head2);
+    }
+    head2.textContent = "".concat(node2.type === "final" ? t("\u6700\u7EC8\u56DE\u590D") : t("\u8F6E\u4E2D\u8FDB\u5C55"), " \xB7 ").concat(metadata(node2));
+    if (node2.type === "final") {
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "chat-item-copy";
+      copy.dataset.markdownDocumentCopy = "true";
+      copy.textContent = t("\u590D\u5236\u6700\u7EC8\u56DE\u590D");
+      head2.append(" \xB7 ", copy);
+    }
+    const source2 = node2.content_raw || node2.message || "";
+    if (smooth) smoothText(root6, node2, source2);
+    else settleMarkdown(root6, node2, source2);
+  }
+  function updateFailure(root6, node2) {
+    root6.className = "dialogue-node dialogue-failure status-".concat(node2.status);
+    root6.textContent = "";
+    const head2 = document.createElement("b");
+    head2.textContent = "".concat(t("\u5931\u8D25\u72B6\u6001"), " \xB7 ").concat(metadata(node2));
+    const body3 = document.createElement("p");
+    body3.textContent = node2.message || statusLabel(node2.status);
+    root6.append(head2, body3);
+  }
+  function updateTool(root6, node2, round) {
+    root6.className = "dialogue-node dialogue-tool status-".concat(node2.status);
+    let summary = root6.querySelector(":scope > summary");
+    if (!summary) {
+      summary = document.createElement("summary");
+      root6.appendChild(summary);
+    }
+    summary.textContent = "".concat(node2.tool_id || t("\u5DE5\u5177"), " \xB7 ").concat(metadata(node2));
+    const disclosure = state.conversationDisclosure.get(node2.node_id);
+    if (disclosure !== void 0) root6.open = disclosure;
+    let body3 = root6.querySelector(":scope > .dialogue-tool-body");
+    if (!body3) {
+      body3 = document.createElement("div");
+      body3.className = "dialogue-tool-body";
+      root6.appendChild(body3);
+    }
+    const detailKey2 = "".concat(round, ":").concat(node2.detail_ref || node2.node_id);
+    const detail = runtimeProjection.timelineNodeDetails.get(detailKey2);
+    const argumentsValue = detail?.arguments;
+    const resultValue = detail?.result;
+    const signature = JSON.stringify([
+      node2.status,
+      argumentsValue,
+      resultValue,
+      node2.approval_id,
+      node2.approval_decision,
+      runtimeProjection.approvalSubmitting,
+      runtimeProjection.approvalFeedback,
+      runtimeProjection.timelineNodeLoading.has(detailKey2),
+      runtimeProjection.timelineNodeErrors.get(detailKey2)
+    ]);
+    if (body3.dataset.signature === signature) return;
+    body3.dataset.signature = signature;
+    body3.replaceChildren();
+    const argumentsTitle = document.createElement("b");
+    argumentsTitle.textContent = t("\u8C03\u7528\u53C2\u6570");
+    const argumentsBody = document.createElement("pre");
+    if (!detail && node2.detail_ref) {
+      const loading = runtimeProjection.timelineNodeLoading.has(detailKey2);
+      const error = runtimeProjection.timelineNodeErrors.get(detailKey2);
+      argumentsBody.textContent = error ? "".concat(t("\u8BE6\u60C5\u8BFB\u53D6\u5931\u8D25"), "\uFF1A").concat(error) : t(loading ? "\u6B63\u5728\u8BFB\u53D6\u5DE5\u5177\u8BE6\u60C5" : "\u5C55\u5F00\u540E\u8BFB\u53D6\u5DE5\u5177\u8BE6\u60C5");
+      if (!loading) {
+        argumentsBody.dataset.timelineDetailRound = String(round);
+        argumentsBody.dataset.timelineDetailRef = node2.detail_ref;
+      }
+    } else argumentsBody.textContent = formatJson(argumentsValue);
+    const resultTitle = document.createElement("b");
+    resultTitle.textContent = t("\u6267\u884C\u7ED3\u679C");
+    const resultBody = document.createElement("pre");
+    resultBody.textContent = node2.status === "unmatched_result" ? t("\u672A\u5339\u914D\u7ED3\u679C") : detail ? formatJson(resultValue) : "\u2014";
+    body3.append(argumentsTitle, argumentsBody, resultTitle, resultBody);
+    const pending = runtimeProjection.status?.pending_tool_approval;
+    if (node2.status === "pending_approval" && node2.approval_id && pending?.approval_id === node2.approval_id) {
+      const actions = document.createElement("div");
+      actions.className = "tool-approval-actions";
+      actions.setAttribute("role", "group");
+      actions.setAttribute("aria-label", t("\u5DE5\u5177\u6267\u884C\u5BA1\u6279"));
+      const submitting = runtimeProjection.approvalSubmitting === node2.approval_id;
+      for (const [decision, label] of [["skip", t("\u8DF3\u8FC7")], ["allow_once", t("\u672C\u6B21\u5141\u8BB8")]]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.toolApprovalId = node2.approval_id;
+        button.dataset.toolApprovalDecision = decision;
+        button.disabled = submitting;
+        button.textContent = submitting ? t("\u6B63\u5728\u5904\u7406") : label;
+        actions.appendChild(button);
+      }
+      body3.appendChild(actions);
+      if (runtimeProjection.approvalFeedback) {
+        const feedback = document.createElement("small");
+        feedback.setAttribute("role", "status");
+        feedback.textContent = runtimeProjection.approvalFeedback;
+        body3.appendChild(feedback);
+      }
+    }
+  }
+  function updateActivity(root6, activity, projectionStale = false) {
+    root6.className = "dialogue-activity ".concat(activity?.terminal ? "terminal" : "active").concat(projectionStale ? " projection-stale" : "");
+    root6.dataset.startedAt = activity?.round_started_at || "";
+    root6.dataset.endedAt = activity?.round_ended_at || "";
+    root6.dataset.terminal = String(Boolean(activity?.terminal));
+    root6.dataset.projectionStale = String(projectionStale);
+    let ring = root6.querySelector(":scope > .dialogue-breath-ring");
+    let label = root6.querySelector(":scope > .dialogue-activity-label");
+    let elapsed = root6.querySelector(":scope > .dialogue-activity-elapsed");
+    if (!ring) {
+      ring = document.createElement("span");
+      ring.className = "dialogue-breath-ring";
+      ring.setAttribute("aria-hidden", "true");
+      root6.appendChild(ring);
+    }
+    if (!label) {
+      label = document.createElement("span");
+      label.className = "dialogue-activity-label";
+      root6.appendChild(label);
+    }
+    if (!elapsed) {
+      elapsed = document.createElement("span");
+      elapsed.className = "dialogue-activity-elapsed";
+      root6.appendChild(elapsed);
+    }
+    label.textContent = "".concat(phaseLabel(activity?.phase), " \xB7 ").concat(activityLabel(activity));
+    root6.setAttribute("role", "status");
+    root6.setAttribute("aria-label", label.textContent);
+  }
+  function updateElapsed() {
+    els.chatThread.querySelectorAll(".dialogue-activity").forEach((root6) => {
+      const target = root6.querySelector(".dialogue-activity-elapsed");
+      if (!target) return;
+      const started = Date.parse(root6.dataset.startedAt || "");
+      if (!Number.isFinite(started)) {
+        target.textContent = "";
+        return;
+      }
+      const terminal = root6.dataset.terminal === "true";
+      const previous4 = Number(root6.dataset.elapsedSeconds || 0);
+      if (root6.dataset.projectionStale === "true" && root6.dataset.elapsedSeconds !== void 0) {
+        target.textContent = "".concat(previous4).concat(t("\u79D2"));
+        return;
+      }
+      const ended = Date.parse(root6.dataset.endedAt || "");
+      const current = terminal && Number.isFinite(ended) ? ended : Date.now();
+      const seconds = Math.max(previous4, Math.floor((current - started) / 1e3));
+      root6.dataset.elapsedSeconds = String(seconds);
+      target.textContent = "".concat(seconds).concat(t("\u79D2"));
+    });
+  }
+  function ensureTimers() {
+    if (!elapsedTimer) elapsedTimer = window.setInterval(updateElapsed, 1e3);
+    if (!fontReadyBound) {
+      void document.fonts?.ready.then(scrollConversationToBottomIfSticky2);
+      fontReadyBound = true;
+    }
+    if (!visibilityBound) {
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) flushSmoothStates();
+      });
+      visibilityBound = true;
+    }
+    updateElapsed();
+  }
+  function reconcileRound(round, live, activeRound) {
+    const key2 = "round:".concat(round);
+    let root6 = els.chatThread.querySelector(':scope > [data-timeline-key="'.concat(CSS.escape(key2), '"]'));
+    if (!root6) {
+      root6 = document.createElement("section");
+      root6.className = "chat-round-timeline";
+      root6.dataset.timelineKey = key2;
+      root6.dataset.chatAnchor = key2;
+      const rail2 = document.createElement("div");
+      rail2.className = "dialogue-event-rail";
+      root6.appendChild(rail2);
+      els.chatThread.appendChild(root6);
+    }
+    const rail = root6.querySelector(":scope > .dialogue-event-rail");
+    if (live.display_mode === "legacy") {
+      const cards = runtimeProjection.legacyCards.get(round);
+      rail.replaceChildren();
+      if (!cards) {
+        const notice = document.createElement("p");
+        notice.className = "chat-history-warning";
+        const loading = runtimeProjection.legacyCardsLoading.has(round);
+        const error = runtimeProjection.legacyCardsErrors.get(round);
+        notice.textContent = error ? "".concat(t("\u8F83\u65E9\u5BF9\u8BDD\u672A\u5B8C\u5168\u8F7D\u5165"), "\uFF1A").concat(error) : t(loading ? "\u6B63\u5728\u8BFB\u53D6\u6700\u8FD1\u5BF9\u8BDD" : "\u6B63\u5728\u8BFB\u53D6\u6700\u8FD1\u5BF9\u8BDD");
+        rail.appendChild(notice);
+      } else {
+        cards.forEach((card, position3) => {
+          const article = document.createElement("article");
+          article.className = "runtime-card legacy-conversation-card ".concat(card.severity === "error" ? "warn" : "");
+          article.dataset.timelineKey = "legacy:".concat(round, ":").concat(card.card_id || card.event_index || position3);
+          const header = document.createElement("header");
+          const title = document.createElement("strong");
+          title.textContent = card.title || card.type;
+          const summary = document.createElement("span");
+          summary.textContent = card.summary || "#".concat(card.event_index || 0);
+          header.append(title, summary);
+          const body3 = document.createElement("pre");
+          body3.textContent = text10(card.content_raw || card.content_md || card.content);
+          article.append(header, body3);
+          rail.appendChild(article);
+        });
+      }
+      return root6;
+    }
+    const nodes = orderedNodes(live);
+    const activeText = [...nodes].reverse().find((node2) => ["progress", "final"].includes(node2.type) && node2.status === "active");
+    let reasoningOrdinal = 0;
+    nodes.forEach((node2, position3) => {
+      const element6 = nodeRoot(rail, node2);
+      if (node2.type === "user") updateUser(element6, node2);
+      else if (node2.type === "reasoning") {
+        reasoningOrdinal += 1;
+        updateReasoning(element6, node2, position3 === nodes.length - 1, reasoningOrdinal);
+      } else if (node2.type === "tool") updateTool(element6, node2, round);
+      else if (node2.type === "failure") updateFailure(element6, node2);
+      else updateMessage(
+        element6,
+        node2,
+        activeRound && live.dialogue_activity?.terminal !== true && activeText?.node_id === node2.node_id && !prefersReducedMotion()
+      );
+      if (node2.type === "tool" && node2.detail_ref) {
+        element6.dataset.timelineDetailRound = String(round);
+        element6.dataset.timelineDetailRef = node2.detail_ref;
+      }
+    });
+    const activityKey = "".concat(key2, ":activity");
+    let activity = rail.querySelector(':scope > [data-timeline-key="'.concat(CSS.escape(activityKey), '"]'));
+    if (!activity) {
+      activity = document.createElement("div");
+      activity.dataset.timelineKey = activityKey;
+      rail.appendChild(activity);
+    }
+    updateActivity(
+      activity,
+      projectedActivity(round, live.dialogue_activity, activeRound),
+      activeRound && Boolean(runtimeProjection.liveError)
+    );
+    reconcileChildren(rail, [...nodes.map((node2) => node2.node_id), activityKey], "[data-timeline-key]");
+    return root6;
+  }
+  function rememberTimelineDisclosure(details, open2) {
+    const key2 = details.dataset.dialogueNodeId;
+    if (key2) state.conversationDisclosure.set(key2, open2);
+  }
+  function renderConversationTimeline() {
+    if (runtimeProjection.liveError) flushSmoothStates();
+    const hadMessages = els.chatThread.childElementCount > 0;
+    if (!hadMessages) state.conversationStickToBottom = true;
+    const stickToBottom = state.conversationStickToBottom;
+    const previousScrollTop = els.chatThread.scrollTop;
+    const previousAnchor = [...els.chatThread.children].find((item) => item instanceof HTMLElement && Boolean(item.dataset.chatAnchor) && item.offsetTop + item.offsetHeight > previousScrollTop);
+    const previousAnchorKey = previousAnchor?.dataset.chatAnchor || "";
+    const previousAnchorOffset = previousAnchor ? previousAnchor.offsetTop - previousScrollTop : 0;
+    const order2 = [];
+    const interrupted = runtimeProjection.status?.interrupted_recovery;
+    if (interrupted?.pending) {
+      const key2 = "interrupted-recovery";
+      let notice = els.chatThread.querySelector(':scope > [data-timeline-key="'.concat(key2, '"]'));
+      if (!notice) {
+        notice = document.createElement("div");
+        notice.className = "chat-projection-warning";
+        notice.dataset.timelineKey = key2;
+        notice.setAttribute("role", "status");
+        const copy = document.createElement("span");
+        copy.className = "chat-projection-warning-copy";
+        copy.append(document.createElement("strong"), document.createElement("small"));
+        notice.appendChild(copy);
+        els.chatThread.appendChild(notice);
+      }
+      const known = Number(interrupted.applied_unregistered || 0) + Number(interrupted.applied_registered || 0) + Number(interrupted.not_applied || 0) + Number(interrupted.known_result || 0);
+      const uncertain = Number(interrupted.conflict || 0) + Number(interrupted.outcome_unknown || 0);
+      notice.querySelector("strong").textContent = t("\u4E0A\u6B21\u4EFB\u52A1\u610F\u5916\u4E2D\u65AD\uFF0C\u4E0B\u4E00\u6761\u6D88\u606F\u5C06\u5148\u6838\u5BF9\u73B0\u573A");
+      notice.querySelector("small").textContent = "".concat(t("\u5DF2\u786E\u5B9A\u52A8\u4F5C"), " ").concat(known, " \xB7 ").concat(t("\u53D7\u963B\u6216\u7ED3\u679C\u4E0D\u786E\u5B9A\u52A8\u4F5C"), " ").concat(uncertain);
+      order2.push(key2);
+    }
+    if (runtimeProjection.liveError) {
+      const key2 = "live-warning";
+      let warning = els.chatThread.querySelector(':scope > [data-timeline-key="'.concat(key2, '"]'));
+      if (!warning) {
+        warning = document.createElement("div");
+        warning.className = "chat-projection-warning";
+        warning.dataset.timelineKey = key2;
+        warning.setAttribute("role", "status");
+        const message = document.createElement("span");
+        message.className = "chat-projection-warning-copy";
+        const title = document.createElement("strong");
+        const detail = document.createElement("small");
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.dataset.retryProjection = "live";
+        retry.textContent = t("\u91CD\u8BD5");
+        message.append(title, detail);
+        warning.append(message, retry);
+        els.chatThread.appendChild(warning);
+      }
+      warning.querySelector("strong").textContent = t("\u5BF9\u8BDD\u6295\u5F71\u6682\u4E0D\u53EF\u7528\uFF0CRuntime \u4ECD\u5728\u8FD0\u884C");
+      const stoppedAt = runtimeProjection.liveErrorEventIndex > 0 ? "".concat(t("\u66F4\u65B0\u505C\u5728\u4E8B\u4EF6"), " #").concat(runtimeProjection.liveErrorEventIndex, " \xB7 ") : "";
+      warning.querySelector("small").textContent = "".concat(stoppedAt).concat(runtimeProjection.liveError);
+      warning.querySelector(":scope > .chat-projection-approval")?.remove();
+      const pendingApproval = runtimeProjection.status?.pending_tool_approval;
+      const approvalAlreadyProjected = Boolean(
+        pendingApproval?.approval_id && runtimeProjection.live?.dialogue_timeline?.nodes.some(
+          (node2) => node2.status === "pending_approval" && node2.approval_id === pendingApproval.approval_id
+        )
+      );
+      if (pendingApproval?.approval_id && !approvalAlreadyProjected) {
+        const approval = document.createElement("div");
+        approval.className = "chat-projection-approval";
+        const label = document.createElement("b");
+        label.textContent = "".concat(t("\u7B49\u5F85\u5DE5\u5177\u6267\u884C\u5BA1\u6279"), " \xB7 ").concat(pendingApproval.tool_label || pendingApproval.tool_id);
+        const actions = document.createElement("div");
+        actions.className = "tool-approval-actions";
+        actions.setAttribute("role", "group");
+        actions.setAttribute("aria-label", t("\u5DE5\u5177\u6267\u884C\u5BA1\u6279"));
+        const submitting = runtimeProjection.approvalSubmitting === pendingApproval.approval_id;
+        for (const [decision, actionLabel] of [["skip", t("\u8DF3\u8FC7")], ["allow_once", t("\u672C\u6B21\u5141\u8BB8")]]) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.toolApprovalId = pendingApproval.approval_id;
+          button.dataset.toolApprovalDecision = decision;
+          button.disabled = submitting;
+          button.textContent = submitting ? t("\u6B63\u5728\u5904\u7406") : actionLabel;
+          actions.appendChild(button);
+        }
+        approval.append(label, actions);
+        if (runtimeProjection.approvalFeedback) {
+          const feedback = document.createElement("small");
+          feedback.setAttribute("role", "status");
+          feedback.textContent = runtimeProjection.approvalFeedback;
+          approval.appendChild(feedback);
+        }
+        warning.appendChild(approval);
+      }
+      order2.push(key2);
+    }
+    if (runtimeProjection.conversationHistoryHasMore) {
+      const key2 = "history-more";
+      let loader = els.chatThread.querySelector(':scope > [data-timeline-key="'.concat(key2, '"]'));
+      if (!loader) {
+        loader = document.createElement("p");
+        loader.className = "chat-history-warning";
+        loader.dataset.timelineKey = key2;
+        els.chatThread.appendChild(loader);
+      }
+      loader.innerHTML = '<button type="button" data-retry-projection="history" '.concat(runtimeProjection.conversationHistoryLoading ? "disabled" : "", ">").concat(t(runtimeProjection.conversationHistoryLoading ? "\u6B63\u5728\u8F7D\u5165\u8F83\u65E9\u5BF9\u8BDD" : "\u52A0\u8F7D\u8F83\u65E9\u5BF9\u8BDD"), "</button>");
+      order2.push(key2);
+    }
+    if (runtimeProjection.conversationHistoryError) {
+      const key2 = "history-warning";
+      let warning = els.chatThread.querySelector(':scope > [data-timeline-key="'.concat(key2, '"]'));
+      if (!warning) {
+        warning = document.createElement("p");
+        warning.className = "chat-history-warning";
+        warning.dataset.timelineKey = key2;
+        warning.innerHTML = "<span>".concat(t("\u8F83\u65E9\u5BF9\u8BDD\u672A\u5B8C\u5168\u8F7D\u5165"), '</span><button type="button" data-retry-projection="history">').concat(t("\u91CD\u8BD5"), "</button>");
+        els.chatThread.appendChild(warning);
+      }
+      order2.push(key2);
+    }
+    runtimeProjection.conversationRoundOrder.forEach((round) => {
+      const live = runtimeProjection.conversationRounds.get(round);
+      if (!live) return;
+      const root6 = reconcileRound(round, live, round === runtimeProjection.round);
+      order2.push(root6.dataset.timelineKey || "round:".concat(round));
+    });
+    if (!order2.length) {
+      const key2 = "empty";
+      let empty3 = els.chatThread.querySelector(':scope > [data-timeline-key="'.concat(key2, '"]'));
+      if (!empty3) {
+        empty3 = document.createElement("div");
+        empty3.className = "conversation-empty";
+        empty3.dataset.timelineKey = key2;
+        els.chatThread.appendChild(empty3);
+      }
+      const connected = runtimeProjection.host === "connected";
+      empty3.innerHTML = '\n      <span class="hud-label">'.concat(connected ? "ROUND / READY" : "RUNTIME / OFFLINE", "</span>\n      <strong>").concat(t(connected ? "\u5C1A\u65E0\u771F\u5B9E\u5BF9\u8BDD\u4E8B\u4EF6\u3002" : "\u672C\u5730\u5BBF\u4E3B\u672A\u8FDE\u63A5\u3002"), "</strong>\n      <p>").concat(t(connected ? "\u8F93\u5165\u5185\u5BB9\u540E\uFF0C\u771F\u5B9E\u4E8B\u4EF6\u4F1A\u6309\u53D1\u751F\u987A\u5E8F\u663E\u793A\u5728\u8FD9\u91CC\u3002" : "\u6062\u590D\u672C\u5730\u5BBF\u4E3B\u540E\uFF0C\u8FD9\u91CC\u4F1A\u7EE7\u7EED\u8BFB\u53D6\u5F53\u524D\u5206\u8EAB\u7684\u771F\u5B9E\u5BF9\u8BDD\u3002"), "</p>\n    ");
+      order2.push(key2);
+    }
+    reconcileChildren(els.chatThread, order2, "[data-timeline-key]");
+    ensureTimers();
+    if (stickToBottom) els.chatThread.scrollTop = els.chatThread.scrollHeight;
+    else {
+      const nextAnchor = previousAnchorKey ? els.chatThread.querySelector('[data-chat-anchor="'.concat(CSS.escape(previousAnchorKey), '"]')) : null;
+      els.chatThread.scrollTop = nextAnchor ? nextAnchor.offsetTop - previousAnchorOffset : previousScrollTop;
+    }
+  }
+
   // src/view.ts
   var navCollapseTimer = 0;
   var manualReturnFocus = null;
   var systemCloseTimer = 0;
   var systemReturnFocus = null;
   var globalSettingsReturnFocus = null;
-  function personaAbbreviation() {
-    return bootstrapProjection.data?.identity?.abbreviation || "UPSP";
-  }
   var personaNameVariants = ["name_zh", "name_en", "abbreviation"];
   var personaNameStoragePrefix = "upsp.seed_gui.persona_name_variant.v1:";
   function selectedPersonaNameVariant(pid, identity) {
@@ -46405,8 +47293,7 @@
     identity: "\u8EAB\u4EFD\u72B6\u6001",
     sleep_state: "\u7761\u7720\u72B6\u6001",
     runtime: "\u8FD0\u884C\u72B6\u6001",
-    focus: "\u5F53\u524D\u7126\u70B9",
-    old_focus: "\u4E0A\u4E00\u4E2A\u7126\u70B9",
+    focus: "\u4E13\u6CE8\u5EA6",
     heartbeat_flags: "\u5FC3\u8DF3\u65D7\u6807",
     alert_deferrals: "\u8B66\u62A5\u6401\u7F6E",
     feeling_buffer: "\u611F\u53D7\u7F13\u51B2",
@@ -46535,6 +47422,7 @@
   }
   function syncShellState() {
     els.app.classList.toggle("system-open", state.systemWindowOpen);
+    applySystemWindowSplit();
     const page = consolePages.find((item) => item.id === state.activePage) || consolePages[0];
     els.app.classList.toggle("nav-locked", state.navCollapseLocked);
     if (state.navCollapseLocked) collapseNavNow();
@@ -46585,7 +47473,7 @@
     els.runtimeState.querySelector("span").textContent = connected ? t("\u672C\u5730\u5BBF\u4E3B\u5DF2\u8FDE\u63A5") : runtimeProjection.host === "connecting" ? t("\u5BBF\u4E3B\u8FDE\u63A5\u4E2D") : t("\u672C\u5730\u5BBF\u4E3B\u4E0D\u53EF\u7528");
     els.commsSource.textContent = runtimeProjection.round == null ? t("\u65E0\u8F6E\u6B21") : "".concat(t("\u5F53\u524D\u8F6E"), " ").concat(runtimeProjection.round);
     els.ledgerRound.textContent = runtimeProjection.round == null ? t("\u65E0\u8F6E\u6B21") : "R".concat(String(runtimeProjection.round).padStart(6, "0"), " / ").concat(runtimeTerm(lifecycle.state, "running"));
-    els.ledgerContext.textContent = "".concat(runtimeProjection.round == null ? 0 : (live?.context_panes || []).length, " / 10");
+    els.ledgerContext.textContent = "".concat(live?.frame_catalog?.length ? 10 : 0, " / 10");
     els.ledgerFrame.textContent = live?.latest_frame_id || t("\u5C1A\u65E0\u5E27\u6B21");
     els.ledgerSettlement.textContent = runtimeTerm(lifecycle.settlement_status || lifecycle.state, "unsettled");
     renderComposerState();
@@ -46701,7 +47589,7 @@
   }
   function renderOverview() {
     const live = runtimeProjection.live;
-    const frames = live?.call_frames || [];
+    const frames = live?.frame_catalog || [];
     const lifecycle = live?.round_lifecycle || {};
     const sections = runtimeProjection.round == null ? [{
       id: "round",
@@ -46727,41 +47615,6 @@
   function objectRow([title, desc, status, page, tone, tab2]) {
     return '\n    <button class="object-row '.concat(tone === "warn" ? "warn" : "", '" data-page="').concat(page, '" ').concat(tab2 ? 'data-tab="'.concat(escapeHtml2(tab2), '"') : "", '>\n      <i class="status-dot ').concat(tone === "warn" ? "warn" : "", '"></i>\n      <span><b>').concat(escapeHtml2(title), "</b><span>").concat(escapeHtml2(desc), "</span></span>\n      <em>").concat(escapeHtml2(status), "</em>\n    </button>\n  ");
   }
-  function isChatDisclosureCard(card) {
-    return ["tool-call", "tool-result"].includes(card.type);
-  }
-  function chatTraceSummary(cards) {
-    const toolCard = cards.find((card) => card.type === "tool-call") || cards.find((card) => card.type === "tool-result");
-    const toolId = String(toolCard?.title || "").split("\uFF5C").at(-1) || "";
-    if (toolCard?.type === "tool-result") return t(toolId === "memory_write" ? "\u786E\u8BA4\u8BB0\u5FC6\u5199\u5165\u7ED3\u679C" : "\u67E5\u770B\u5DE5\u5177\u6267\u884C\u7ED3\u679C");
-    const summary = {
-      setup_finalize: "\u5B8C\u6210\u672C\u8F6E\u8D77\u624B",
-      memory_write: "\u5199\u5165\u8BB0\u5FC6",
-      memory_container_create: "\u521B\u5EFA\u8BB0\u5FC6\u5BB9\u5668",
-      cleanup_finalize: "\u5B8C\u6210\u672C\u8F6E\u5584\u540E"
-    }[toolId] || (cards.some((card) => card.type === "assistant-streaming") ? "\u6B63\u5728\u51C6\u5907\u5DE5\u5177\u8C03\u7528" : "\u6267\u884C\u5DE5\u5177\u8C03\u7528");
-    return t(summary);
-  }
-  function chatTraceCode(content3) {
-    const start2 = content3.indexOf("```");
-    const end = content3.lastIndexOf("```");
-    return start2 >= 0 && end > start2 ? content3.slice(start2, end + 3) : content3;
-  }
-  function renderChatMeta(recordedAt, copyReply = false) {
-    const source2 = String(recordedAt || "").trim();
-    const date = new Date(source2);
-    const validTime = source2 && !Number.isNaN(date.getTime());
-    if (!copyReply && !validTime) return "";
-    const time = validTime ? '<time class="chat-item-time" datetime="'.concat(escapeHtml2(source2), '" title="').concat(escapeHtml2(new Intl.DateTimeFormat(state.locale, {
-      dateStyle: "medium",
-      timeStyle: "medium"
-    }).format(date)), '">').concat(escapeHtml2(new Intl.DateTimeFormat("en-GB", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23"
-    }).format(date)), "</time>") : "";
-    return '<div class="chat-item-meta">\n    '.concat(copyReply ? '<button class="chat-item-copy" type="button" data-markdown-document-copy="true" aria-label="'.concat(t("\u590D\u5236\u6700\u7EC8\u56DE\u590D"), '">').concat(t("\u590D\u5236"), "</button>") : "", "\n    ").concat(time, "\n  </div>");
-  }
   function fullLocalTime(value) {
     const source2 = String(value || "").trim();
     const date = new Date(source2);
@@ -46774,136 +47627,8 @@
     const time = fullLocalTime(value);
     return time ? '<time class="'.concat(escapeHtml2(className), '" datetime="').concat(escapeHtml2(time.source), '" title="').concat(escapeHtml2(time.title), '">').concat(escapeHtml2(time.label), "</time>") : "";
   }
-  function renderChatTraceStep(step, groupKey, position3) {
-    const key2 = "".concat(groupKey, ":step:").concat(step.key, ":").concat(position3);
-    const open2 = state.conversationDisclosure.has(key2) ? state.conversationDisclosure.get(key2) : false;
-    const hasEvidence = step.cards.some(isChatDisclosureCard);
-    const cards = hasEvidence ? step.cards.filter((card) => card.type !== "assistant-streaming") : step.cards;
-    return '\n    <details class="chat-tool-step" data-conversation-card-key="'.concat(escapeHtml2(key2), '" ').concat(open2 ? "open" : "", ">\n      <summary>").concat(escapeHtml2(chatTraceSummary(step.cards)), '</summary>\n      <div class="chat-tool-code ledger-markdown">\n        ').concat(cards.map((card, cardPosition) => {
-      const content3 = String(card.content_md || card.content_raw || "").trim();
-      const documentId = "".concat(groupKey, ":step:").concat(step.key, ":").concat(position3, ":card:").concat(card.card_id || card.event_index || cardPosition);
-      return content3 ? renderMarkdownDocument(documentId, chatTraceCode(content3)) : '<p class="runtime-empty-copy">'.concat(t("\u65E0\u53EF\u5C55\u793A\u7684\u7ED3\u6784\u5316\u5185\u5BB9\u3002"), "</p>");
-    }).join(""), "\n      </div>\n    </details>\n  ");
-  }
-  function renderChatTraceGroup(cards, round) {
-    const first = cards[0];
-    const groupKey = "".concat(round ?? "none", ":trace:").concat(first?.card_id || first?.event_index || "event");
-    const open2 = state.conversationDisclosure.has(groupKey) ? state.conversationDisclosure.get(groupKey) : false;
-    const recordedAt = [...cards].reverse().map((card) => String(card.recorded_at || "").trim()).find((value) => value && !Number.isNaN(new Date(value).getTime()));
-    const steps = [];
-    cards.forEach((card, position3) => {
-      const key2 = card.frame_id || "".concat(card.event_index || "event", ":").concat(position3);
-      const current = steps.at(-1);
-      if (current?.key === key2) current.cards.push(card);
-      else steps.push({ key: key2, cards: [card] });
-    });
-    const callCount = cards.filter((card) => card.type === "tool-call").length;
-    return '\n    <details class="chat-tool-group" data-chat-anchor="'.concat(escapeHtml2(groupKey), '" data-conversation-card-key="').concat(escapeHtml2(groupKey), '" ').concat(open2 ? "open" : "", ">\n      <summary>").concat(callCount === 1 ? t("\u5DE5\u5177\u8F68\u8FF9 \xB7 1 \u6B21\u8C03\u7528") : t("\u5DE5\u5177\u8F68\u8FF9 \xB7 {count} \u6B21\u8C03\u7528", { count: callCount }), '</summary>\n      <div class="chat-tool-steps">\n        ').concat(steps.map((step, position3) => renderChatTraceStep(step, groupKey, position3)).join(""), "\n      </div>\n      ").concat(renderChatMeta(recordedAt), "\n    </details>\n  ");
-  }
-  function buildChatItems(conversation) {
-    const latestApprovals = /* @__PURE__ */ new Map();
-    conversation.forEach((card) => {
-      if (card.type === "tool-approval" && card.approval_id) {
-        latestApprovals.set(card.approval_id, card);
-      }
-    });
-    const items = [];
-    let trace = [];
-    const flushTrace = () => {
-      if (trace.length) items.push({ type: "tool-trace", cards: trace });
-      trace = [];
-    };
-    const emittedApprovals = /* @__PURE__ */ new Set();
-    conversation.forEach((card) => {
-      if (card.type === "tool-approval" && card.approval_id) {
-        if (emittedApprovals.has(card.approval_id)) return;
-        emittedApprovals.add(card.approval_id);
-        flushTrace();
-        items.push({
-          type: "tool-approval",
-          card: latestApprovals.get(card.approval_id) || card
-        });
-        return;
-      }
-      const visibleStream = card.type === "assistant-streaming" && ["reaction", "final_reply"].includes(String(card.phase || "")) && Boolean(String(card.content_raw || "").trim());
-      if (card.type === "assistant-streaming" && !visibleStream || isChatDisclosureCard(card)) {
-        trace.push(card);
-        return;
-      }
-      if (card.type === "user" || visibleStream || ["assistant-progress", "assistant-final"].includes(card.type)) {
-        flushTrace();
-        items.push({ type: "message", card });
-      }
-    });
-    flushTrace();
-    return items;
-  }
-  function renderToolApprovalCard(card, round) {
-    const pending = runtimeProjection.status?.pending_tool_approval;
-    const active = pending?.approval_id === card.approval_id && !card.decision;
-    const details = active ? pending?.details : null;
-    const submitting = runtimeProjection.approvalSubmitting === card.approval_id;
-    const stateText = card.decision === "allow_once" ? t("\u5DF2\u5141\u8BB8") : card.decision === "skip" ? t("\u5DF2\u8DF3\u8FC7") : card.decision === "cancelled" ? t("\u5DF2\u53D6\u6D88") : submitting ? t("\u6B63\u5728\u5904\u7406") : t("\u7B49\u5F85\u4F60\u7684\u51B3\u5B9A");
-    const summary = String(card.content_raw || card.summary || card.tool_id || "").trim();
-    return '\n    <section class="tool-approval-card '.concat(active ? "pending" : "resolved", '" data-chat-anchor="').concat(escapeHtml2("".concat(round, ":approval:").concat(card.approval_id)), '">\n      <div class="tool-approval-head"><b>').concat(t("\u5DE5\u5177\u6267\u884C\u5BA1\u6279"), "</b><span>").concat(escapeHtml2(stateText), "</span></div>\n      <p><code>").concat(escapeHtml2(card.tool_id || pending?.tool_id || ""), "</code>").concat(summary ? " \xB7 ".concat(escapeHtml2(summary)) : "", "</p>\n      ").concat(details ? '<details class="tool-approval-details"><summary>'.concat(t("\u6280\u672F\u8BE6\u60C5"), "</summary><pre>").concat(escapeHtml2(JSON.stringify(details, null, 2)), "</pre></details>") : "", "\n      ").concat(active ? '<div class="tool-approval-actions" role="group" aria-label="'.concat(t("\u5DE5\u5177\u6267\u884C\u5BA1\u6279"), '">\n        <button type="button" data-tool-approval-id="').concat(escapeHtml2(card.approval_id), '" data-tool-approval-decision="skip" ').concat(submitting ? "disabled" : "", ">").concat(submitting ? t("\u6B63\u5728\u5904\u7406") : t("\u8DF3\u8FC7"), '</button>\n        <button type="button" data-tool-approval-id="').concat(escapeHtml2(card.approval_id), '" data-tool-approval-decision="allow_once" ').concat(submitting ? "disabled" : "", ">").concat(submitting ? t("\u6B63\u5728\u5904\u7406") : t("\u672C\u6B21\u5141\u8BB8"), "</button>\n      </div>") : "", "\n      ").concat(runtimeProjection.approvalFeedback && active ? '<small role="status">'.concat(escapeHtml2(runtimeProjection.approvalFeedback), "</small>") : "", "\n      ").concat(renderChatMeta(card.recorded_at || pending?.requested_at), "\n    </section>\n  ");
-  }
-  function chatMessageText(card) {
-    const text10 = String(card.content_raw || card.content_md || "");
-    const bodyAt = text10.indexOf("\n\n");
-    return card.type === "user" && text10.startsWith("\u3010\u672C\u8F6E\u4EA4\u4E92\u3011") && bodyAt >= 0 ? text10.slice(bodyAt + 2).trim() : text10;
-  }
-  function chatMessageAnchor(round, card, position3) {
-    if (card.frame_id && ["assistant-streaming", "assistant-progress", "assistant-final"].includes(card.type)) {
-      return "".concat(round, ":frame:").concat(card.frame_id, ":assistant");
-    }
-    return "".concat(round, ":message:").concat(card.card_id || card.event_index || position3);
-  }
-  function retainedConversationItems() {
-    return runtimeProjection.conversationRoundOrder.flatMap((round) => {
-      const projection = runtimeProjection.conversationRounds.get(round);
-      return buildChatItems(projection?.conversation || []).map((item) => ({
-        ...item,
-        round
-      }));
-    });
-  }
   function renderChat() {
-    els.chatThread.querySelectorAll("details[data-conversation-card-key]").forEach((details) => {
-      const key2 = details.dataset.conversationCardKey;
-      if (key2) state.conversationDisclosure.set(key2, details.open);
-    });
-    const hadMessages = els.chatThread.childElementCount > 0;
-    const previousScrollTop = els.chatThread.scrollTop;
-    const wasAtLatest = !hadMessages || els.chatThread.scrollHeight - previousScrollTop - els.chatThread.clientHeight <= 24;
-    const previousAnchor = [...els.chatThread.children].find((item) => Boolean(
-      item instanceof HTMLElement && item.dataset.chatAnchor && item.offsetTop + item.offsetHeight > previousScrollTop
-    ));
-    const previousAnchorKey = previousAnchor?.dataset.chatAnchor || "";
-    const previousAnchorOffset = previousAnchor ? previousAnchor.offsetTop - previousScrollTop : 0;
-    const items = retainedConversationItems();
-    const historyNotice = runtimeProjection.conversationHistoryError ? '\n    <p class="chat-history-warning">\n      <span>'.concat(t("\u8F83\u65E9\u5BF9\u8BDD\u672A\u5B8C\u5168\u8F7D\u5165"), '</span>\n      <button type="button" data-retry-projection="history">').concat(t("\u91CD\u8BD5"), "</button>\n    </p>\n  ") : "";
-    els.chatThread.innerHTML = items.length || historyNotice ? historyNotice + items.map((item, position3) => {
-      if (item.type === "tool-trace") return renderChatTraceGroup(item.cards, item.round);
-      if (item.type === "tool-approval") return renderToolApprovalCard(item.card, item.round);
-      const card = item.card;
-      const kind = card.type === "user" ? "user" : "system";
-      const who = card.type === "user" ? t("\u4F60") : personaAbbreviation();
-      const text10 = chatMessageText(card);
-      const messageId = chatMessageAnchor(item.round, card, position3);
-      const streamState = card.type === "assistant-streaming" ? card.stream_state || "active" : "";
-      const streamStatus = streamState === "interrupted" ? t("\u8F93\u51FA\u4E2D\u65AD") : streamState === "stopped" ? t("\u5DF2\u505C\u6B62") : "";
-      return '\n      <div class="chat-bubble '.concat(kind, " ").concat(escapeHtml2(card.type), " ").concat(streamState ? "stream-state-".concat(escapeHtml2(streamState)) : "", '" data-chat-anchor="').concat(escapeHtml2(messageId), '" data-round="').concat(escapeHtml2(item.round), '">\n        <b>').concat(escapeHtml2(who), "</b>\n        ").concat(card.type === "user" ? "<p>".concat(escapeHtml2(text10), "</p>") : renderMarkdownDocument(
-        messageId,
-        card.type === "assistant-streaming" ? card.content_raw || "" : card.content_md || card.content_raw || ""
-      ), "\n        ").concat(streamStatus ? '<small class="stream-status">'.concat(escapeHtml2(streamStatus), "</small>") : "", "\n        ").concat(card.type === "assistant-final" ? renderChatMeta(card.recorded_at, true) : "", "\n      </div>\n    ");
-    }).join("") : '\n    <div class="chat-bubble system empty">\n      <b>'.concat(t("\u8F6E\u6B21\u8D26\u672C"), "</b>\n      <p>").concat(runtimeProjection.host === "connected" ? t("\u5C1A\u65E0\u771F\u5B9E\u5BF9\u8BDD\u4E8B\u4EF6\u3002") : t("\u672C\u5730\u5BBF\u4E3B\u672A\u8FDE\u63A5\u3002"), "</p>\n    </div>\n  ");
-    hydrateMarkdownDocuments(els.chatThread, els.chatThread);
-    if (wasAtLatest) {
-      els.chatThread.scrollTop = els.chatThread.scrollHeight;
-    } else {
-      const nextAnchor = previousAnchorKey ? els.chatThread.querySelector('[data-chat-anchor="'.concat(CSS.escape(previousAnchorKey), '"]')) : null;
-      els.chatThread.scrollTop = nextAnchor ? nextAnchor.offsetTop - previousAnchorOffset : previousScrollTop;
-    }
+    renderConversationTimeline();
   }
   function captureStageScroll() {
     const snapshots = /* @__PURE__ */ new Map();
@@ -46927,6 +47652,7 @@
     });
   }
   function renderStage(pageId) {
+    if (deferSystemWindowRender(() => renderStage(pageId))) return;
     const renderers = {
       run: renderRunPage,
       persona: renderPersonaPage,
@@ -47025,14 +47751,7 @@
     return '<button class="deposition-link" data-deposition-jump-kind="'.concat(kind, '" data-deposition-id="').concat(escapeHtml2(itemId), '">').concat(escapeHtml2(label || itemId), "</button>");
   }
   function renderDepositionEmpty(label, title, desc) {
-    return '<section class="deposition-empty"><span class="hud-label">'.concat(escapeHtml2(label), "</span><h2>").concat(escapeHtml2(title), "</h2><p>").concat(escapeHtml2(desc), "</p></section>");
-  }
-  function runtimeCardText(card) {
-    return String(card?.content_raw || card?.content_md || card?.content || "");
-  }
-  function renderRuntimeCards(cards, emptyText = "\u5F53\u524D\u6295\u5F71\u6CA1\u6709\u5339\u914D\u4E8B\u4EF6\u3002", scrollKey = "") {
-    if (!cards.length) return '<p class="runtime-empty-copy">'.concat(escapeHtml2(emptyText), "</p>");
-    return '<div class="runtime-card-list"'.concat(scrollKey ? ' data-stage-scroll-key="'.concat(escapeHtml2(scrollKey), '"') : "", ">").concat(cards.map((card) => '\n    <article class="runtime-card '.concat(card.severity === "error" ? "warn" : "", '">\n      <header><strong>').concat(escapeHtml2(card.title || card.type), "</strong><span>").concat(escapeHtml2(card.summary || "#".concat(card.event_index || 0)), "</span></header>\n      <small>").concat(escapeHtml2(card.event_type || "event"), " \xB7 ").concat(escapeHtml2(card.frame_id || "round"), "</small>\n      <pre>").concat(escapeHtml2(runtimeCardText(card)), "</pre>\n    </article>\n  ")).join(""), "</div>");
+    return '<section class="deposition-empty"><span class="hud-label">'.concat(escapeHtml2(label), "</span><h2>").concat(escapeHtml2(title), "</h2><p>").concat(escapeHtml2(desc), '</p><button class="empty-state-action" type="button" data-close-system-window>').concat(t("\u7EE7\u7EED\u4EA4\u4E92"), "</button></section>");
   }
   function renderRuntimeFrames(frames) {
     if (!frames.length) return '<p class="runtime-empty-copy">\u5C1A\u65E0 Frame \u6295\u5F71\u3002</p>';
@@ -47064,11 +47783,13 @@
     if (round === null) return null;
     const live = round === runtimeProjection.round ? runtimeProjection.live : runtimeProjection.conversationRounds.get(round) || null;
     if (!live) return null;
-    const frames = live.call_frames || [];
+    const frames = live.frame_catalog || [];
     if (state.selectedTaskFrame !== null && !frames.some((frame2) => frame2.frame_id === state.selectedTaskFrame)) {
       state.selectedTaskFrame = null;
     }
-    const frame = state.selectedTaskFrame === null ? frames.at(-1) || null : frames.find((item) => item.frame_id === state.selectedTaskFrame) || null;
+    const frameEntry = state.selectedTaskFrame === null ? frames.at(-1) || null : frames.find((item) => item.frame_id === state.selectedTaskFrame) || null;
+    const detail = runtimeProjection.frameDetail;
+    const frame = frameEntry && detail?.round === round && detail.frameId === frameEntry.frame_id ? detail.frame : frameEntry;
     return { round, live, frame };
   }
   function taskRoundSelector(selectedRound) {
@@ -47084,11 +47805,8 @@
   }
   function taskFrameSnapshot(frame) {
     const pane = frame?.context_panes?.find((item) => item.id === "40_high_freq");
-    const source2 = String(pane?.content_raw || pane?.content_md || "");
-    const start2 = source2.indexOf("## \u5F53\u524D\u4EFB\u52A1\u6E05\u5355\u72B6\u6001");
-    if (start2 < 0) return "";
-    const end = source2.indexOf("\n<!-- [STEP_TOOLBELT:", start2);
-    return source2.slice(start2, end < 0 ? void 0 : end).trim();
+    const taskBoard = pane?.content_blocks?.find((block) => block.block_id === "high_freq:task_board");
+    return String(taskBoard?.content_md || taskBoard?.content_raw || "").trim();
   }
   function renderTaskEvidencePage() {
     if (runtimeProjection.host !== "connected") {
@@ -47108,13 +47826,13 @@
     const relayLabel = relay.inFlight ? "\u4E2D\u7EE7\u6267\u884C\u4E2D" : relay.ready ? "\u53EF\u4EE5\u7EE7\u7EED" : "\u7B49\u5F85 continue_requested";
     const selectedEvidence = taskEvidenceSelection();
     const selectedFrame = selectedEvidence?.frame || null;
-    const evidenceCards = (selectedEvidence?.live.conversation || []).filter((card) => (card.type === "tool-call" || card.type === "tool-result" || String(card.event_type || "").includes("receipt")) && (!selectedFrame || card.frame_id === selectedFrame.frame_id)).slice(-8).reverse();
+    const evidenceItems = (selectedEvidence ? runtimeProjection.ledgerItems.get(selectedEvidence.round) || [] : []).filter((item) => (item.type === "tool" || /tool|receipt|settle/i.test(String(item.event_type || ""))) && (!selectedFrame || item.frame_id === selectedFrame.frame_id)).slice(-8).reverse();
     const reviewingHistory = state.selectedTaskRound !== null || state.selectedTaskFrame !== null;
     const taskSnapshot = reviewingHistory ? taskFrameSnapshot(selectedFrame) : "";
     const pendingInputs = task?.pending_inputs || [];
     const requirements = task?.source_requirements || [];
     const risks = task?.risk_notes || [];
-    return '<section class="task-workspace">\n    <header class="task-hero">\n      <div><span class="hud-label">'.concat(t("\u4EFB\u52A1\u5DE5\u4F5C\u53F0"), " \xB7 ").concat(escapeHtml2(projection.active_guides?.work || t("\u5F53\u524D\u6CA1\u6709\u6D3B\u52A8\u4EFB\u52A1")), "</span>\n        <h2>").concat(escapeHtml2(task?.title || t("\u5F53\u524D\u6CA1\u6709\u6D3B\u52A8\u4EFB\u52A1")), "</h2>\n        <p>").concat(escapeHtml2(task?.goal || t("\u5DE5\u4F5C\u53F0\u672A\u767B\u8BB0\u6D3B\u52A8\u4EFB\u52A1\uFF1B\u4E0D\u4F1A\u4ECE\u5BF9\u8BDD\u6587\u6848\u63A8\u65AD\u4EFB\u52A1\u3002")), '</p>\n      </div>\n      <dl class="task-metrics">\n        <div><dt>').concat(t("\u9879\u76EE\u6570"), "</dt><dd>").concat(escapeHtml2(summary.open_items || 0), "</dd></div>\n        <div><dt>").concat(t("\u9A8C\u6536\u6570"), "</dt><dd>").concat(escapeHtml2(summary.pending_acceptance || 0), "</dd></div>\n        <div><dt>").concat(t("\u8F93\u5165\u6570"), "</dt><dd>").concat(escapeHtml2(summary.open_pending_inputs || 0), "</dd></div>\n        <div><dt>").concat(t("\u4EFB\u52A1\u72B6\u6001"), "</dt><dd>").concat(escapeHtml2(runtimeTerm(summary.state || "empty")), '</dd></div>\n      </dl>\n    </header>\n    <section class="relay-console ').concat(relay.ready ? "ready" : "", '">\n      <div><span class="hud-label">').concat(t("\u8FD0\u884C\u65F6\u4E2D\u7EE7"), " \xB7 ").concat(escapeHtml2(relay.roundType), "</span><strong>").concat(escapeHtml2(relayLabel), "</strong>\n        <p>").concat(t("\u53EA\u5728\u7ED3\u6784\u5316\u72B6\u6001\u540C\u65F6\u7ED9\u51FA\u4E2D\u7EE7\u8F6E\u578B\u4E0E\u7EE7\u7EED\u8BF7\u6C42\u65F6\u5F00\u653E\uFF1B\u6267\u884C\u6743\u9650\u7EE7\u627F\u4E0B\u65B9\u901A\u4FE1\u5E26\u3002"), ' <code>round_type=relay</code> \xB7 <code>continue_requested</code></p>\n      </div>\n      <button type="button" data-runtime-relay ').concat(relayDisabled ? "disabled" : "", ">").concat(t("\u6267\u884C\u4E0B\u4E00\u4E2D\u7EE7\u8F6E"), '</button>\n      <span role="status">').concat(escapeHtml2(taskProjection.relayFeedback || (relay.ready ? t("\u672A\u6267\u884C\uFF1B\u7B49\u5F85\u7528\u6237\u64CD\u4F5C\u3002") : "flags: ".concat(relay.activeFlags.join(", ") || "none"))), '</span>\n    </section>\n    <div class="task-columns">\n      <section class="task-pane"><header><span class="hud-label">').concat(t(reviewingHistory ? "\u8BE5\u5E27\u4EFB\u52A1\u5FEB\u7167" : "\u4EFB\u52A1\u8D26\u672C"), "</span><strong>").concat(escapeHtml2(reviewingHistory ? selectedFrame?.frame_id || "none" : task?.id || "none"), '</strong></header>\n        <div class="task-pane-scroll ').concat(reviewingHistory ? "task-frame-snapshot" : "", '" data-stage-scroll-key="').concat(escapeHtml2(reviewingHistory ? "run:tools:task:".concat(selectedEvidence?.round || "none", ":").concat(selectedFrame?.frame_id || "none") : "run:tools:task:".concat(task?.id || "none")), '">\n          ').concat(reviewingHistory ? taskSnapshot ? renderMarkdownDocument("task-snapshot:".concat(selectedEvidence?.round, ":").concat(selectedFrame?.frame_id), taskSnapshot) : '<p class="runtime-empty-copy">'.concat(t("\u8BE5\u5E27\u672A\u88C5\u914D\u6D3B\u52A8\u4EFB\u52A1\u6E05\u5355\u3002"), "</p>") : "".concat(pendingInputs.length ? '<section class="task-subsection"><h3>'.concat(t("\u5F85\u6574\u5408\u8F93\u5165"), "</h3>").concat(pendingInputs.map((item) => '<article class="task-pending"><b>'.concat(escapeHtml2(item.id), "</b><em>").concat(escapeHtml2(item.status), "</em><p>").concat(escapeHtml2(item.summary || t("\u65E0\u6458\u8981")), "</p>").concat((item.source_refs || []).map((ref) => "<code>".concat(escapeHtml2(ref), "</code>")).join(""), "</article>")).join(""), "</section>") : "", '\n          <section class="task-subsection"><h3>').concat(t("\u4EFB\u52A1\u9879"), "</h3>").concat(taskRecordRows(task?.items || [], t("\u5F53\u524D\u6CA1\u6709\u4EFB\u52A1\u9879\u3002")), '</section>\n          <section class="task-subsection"><h3>').concat(t("\u9A8C\u6536\u9879"), "</h3>").concat(taskRecordRows(task?.acceptance || [], t("\u5F53\u524D\u6CA1\u6709\u9A8C\u6536\u9879\u3002")), "</section>\n          ").concat(requirements.length ? '<section class="task-subsection"><h3>'.concat(t("\u6765\u6E90\u8981\u6C42"), "</h3>").concat(requirements.map((item) => "<p><b>".concat(escapeHtml2(item.id), "</b>").concat(escapeHtml2(item.summary || t("\u65E0\u6458\u8981")), "</p>")).join(""), "</section>") : "", "\n          ").concat(risks.length ? '<section class="task-subsection warn"><h3>'.concat(t("\u98CE\u9669\u5907\u6CE8"), "</h3>").concat(risks.map((note) => "<p>".concat(escapeHtml2(note), "</p>")).join(""), "</section>") : ""), '\n        </div>\n      </section>\n      <section class="task-pane evidence"><header class="task-evidence-header"><div><span class="hud-label">').concat(t("\u8F6E\u6B21\u8BC1\u636E"), "</span><strong>").concat(escapeHtml2(selectedEvidence ? "".concat(t("\u672C\u5730\u5BBF\u4E3B\u5DF2\u8FDE\u63A5"), " \xB7 R").concat(selectedEvidence.round, " \xB7 ").concat(selectedFrame?.frame_id || t("\u5C1A\u65E0\u5E27\u6B21")) : t("\u65E0\u8F6E\u6B21")), "</strong></div>\n        ").concat(selectedEvidence && selectedFrame ? '<div class="context-selectors">'.concat(taskRoundSelector(selectedEvidence.round)).concat(taskFrameSelector(selectedEvidence.live.call_frames || [], selectedFrame), "</div>") : "", "</header>\n        ").concat(renderRuntimeCards(evidenceCards, t("\u8BE5\u5E27\u5C1A\u65E0\u7ED3\u6784\u5316\u5DE5\u5177\u8C03\u7528\u6216\u56DE\u6267\u8BC1\u636E\u3002"), "run:tools:evidence:".concat(selectedEvidence?.round ?? "none", ":").concat(selectedFrame?.frame_id || "none")), "\n      </section>\n    </div>\n  </section>");
+    return '<section class="task-workspace">\n    <header class="task-hero">\n      <div><span class="hud-label">'.concat(t("\u4EFB\u52A1\u5DE5\u4F5C\u53F0"), " \xB7 ").concat(escapeHtml2(projection.active_guides?.work || t("\u5F53\u524D\u6CA1\u6709\u6D3B\u52A8\u4EFB\u52A1")), "</span>\n        <h2>").concat(escapeHtml2(task?.title || t("\u5F53\u524D\u6CA1\u6709\u6D3B\u52A8\u4EFB\u52A1")), "</h2>\n        <p>").concat(escapeHtml2(task?.goal || t("\u5DE5\u4F5C\u53F0\u672A\u767B\u8BB0\u6D3B\u52A8\u4EFB\u52A1\uFF1B\u4E0D\u4F1A\u4ECE\u5BF9\u8BDD\u6587\u6848\u63A8\u65AD\u4EFB\u52A1\u3002")), '</p>\n      </div>\n      <dl class="task-metrics">\n        <div><dt>').concat(t("\u9879\u76EE\u6570"), "</dt><dd>").concat(escapeHtml2(summary.open_items || 0), "</dd></div>\n        <div><dt>").concat(t("\u9A8C\u6536\u6570"), "</dt><dd>").concat(escapeHtml2(summary.pending_acceptance || 0), "</dd></div>\n        <div><dt>").concat(t("\u8F93\u5165\u6570"), "</dt><dd>").concat(escapeHtml2(summary.open_pending_inputs || 0), "</dd></div>\n        <div><dt>").concat(t("\u4EFB\u52A1\u72B6\u6001"), "</dt><dd>").concat(escapeHtml2(runtimeTerm(summary.state || "empty")), '</dd></div>\n      </dl>\n    </header>\n    <section class="relay-console ').concat(relay.ready ? "ready" : "", '">\n      <div><span class="hud-label">').concat(t("\u8FD0\u884C\u65F6\u4E2D\u7EE7"), " \xB7 ").concat(escapeHtml2(relay.roundType), "</span><strong>").concat(escapeHtml2(relayLabel), "</strong>\n        <p>").concat(t("\u53EA\u5728\u7ED3\u6784\u5316\u72B6\u6001\u540C\u65F6\u7ED9\u51FA\u4E2D\u7EE7\u8F6E\u578B\u4E0E\u7EE7\u7EED\u8BF7\u6C42\u65F6\u5F00\u653E\uFF1B\u6267\u884C\u6743\u9650\u7EE7\u627F\u4E0B\u65B9\u901A\u4FE1\u5E26\u3002"), ' <code>round_type=relay</code> \xB7 <code>continue_requested</code></p>\n      </div>\n      <button type="button" data-runtime-relay ').concat(relayDisabled ? "disabled" : "", ">").concat(t("\u6267\u884C\u4E0B\u4E00\u4E2D\u7EE7\u8F6E"), '</button>\n      <span role="status">').concat(escapeHtml2(taskProjection.relayFeedback || (relay.ready ? t("\u672A\u6267\u884C\uFF1B\u7B49\u5F85\u7528\u6237\u64CD\u4F5C\u3002") : "flags: ".concat(relay.activeFlags.join(", ") || "none"))), '</span>\n    </section>\n    <div class="task-columns">\n      <section class="task-pane"><header><span class="hud-label">').concat(t(reviewingHistory ? "\u8BE5\u5E27\u4EFB\u52A1\u5FEB\u7167" : "\u4EFB\u52A1\u8D26\u672C"), "</span><strong>").concat(escapeHtml2(reviewingHistory ? selectedFrame?.frame_id || "none" : task?.id || "none"), '</strong></header>\n        <div class="task-pane-scroll ').concat(reviewingHistory ? "task-frame-snapshot" : "", '" data-stage-scroll-key="').concat(escapeHtml2(reviewingHistory ? "run:tools:task:".concat(selectedEvidence?.round || "none", ":").concat(selectedFrame?.frame_id || "none") : "run:tools:task:".concat(task?.id || "none")), '">\n          ').concat(reviewingHistory ? taskSnapshot ? renderMarkdownDocument("task-snapshot:".concat(selectedEvidence?.round, ":").concat(selectedFrame?.frame_id), taskSnapshot) : '<p class="runtime-empty-copy">'.concat(t("\u8BE5\u5E27\u672A\u88C5\u914D\u6D3B\u52A8\u4EFB\u52A1\u6E05\u5355\u3002"), "</p>") : "".concat(pendingInputs.length ? '<section class="task-subsection"><h3>'.concat(t("\u5F85\u6574\u5408\u8F93\u5165"), "</h3>").concat(pendingInputs.map((item) => '<article class="task-pending"><b>'.concat(escapeHtml2(item.id), "</b><em>").concat(escapeHtml2(item.status), "</em><p>").concat(escapeHtml2(item.summary || t("\u65E0\u6458\u8981")), "</p>").concat((item.source_refs || []).map((ref) => "<code>".concat(escapeHtml2(ref), "</code>")).join(""), "</article>")).join(""), "</section>") : "", '\n          <section class="task-subsection"><h3>').concat(t("\u4EFB\u52A1\u9879"), "</h3>").concat(taskRecordRows(task?.items || [], t("\u5F53\u524D\u6CA1\u6709\u4EFB\u52A1\u9879\u3002")), '</section>\n          <section class="task-subsection"><h3>').concat(t("\u9A8C\u6536\u9879"), "</h3>").concat(taskRecordRows(task?.acceptance || [], t("\u5F53\u524D\u6CA1\u6709\u9A8C\u6536\u9879\u3002")), "</section>\n          ").concat(requirements.length ? '<section class="task-subsection"><h3>'.concat(t("\u6765\u6E90\u8981\u6C42"), "</h3>").concat(requirements.map((item) => "<p><b>".concat(escapeHtml2(item.id), "</b>").concat(escapeHtml2(item.summary || t("\u65E0\u6458\u8981")), "</p>")).join(""), "</section>") : "", "\n          ").concat(risks.length ? '<section class="task-subsection warn"><h3>'.concat(t("\u98CE\u9669\u5907\u6CE8"), "</h3>").concat(risks.map((note) => "<p>".concat(escapeHtml2(note), "</p>")).join(""), "</section>") : ""), '\n        </div>\n      </section>\n      <section class="task-pane evidence"><header class="task-evidence-header"><div><span class="hud-label">').concat(t("\u8F6E\u6B21\u8BC1\u636E"), "</span><strong>").concat(escapeHtml2(selectedEvidence ? "".concat(t("\u672C\u5730\u5BBF\u4E3B\u5DF2\u8FDE\u63A5"), " \xB7 R").concat(selectedEvidence.round, " \xB7 ").concat(selectedFrame?.frame_id || t("\u5C1A\u65E0\u5E27\u6B21")) : t("\u65E0\u8F6E\u6B21")), "</strong></div>\n        ").concat(selectedEvidence && selectedFrame ? '<div class="context-selectors">'.concat(taskRoundSelector(selectedEvidence.round)).concat(taskFrameSelector(selectedEvidence.live.frame_catalog || [], selectedFrame), "</div>") : "", "</header>\n        ").concat(selectedEvidence ? renderLedgerDirectory(selectedEvidence.round, evidenceItems, t("\u8BE5\u5E27\u5C1A\u65E0\u7ED3\u6784\u5316\u5DE5\u5177\u8C03\u7528\u6216\u56DE\u6267\u8BC1\u636E\u3002"), "run:tools:evidence:".concat(selectedEvidence.round, ":").concat(selectedFrame?.frame_id || "none")) : '<p class="runtime-empty-copy">'.concat(t("\u8BE5\u5E27\u5C1A\u65E0\u7ED3\u6784\u5316\u5DE5\u5177\u8C03\u7528\u6216\u56DE\u6267\u8BC1\u636E\u3002"), "</p>"), "\n      </section>\n    </div>\n  </section>");
   }
   function renderRuntimeRunPage() {
     if (runtimeProjection.host !== "connected") {
@@ -47128,9 +47846,10 @@
     if (!live || runtimeProjection.round == null) {
       return renderRuntimeEmpty(t("\u8F6E\u6B21\u8D26\u672C"), t("\u5C1A\u65E0\u8F6E\u6B21"), t("\u5BBF\u4E3B\u5DF2\u8FDE\u63A5\uFF0C\u7B49\u5F85\u771F\u5B9E\u4E8B\u4EF6"));
     }
-    const cards = live.conversation || [];
+    const ledgerItems = runtimeProjection.ledgerItems.get(runtimeProjection.round) || [];
     if (tab2 === "receipts") {
-      return renderRuntimeCards(cards.filter((card) => card.type === "settlement" || card.event_type.includes("receipt") || card.event_type.includes("settled")), t("\u5C1A\u65E0\u56DE\u6267\u6216\u7ED3\u7B97\u4E8B\u4EF6\u3002"), "run:receipts:".concat(runtimeProjection.round));
+      const receipts = ledgerItems.filter((item) => item.type === "settlement" || item.event_type.includes("receipt") || item.event_type.includes("settled"));
+      return renderLedgerDirectory(runtimeProjection.round, receipts, t("\u5C1A\u65E0\u56DE\u6267\u6216\u7ED3\u7B97\u4E8B\u4EF6\u3002"), "run:receipts:".concat(runtimeProjection.round));
     }
     if (tab2 === "risks") {
       const lifecycle2 = live.round_lifecycle || {};
@@ -47143,7 +47862,7 @@
     const statusbar = live.statusbar_projection || {};
     const lifecycle = live.round_lifecycle || {};
     const indexes = lifecycle.event_indexes || {};
-    return '\n    <div class="runtime-run" data-stage-scroll-key="'.concat(escapeHtml2("run:round:".concat(runtimeProjection.round)), '">\n      <section class="run-focus">\n        <div class="focus-kicker"><span class="hud-label">').concat(t("\u5F53\u524D\u8FD0\u884C"), "</span><em>").concat(escapeHtml2(runtimeTerm(lifecycle.state || "running")), "</em></div>\n        <h2>").concat(escapeHtml2(statusbar.round?.id || "R".concat(String(runtimeProjection.round).padStart(6, "0"))), " \xB7 ").concat(escapeHtml2(runtimeTerm(statusbar.round?.type || t("\u8F6E\u578B\u672A\u6295\u5F71"))), "</h2>\n        <p>").concat(escapeHtml2(statusbar.round?.progress || t("\u7B49\u5F85\u7ED3\u6784\u5316\u72B6\u6001\u680F")), " \xB7 ").concat(escapeHtml2(statusbar.workhood || t("\u5DE5\u5316\u672A\u6295\u5F71")), '</p>\n        <div class="runtime-lifecycle" aria-label="').concat(t("\u8F6E\u6B21\u751F\u547D\u5468\u671F\u4E8B\u4EF6\u7D22\u5F15"), '">\n          ').concat(Object.entries(indexes).map(([eventType, index2]) => "<span><b>".concat(escapeHtml2(runtimeTerm(eventType)), "</b><code>#").concat(escapeHtml2(index2), "</code></span>")).join("") || "<span>".concat(t("\u5C1A\u65E0\u751F\u547D\u5468\u671F\u4E8B\u4EF6\u7D22\u5F15"), "</span>"), '\n        </div>\n      </section>\n      <section class="status-ledger">\n        <header><span class="hud-label">').concat(t("\u72B6\u6001\u6982\u89C8"), '</span></header>\n        <div class="status-ledger-row"><b>').concat(t("\u8F6E\u6B21"), "</b><span>").concat(escapeHtml2(runtimeTerm(statusbar.round?.type || t("\u672A\u6295\u5F71"))), "</span><em>").concat(escapeHtml2(statusbar.round?.id || "\u2014"), '</em></div>\n        <div class="status-ledger-row"><b>').concat(t("\u6A21\u5F0F"), "</b><span>").concat(escapeHtml2(statusbar.dynamic || t("\u7ED3\u6784\u5316\u6295\u5F71\u5C1A\u4E0D\u53EF\u7528")), "</span><em>").concat(escapeHtml2(runtimeTerm(statusbar.mode || t("\u672A\u6295\u5F71"))), '</em></div>\n        <div class="status-ledger-row"><b>').concat(t("\u5E27\u6B21"), "</b><span>").concat(escapeHtml2(live.latest_frame_id || t("\u5C1A\u65E0\u5E27\u6B21")), "</span><em>").concat(escapeHtml2((live.call_frames || []).length), '</em></div>\n        <div class="status-ledger-row ').concat(lifecycle.state === "unsettled" ? "warn" : "", '"><b>').concat(t("\u7ED3\u7B97"), "</b><span>").concat(escapeHtml2(runtimeTerm(lifecycle.settlement_status || "pending")), "</span><em>").concat(escapeHtml2(runtimeTerm(lifecycle.state || "running")), '</em></div>\n      </section>\n      <section class="runtime-frames" data-stage-scroll-key="').concat(escapeHtml2("run:round:".concat(runtimeProjection.round, ":frames")), '"><span class="hud-label">').concat(t("\u5E27\u6B21\u5217\u8868"), "</span>").concat(renderRuntimeFrames(live.call_frames || []), "</section>\n    </div>\n  ");
+    return '\n    <div class="runtime-run" data-stage-scroll-key="'.concat(escapeHtml2("run:round:".concat(runtimeProjection.round)), '">\n      <section class="run-focus">\n        <div class="focus-kicker"><span class="hud-label">').concat(t("\u5F53\u524D\u8FD0\u884C"), "</span><em>").concat(escapeHtml2(runtimeTerm(lifecycle.state || "running")), "</em></div>\n        <h2>").concat(escapeHtml2(statusbar.round?.id || "R".concat(String(runtimeProjection.round).padStart(6, "0"))), " \xB7 ").concat(escapeHtml2(runtimeTerm(statusbar.round?.type || t("\u8F6E\u578B\u672A\u6295\u5F71"))), "</h2>\n        <p>").concat(escapeHtml2(statusbar.round?.progress || t("\u7B49\u5F85\u7ED3\u6784\u5316\u72B6\u6001\u680F")), " \xB7 ").concat(escapeHtml2(statusbar.workhood || t("\u5DE5\u5316\u672A\u6295\u5F71")), '</p>\n        <div class="runtime-lifecycle" aria-label="').concat(t("\u8F6E\u6B21\u751F\u547D\u5468\u671F\u4E8B\u4EF6\u7D22\u5F15"), '">\n          ').concat(Object.entries(indexes).map(([eventType, index2]) => "<span><b>".concat(escapeHtml2(runtimeTerm(eventType)), "</b><code>#").concat(escapeHtml2(index2), "</code></span>")).join("") || "<span>".concat(t("\u5C1A\u65E0\u751F\u547D\u5468\u671F\u4E8B\u4EF6\u7D22\u5F15"), "</span>"), '\n        </div>\n      </section>\n      <section class="status-ledger">\n        <header><span class="hud-label">').concat(t("\u72B6\u6001\u6982\u89C8"), '</span></header>\n        <div class="status-ledger-row"><b>').concat(t("\u8F6E\u6B21"), "</b><span>").concat(escapeHtml2(runtimeTerm(statusbar.round?.type || t("\u672A\u6295\u5F71"))), "</span><em>").concat(escapeHtml2(statusbar.round?.id || "\u2014"), '</em></div>\n        <div class="status-ledger-row"><b>').concat(t("\u6A21\u5F0F"), "</b><span>").concat(escapeHtml2(statusbar.dynamic || t("\u7ED3\u6784\u5316\u6295\u5F71\u5C1A\u4E0D\u53EF\u7528")), "</span><em>").concat(escapeHtml2(runtimeTerm(statusbar.mode || t("\u672A\u6295\u5F71"))), '</em></div>\n        <div class="status-ledger-row"><b>').concat(t("\u5E27\u6B21"), "</b><span>").concat(escapeHtml2(live.latest_frame_id || t("\u5C1A\u65E0\u5E27\u6B21")), "</span><em>").concat(escapeHtml2((live.frame_catalog || []).length), '</em></div>\n        <div class="status-ledger-row ').concat(lifecycle.state === "unsettled" ? "warn" : "", '"><b>').concat(t("\u7ED3\u7B97"), "</b><span>").concat(escapeHtml2(runtimeTerm(lifecycle.settlement_status || "pending")), "</span><em>").concat(escapeHtml2(runtimeTerm(lifecycle.state || "running")), '</em></div>\n      </section>\n      <section class="runtime-frames" data-stage-scroll-key="').concat(escapeHtml2("run:round:".concat(runtimeProjection.round, ":frames")), '"><span class="hud-label">').concat(t("\u5E27\u6B21\u5217\u8868"), "</span>").concat(renderRuntimeFrames(live.frame_catalog || []), "</section>\n    </div>\n  ");
   }
   function contextPaneMarkdown(pane) {
     const source2 = pane?.content_md || pane?.content_raw || "";
@@ -47152,8 +47871,8 @@
     try {
       const parsed = JSON.parse(raw2);
       if (pane.id === "01_tool_header" && parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const { tools: _tools, ...metadata } = parsed;
-        return "```json\n".concat(JSON.stringify(metadata, null, 2), "\n```");
+        const { tools: _tools, ...metadata2 } = parsed;
+        return "```json\n".concat(JSON.stringify(metadata2, null, 2), "\n```");
       }
       return "```json\n".concat(raw2, "\n```");
     } catch {
@@ -47349,24 +48068,24 @@
     } catch {
     }
     const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
-    const text10 = (value, fallback = "\u2014") => typeof value === "string" && value.trim() ? value.trim() : typeof value === "number" ? String(value) : fallback;
+    const text11 = (value, fallback = "\u2014") => typeof value === "string" && value.trim() ? value.trim() : typeof value === "number" ? String(value) : fallback;
     let kind = "call";
     let primary = pane.id;
     let secondary = t("\u7ED3\u6784\u5316\u8C03\u7528\u5934");
     if (pane.id === "00_call_header") {
       const call = record(data.call);
       const endpoint = record(data.endpoint);
-      primary = text10(call.phase, text10(call.channel, "unknown"));
-      secondary = "".concat(t("\u7B2C {attempt} \u6B21", { attempt: text10(call.attempt, "?") }), " \xB7 ").concat(text10(endpoint.tier, t("\u7AEF\u70B9\u672A\u6807\u8BB0")));
+      primary = text11(call.phase, text11(call.channel, "unknown"));
+      secondary = "".concat(t("\u7B2C {attempt} \u6B21", { attempt: text11(call.attempt, "?") }), " \xB7 ").concat(text11(endpoint.tier, t("\u7AEF\u70B9\u672A\u6807\u8BB0")));
     } else if (pane.id === "01_tool_header") {
       kind = "tools";
-      primary = text10(data.permission_label, text10(data.permission_level, t("\u672A\u6807\u8BB0")));
+      primary = text11(data.permission_label, text11(data.permission_level, t("\u672A\u6807\u8BB0")));
       const toolCount = Array.isArray(data.tool_names) ? data.tool_names.length : 0;
-      secondary = "".concat(toolCount, " ").concat(t("\u4E2A\u5DE5\u5177"), " \xB7 ").concat(text10(data.tool_mode, t("\u6A21\u5F0F\u672A\u6807\u8BB0")));
+      secondary = "".concat(toolCount, " ").concat(t("\u4E2A\u5DE5\u5177"), " \xB7 ").concat(text11(data.tool_mode, t("\u6A21\u5F0F\u672A\u6807\u8BB0")));
     } else if (pane.id === "02_generation_config") {
       kind = "generation";
-      primary = text10(data.reasoning_effort, t("\u672A\u6807\u8BB0"));
-      secondary = t("\u6E29\u5EA6 {value}", { value: text10(data.temperature, t("\u672A\u6807\u8BB0")) });
+      primary = text11(data.reasoning_effort, t("\u672A\u6807\u8BB0"));
+      secondary = t("\u6E29\u5EA6 {value}", { value: text11(data.temperature, t("\u672A\u6807\u8BB0")) });
     }
     const paneLabel = contextPaneLabel(pane.id);
     return '<button class="context-instrument '.concat(kind, '" data-runtime-pane="').concat(escapeHtml2(pane.id), '" aria-label="').concat(escapeHtml2(t("\u67E5\u770B {title} \u5C42\u771F\u5B9E\u5185\u5BB9", { title: paneLabel })), '">\n    <span class="context-instrument-top"><b>').concat(escapeHtml2(paneLabel), '</b></span>\n    <span class="context-instrument-readout"><strong>').concat(escapeHtml2(primary), "</strong><small>").concat(escapeHtml2(secondary), '</small></span>\n    <span class="context-instrument-foot"><em>').concat(escapeHtml2(pane.chars ?? pane.raw_chars ?? 0), " CH</em></span>\n  </button>");
@@ -47388,7 +48107,7 @@
     return '<label class="protocol-round-select context-round-select"><span>'.concat(t("\u9009\u62E9\u8F6E\u6B21"), '</span><select data-context-round>\n    <option value="latest" ').concat(state.selectedContextRound === null ? "selected" : "", ">").concat(t("\u6700\u65B0"), " \xB7 R").concat(escapeHtml2(latest), "</option>\n    ").concat(historical.map((round) => '<option value="'.concat(escapeHtml2(round), '" ').concat(state.selectedContextRound === round ? "selected" : "", ">R").concat(escapeHtml2(round), "</option>")).join(""), "\n  </select></label>");
   }
   function contextFrameSelection(live) {
-    const frames = live.call_frames || [];
+    const frames = live.frame_catalog || [];
     if (state.selectedContextFrame !== null && !frames.some((frame) => frame.frame_id === state.selectedContextFrame)) {
       state.selectedContextFrame = null;
     }
@@ -47401,7 +48120,7 @@
   }
   function contextSelectors(round, live, frame) {
     const frameTime = renderFullTime(frame.created_at, "context-frame-time");
-    return '<div class="context-selectors">'.concat(contextRoundSelector(round)).concat(contextFrameSelector(live.call_frames || [], frame)).concat(frameTime ? '<p class="context-frame-created">'.concat(t("\u8C03\u7528\u7F16\u8BD1\u65F6\u95F4"), " \xB7 ").concat(frameTime, "</p>") : "", "</div>");
+    return '<div class="context-selectors">'.concat(contextRoundSelector(round)).concat(contextFrameSelector(live.frame_catalog || [], frame)).concat(frameTime ? '<p class="context-frame-created">'.concat(t("\u8C03\u7528\u7F16\u8BD1\u65F6\u95F4"), " \xB7 ").concat(frameTime, "</p>") : "", "</div>");
   }
   function frameContextUsage(frame, ring = false) {
     const usage = frame?.context_usage;
@@ -47431,8 +48150,15 @@
     const selectedRound = contextSelection();
     if (!selectedRound) return renderRuntimeEmpty(t("\u4E0A\u4E0B\u6587\u5341\u5C42"), t("\u5C1A\u65E0\u4E0A\u4E0B\u6587\u6295\u5F71"), t("\u5341\u5C42\u53EA\u4ECE\u771F\u5B9E\u8F6E\u6B21\u8D26\u672C\u4E0E\u5B9E\u65F6\u5206\u5C42\u6295\u5F71\u8BFB\u53D6\u3002"));
     const { round, live } = selectedRound;
-    const frame = contextFrameSelection(live);
-    if (!frame) return renderRuntimeEmpty(t("\u5E27\u6B21"), t("\u8BE5\u8F6E\u5C1A\u65E0\u8C03\u7528\u5E27"), t("\u4E0A\u4E0B\u6587\u5341\u5C42\u53EA\u4ECE\u771F\u5B9E\u5E27\u6B21\u8F93\u5165\u5FEB\u7167\u8BFB\u53D6\u3002"));
+    const frameEntry = contextFrameSelection(live);
+    if (!frameEntry) return renderRuntimeEmpty(t("\u5E27\u6B21"), t("\u8BE5\u8F6E\u5C1A\u65E0\u8C03\u7528\u5E27"), t("\u4E0A\u4E0B\u6587\u5341\u5C42\u53EA\u4ECE\u771F\u5B9E\u5E27\u6B21\u8F93\u5165\u5FEB\u7167\u8BFB\u53D6\u3002"));
+    const detail = runtimeProjection.frameDetail;
+    const detailKey2 = "".concat(round, ":").concat(frameEntry.frame_id);
+    const frame = detail?.round === round && detail.frameId === frameEntry.frame_id ? detail.frame : null;
+    if (!frame) {
+      const message = runtimeProjection.frameDetailError ? "".concat(t("\u4E0A\u4E0B\u6587\u8BE6\u60C5\u8BFB\u53D6\u5931\u8D25"), "\uFF1A").concat(runtimeProjection.frameDetailError) : runtimeProjection.frameDetailLoading === detailKey2 ? t("\u6B63\u5728\u8BFB\u53D6\u6240\u9009 Frame") : t("\u8BF7\u9009\u62E9 Frame \u8BFB\u53D6\u4E0A\u4E0B\u6587\u8BE6\u60C5");
+      return '<section class="runtime-empty"><span class="hud-label">'.concat(t("\u4E0A\u4E0B\u6587\u5341\u5C42"), "</span><h2>").concat(escapeHtml2(frameEntry.frame_id), "</h2><p>").concat(escapeHtml2(message), '</p><button type="button" data-load-frame-detail data-detail-round="').concat(escapeHtml2(round), '" data-detail-frame="').concat(escapeHtml2(frameEntry.frame_id), '">').concat(t("\u91CD\u8BD5"), "</button></section>");
+    }
     const panes = frame.context_panes || [];
     const tab2 = getActivePageTab("context");
     if (tab2 === "guide") {
@@ -47449,7 +48175,8 @@
     on_demand: "\u6309\u9700"
   };
   function ledgerCardId(card, position3) {
-    return String(card.card_id || "event-".concat(card.event_index ?? "unknown", "-").concat(position3));
+    if ("detail_ref" in card && card.detail_ref) return card.detail_ref;
+    return String(card.card_id || card.event_index || "event-".concat(position3));
   }
   var providerErrorCopy = {
     cancelled: { title: "\u6A21\u578B\u8C03\u7528\u5DF2\u505C\u6B62", what: "\u672C\u6B21\u6A21\u578B\u8C03\u7528\u5DF2\u88AB\u53D6\u6D88\uFF0C\u6CA1\u6709\u7EE7\u7EED\u7B49\u5F85\u4E0A\u6E38\u54CD\u5E94\u3002", action: "\u5982\u9700\u7EE7\u7EED\uFF0C\u8BF7\u91CD\u65B0\u53D1\u9001\uFF1B\u82E5\u5E76\u975E\u4E3B\u52A8\u505C\u6B62\uFF0C\u8BF7\u68C0\u67E5\u5BBF\u4E3B\u662F\u5426\u4ECD\u5728\u8FD0\u884C\u3002" },
@@ -47471,7 +48198,8 @@
     unknown: { title: "\u672A\u8BC6\u522B\u7684\u6A21\u578B\u670D\u52A1\u9519\u8BEF", what: "\u73B0\u6709\u4FE1\u606F\u4E0D\u8DB3\u4EE5\u53EF\u9760\u5224\u65AD\u9519\u8BEF\u7C7B\u522B\u3002", action: "\u8BF7\u4FDD\u7559\u6280\u672F\u8BE6\u60C5\uFF0C\u5E76\u4ECE\u4E0A\u6E38\u65E5\u5FD7\u548C\u8FDE\u63A5\u914D\u7F6E\u7EE7\u7EED\u6392\u67E5\u3002" }
   };
   function ledgerCardTitle(card) {
-    const copy = card.provider_error_hint && providerErrorCopy[card.provider_error_hint.kind];
+    const hint = "provider_error_hint" in card ? card.provider_error_hint : void 0;
+    const copy = hint && providerErrorCopy[hint.kind];
     return copy ? t(copy.title) : String(card.title || card.type || card.event_type || "");
   }
   function ledgerCardMarkdown(card) {
@@ -47516,15 +48244,10 @@
     const selected = ledgerSelection();
     if (!selected) return renderRuntimeEmpty(t("\u8FD0\u884C\u65F6"), t("\u5C1A\u65E0\u52A8\u6001\u8D26\u672C"), t("\u4E8B\u4EF6\u3001\u5DE5\u5177\u4E0E\u7ED3\u7B97\u53EA\u5728\u771F\u5B9E\u8F6E\u6B21\u8D26\u672C\u51FA\u73B0\u540E\u5C55\u793A\u3002"));
     const { round, live } = selected;
-    const cards = live.conversation || [];
+    const items = runtimeProjection.ledgerItems.get(round) || [];
     const lifecycle = live.round_lifecycle || {};
-    const blockingCount = cards.filter(ledgerBlocking).length + (lifecycle.fatal_reasons || []).length + (lifecycle.degraded_reasons || []).length;
-    return '<section class="protocol-center protocol-ledger" data-stage-scroll-key="'.concat(escapeHtml2("audit:ledger:".concat(round)), '">\n    <header class="protocol-center-head">\n      <div><span class="hud-label">').concat(t("\u8FD0\u884C\u65F6"), " \xB7 ").concat(t("\u8F6E\u6B21"), " ").concat(escapeHtml2(round), "</span><h2>").concat(t("\u52A8\u6001\u8D26\u672C"), "</h2><p>").concat(t("\u6309\u8FD0\u884C\u65F6\u539F\u6295\u5F71\u987A\u5E8F\u5217\u51FA {count} \u4E2A\u7ED3\u6784\u5316\u4E8B\u4EF6\uFF1B\u6B63\u6587\u4EC5\u5728\u8BE6\u60C5\u5F39\u7A97\u4E2D\u8BFB\u53D6\u3002", { count: cards.length }), '</p></div>\n      <div class="protocol-head-actions">').concat(ledgerRoundSelector(round), '<button class="evidence-export" type="button" data-export-evidence>').concat(t("\u5BFC\u51FA\u5F53\u524D\u8BC1\u636E"), '</button></div>\n    </header>\n    <dl class="protocol-summary">\n      <div><dt>').concat(t("\u8F6E\u6B21"), "</dt><dd>R").concat(escapeHtml2(round), "</dd></div>\n      <div><dt>").concat(t("\u751F\u547D\u5468\u671F"), "</dt><dd>").concat(escapeHtml2(runtimeTerm(lifecycle.state || "running")), "</dd></div>\n      <div><dt>").concat(t("\u7ED3\u7B97"), "</dt><dd>").concat(escapeHtml2(runtimeTerm(lifecycle.settlement_status || "pending")), '</dd></div>\n      <div class="').concat(blockingCount ? "warn" : "", '"><dt>').concat(t("\u963B\u585E\u9879"), "</dt><dd>").concat(escapeHtml2(blockingCount), '</dd></div>\n    </dl>\n    <p class="export-feedback" role="status">').concat(escapeHtml2(runtimeProjection.exportFeedback), '</p>\n    <div class="protocol-index" role="list" aria-label="').concat(escapeHtml2(t("\u8F6E\u6B21 {round} \u4E8B\u4EF6\u76EE\u5F55", { round })), '">\n      ').concat(cards.length ? cards.map((card, position3) => {
-      const cardId = ledgerCardId(card, position3);
-      const warn = ledgerBlocking(card);
-      const time = String(card.recorded_at || "").replace("T", " ").slice(0, 19) || t("\u672A\u8BB0\u5F55");
-      return '<button class="protocol-index-row ledger-event '.concat(warn ? "warn" : "", '" type="button" role="listitem" data-ledger-event data-ledger-round="').concat(escapeHtml2(round), '" data-ledger-card-id="').concat(escapeHtml2(cardId), '">\n          <span class="protocol-index-seq">#').concat(escapeHtml2(card.event_index ?? position3), '</span>\n          <span class="protocol-index-main"><b>').concat(escapeHtml2(ledgerCardTitle(card)), "</b><small>").concat(escapeHtml2(time), " \xB7 ").concat(escapeHtml2(runtimeTerm(card.phase || "round")), " \xB7 ").concat(escapeHtml2(card.frame_id || "round"), '</small></span>\n          <span class="protocol-index-tags"><em>').concat(escapeHtml2(card.type || "event"), "</em>").concat(card.severity ? "<em>".concat(escapeHtml2(card.severity), "</em>") : "", "</span>\n        </button>");
-    }).join("") : '<p class="runtime-empty-copy">'.concat(t("\u8BE5\u8F6E\u6CA1\u6709\u7ED3\u6784\u5316\u4E8B\u4EF6\u3002"), "</p>"), "\n    </div>\n  </section>");
+    const blockingCount = items.filter(ledgerBlocking).length + (lifecycle.fatal_reasons || []).length + (lifecycle.degraded_reasons || []).length;
+    return '<section class="protocol-center protocol-ledger" data-stage-scroll-key="'.concat(escapeHtml2("audit:ledger:".concat(round)), '">\n    <header class="protocol-center-head">\n      <div><span class="hud-label">').concat(t("\u8FD0\u884C\u65F6"), " \xB7 ").concat(t("\u8F6E\u6B21"), " ").concat(escapeHtml2(round), "</span><h2>").concat(t("\u52A8\u6001\u8D26\u672C"), "</h2><p>").concat(t("\u6309\u8FD0\u884C\u65F6\u539F\u6295\u5F71\u987A\u5E8F\u5217\u51FA {count} \u4E2A\u7ED3\u6784\u5316\u4E8B\u4EF6\uFF1B\u6B63\u6587\u4EC5\u5728\u8BE6\u60C5\u5F39\u7A97\u4E2D\u8BFB\u53D6\u3002", { count: items.length }), '</p></div>\n      <div class="protocol-head-actions">').concat(ledgerRoundSelector(round), '<button class="evidence-export" type="button" data-export-evidence>').concat(t("\u5BFC\u51FA\u5F53\u524D\u8BC1\u636E"), '</button></div>\n    </header>\n    <dl class="protocol-summary">\n      <div><dt>').concat(t("\u8F6E\u6B21"), "</dt><dd>R").concat(escapeHtml2(round), "</dd></div>\n      <div><dt>").concat(t("\u751F\u547D\u5468\u671F"), "</dt><dd>").concat(escapeHtml2(runtimeTerm(lifecycle.state || "running")), "</dd></div>\n      <div><dt>").concat(t("\u7ED3\u7B97"), "</dt><dd>").concat(escapeHtml2(runtimeTerm(lifecycle.settlement_status || "pending")), '</dd></div>\n      <div class="').concat(blockingCount ? "warn" : "", '"><dt>').concat(t("\u963B\u585E\u9879"), "</dt><dd>").concat(escapeHtml2(blockingCount), '</dd></div>\n    </dl>\n    <p class="export-feedback" role="status">').concat(escapeHtml2(runtimeProjection.exportFeedback), '</p>\n    <div class="protocol-index" role="list" aria-label="').concat(escapeHtml2(t("\u8F6E\u6B21 {round} \u4E8B\u4EF6\u76EE\u5F55", { round })), '">\n      ').concat(renderLedgerDirectory(round, items, t("\u8BE5\u8F6E\u6CA1\u6709\u7ED3\u6784\u5316\u4E8B\u4EF6\u3002"), "audit:ledger:".concat(round, ":items")), "\n    </div>\n  </section>");
   }
   function protocolEntryRow(entry, detail, tags) {
     return '<button class="protocol-index-row" type="button" data-protocol-document data-protocol-kind="'.concat(entry.kind, '" data-protocol-id="').concat(escapeHtml2(entry.id), '">\n    <span class="protocol-index-main"><b>').concat(escapeHtml2(entry.description || entry.file), "</b><small>").concat(escapeHtml2(detail || entry.source_ref), '</small></span>\n    <span class="protocol-index-tags">').concat(tags.map((tag) => "<em>".concat(escapeHtml2(tag), "</em>")).join(""), "</span>\n  </button>");
@@ -47594,6 +48317,15 @@
     const position3 = value === null ? 0 : Math.max(0, Math.min(100, (value + 100) / 2));
     const display = value === null ? "\u2014" : "".concat(value > 0 ? "+" : "").concat(new Intl.NumberFormat(state.locale, { maximumFractionDigits: 1 }).format(value));
     return '<div class="persona-vital">\n    <span>'.concat(t(label), "\uFF1A").concat(escapeHtml2(description), "</span>\n    <strong>").concat(escapeHtml2(display), '</strong>\n    <div class="persona-vital-track" role="img" aria-label="').concat(escapeHtml2("".concat(t(label), " ").concat(description, " ").concat(display)), '"><i style="--value:').concat(position3, '%"></i></div>\n  </div>');
+  }
+  function renderLedgerDirectory(round, items, emptyText, key2) {
+    if (!items.length) return '<p class="runtime-empty-copy">'.concat(escapeHtml2(emptyText), "</p>");
+    return '<div class="protocol-index" data-stage-scroll-key="'.concat(escapeHtml2(key2), '" role="list">').concat(items.map((item, position3) => {
+      const ref = ledgerCardId(item, position3);
+      const warn = ledgerBlocking(item);
+      const time = String(item.recorded_at || "").replace("T", " ").slice(0, 19) || t("\u672A\u8BB0\u5F55");
+      return '<button class="protocol-index-row ledger-event '.concat(warn ? "warn" : "", '" type="button" role="listitem" data-ledger-event data-ledger-round="').concat(escapeHtml2(round), '" data-ledger-card-id="').concat(escapeHtml2(ref), '">\n      <span class="protocol-index-seq">#').concat(escapeHtml2(item.event_index ?? position3), '</span>\n      <span class="protocol-index-main"><b>').concat(escapeHtml2(ledgerCardTitle(item)), "</b><small>").concat(escapeHtml2(time), " \xB7 ").concat(escapeHtml2(runtimeTerm(item.phase || "round")), " \xB7 ").concat(escapeHtml2(item.frame_id || "round"), '</small></span>\n      <span class="protocol-index-tags"><em>').concat(escapeHtml2(item.type || "event"), "</em>").concat(item.severity ? "<em>".concat(escapeHtml2(item.severity), "</em>") : "", "</span>\n    </button>");
+    }).join(""), "</div>");
   }
   function personaMeter(label, value, display) {
     const position3 = value === null ? 0 : Math.max(0, Math.min(100, value));
@@ -47732,17 +48464,6 @@
     const axisLabels = { trust: "\u4FE1\u4EFB", safety: "\u5B89\u5FC3", value: "\u91CD\u89C6", investment: "\u6295\u5165", honesty: "\u5766\u8BDA", resonance: "\u5171\u632F" };
     return '\n    <div class="deposition-workspace">\n      <nav class="deposition-master" aria-label="'.concat(t("\u6D3B\u52A8\u5173\u7CFB\u5361\u5217\u8868"), '">\n        <header><span class="hud-label">').concat(t("\u5173\u7CFB\u57DF"), "</span><strong>").concat(items.length, " ").concat(t("\u5F20"), '</strong></header>\n        <div class="deposition-list" data-stage-scroll-key="relations:list">').concat(items.map((item) => depositionRow("relation", item, item.id === selected?.id, item.id, item.status)).join(""), '</div>\n      </nav>\n      <section class="deposition-detail" aria-live="polite" data-stage-scroll-key="').concat(escapeHtml2("relations:detail:".concat(selected?.id || "none")), '">\n        ').concat(!selected ? renderDepositionEmpty(t("\u5173\u7CFB\u57DF"), t("\u6CA1\u6709\u6D3B\u52A8\u5173\u7CFB\u5361"), t("\u5F53\u524D\u5173\u7CFB\u767B\u8BB0\u8868\u6CA1\u6709\u6D3B\u52A8\u5361\u7247\u3002")) : '\n          <header class="ledger-title compact"><div><span class="hud-label">'.concat(escapeHtml2(selected.category || "REL"), " / ACTIVE CARD</span><h2>").concat(escapeHtml2(detail?.name || selected.name || selected.id), "</h2></div><p>").concat(escapeHtml2(selected.id), "</p></header>\n          ").concat(detail ? '\n            <div class="relation-axis-grid">'.concat(Object.entries(axisLabels).map(([axis, label]) => "<div><span>".concat(escapeHtml2(t(label)), "</span><strong>").concat(Number(axes2[axis] || 0) >= 0 ? "+" : "").concat(escapeHtml2(axes2[axis] || 0), "</strong></div>")).join(""), '</div>\n            <section class="deposition-notes"><span class="hud-label">').concat(t("\u5173\u7CFB\u7B14\u8BB0"), "</span>").concat((detail.notes || []).length ? (detail.notes || []).map((note) => "<article><time>".concat(escapeHtml2(note.date || t("\u672A\u6807\u65E5\u671F")), "</time><p>").concat(escapeHtml2(note.content), "</p></article>")).join("") : '<p class="runtime-empty-copy">'.concat(t("\u6CA1\u6709\u5173\u7CFB\u7B14\u8BB0\u3002"), "</p>"), "</section>\n          ") : depositionDetailStatus("relation", selected.id, t("\u6B63\u5728\u8BFB\u53D6\u5173\u7CFB\u5361\u2026")), "\n        "), "\n      </section>\n    </div>\n  ");
   }
-  function renderContainerFocusControls(selected) {
-    const focus = depositionProjection.index?.focus || { current: "", previous: "" };
-    const mutation = depositionProjection.focusMutation;
-    const selectedIsCurrent = focus.current === selected.id;
-    const selectedIsRestorable = !focus.current && focus.previous === selected.id;
-    const action = selectedIsCurrent ? "close" : selectedIsRestorable ? "restore" : "open";
-    const actionTarget = action === "restore" ? "" : selected.id;
-    const actionLabel = selectedIsCurrent ? t("\u5173\u95ED\u5F53\u524D\u7126\u70B9") : selectedIsRestorable ? t("\u6062\u590D\u4E3A\u5F53\u524D\u7126\u70B9") : t("\u6253\u5F00\u4E3A\u5F53\u524D\u7126\u70B9");
-    const receipt = mutation.receipt;
-    return '\n    <section class="container-focus-control" aria-busy="'.concat(mutation.pending ? "true" : "false", '">\n      <header><div><span class="hud-label">').concat(t("\u5BB9\u5668\u5DE5\u4F5C\u53F0"), "</span><h3>").concat(t("\u53D7\u63A7\u7126\u70B9"), "</h3></div><code>").concat(escapeHtml2(focus.current || "NONE"), "</code></header>\n      <dl>\n        <div><dt>").concat(t("\u5F53\u524D"), "</dt><dd>").concat(escapeHtml2(focus.current || t("\u65E0")), "</dd></div>\n        <div><dt>").concat(t("\u4E0A\u4E00\u4E2A"), "</dt><dd>").concat(escapeHtml2(focus.previous || t("\u65E0")), '</dd></div>\n      </dl>\n      <div class="container-focus-actions">\n        <button type="button" data-container-focus-action="').concat(action, '" data-container-id="').concat(escapeHtml2(actionTarget), '" ').concat(mutation.pending ? "disabled" : "", ">").concat(escapeHtml2(actionLabel), "</button>\n        ").concat(focus.previous && focus.previous !== selected.id ? '<button type="button" data-container-focus-action="restore" data-container-id="" '.concat(mutation.pending ? "disabled" : "", ">").concat(t("\u6062\u590D\u4E0A\u4E00\u4E2A\u7126\u70B9 \xB7 {id}", { id: focus.previous }), "</button>") : "", '\n      </div>\n      <p class="container-focus-feedback" aria-live="polite">').concat(escapeHtml2(mutation.pending ? t("\u63D0\u4EA4\u4E2D") : mutation.feedback || t("\u52A8\u4F5C\u7ECF\u65E2\u6709\u5BB9\u5668\u7126\u70B9\u5904\u7406\u5668\u63D0\u4EA4\uFF1B\u754C\u9762\u7B49\u5F85\u771F\u6E90\u91CD\u8BFB\u540E\u518D\u66F4\u65B0\u3002")), "</p>\n      ").concat(receipt ? '<dl class="container-focus-receipt">\n        <div><dt>RECEIPT</dt><dd>'.concat(escapeHtml2(receipt.tool_id || "container_focus"), "</dd></div>\n        <div><dt>STATUS</dt><dd>").concat(escapeHtml2(receipt.status || "unknown"), "</dd></div>\n        <div><dt>ACTION</dt><dd>").concat(escapeHtml2(receipt.action || "unknown"), "</dd></div>\n        <div><dt>TARGET</dt><dd>").concat(escapeHtml2(receipt.container_id || "none"), "</dd></div>\n        ").concat(receipt.reason ? "<div><dt>REASON</dt><dd>".concat(escapeHtml2(receipt.reason), "</dd></div>") : "", "\n      </dl>") : "", "\n    </section>\n  ");
-  }
   function renderContainersPage() {
     const unavailable = renderDepositionUnavailable("CONTAINER / CONTROLLED");
     if (unavailable) return unavailable;
@@ -47751,7 +48472,7 @@
     const items = prefix ? depositionItems("container").filter((item) => item.prefix === prefix) : [];
     const selected = selectDepositionItem("container", items);
     const detail = selected ? depositionDetail("container", selected.id) : null;
-    return '\n    <div class="deposition-workspace">\n      <nav class="deposition-master" aria-label="'.concat(t("\u5DF2\u767B\u8BB0\u5BB9\u5668\u5217\u8868"), '">\n        <header><span class="hud-label">').concat(escapeHtml2(prefix || "CAND"), "</span><strong>").concat(items.length, " ").concat(t("\u4E2A"), '</strong></header>\n        <div class="deposition-list" data-stage-scroll-key="').concat(escapeHtml2("containers:".concat(tab2, ":list")), '">').concat(items.map((item) => depositionRow("container", item, item.id === selected?.id, item.id, item.focus ? "FOCUS" : item.status)).join(""), '</div>\n      </nav>\n      <section class="deposition-detail" aria-live="polite" data-stage-scroll-key="').concat(escapeHtml2("containers:".concat(tab2, ":detail:").concat(selected?.id || "none")), '">\n        ').concat(!selected ? renderDepositionEmpty(prefix || "CANDIDATES", tab2 === "candidates" ? t("\u5019\u9009\u5BB9\u5668\u672A\u63A5\u5165") : t("\u6CA1\u6709 {prefix} \u5BB9\u5668", { prefix: prefix || "" }), tab2 === "candidates" ? t("\u53EA\u8BFB\u53D6\u6B63\u5F0F\u767B\u8BB0\u8868\u5B9E\u4F8B\uFF1B\u5019\u9009\u96C6\u5408\u4ECD\u4FDD\u6301\u5EF6\u671F\u3002") : t("\u5F53\u524D\u767B\u8BB0\u8868\u6CA1\u6709\u8BE5\u7C7B\u578B\u5B9E\u4F8B\uFF0C\u8FD9\u662F\u6B63\u5E38\u7A7A\u6001\u3002")) : '\n          <header class="ledger-title compact"><div><span class="hud-label">'.concat(escapeHtml2(selected.prefix), " / REGISTERED</span><h2>").concat(escapeHtml2(selected.title || selected.id), "</h2></div><p>").concat(escapeHtml2(selected.id), '</p></header>\n          <dl class="container-facts">\n            <div><dt>').concat(t("\u72B6\u6001"), "</dt><dd>").concat(escapeHtml2(runtimeTerm(selected.status || t("\u672A\u77E5"))), "</dd></div>\n            <div><dt>").concat(t("\u7126\u70B9"), "</dt><dd>").concat(selected.focus ? t("\u5F53\u524D\u7126\u70B9") : t("\u672A\u805A\u7126"), "</dd></div>\n            <div><dt>").concat(t("\u76EE\u6807"), "</dt><dd>").concat(escapeHtml2(detail?.default_target || t("\u8BFB\u53D6\u4E2D")), "</dd></div>\n          </dl>\n          ").concat(detail ? '<pre class="deposition-content">'.concat(escapeHtml2(detail.content || t("\u5BB9\u5668\u6B63\u6587\u4E3A\u7A7A\u3002")), "</pre>").concat(detail.content_truncated ? '<p class="deposition-source-note">'.concat(t("\u6B63\u6587\u8D85\u8FC7 64 KiB\uFF0C\u5F53\u524D\u53EA\u8BFB\u6295\u5F71\u5DF2\u660E\u786E\u622A\u65AD\u3002"), "</p>") : "") : depositionDetailStatus("container", selected.id, t("\u6B63\u5728\u8BFB\u53D6\u5BB9\u5668\u6B63\u6587\u2026")), "\n          ").concat(renderContainerFocusControls(selected), '\n          <section class="deposition-refs"><span class="hud-label">').concat(t("\u8BB0\u5FC6\u5F15\u7528"), "</span>").concat(selected.entries?.length ? selected.entries.map((entry) => "<div>".concat(entry.mem_id ? depositionJump("memory", entry.mem_id) : "<em>".concat(t("\u65E0 MEM \u5F15\u7528"), "</em>"), "<span>").concat(escapeHtml2(entry.title || entry.target_file || t("\u5DF2\u767B\u8BB0\u6761\u76EE")), "</span><code>").concat(entry.round == null ? "" : "R".concat(escapeHtml2(entry.round)), "</code></div>")).join("") : '<p class="runtime-empty-copy">'.concat(t("\u6CA1\u6709\u5DF2\u767B\u8BB0\u7684\u8BB0\u5FC6\u5F15\u7528\u3002"), "</p>"), "</section>\n        "), "\n      </section>\n    </div>\n  ");
+    return '\n    <div class="deposition-workspace">\n      <nav class="deposition-master" aria-label="'.concat(t("\u5DF2\u767B\u8BB0\u5BB9\u5668\u5217\u8868"), '">\n        <header><span class="hud-label">').concat(escapeHtml2(prefix || "CAND"), "</span><strong>").concat(items.length, " ").concat(t("\u4E2A"), '</strong></header>\n        <div class="deposition-list" data-stage-scroll-key="').concat(escapeHtml2("containers:".concat(tab2, ":list")), '">').concat(items.map((item) => depositionRow("container", item, item.id === selected?.id, item.id, item.status)).join(""), '</div>\n      </nav>\n      <section class="deposition-detail" aria-live="polite" data-stage-scroll-key="').concat(escapeHtml2("containers:".concat(tab2, ":detail:").concat(selected?.id || "none")), '">\n        ').concat(!selected ? renderDepositionEmpty(prefix || "CANDIDATES", tab2 === "candidates" ? t("\u5019\u9009\u5BB9\u5668\u672A\u63A5\u5165") : t("\u6CA1\u6709 {prefix} \u5BB9\u5668", { prefix: prefix || "" }), tab2 === "candidates" ? t("\u53EA\u8BFB\u53D6\u6B63\u5F0F\u767B\u8BB0\u8868\u5B9E\u4F8B\uFF1B\u5019\u9009\u96C6\u5408\u4ECD\u4FDD\u6301\u5EF6\u671F\u3002") : t("\u5F53\u524D\u767B\u8BB0\u8868\u6CA1\u6709\u8BE5\u7C7B\u578B\u5B9E\u4F8B\uFF0C\u8FD9\u662F\u6B63\u5E38\u7A7A\u6001\u3002")) : '\n          <header class="ledger-title compact"><div><span class="hud-label">'.concat(escapeHtml2(selected.prefix), " / REGISTERED</span><h2>").concat(escapeHtml2(selected.title || selected.id), "</h2></div><p>").concat(escapeHtml2(selected.id), '</p></header>\n          <dl class="container-facts">\n            <div><dt>').concat(t("\u72B6\u6001"), "</dt><dd>").concat(escapeHtml2(runtimeTerm(selected.status || t("\u672A\u77E5"))), "</dd></div>\n            <div><dt>").concat(t("\u76EE\u6807"), "</dt><dd>").concat(escapeHtml2(detail?.default_target || t("\u8BFB\u53D6\u4E2D")), "</dd></div>\n          </dl>\n          ").concat(detail ? '<pre class="deposition-content">'.concat(escapeHtml2(detail.content || t("\u5BB9\u5668\u6B63\u6587\u4E3A\u7A7A\u3002")), "</pre>").concat(detail.content_truncated ? '<p class="deposition-source-note">'.concat(t("\u6B63\u6587\u8D85\u8FC7 64 KiB\uFF0C\u5F53\u524D\u53EA\u8BFB\u6295\u5F71\u5DF2\u660E\u786E\u622A\u65AD\u3002"), "</p>") : "") : depositionDetailStatus("container", selected.id, t("\u6B63\u5728\u8BFB\u53D6\u5BB9\u5668\u6B63\u6587\u2026")), '\n          <section class="deposition-refs"><span class="hud-label">').concat(t("\u8BB0\u5FC6\u5F15\u7528"), "</span>").concat(selected.entries?.length ? selected.entries.map((entry) => "<div>".concat(entry.mem_id ? depositionJump("memory", entry.mem_id) : "<em>".concat(t("\u65E0 MEM \u5F15\u7528"), "</em>"), "<span>").concat(escapeHtml2(entry.title || entry.target_file || t("\u5DF2\u767B\u8BB0\u6761\u76EE")), "</span><code>").concat(entry.round == null ? "" : "R".concat(escapeHtml2(entry.round)), "</code></div>")).join("") : '<p class="runtime-empty-copy">'.concat(t("\u6CA1\u6709\u5DF2\u767B\u8BB0\u7684\u8BB0\u5FC6\u5F15\u7528\u3002"), "</p>"), "</section>\n        "), "\n      </section>\n    </div>\n  ");
   }
   function renderAuditPage() {
     return renderRuntimeAuditPage();
@@ -47817,7 +48538,7 @@
       { key: "index_display_limits.association_index", label: "\u8054\u60F3\u7D22\u5F15\u663E\u793A\u91CF", kind: "int", min: 1, max: 1e3 }
     ],
     relation: [
-      { key: "relation_focus.max_slots", label: "\u5173\u7CFB\u7126\u70B9\u69FD\u4F4D", kind: "int", min: 1, max: 32 }
+      { key: "relation_context.max_slots", label: "\u5173\u7CFB\u5728\u573A\u69FD\u4F4D", kind: "int", min: 1, max: 32 }
     ]
   };
   function renderSettingField(field, value) {
@@ -47861,7 +48582,7 @@
       ["lately", "\u6700\u8FD1\u7F13\u5B58", "\u8FD1\u671F\u8BED\u6599\u7684\u5BB9\u91CF\u3001\u88C1\u526A\u4E0E\u538B\u7F29\u8FB9\u754C\u3002"],
       ["periodic", "\u5B9A\u671F\u5C42", "\u5B9A\u671F\u8BB0\u5FC6\u6295\u5F71\u7684\u5185\u5BB9\u4E0A\u9650\u3002"],
       ["high_freq", "\u9AD8\u9891\u5C42", "\u9AD8\u9891\u7D22\u5F15\u4E0E\u5F15\u7528\u7A97\u53E3\u7684\u663E\u793A\u8FB9\u754C\u3002"],
-      ["relation", "\u5173\u7CFB\u7126\u70B9", "\u6BCF\u8F6E\u53EF\u88C5\u914D\u7684\u5173\u7CFB\u7126\u70B9\u69FD\u4F4D\u3002"]
+      ["relation", "\u5173\u7CFB\u5728\u573A\u6295\u5F71", "\u6BCF\u8F6E\u53EF\u88C5\u914D\u7684\u5173\u7CFB\u5728\u573A\u69FD\u4F4D\u3002"]
     ];
     return '<form class="settings-context-form" data-context-settings-form>\n    '.concat(groups.map(([fileId, title, description]) => '<section class="ledger-panel settings-panel settings-context-panel" data-settings-file="'.concat(fileId, '">\n      <header class="ledger-title"><h2>').concat(t(title), "</h2><p>").concat(t(description), '</p></header>\n      <div class="settings-grid">').concat(contextSettingFields[fileId].map((field) => renderSettingField(field, files[fileId].values[field.key])).join(""), "</div>\n    </section>")).join(""), '\n    <details class="settings-advanced ledger-panel settings-panel settings-context-panel" data-settings-file="memory">\n      <summary>').concat(t("\u8BB0\u5FC6\u4EE3\u8C22"), "</summary>\n      <p>").concat(t("\u8BB0\u5FC6\u70ED\u5EA6\u3001\u53EC\u56DE\u3001\u8870\u51CF\u4E0E\u5347\u683C\u8FB9\u754C\u3002"), '</p>\n      <div class="settings-grid">').concat(contextSettingFields.memory.map((field) => renderSettingField(field, files.memory.values[field.key])).join(""), "</div>\n    </details>\n    ").concat(settingsActions(), "\n  </form>").concat(settingsFeedback());
   }
@@ -48048,7 +48769,7 @@
     "intro.md": ["\u4EC0\u4E48\u662F UPSP", "UPSP \u57FA\u672C\u89E3\u91CA"],
     "step-wheel.md": ["\u4E09\u6B65\u8F6E", "\u8D77\u624B / \u53CD\u5E94 / \u5584\u540E"],
     "context-layers.md": ["\u4E0A\u4E0B\u6587\u5341\u5C42", "\u5E38\u9A7B\u5C42\u81F3\u5F39\u7A97\u5C42"],
-    "content-window.md": ["\u5185\u5BB9\u7A97\u53E3\u4E09\u901A\u9053", "\u7126\u70B9 / \u5E38\u9A7B / \u5373\u65F6"],
+    "content-window.md": ["\u5185\u5BB9\u7A97\u53E3\u4E24\u79CD\u6302\u8F7D", "\u5E38\u9A7B / \u5373\u65F6"],
     "memory-bus.md": ["\u8BB0\u5FC6\u603B\u7EBF", "MEM \u4E0D\u662F\u666E\u901A\u5BB9\u5668"],
     "work-containers.md": ["\u5DE5\u4F5C\u5BB9\u5668", "\u8FA9\u8BC1\u94FE / \u4E8B\u4EF6\u94FE / \u9879\u76EE / \u6280\u80FD"],
     "audit-tools.md": ["\u534F\u8BAE\u4E2D\u5FC3", "\u52A8\u6001\u8D26\u672C / \u89C4\u5219 / \u6587\u6863"],
@@ -48088,7 +48809,9 @@
   }
   function openContextToolAnnotation(toolName) {
     const selectedRound = contextSelection();
-    const frame = selectedRound ? contextFrameSelection(selectedRound.live) : null;
+    const selected = selectedRound ? contextFrameSelection(selectedRound.live) : null;
+    const detail = runtimeProjection.frameDetail;
+    const frame = selectedRound && selected && detail?.round === selectedRound.round && detail.frameId === selected.frame_id ? detail.frame : null;
     const pane = frame?.context_panes?.find((entry) => entry.id === "01_tool_header");
     const tool = contextToolAnnotations(pane).find((entry) => entry.name === toolName);
     if (!selectedRound || !frame || !tool) return;
@@ -48213,17 +48936,12 @@
     if (!response.ok) throw new Error("manual_read_failed:".concat(response.status));
     return parseFrontmatter(await response.text());
   }
-  function openLedgerEvent(round, cardId) {
-    const live = round === runtimeProjection.round ? runtimeProjection.live : runtimeProjection.conversationRounds.get(round) || null;
-    const cards = live?.conversation || [];
-    const position3 = cards.findIndex((card2, index2) => ledgerCardId(card2, index2) === cardId);
-    const card = position3 >= 0 ? cards[position3] : null;
-    if (!card) return;
+  function openLedgerEvent(round, cardId, card) {
     rememberDetailFocus();
     showDetail({
       sourceType: "RUNTIME",
       title: ledgerCardTitle(card) || "".concat(t("\u8FD0\u884C\u65F6"), " ").concat(state.locale === "zh-CN" ? "\u4E8B\u4EF6" : "event"),
-      summary: "".concat(card.type || "event", " \xB7 #").concat(card.event_index ?? position3),
+      summary: "".concat(card.type || "event", " \xB7 #").concat(card.event_index ?? cardId),
       sourceRef: "".concat(t("\u5F53\u524D\u8F6E"), " R").concat(round, " \xB7 ").concat(card.phase || "round", " \xB7 ").concat(card.frame_id || "round", " \xB7 ").concat(card.event_type || "event"),
       documentId: "ledger:".concat(round, ":").concat(cardId),
       contentMd: ledgerCardMarkdown(card),
@@ -48343,9 +49061,12 @@
     const stage = runtimeProjection.status?.stage || "";
     const stopRequested = runtimeProjection.status?.stop_requested === true;
     const canStop = runtimeProjection.status?.can_stop === true;
-    const stopAvailable = canStop || Boolean(inFlight && stage !== "cleanup_local");
+    const localSettlement = stage === "cleanup_local";
+    const stopAvailable = canStop || Boolean(
+      inFlight && runtimeProjection.awaitingProjection && !localSettlement
+    );
     const roundActive = Boolean(
-      inFlight || relayInFlight || canStop || stage === "cleanup_local" || stopRequested && runtimeProjection.status?.current_round != null
+      inFlight || relayInFlight || canStop || localSettlement || stopRequested && runtimeProjection.status?.current_round != null
     );
     const projectedPermission = runtimeProjection.status?.execution_permission?.pending_level || runtimeProjection.status?.execution_permission?.permission_level;
     if (roundActive && !runtimeProjection.permissionChanging && projectedPermission) {
@@ -48354,10 +49075,10 @@
     const connected = runtimeProjection.host === "connected";
     const pending = inFlight || relayInFlight || runtimeProjection.awaitingProjection;
     const modelReady = settingsProjection.data?.persona.setup_model_ready === true;
-    const frames = runtimeProjection.live?.call_frames || [];
+    const frames = runtimeProjection.live?.frame_catalog || [];
     const latestFrame = frames.find((frame) => frame.frame_id === runtimeProjection.live?.latest_frame_id) || frames.at(-1) || null;
     const reportedFrame = latestFrame?.context_usage?.state === "reported" ? latestFrame : [...frames].reverse().find((frame) => frame.context_usage?.state === "reported") || [...runtimeProjection.conversationRoundOrder].reverse().flatMap((round) => [
-      ...runtimeProjection.conversationRounds.get(round)?.call_frames || []
+      ...runtimeProjection.conversationRounds.get(round)?.frame_catalog || []
     ].reverse()).find((frame) => frame.context_usage?.state === "reported") || latestFrame;
     const contextUsageHtml = frameContextUsage(reportedFrame, true);
     if (els.contextUsage.innerHTML !== contextUsageHtml) {
@@ -48365,15 +49086,16 @@
     }
     els.configureModelButton.hidden = modelReady;
     els.sendButton.hidden = !modelReady || roundActive;
-    els.stopButton.hidden = !roundActive;
-    els.stopButton.disabled = runtimeProjection.stopping || !stopAvailable;
+    els.stopButton.hidden = !roundActive || !stopAvailable && !localSettlement;
+    els.stopButton.disabled = localSettlement || runtimeProjection.stopping || !stopAvailable;
+    els.stopButton.title = localSettlement ? t("\u672C\u5730\u7ED3\u7B97\u4E0D\u53EF\u4E2D\u65AD") : "";
     els.sendButton.disabled = !connected || pending || !modelReady;
     els.permissionLevel.disabled = runtimeProjection.permissionChanging || stage.startsWith("cleanup");
     els.messageInput.readOnly = pending;
     els.runtimeComposer.setAttribute("aria-busy", String(pending));
     if (!modelReady) {
       els.sendFeedback.textContent = t("\u5C1A\u672A\u914D\u7F6E\u53EF\u7528\u6A21\u578B\uFF0C\u5B8C\u6210\u6A21\u578B\u670D\u52A1\u4E0E\u8D77\u624B\u8DEF\u7531\u540E\u5373\u53EF\u53D1\u9001\u3002");
-    } else if (stage === "cleanup_local") {
+    } else if (localSettlement) {
       els.sendFeedback.textContent = t("\u6B63\u5728\u672C\u5730\u5584\u540E");
     } else if (stage === "tool_approval") {
       els.sendFeedback.textContent = t("\u7B49\u5F85\u5DE5\u5177\u6267\u884C\u5BA1\u6279");
@@ -48836,6 +49558,7 @@
   // src/runtime.ts
   var contextPrefixDiffController = null;
   var depositionDetailRequests = /* @__PURE__ */ new Map();
+  var LIVE_PROJECTION_RETRY_DELAY_MS = 5e3;
   var RuntimeRequestError = class extends Error {
     status;
     code;
@@ -48884,6 +49607,7 @@
   function refreshRuntimeUi() {
     const key2 = JSON.stringify([
       runtimeProjection.host,
+      runtimeProjection.hostSession,
       runtimeProjection.round,
       runtimeProjection.live?.last_event_index || 0,
       runtimeProjection.live?.round_lifecycle?.state || "",
@@ -48892,6 +49616,15 @@
       runtimeProjection.status?.stage || "",
       runtimeProjection.status?.stop_requested || false,
       runtimeProjection.status?.can_stop || false,
+      runtimeProjection.status?.pending_tool_approval?.approval_id || "",
+      runtimeProjection.status?.interrupted_recovery?.pending || false,
+      runtimeProjection.status?.interrupted_recovery?.round || 0,
+      runtimeProjection.status?.interrupted_recovery?.applied_unregistered || 0,
+      runtimeProjection.status?.interrupted_recovery?.applied_registered || 0,
+      runtimeProjection.status?.interrupted_recovery?.not_applied || 0,
+      runtimeProjection.status?.interrupted_recovery?.known_result || 0,
+      runtimeProjection.status?.interrupted_recovery?.conflict || 0,
+      runtimeProjection.status?.interrupted_recovery?.outcome_unknown || 0,
       runtimeProjection.status?.cli?.data?.round_type || "",
       (runtimeProjection.status?.cli?.data?.active_flags || []).join(","),
       runtimeProjection.sending,
@@ -48899,10 +49632,14 @@
       taskProjection.relayPending,
       runtimeProjection.awaitingProjection,
       runtimeProjection.error,
+      runtimeProjection.liveError,
+      runtimeProjection.liveErrorEventIndex,
       runtimeProjection.sendFeedback,
       runtimeProjection.exportFeedback,
       runtimeProjection.conversationHistoryVersion,
-      runtimeProjection.conversationHistoryError
+      runtimeProjection.conversationHistoryError,
+      runtimeProjection.conversationHistoryHasMore,
+      runtimeProjection.conversationHistoryLoading
     ]);
     if (key2 === runtimeProjection.renderKey) {
       renderComposerState();
@@ -48919,7 +49656,7 @@
     }
   }
   function validateLiveState(statePayload) {
-    if (statePayload !== null && statePayload?.schema_version !== "round_live_state.v2") {
+    if (statePayload !== null && statePayload?.schema_version !== "round_live_state.v3") {
       throw new Error("round_live_state_schema_mismatch");
     }
   }
@@ -48929,7 +49666,7 @@
     const round = selectedRound !== null && runtimeProjection.conversationRounds.has(selectedRound) ? selectedRound : runtimeProjection.round ?? rounds.at(-1) ?? null;
     if (round === null) return null;
     const live = round === runtimeProjection.round ? runtimeProjection.live : runtimeProjection.conversationRounds.get(round) || null;
-    const frames = live?.call_frames || [];
+    const frames = live?.frame_catalog || [];
     const frame = state.selectedContextFrame === null ? frames.at(-1) : frames.find((item) => item.frame_id === state.selectedContextFrame);
     return frame ? { round, frameId: frame.frame_id } : null;
   }
@@ -48983,6 +49720,243 @@
       if (contextPrefixDiffController === controller) contextPrefixDiffController = null;
     }
   }
+  function liveForRound(round) {
+    return round === runtimeProjection.round ? runtimeProjection.live : runtimeProjection.conversationRounds.get(round) || null;
+  }
+  function detailKey(round, ref) {
+    return "".concat(round, ":").concat(ref);
+  }
+  async function fetchLiveDetail(kind, round, ref = "") {
+    const query = new URLSearchParams({ kind, round: String(round) });
+    if (ref) query.set("ref", ref);
+    const payload = await fetchRuntimeJson("./api/live/detail?".concat(query.toString()));
+    if (payload.schema_version !== "round_live_detail.v1" || payload.kind !== kind || payload.round !== round) {
+      throw new Error("round_live_detail_schema_mismatch");
+    }
+    if (ref && payload.ref !== ref) throw new Error("round_live_detail_ref_mismatch");
+    return payload;
+  }
+  async function loadLegacyCards(round) {
+    if (runtimeProjection.legacyCards.has(round) || runtimeProjection.legacyCardsLoading.has(round)) return;
+    const generation = runtimeProjection.detailGeneration;
+    runtimeProjection.legacyCardsLoading.add(round);
+    runtimeProjection.legacyCardsErrors.delete(round);
+    refreshRuntimeUi();
+    try {
+      const detail = await fetchLiveDetail("legacy_conversation", round);
+      if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return;
+      const body3 = jsonObject2(detail.payload);
+      if (!Array.isArray(body3.conversation)) throw new Error("legacy_conversation_detail_invalid");
+      runtimeProjection.legacyCards.set(round, body3.conversation);
+    } catch (error) {
+      if (generation === runtimeProjection.detailGeneration) {
+        const failure = errorView(error);
+        runtimeProjection.legacyCardsErrors.set(round, failure.code || failure.message);
+      }
+    } finally {
+      if (generation === runtimeProjection.detailGeneration) {
+        runtimeProjection.legacyCardsLoading.delete(round);
+        runtimeProjection.conversationHistoryVersion += 1;
+        refreshRuntimeUi();
+      }
+    }
+  }
+  async function loadLedgerItems(round) {
+    if (runtimeProjection.ledgerItems.has(round) || runtimeProjection.ledgerItemsLoading.has(round)) return;
+    const generation = runtimeProjection.detailGeneration;
+    runtimeProjection.ledgerItemsLoading.add(round);
+    runtimeProjection.ledgerItemsErrors.delete(round);
+    refreshRuntimeUi();
+    try {
+      const detail = await fetchLiveDetail("ledger", round);
+      if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return;
+      const body3 = jsonObject2(detail.payload);
+      if (!Array.isArray(body3.items)) throw new Error("ledger_detail_invalid");
+      runtimeProjection.ledgerItems.set(round, body3.items);
+    } catch (error) {
+      if (generation === runtimeProjection.detailGeneration) {
+        const failure = errorView(error);
+        runtimeProjection.ledgerItemsErrors.set(round, failure.code || failure.message);
+      }
+    } finally {
+      if (generation === runtimeProjection.detailGeneration) {
+        runtimeProjection.ledgerItemsLoading.delete(round);
+        runtimeProjection.conversationHistoryVersion += 1;
+        refreshRuntimeUi();
+      }
+    }
+  }
+  async function fetchLedgerEventCard(round, eventRef) {
+    const generation = runtimeProjection.detailGeneration;
+    const detail = await fetchLiveDetail("event", round, eventRef);
+    if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return null;
+    const body3 = jsonObject2(detail.payload);
+    const cards = Array.isArray(body3.cards) ? body3.cards : [];
+    const event = jsonObject2(body3.event);
+    if (cards.length) {
+      const sections = cards.map((card) => {
+        const title = String(card.title || card.type || "event");
+        const content3 = String(card.content_md || card.content_raw || card.content || "");
+        return "## ".concat(title, "\n\n").concat(content3);
+      });
+      sections.push("## ".concat(t("\u539F\u59CB JSON"), "\n\n```json\n").concat(JSON.stringify(event, null, 2), "\n```"));
+      return {
+        ...cards[0],
+        title: String(event.event_type || cards[0].title || "event"),
+        content_md: sections.join("\n\n"),
+        content_raw: JSON.stringify(event, null, 2)
+      };
+    }
+    return {
+      event_index: Number(event.event_index || eventRef),
+      event_type: String(event.event_type || "event"),
+      phase: String(event.phase || "round"),
+      frame_id: String(event.frame_id || ""),
+      recorded_at: String(event.recorded_at || ""),
+      title: String(event.event_type || "event"),
+      type: "event",
+      content_md: "```json\n".concat(JSON.stringify(event, null, 2), "\n```")
+    };
+  }
+  async function loadFrameDetail(round, frameId, { force = false } = {}) {
+    const key2 = detailKey(round, frameId);
+    if (!force && runtimeProjection.frameDetail?.round === round && runtimeProjection.frameDetail.frameId === frameId) return;
+    if (runtimeProjection.frameDetailLoading === key2) return;
+    const generation = runtimeProjection.detailGeneration;
+    runtimeProjection.frameDetail = null;
+    runtimeProjection.frameDetailLoading = key2;
+    runtimeProjection.frameDetailError = "";
+    refreshRuntimeUi();
+    try {
+      const detail = await fetchLiveDetail("frame", round, frameId);
+      if (generation !== runtimeProjection.detailGeneration || runtimeProjection.frameDetailLoading !== key2 || !liveForRound(round)) return;
+      const frame = detail.payload;
+      if (!frame || frame.frame_id !== frameId) throw new Error("frame_detail_invalid");
+      runtimeProjection.frameDetail = { round, frameId, frame };
+    } catch (error) {
+      if (generation === runtimeProjection.detailGeneration && runtimeProjection.frameDetailLoading === key2) {
+        const failure = errorView(error);
+        runtimeProjection.frameDetailError = failure.code || failure.message;
+      }
+    } finally {
+      if (generation === runtimeProjection.detailGeneration && runtimeProjection.frameDetailLoading === key2) {
+        runtimeProjection.frameDetailLoading = "";
+        runtimeProjection.conversationHistoryVersion += 1;
+        refreshRuntimeUi();
+      }
+    }
+  }
+  async function loadTimelineNodeDetail(round, nodeId) {
+    const key2 = detailKey(round, nodeId);
+    const current = liveForRound(round)?.dialogue_timeline?.nodes.find((node2) => node2.node_id === nodeId);
+    const cached = runtimeProjection.timelineNodeDetails.get(key2);
+    if (cached && cached.status === current?.status && cached.ended_at === current?.ended_at && cached.approval_decision === current?.approval_decision) return;
+    if (runtimeProjection.timelineNodeLoading.has(key2)) return;
+    const generation = runtimeProjection.detailGeneration;
+    runtimeProjection.timelineNodeLoading.add(key2);
+    runtimeProjection.timelineNodeErrors.delete(key2);
+    refreshRuntimeUi();
+    try {
+      const detail = await fetchLiveDetail("timeline_node", round, nodeId);
+      if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return;
+      const node2 = detail.payload;
+      if (!node2 || node2.node_id !== nodeId) throw new Error("timeline_node_detail_invalid");
+      runtimeProjection.timelineNodeDetails.set(key2, node2);
+    } catch (error) {
+      if (generation === runtimeProjection.detailGeneration) {
+        const failure = errorView(error);
+        runtimeProjection.timelineNodeErrors.set(key2, failure.code || failure.message);
+      }
+    } finally {
+      if (generation === runtimeProjection.detailGeneration) {
+        runtimeProjection.timelineNodeLoading.delete(key2);
+        runtimeProjection.conversationHistoryVersion += 1;
+        refreshRuntimeUi();
+      }
+    }
+  }
+  function refreshAdvancedRoundDetails(round, live) {
+    const reloadLedger = runtimeProjection.ledgerItems.delete(round);
+    runtimeProjection.ledgerItemsErrors.delete(round);
+    const currentNodes = new Map(
+      (live?.dialogue_timeline?.nodes || []).map((node2) => [node2.node_id, node2])
+    );
+    const reloadNodeIds = [];
+    for (const [key2, cached] of runtimeProjection.timelineNodeDetails) {
+      if (!key2.startsWith("".concat(round, ":"))) continue;
+      const current = currentNodes.get(cached.node_id);
+      if (current && current.status === cached.status && current.ended_at === cached.ended_at && current.approval_decision === cached.approval_decision) continue;
+      runtimeProjection.timelineNodeDetails.delete(key2);
+      runtimeProjection.timelineNodeErrors.delete(key2);
+      if (current?.detail_ref && state.conversationDisclosure.get(current.node_id) === true) {
+        reloadNodeIds.push(current.node_id);
+      }
+    }
+    const ledgerVisible = state.activePage === "audit" || state.activePage === "run" && ["tools", "receipts"].includes(getActivePageTab("run"));
+    if (reloadLedger && ledgerVisible) void loadLedgerItems(round);
+    for (const nodeId of reloadNodeIds) void loadTimelineNodeDetail(round, nodeId);
+  }
+  function loadSelectedRuntimeDetails(pageId, tabId = "") {
+    const selectedRound = pageId === "audit" ? state.selectedLedgerRound : pageId === "context" ? state.selectedContextRound : state.selectedTaskRound;
+    const round = selectedRound ?? runtimeProjection.round ?? runtimeProjection.conversationRoundOrder.at(-1) ?? null;
+    if (round === null) return;
+    const live = liveForRound(round);
+    if (!live) return;
+    if (pageId === "audit" || pageId === "run" && ["tools", "receipts"].includes(tabId)) {
+      void loadLedgerItems(round);
+    }
+    if (pageId !== "context" && !(pageId === "run" && tabId === "tools")) return;
+    const selectedFrameId = pageId === "context" ? state.selectedContextFrame : state.selectedTaskFrame;
+    const frames = live.frame_catalog || [];
+    const frame = selectedFrameId === null ? frames.at(-1) : frames.find((item) => item.frame_id === selectedFrameId);
+    if (frame) void loadFrameDetail(round, frame.frame_id);
+  }
+  function clearLiveDetails() {
+    runtimeProjection.detailGeneration += 1;
+    runtimeProjection.legacyCards.clear();
+    runtimeProjection.legacyCardsLoading.clear();
+    runtimeProjection.legacyCardsErrors.clear();
+    runtimeProjection.ledgerItems.clear();
+    runtimeProjection.ledgerItemsLoading.clear();
+    runtimeProjection.ledgerItemsErrors.clear();
+    runtimeProjection.frameDetail = null;
+    runtimeProjection.frameDetailLoading = "";
+    runtimeProjection.frameDetailError = "";
+    runtimeProjection.timelineNodeDetails.clear();
+    runtimeProjection.timelineNodeLoading.clear();
+    runtimeProjection.timelineNodeErrors.clear();
+  }
+  function clearRoundProjectionForIdentityMutation() {
+    clearLiveDetails();
+    state.conversationStickToBottom = true;
+    runtimeProjection.hostSession = "";
+    runtimeProjection.live = null;
+    runtimeProjection.round = null;
+    runtimeProjection.conversationRounds.clear();
+    runtimeProjection.conversationRoundOrder = [];
+    runtimeProjection.conversationHistoryInitialized = false;
+    runtimeProjection.conversationHistoryLatest = null;
+    runtimeProjection.conversationHistoryHasMore = false;
+    runtimeProjection.conversationHistoryLoading = false;
+    runtimeProjection.conversationHistoryError = "";
+    runtimeProjection.liveError = "";
+    runtimeProjection.liveErrorEventIndex = 0;
+    runtimeProjection.liveRetryAfter = 0;
+    runtimeProjection.fullRefreshNeeded = true;
+    state.selectedTaskRound = null;
+    state.selectedTaskFrame = null;
+    state.selectedContextRound = null;
+    state.selectedContextFrame = null;
+    state.selectedLedgerRound = null;
+  }
+  function requestDesktopBackendRestart() {
+    const webview = window.chrome?.webview;
+    if (!webview) return;
+    window.requestAnimationFrame(() => webview.postMessage({
+      schema_version: "upsp_desktop_message.v1",
+      command: "restart_backend"
+    }));
+  }
   function cacheLatestConversation(round, liveState) {
     if (round === null || !Number.isInteger(round) || !liveState) return;
     runtimeProjection.conversationRounds.set(round, liveState);
@@ -48994,13 +49968,18 @@
     }
   }
   async function syncConversationHistory({ force = false } = {}) {
+    if (runtimeProjection.conversationHistoryLoading) return;
+    const generation = runtimeProjection.detailGeneration;
     const latestRound = runtimeProjection.round;
     cacheLatestConversation(latestRound, runtimeProjection.live);
     if (!force && runtimeProjection.conversationHistoryInitialized && runtimeProjection.conversationHistoryLatest === latestRound) return;
     runtimeProjection.conversationHistoryInitialized = true;
     runtimeProjection.conversationHistoryLatest = latestRound;
+    runtimeProjection.conversationHistoryLoading = true;
+    refreshRuntimeUi();
     try {
       const payload = await fetchRuntimeJson("./api/rounds");
+      if (generation !== runtimeProjection.detailGeneration) return;
       if (!Array.isArray(payload.rounds)) throw new Error("round_list_schema_mismatch");
       const roundIds = [...new Set(payload.rounds.map((item) => Number(item.round)).filter((round) => Number.isInteger(round)))].sort((left, right) => left - right);
       if (latestRound !== null && Number.isInteger(latestRound) && !roundIds.includes(latestRound)) {
@@ -49011,22 +49990,32 @@
       [...runtimeProjection.conversationRounds.keys()].forEach((round) => {
         if (!retained.has(round)) runtimeProjection.conversationRounds.delete(round);
       });
-      const missing = roundIds.filter((round) => !runtimeProjection.conversationRounds.has(round));
+      const missing = roundIds.filter((round) => !runtimeProjection.conversationRounds.has(round)).sort((left, right) => right - left);
       const failed = [];
-      await Promise.all(missing.map(async (round) => {
+      for (const round of force ? missing.slice(0, 2) : []) {
         try {
           const roundPayload = await fetchRuntimeJson("./api/live/state?round=".concat(round));
+          if (generation !== runtimeProjection.detailGeneration) return;
           validateLiveState(roundPayload.state || null);
           if (Number(roundPayload.round) !== round || !roundPayload.state) {
             throw new Error("round_history_projection_mismatch");
           }
           runtimeProjection.conversationRounds.set(round, roundPayload.state);
+          if (roundPayload.state.display_mode === "legacy") void loadLegacyCards(round);
+          runtimeProjection.conversationRoundOrder = roundIds.filter(
+            (item) => runtimeProjection.conversationRounds.has(item)
+          );
+          runtimeProjection.conversationHistoryVersion += 1;
+          refreshRuntimeUi();
         } catch (error) {
           failed.push({ round, error });
         }
-      }));
+      }
       runtimeProjection.conversationRoundOrder = roundIds.filter(
         (round) => runtimeProjection.conversationRounds.has(round)
+      );
+      runtimeProjection.conversationHistoryHasMore = roundIds.some(
+        (round) => !runtimeProjection.conversationRounds.has(round)
       );
       if (state.selectedLedgerRound !== null && !retained.has(state.selectedLedgerRound)) {
         state.selectedLedgerRound = null;
@@ -49040,9 +50029,17 @@
       }
       runtimeProjection.conversationHistoryError = failed.length ? t("\u8F83\u65E9\u5BF9\u8BDD\u672A\u5B8C\u5168\u8F7D\u5165") : "";
     } catch (error) {
-      runtimeProjection.conversationHistoryError = t("\u8F83\u65E9\u5BF9\u8BDD\u672A\u5B8C\u5168\u8F7D\u5165");
+      if (generation === runtimeProjection.detailGeneration) {
+        runtimeProjection.conversationHistoryError = t("\u8F83\u65E9\u5BF9\u8BDD\u672A\u5B8C\u5168\u8F7D\u5165");
+      }
+    } finally {
+      if (generation === runtimeProjection.detailGeneration) {
+        runtimeProjection.conversationHistoryLoading = false;
+      }
     }
-    runtimeProjection.conversationHistoryVersion += 1;
+    if (generation === runtimeProjection.detailGeneration) {
+      runtimeProjection.conversationHistoryVersion += 1;
+    }
   }
   async function fetchFullLiveProjection() {
     const payload = await fetchRuntimeJson("./api/live/state?round=latest");
@@ -49053,7 +50050,7 @@
     if (forceFull || runtimeProjection.fullRefreshNeeded) return fetchFullLiveProjection();
     const after = Number(runtimeProjection.live?.last_event_index || 0);
     const payload = await fetchRuntimeJson("./api/live/events?round=latest&after=".concat(after));
-    if (payload.schema_version !== "round_live_events.v1") {
+    if (payload.schema_version !== "round_live_events.v2") {
       throw new Error("round_live_events_schema_mismatch");
     }
     const nextRound = payload.round ?? null;
@@ -49071,26 +50068,91 @@
       return polling.runtime;
     }
     const request = (async () => {
-      const previousRound = runtimeProjection.round;
-      const previousEventIndex = Number(
-        runtimeProjection.live?.last_event_index || 0
-      );
+      let requestGeneration = runtimeProjection.detailGeneration;
+      let status;
       try {
-        const [status, livePayload] = await Promise.all([
-          fetchRuntimeJson("./api/runtime/status"),
-          fetchLiveProjection(forceFull)
-        ]);
-        if (status.schema_version !== "seed_gui_runtime_status.v2") {
+        status = await fetchRuntimeJson("./api/runtime/status");
+        if (status.schema_version !== "seed_gui_runtime_status.v3") {
           throw new Error("runtime_status_schema_mismatch");
         }
-        runtimeProjection.host = "connected";
-        runtimeProjection.status = status;
-        runtimeProjection.live = livePayload.state;
-        runtimeProjection.round = livePayload.round;
-        runtimeProjection.error = "";
-        runtimeProjection.fullRefreshNeeded = false;
-        const liveAdvanced = previousRound !== livePayload.round || previousEventIndex !== Number(livePayload.state?.last_event_index || 0);
-        await syncConversationHistory();
+      } catch (error) {
+        if (requestGeneration !== runtimeProjection.detailGeneration) return false;
+        const failure = errorView(error);
+        runtimeProjection.host = "error";
+        runtimeProjection.status = null;
+        runtimeProjection.liveError = "";
+        runtimeProjection.liveErrorEventIndex = 0;
+        runtimeProjection.liveRetryAfter = 0;
+        runtimeProjection.fullRefreshNeeded = true;
+        runtimeProjection.error = "".concat(t("\u5BBF\u4E3B\u72B6\u6001\u8BFB\u53D6\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
+        refreshRuntimeUi();
+        return true;
+      }
+      if (requestGeneration !== runtimeProjection.detailGeneration) return false;
+      const nextHostSession = status.host_session || "";
+      const identityChanged = Boolean(
+        runtimeProjection.hostSession && runtimeProjection.hostSession !== nextHostSession
+      );
+      if (identityChanged) {
+        clearRoundProjectionForIdentityMutation();
+        requestGeneration = runtimeProjection.detailGeneration;
+      }
+      runtimeProjection.hostSession = nextHostSession;
+      const activeRound = status.current_round !== null && status.current_round !== void 0 && Number.isInteger(Number(status.current_round)) ? Number(status.current_round) : null;
+      if (!identityChanged && activeRound !== null && runtimeProjection.round !== null && activeRound !== runtimeProjection.round) {
+        cacheLatestConversation(runtimeProjection.round, runtimeProjection.live);
+        clearLiveDetails();
+        requestGeneration = runtimeProjection.detailGeneration;
+        runtimeProjection.live = null;
+        runtimeProjection.round = activeRound;
+        runtimeProjection.liveError = "";
+        runtimeProjection.liveErrorEventIndex = 0;
+        runtimeProjection.liveRetryAfter = 0;
+        runtimeProjection.fullRefreshNeeded = true;
+      }
+      runtimeProjection.host = "connected";
+      runtimeProjection.status = status;
+      runtimeProjection.error = "";
+      let liveAdvanced = false;
+      let liveSucceeded = false;
+      const retryDue = Date.now() >= runtimeProjection.liveRetryAfter;
+      if (forceFull || !runtimeProjection.liveError || retryDue) {
+        const previousRound = runtimeProjection.round;
+        const previousEventIndex = Number(
+          runtimeProjection.live?.last_event_index || 0
+        );
+        try {
+          const livePayload = await fetchLiveProjection(
+            forceFull || Boolean(runtimeProjection.liveError)
+          );
+          if (requestGeneration !== runtimeProjection.detailGeneration) return false;
+          if (activeRound !== null && livePayload.round !== activeRound) {
+            throw new Error("round_live_status_projection_mismatch");
+          }
+          runtimeProjection.live = livePayload.state;
+          runtimeProjection.round = livePayload.round;
+          runtimeProjection.liveError = "";
+          runtimeProjection.liveErrorEventIndex = 0;
+          runtimeProjection.liveRetryAfter = 0;
+          runtimeProjection.fullRefreshNeeded = false;
+          liveAdvanced = previousRound !== livePayload.round || previousEventIndex !== Number(livePayload.state?.last_event_index || 0);
+          liveSucceeded = true;
+        } catch (error) {
+          if (requestGeneration !== runtimeProjection.detailGeneration) return false;
+          const failure = errorView(error);
+          runtimeProjection.liveError = "".concat(t("\u5B9E\u65F6\u6295\u5F71\u8BFB\u53D6\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
+          runtimeProjection.liveErrorEventIndex = Number(
+            runtimeProjection.live?.last_event_index || 0
+          );
+          runtimeProjection.liveRetryAfter = Date.now() + LIVE_PROJECTION_RETRY_DELAY_MS;
+          runtimeProjection.fullRefreshNeeded = true;
+        }
+      }
+      if (liveSucceeded && liveAdvanced && runtimeProjection.round !== null) {
+        refreshAdvancedRoundDetails(runtimeProjection.round, runtimeProjection.live);
+      }
+      if (liveSucceeded) {
+        void syncConversationHistory().then(() => refreshRuntimeUi());
         if (liveAdvanced) {
           await pollTaskProjection({ force: true, ignoreVisibility: true });
         }
@@ -49098,14 +50160,14 @@
           runtimeProjection.awaitingProjection = false;
           runtimeProjection.submitBaseline = null;
         }
-      } catch (error) {
-        const failure = errorView(error);
-        runtimeProjection.host = "error";
-        runtimeProjection.status = null;
-        runtimeProjection.fullRefreshNeeded = true;
-        runtimeProjection.error = "".concat(t("\u5BBF\u4E3B\u72B6\u6001\u8BFB\u53D6\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
       }
       refreshRuntimeUi();
+      const visibleRound = runtimeProjection.round;
+      if (visibleRound !== null && runtimeProjection.live?.display_mode === "legacy" && !runtimeProjection.legacyCards.has(visibleRound) && !runtimeProjection.legacyCardsLoading.has(visibleRound)) {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(
+          () => void loadLegacyCards(visibleRound)
+        ));
+      }
       return true;
     })();
     polling.runtime = request.finally(() => {
@@ -49517,43 +50579,6 @@
     });
     return polling.deposition;
   }
-  async function submitContainerFocus(action, containerId) {
-    const mutation = depositionProjection.focusMutation;
-    if (mutation.pending) return;
-    mutation.pending = true;
-    mutation.feedback = "";
-    renderStage("containers");
-    try {
-      const payload = await fetchRuntimeJson("./api/container/focus", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, container_id: containerId })
-      });
-      if (payload.schema_version !== "seed_gui_container_focus_result.v1" || payload.submission_source !== "seed_gui" || payload.receipt?.tool_id !== "container_focus" || payload.receipt?.status !== "applied") {
-        throw new Error("container_focus_receipt_mismatch");
-      }
-      mutation.receipt = payload.receipt;
-      mutation.feedback = "\u5DF2\u7531 processor ".concat(payload.receipt.action, "\uFF1A").concat(payload.receipt.container_id || "\u65E0\u76EE\u6807", "\u3002");
-      await pollDeposition({ force: true, ignoreVisibility: true });
-    } catch (error) {
-      const failure = errorView(error);
-      const receipt = jsonObject2(failure.payload.receipt);
-      if (receipt.tool_id === "container_focus") {
-        mutation.receipt = receipt;
-      }
-      const labels = {
-        400: t("\u7126\u70B9\u53C2\u6570\u65E0\u6548"),
-        403: t("\u8BF7\u6C42\u6765\u6E90\u88AB\u62D2\u7EDD"),
-        404: t("\u5BB9\u5668\u4E0D\u5B58\u5728"),
-        409: t("\u7126\u70B9\u72B6\u6001\u51B2\u7A81\u6216\u5DF2\u6709\u5199\u5165\u5728\u9014"),
-        503: t("\u672C\u5730\u7126\u70B9\u5904\u7406\u5668\u4E0D\u53EF\u7528")
-      };
-      mutation.feedback = "".concat(labels[failure.status] || t("\u7126\u70B9\u53D8\u66F4\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
-    } finally {
-      mutation.pending = false;
-      if (state.activePage === "containers") renderStage("containers");
-    }
-  }
   function confirmUnlimitedPermission(permissionLevel) {
     if (permissionLevel !== "unlimited" || runtimeProjection.unlimitedConfirmed) return true;
     const confirmed = window.confirm(t("\u653E\u884C\u6743\u9650\u4F1A\u5141\u8BB8\u526F\u4F5C\u7528\u5DE5\u5177\u76F4\u63A5\u6267\u884C\u3002\u4EC5\u786E\u8BA4\u5F53\u524D\u9875\u9762\u4F1A\u8BDD\u4F7F\u7528\u653E\u884C\u6743\u9650\uFF1F"));
@@ -49636,7 +50661,7 @@
     mutation.receipt = null;
     let mutationAccepted = false;
     let truthReloaded = false;
-    const detailKey = "memory:".concat(memId);
+    const detailKey2 = "memory:".concat(memId);
     openMemoryDetail(memId, { retry: true });
     try {
       const payload = await fetchRuntimeJson("./api/deposition/memory/periodic", {
@@ -49657,7 +50682,7 @@
       truthReloaded = indexReloaded && detailReloaded && typeof mounted === "boolean" && mountStatus === (payload.receipt.mount_status || (action === "mount" ? "mounted" : "unmounted"));
       if (!truthReloaded) {
         delete depositionProjection.details.memory[memId];
-        depositionProjection.detailErrors[detailKey] = t("\u64CD\u4F5C\u5DF2\u63D0\u4EA4\uFF0C\u4F46\u8BB0\u5FC6\u771F\u6E90\u91CD\u8BFB\u5931\u8D25\uFF1B\u4E3A\u907F\u514D\u663E\u793A\u65E7\u72B6\u6001\uFF0C\u8BF7\u91CD\u65B0\u8BFB\u53D6\u8BE6\u60C5\u3002");
+        depositionProjection.detailErrors[detailKey2] = t("\u64CD\u4F5C\u5DF2\u63D0\u4EA4\uFF0C\u4F46\u8BB0\u5FC6\u771F\u6E90\u91CD\u8BFB\u5931\u8D25\uFF1B\u4E3A\u907F\u514D\u663E\u793A\u65E7\u72B6\u6001\uFF0C\u8BF7\u91CD\u65B0\u8BFB\u53D6\u8BE6\u60C5\u3002");
         throw new Error("periodic_memory_truth_reload_failed");
       }
     } catch (error) {
@@ -49806,9 +50831,13 @@
       if (receipt.schema_version !== "seed_gui_instance_mutation_receipt.v1") {
         throw new Error("instance_mutation_receipt_mismatch");
       }
+      clearRoundProjectionForIdentityMutation();
       if (receipt.restart_required === true) {
         runtimeProjection.sendFeedback = t("\u6B63\u5728\u5207\u6362\u4F4D\u683C\u6216\u5206\u8EAB");
+        refreshRuntimeUi();
+        requestDesktopBackendRestart();
       } else {
+        refreshRuntimeUi();
         await pollPersonaCatalog({ force: true });
       }
     } catch (error) {
@@ -49908,6 +50937,11 @@
       refreshRuntimeUi();
       return;
     }
+    if (target === "live") {
+      runtimeProjection.liveRetryAfter = 0;
+      await pollRuntime({ forceFull: true, ignoreVisibility: true });
+      return;
+    }
     if (target === "runtime") {
       await Promise.all([
         pollRuntime({ forceFull: true, ignoreVisibility: true }),
@@ -49924,62 +50958,29 @@
       await pollDeposition({ force: true, ignoreVisibility: true });
     }
   }
-  function evidenceExportPayload() {
+  function evidenceExportRound() {
     const selectedRound = state.selectedLedgerRound ?? runtimeProjection.round;
     const live = selectedRound === runtimeProjection.round ? runtimeProjection.live : selectedRound == null ? null : runtimeProjection.conversationRounds.get(selectedRound) || null;
-    if (!live || selectedRound == null) return null;
-    return {
-      round: selectedRound,
-      payload: {
-        schema_version: "seed_gui_evidence_export.v1",
-        exported_at: (/* @__PURE__ */ new Date()).toISOString(),
-        source: {
-          projection_schema: live.schema_version,
-          round: selectedRound,
-          last_event_index: Number(live.last_event_index || 0),
-          host: "127.0.0.1"
-        },
-        runtime_projection: {
-          schema_version: live.schema_version,
-          round: selectedRound,
-          last_event_index: Number(live.last_event_index || 0),
-          latest_frame_id: live.latest_frame_id || "",
-          statusbar_projection: live.statusbar_projection || null,
-          round_lifecycle: live.round_lifecycle || null,
-          call_frames: (live.call_frames || []).map((frame) => ({
-            frame_id: frame.frame_id || "",
-            round: frame.round ?? selectedRound,
-            label: frame.label || "",
-            phase: frame.phase || "",
-            iteration: frame.iteration ?? null,
-            call_channel: frame.call_channel || "",
-            event_start_index: frame.event_start_index ?? null,
-            event_end_index: frame.event_end_index ?? null,
-            layer_source: frame.layer_source || "",
-            historical: Boolean(frame.historical)
-          })),
-          context_panes: live.context_panes || [],
-          conversation: live.conversation || [],
-          manifest: live.manifest || {}
-        },
-        task_projection: taskProjection.data,
-        deposition_index: depositionProjection.index
-      }
-    };
+    return live && selectedRound != null ? selectedRound : null;
   }
-  function exportCurrentEvidence() {
-    const evidence = evidenceExportPayload();
-    if (!evidence) {
+  async function exportCurrentEvidence() {
+    const round = evidenceExportRound();
+    if (round === null) {
       runtimeProjection.exportFeedback = t("\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u771F\u5B9E\u8F6E\u6B21\u6295\u5F71\u3002");
       renderStageAndFocus("audit", "[data-export-evidence]");
       return;
     }
     try {
-      const body3 = "".concat(JSON.stringify(evidence.payload, null, 2), "\n");
+      const detail = await fetchLiveDetail("evidence", round);
+      const payload = jsonObject2(detail.payload);
+      payload.exported_at = (/* @__PURE__ */ new Date()).toISOString();
+      payload.task_projection = taskProjection.data;
+      payload.deposition_index = depositionProjection.index;
+      const body3 = "".concat(JSON.stringify(payload, null, 2), "\n");
       const url = URL.createObjectURL(new Blob([body3], { type: "application/json;charset=utf-8" }));
       const link3 = document.createElement("a");
       link3.href = url;
-      link3.download = "upsp-seed-round-".concat(String(evidence.round).padStart(6, "0"), "-evidence.json");
+      link3.download = "upsp-seed-round-".concat(String(round).padStart(6, "0"), "-evidence.json");
       document.body.append(link3);
       link3.click();
       link3.remove();
@@ -50083,13 +51084,32 @@
     return values;
   }
   function initEvents() {
+    initSystemWindowSplit();
     document.addEventListener("scroll", (event) => {
       const nav = event.target instanceof HTMLElement ? event.target.closest(".runtime-context-workspace > nav") : null;
       const rail = nav?.parentElement?.querySelector(".context-diff-rail");
       if (nav && rail) rail.scrollTop = nav.scrollTop;
     }, true);
+    els.chatThread.addEventListener("scroll", () => {
+      updateConversationStickyState(els.chatThread, state);
+    }, { passive: true });
+    els.chatThread.addEventListener("toggle", () => {
+      window.requestAnimationFrame(() => {
+        scrollConversationToBottomIfSticky(els.chatThread, state);
+      });
+    }, true);
     els.chatThread.addEventListener("click", (event) => {
-      const button = eventElement(event)?.closest("[data-tool-approval-decision]");
+      const target = eventElement(event);
+      const summary = target?.closest("details[data-dialogue-node-id] > summary");
+      const details = summary?.parentElement;
+      if (details instanceof HTMLDetailsElement) {
+        const opening2 = !details.open;
+        rememberTimelineDisclosure(details, opening2);
+        const round = Number(details.dataset.timelineDetailRound);
+        const ref = details.dataset.timelineDetailRef || "";
+        if (opening2 && Number.isInteger(round) && ref) void loadTimelineNodeDetail(round, ref);
+      }
+      const button = target?.closest("[data-tool-approval-decision]");
       if (!button) return;
       const approvalId = button.dataset.toolApprovalId || "";
       const decision = button.dataset.toolApprovalDecision;
@@ -50200,9 +51220,9 @@
       }
       const copyDiagnostics = target.closest("[data-copy-about-diagnostics]");
       if (copyDiagnostics) {
-        const text10 = aboutDiagnosticText();
-        if (!text10) return;
-        void navigator.clipboard.writeText(text10).then(() => {
+        const text11 = aboutDiagnosticText();
+        if (!text11) return;
+        void navigator.clipboard.writeText(text11).then(() => {
           copyDiagnostics.textContent = t("\u5DF2\u590D\u5236");
           window.setTimeout(() => {
             copyDiagnostics.textContent = t("\u590D\u5236\u8BCA\u65AD\u4FE1\u606F");
@@ -50319,7 +51339,14 @@
       if (ledgerEvent) {
         const round = Number(ledgerEvent.dataset.ledgerRound);
         const cardId = ledgerEvent.dataset.ledgerCardId || "";
-        if (Number.isInteger(round) && cardId) openLedgerEvent(round, cardId);
+        if (Number.isInteger(round) && cardId) {
+          void fetchLedgerEventCard(round, cardId).then((card) => {
+            if (card) openLedgerEvent(round, cardId, card);
+          }).catch((error) => {
+            runtimeProjection.exportFeedback = "".concat(t("\u8BFB\u53D6\u4E8B\u4EF6\u8BE6\u60C5\u5931\u8D25"), "\uFF1A").concat(error instanceof Error ? error.message : String(error));
+            if (state.activePage === "audit") renderStage("audit");
+          });
+        }
         return;
       }
       const contextTool = target.closest("[data-context-tool]");
@@ -50342,6 +51369,13 @@
       }
       if (target.closest("[data-runtime-relay]")) {
         submitRuntimeRelay();
+        return;
+      }
+      const frameDetail = target.closest("[data-load-frame-detail]");
+      if (frameDetail) {
+        const round = Number(frameDetail.dataset.detailRound);
+        const frameId = frameDetail.dataset.detailFrame || "";
+        if (Number.isInteger(round) && frameId) void loadFrameDetail(round, frameId, { force: true });
         return;
       }
       if (target.closest("#stopButton")) {
@@ -50367,6 +51401,7 @@
           return;
         }
         setPage(pageId, tabId);
+        loadSelectedRuntimeDetails(pageId, tabId || getActivePageTab(pageId));
         if (pageId === "persona") void pollPersonaProjection();
         loadActiveDepositionDetail(pageId);
         requestContextPrefixDiffIfVisible();
@@ -50382,6 +51417,7 @@
       if (tabButton) {
         setActivePageTab(state.activePage, tabButton.dataset.pageTab || "");
         renderStageAndFocus(state.activePage, '[data-page-tab="'.concat(CSS.escape(state.activeTabs[state.activePage]), '"]'));
+        loadSelectedRuntimeDetails(state.activePage, getActivePageTab(state.activePage));
         if (state.activePage === "persona") void pollPersonaProjection();
         loadActiveDepositionDetail(state.activePage);
         requestContextPrefixDiffIfVisible();
@@ -50398,11 +51434,6 @@
         setActivePageTab("context", "content");
         renderStageAndFocus("context", '[data-runtime-pane="'.concat(CSS.escape(state.activeRuntimePane), '"]'));
         requestContextPrefixDiffIfVisible();
-        return;
-      }
-      const focusButton = target.closest("[data-container-focus-action]");
-      if (focusButton) {
-        submitContainerFocus(focusButton.dataset.containerFocusAction || "", focusButton.dataset.containerId || "");
         return;
       }
       const periodicMemoryButton = target.closest("[data-periodic-memory-action]");
@@ -50480,11 +51511,17 @@
     });
     els.chatThread.addEventListener("keydown", (event) => {
       const target = eventElement(event);
-      const summary = target?.closest(".chat-tool-group > summary, .chat-tool-step > summary");
+      const summary = target?.closest("details[data-dialogue-node-id] > summary");
       if (!summary || !["Enter", " "].includes(event.key)) return;
       event.preventDefault();
       const details = summary.parentElement;
-      if (details instanceof HTMLDetailsElement) details.open = !details.open;
+      if (details instanceof HTMLDetailsElement) {
+        details.open = !details.open;
+        rememberTimelineDisclosure(details, details.open);
+        const round = Number(details.dataset.timelineDetailRound);
+        const ref = details.dataset.timelineDetailRef || "";
+        if (details.open && Number.isInteger(round) && ref) void loadTimelineNodeDetail(round, ref);
+      }
     });
     els.runtimeComposer.addEventListener("submit", (event) => void submitRuntimeMessage(event));
     document.addEventListener("submit", (event) => {
@@ -50525,19 +51562,19 @@
         const entity = form.dataset.modelCatalogForm;
         if (entity !== "connection" && entity !== "model") return;
         const fields = new FormData(form);
-        const text10 = (name) => String(fields.get(name) || "").trim();
+        const text11 = (name) => String(fields.get(name) || "").trim();
         let values;
         if (entity === "connection") {
           values = {
-            alias: text10("alias"),
-            protocol: text10("protocol"),
-            url: providerRequestUrl(text10("url_base"), text10("url_path")),
-            api_key_env: text10("api_key_env")
+            alias: text11("alias"),
+            protocol: text11("protocol"),
+            url: providerRequestUrl(text11("url_base"), text11("url_path")),
+            api_key_env: text11("api_key_env")
           };
         } else {
           let requestOverrides;
           try {
-            const parsed = JSON.parse(text10("request_overrides") || "{}");
+            const parsed = JSON.parse(text11("request_overrides") || "{}");
             if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not_object");
             requestOverrides = parsed;
           } catch {
@@ -50546,15 +51583,15 @@
             return;
           }
           values = {
-            alias: text10("alias"),
-            connection_id: text10("connection_id"),
-            model: text10("model"),
-            context_window: Number.parseInt(text10("context_window"), 10),
-            output_token_limit: Number.parseInt(text10("output_token_limit") || "0", 10),
-            detected_context_window: Number.parseInt(text10("detected_context_window") || "0", 10),
-            context_window_source: text10("context_window_source") || "unknown",
-            reasoning_supported: text10("reasoning_supported").split(",").map((item) => item.trim()).filter(Boolean),
-            reasoning_default: text10("reasoning_default"),
+            alias: text11("alias"),
+            connection_id: text11("connection_id"),
+            model: text11("model"),
+            context_window: Number.parseInt(text11("context_window"), 10),
+            output_token_limit: Number.parseInt(text11("output_token_limit") || "0", 10),
+            detected_context_window: Number.parseInt(text11("detected_context_window") || "0", 10),
+            context_window_source: text11("context_window_source") || "unknown",
+            reasoning_supported: text11("reasoning_supported").split(",").map((item) => item.trim()).filter(Boolean),
+            reasoning_default: text11("reasoning_default"),
             streaming_enabled: fields.get("streaming_enabled") === "on",
             streaming_include_usage: fields.get("streaming_include_usage") === "on",
             request_overrides: requestOverrides
@@ -50647,6 +51684,7 @@
       if (!selector) return;
       state.selectedLedgerRound = selector.value === "latest" ? null : Number(selector.value);
       renderStageAndFocus("audit", "[data-ledger-round]");
+      loadSelectedRuntimeDetails("audit", "ledger");
     });
     document.addEventListener("change", (event) => {
       const selector = eventElement(event)?.closest("[data-context-round]");
@@ -50654,6 +51692,7 @@
       state.selectedContextRound = selector.value === "latest" ? null : Number(selector.value);
       state.selectedContextFrame = null;
       renderStageAndFocus("context", "[data-context-round]");
+      loadSelectedRuntimeDetails("context", getActivePageTab("context"));
       requestContextPrefixDiffIfVisible();
     });
     document.addEventListener("change", (event) => {
@@ -50661,6 +51700,7 @@
       if (!selector) return;
       state.selectedContextFrame = selector.value === "latest" ? null : selector.value;
       renderStageAndFocus("context", "[data-context-frame]");
+      loadSelectedRuntimeDetails("context", getActivePageTab("context"));
       requestContextPrefixDiffIfVisible();
     });
     document.addEventListener("change", (event) => {
@@ -50669,12 +51709,14 @@
       state.selectedTaskRound = selector.value === "latest" ? null : Number(selector.value);
       state.selectedTaskFrame = null;
       renderStageAndFocus("run", "[data-task-round]");
+      loadSelectedRuntimeDetails("run", "tools");
     });
     document.addEventListener("change", (event) => {
       const selector = eventElement(event)?.closest("[data-task-frame]");
       if (!selector) return;
       state.selectedTaskFrame = selector.value === "latest" ? null : selector.value;
       renderStageAndFocus("run", "[data-task-frame]");
+      loadSelectedRuntimeDetails("run", "tools");
     });
     els.messageInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {

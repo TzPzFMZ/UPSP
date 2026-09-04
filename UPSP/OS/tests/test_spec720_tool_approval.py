@@ -56,19 +56,93 @@ def test_guarded_approval_blocks_handler_until_allow_and_skip_never_executes(mon
     assert skipped[0]["error_hint"]["kind"] == "permission_security"
 
 
-def test_skipped_duplicate_does_not_prompt_again(monkeypatch):
+@pytest.mark.parametrize(("decision", "reason"), [
+    ("skip", "user_skipped_tool_approval"),
+    ("cancelled", "tool_approval_cancelled"),
+])
+def test_guarded_rejection_duplicate_does_not_prompt_again(
+        monkeypatch, decision, reason):
     from engines.general_tool_dispatcher import GeneralToolDispatcher
 
     monkeypatch.setenv("UPSP_EXECUTION_PERMISSION_LEVEL", "guarded")
     first = GeneralToolDispatcher(
         execute_fn=lambda *_args, **_kwargs: pytest.fail("handler ran"),
-        approval_fn=lambda _payload: "skip",
+        approval_fn=lambda _payload: decision,
     ).handle_requests([SIDE_EFFECT_REQUEST], [])
     second = GeneralToolDispatcher(
         execute_fn=lambda *_args, **_kwargs: pytest.fail("handler ran"),
         approval_fn=lambda _payload: pytest.fail("approval repeated"),
     ).handle_requests([SIDE_EFFECT_REQUEST], [], prior_results=first)
+    assert first[0]["reason"] == reason
     assert second[0]["reason"] == "duplicate_tool_failure_repeated"
+    assert first[0]["dispatch_stage"] == "approval"
+    assert second[0]["dispatch_stage"] == "duplicate_guard"
+
+
+def test_spec774_guarded_skip_does_not_block_later_unlimited_execution(monkeypatch):
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+    monkeypatch.setenv("UPSP_EXECUTION_PERMISSION_LEVEL", "guarded")
+    executed = []
+    first = GeneralToolDispatcher(
+        execute_fn=lambda *_args, **_kwargs: pytest.fail("handler ran"),
+        approval_fn=lambda _payload: "skip",
+    ).handle_requests([SIDE_EFFECT_REQUEST], [])
+    second = GeneralToolDispatcher(
+        execute_fn=lambda call, **_kwargs: executed.append(call)
+        or {"tool_id": call["tool_id"], "status": "ok"},
+        approval_fn=lambda _payload: pytest.fail("approval repeated"),
+    ).handle_requests(
+        [SIDE_EFFECT_REQUEST],
+        [],
+        prior_results=first,
+        runtime_context={"execution_permission_level": "unlimited"},
+    )
+
+    assert first[0]["dispatch_stage"] == "approval"
+    assert second[0]["status"] == "ok"
+    assert second[0]["dispatch_stage"] == "handler"
+    assert len(executed) == 1
+
+
+def test_spec774_handler_success_supersedes_earlier_guarded_skip(monkeypatch):
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+    monkeypatch.setenv("UPSP_EXECUTION_PERMISSION_LEVEL", "guarded")
+    executed = []
+    approvals = []
+    first = GeneralToolDispatcher(
+        execute_fn=lambda *_args, **_kwargs: pytest.fail("handler ran"),
+        approval_fn=lambda _payload: "skip",
+    ).handle_requests([
+        dict(SIDE_EFFECT_REQUEST, call_id="call-guarded-skip")
+    ], [])
+    second = GeneralToolDispatcher(
+        execute_fn=lambda call, **_kwargs: executed.append(call)
+        or {"tool_id": call["tool_id"], "status": "ok"},
+    ).handle_requests(
+        [dict(SIDE_EFFECT_REQUEST, call_id="call-unlimited-success")],
+        [],
+        prior_results=first,
+        runtime_context={"execution_permission_level": "unlimited"},
+    )
+    third = GeneralToolDispatcher(
+        execute_fn=lambda *_args, **_kwargs: pytest.fail("handler repeated"),
+        approval_fn=lambda payload: approvals.append(payload) or "allow_once",
+    ).handle_requests(
+        [dict(SIDE_EFFECT_REQUEST, call_id="call-guarded-duplicate")],
+        [],
+        prior_results=first + second,
+        runtime_context={"execution_permission_level": "guarded"},
+    )
+
+    assert first[0]["reason"] == "user_skipped_tool_approval"
+    assert second[0]["status"] == "ok"
+    assert third[0]["reason"] == "duplicate_tool_result_satisfied"
+    assert third[0]["duplicate_of_call_id"] == "call-unlimited-success"
+    assert third[0]["previous_status"] == "ok"
+    assert approvals == []
+    assert len(executed) == 1
 
 
 def test_multiple_side_effect_calls_are_approved_in_original_order(monkeypatch):

@@ -112,6 +112,225 @@ def test_spec710_openai_chat_refusal_is_visible_before_completion():
     assert first["content_chars"] == len("request refused")
 
 
+@pytest.mark.parametrize(
+    ("provider", "events", "expected_channels"),
+    [
+        (
+            "openai_chat",
+            [
+                {"choices": [{"index": 0, "delta": {"reasoning_content": "先想"}}]},
+                {"choices": [{"index": 0, "delta": {"content": "进展"}}]},
+                {"choices": [{"index": 0, "delta": {"reasoning_content": "再想"}}]},
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+                "[DONE]",
+            ],
+            ["reasoning", "content", "reasoning"],
+        ),
+        (
+            "openai_responses",
+            [
+                {"type": "response.reasoning_text.delta", "output_index": 0, "item_id": "r1", "delta": "先想"},
+                {"type": "response.output_text.delta", "output_index": 1, "item_id": "m1", "delta": "进展"},
+                {"type": "response.reasoning_text.delta", "output_index": 2, "item_id": "r2", "delta": "再想"},
+                {"type": "response.completed", "response": {"status": "completed"}},
+            ],
+            ["reasoning", "content", "reasoning"],
+        ),
+        (
+            "anthropic_messages",
+            [
+                {"type": "message_start", "message": {"id": "m1", "content": []}},
+                {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+                {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "先想"}},
+                {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "进展"}},
+                {"type": "content_block_start", "index": 2, "content_block": {"type": "thinking", "thinking": ""}},
+                {"type": "content_block_delta", "index": 2, "delta": {"type": "thinking_delta", "thinking": "再想"}},
+                {"type": "message_stop"},
+            ],
+            ["reasoning", "content", "reasoning"],
+        ),
+    ],
+)
+def test_spec771_stream_segments_preserve_provider_channel_order(provider, events, expected_channels):
+    _response, emitted = _read(provider, events)
+    segments = [
+        segment
+        for _event_type, payload in emitted
+        for segment in payload.get("stream_segments") or []
+    ]
+
+    assert [segment["channel"] for segment in segments] == expected_channels
+    assert [segment["delta"] for segment in segments] == ["先想", "进展", "再想"]
+    assert [segment["segment_id"] for segment in segments] == ["seg-0001", "seg-0002", "seg-0003"]
+    assert all(isinstance(segment["provider_block"], dict) for segment in segments)
+
+
+@pytest.mark.parametrize(
+    ("provider", "events", "expected_tool"),
+    [
+        (
+            "openai_chat",
+            [
+                {"choices": [{"index": 0, "delta": {"content": "工具前"}}]},
+                {"choices": [{"index": 0, "delta": {"tool_calls": [{
+                    "index": 0,
+                    "id": "call-chat",
+                    "function": {"name": "file_read", "arguments": "{}"},
+                }]}}]},
+                {"choices": [{"index": 0, "delta": {"content": "工具后"}}]},
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+                "[DONE]",
+            ],
+            ("file_read", "call-chat"),
+        ),
+        (
+            "openai_responses",
+            [
+                {"type": "response.output_text.delta", "output_index": 0, "item_id": "m1", "delta": "工具前"},
+                {"type": "response.output_item.added", "output_index": 1, "item": {
+                    "id": "item-call", "type": "function_call", "call_id": "call-responses",
+                    "name": "file_read", "arguments": "{}",
+                }},
+                {"type": "response.output_text.delta", "output_index": 2, "item_id": "m2", "delta": "工具后"},
+                {"type": "response.completed", "response": {"status": "completed"}},
+            ],
+            ("file_read", "call-responses"),
+        ),
+        (
+            "anthropic_messages",
+            [
+                {"type": "message_start", "message": {"id": "m1", "content": []}},
+                {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "工具前"}},
+                {"type": "content_block_start", "index": 1, "content_block": {
+                    "type": "tool_use", "id": "call-anthropic", "name": "file_read", "input": {},
+                }},
+                {"type": "content_block_start", "index": 2, "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 2, "delta": {"type": "text_delta", "text": "工具后"}},
+                {"type": "message_stop"},
+            ],
+            ("file_read", "call-anthropic"),
+        ),
+    ],
+)
+def test_spec771_tool_boundaries_split_visible_text_without_exposing_arguments(
+        provider, events, expected_tool):
+    _response, emitted = _read(provider, events)
+    ordered = []
+    for _event_type, payload in emitted:
+        ordered.extend(
+            (int(item["sequence"]), "text", item["delta"])
+            for item in payload.get("stream_segments") or []
+        )
+        ordered.extend(
+            (int(item["sequence"]), "tool", (item["tool_id"], item["call_id"]))
+            for item in payload.get("stream_tool_boundaries") or []
+        )
+
+    assert [item[1:] for item in sorted(ordered)] == [
+        ("text", "工具前"),
+        ("tool", expected_tool),
+        ("text", "工具后"),
+    ]
+    assert "arguments" not in json.dumps(ordered, ensure_ascii=False)
+
+
+def test_spec771_openai_responses_reasoning_summary_is_visible_reasoning():
+    _response, emitted = _read("openai_responses", [
+        {
+            "type": "response.reasoning_summary_text.delta",
+            "output_index": 0,
+            "item_id": "reasoning-1",
+            "summary_index": 2,
+            "delta": "摘要思考",
+        },
+        {"type": "response.completed", "response": {"status": "completed"}},
+    ])
+    segments = [
+        item
+        for _event_type, payload in emitted
+        for item in payload.get("stream_segments") or []
+    ]
+
+    assert [(item["channel"], item["delta"]) for item in segments] == [
+        ("reasoning", "摘要思考")
+    ]
+    assert segments[0]["provider_block"]["summary_index"] == 2
+    assert segments[0]["provider_block"]["event_type"] == (
+        "response.reasoning_summary_text.delta")
+
+
+def test_spec772_openai_responses_reasoning_item_is_not_visible_text():
+    executor = object.__new__(APIExecutor)
+    response = {
+        "output": [
+            {
+                "id": "reasoning-1",
+                "type": "reasoning",
+                "content": [{"type": "reasoning_text", "text": "内部推理"}],
+            },
+            {
+                "id": "tool-1",
+                "type": "function_call",
+                "call_id": "call-1",
+                "name": "file_read",
+                "arguments": "{}",
+            },
+        ],
+    }
+
+    assert executor._response_text(response) == ""
+    envelopes = extract_tool_call_envelopes(
+        response,
+        provider="openai_responses",
+        endpoint="unit",
+    )
+    assert [(item["tool_id"], item["call_id"]) for item in envelopes] == [
+        ("file_read", "call-1")
+    ]
+
+
+def test_spec772_openai_responses_reads_only_typed_message_content():
+    executor = object.__new__(APIExecutor)
+    response = {
+        "output": [
+            {
+                "type": "reasoning",
+                "content": [{"type": "reasoning_text", "text": "不要泄漏"}],
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "可见正文"},
+                    {"type": "refusal", "refusal": "拒绝说明"},
+                    {"type": "reasoning_text", "text": "仍不可见"},
+                ],
+            },
+        ],
+    }
+
+    assert executor._response_text(response) == "可见正文\n拒绝说明"
+
+
+def test_spec772_other_provider_visible_text_boundaries_remain_closed():
+    executor = object.__new__(APIExecutor)
+
+    assert executor._response_text({
+        "choices": [{"message": {
+            "content": "Chat正文",
+            "reasoning_content": "Chat推理",
+        }}],
+    }) == "Chat正文"
+    assert executor._response_text({
+        "content": [
+            {"type": "thinking", "thinking": "Anthropic推理"},
+            {"type": "text", "text": "Anthropic正文"},
+        ],
+    }) == "Anthropic正文"
+
+
 def test_spec710_custom_url_uses_explicit_protocol_instead_of_guessing():
     executor = object.__new__(APIExecutor)
     executor.cfg = _Config()

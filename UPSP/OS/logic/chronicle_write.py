@@ -45,8 +45,6 @@ def _receipt(status, *, layer="", path="", reason="", round_num=None,
              round_type="", source_refs=None):
     receipt = {
         "tool_id": "chronicle_write",
-        "tool_family": "protocol_tool",
-        "tool_class": "sync_tool",
         "status": status,
         "source": "chronicle_write",
         "layer": layer,
@@ -72,23 +70,23 @@ def _normalize_declaration(declaration):
 
 
 def apply_chronicle_write_declarations(declarations, stores=None):
-    """Validate chronicle body declarations and write the current Runtime focus."""
+    """Validate model prose and commit the frozen Runtime write scope."""
     stores = stores or {}
     chronicle_store = stores.get("chronicle_store") or ChronicleStore()
-    chronicle_focus = stores.get("chronicle_focus")
+    write_scope = stores.get("chronicle_write_scope")
     receipts = []
     for declaration in declarations or []:
         item = _normalize_declaration(declaration)
         if not item:
             receipts.append(_receipt("error", reason="invalid_declaration"))
             continue
-        if not isinstance(chronicle_focus, dict) or not chronicle_focus:
+        if not isinstance(write_scope, dict) or not write_scope:
             receipts.append(_receipt(
                 "rejected",
-                reason="no_active_chronicle_focus",
+                reason="no_active_chronicle_write_scope",
             ))
             continue
-        layer = str(chronicle_focus.get("layer") or "").strip()
+        layer = str(write_scope.get("layer") or "").strip()
         if layer not in VALID_CHRONICLE_LAYERS:
             receipts.append(_receipt(
                 "error",
@@ -105,9 +103,9 @@ def apply_chronicle_write_declarations(declarations, stores=None):
                 reason="empty_chronicle_content",
             ))
             continue
-        round_num = chronicle_focus.get("round_num")
-        round_type = str(chronicle_focus.get("round_type") or "").strip()
-        source_refs = _clean_list(chronicle_focus.get("source_refs"))
+        round_num = write_scope.get("round_num")
+        round_type = str(write_scope.get("round_type") or "").strip()
+        source_refs = _clean_list(write_scope.get("source_refs"))
         if round_type and round_type not in VALID_ROUND_TYPES:
             receipts.append(_receipt(
                 "error",
@@ -120,11 +118,9 @@ def apply_chronicle_write_declarations(declarations, stores=None):
             ))
             continue
         try:
-            writer = getattr(chronicle_store, "write_focused_entry", None)
-            if callable(writer):
-                path = writer(chronicle_focus, item["content"])
-            else:
-                path = chronicle_store.write_entry(layer, item["content"])
+            path = chronicle_store.commit_write_scope(
+                write_scope, item["content"]
+            )
         except Exception as exc:
             receipts.append(_receipt(
                 "error",

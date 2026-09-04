@@ -458,8 +458,6 @@ def apply_task_bootstrap_missing_access_terminal_settlement(
         pass
     return {
         "tool_id": "final_reply",
-        "tool_family": "message_channel",
-        "tool_class": "runtime_guard",
         "status": "task_bootstrap_missing_access_finalized",
         "source": "natural_final_reply_candidate",
         "guide_id": guide_id,
@@ -483,8 +481,6 @@ def apply_reaction_handoff_relay_receipt(state_manager, relay_receipt, trace=Non
         reason = str(exc) or reason
     receipt = {
         "tool_id": "reaction_finalize",
-        "tool_family": "substrate_tool",
-        "tool_class": "sync_tool",
         "status": status,
         "source": "closeout_form",
         "set_flags": ["continue_requested"] if status == "continue_requested_set" else [],
@@ -539,8 +535,6 @@ def build_runtime_auto_continue_closeout(
     }
     guard_receipt = {
         "tool_id": "reaction_finalize",
-        "tool_family": "substrate_tool",
-        "tool_class": "sync_tool",
         "status": "runtime_auto_continue",
         "source": "runtime_auto_continue",
         "reason": reason,

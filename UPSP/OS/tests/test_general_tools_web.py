@@ -39,7 +39,6 @@ def test_web_fetch_general_tool_fetches_public_page_with_injected_backend():
 
     assert calls == [("https://example.com/page", 1500)]
     assert result["tool_id"] == "web_fetch"
-    assert result["tool_family"] == "general_tool"
     assert result["tool_class"] == "read_tool"
     assert result["handler"] == "web_fetch_handler"
     assert result["permission_scope"] == "public_web_read"

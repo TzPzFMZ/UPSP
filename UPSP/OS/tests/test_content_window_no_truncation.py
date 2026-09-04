@@ -8,6 +8,48 @@ sys.path.insert(0, TESTS_DIR)
 sys.path.insert(0, os.path.join(TESTS_DIR, ".."))
 
 
+class _DummyResidentStore:
+    def __init__(self):
+        self.revision = 0
+        self.mounted = False
+
+    def snapshot_bytes(self):
+        return None
+
+    def restore_bytes(self, _payload):
+        return None
+
+    def add(self, _item, *, candidate=None, expected_revision=None):
+        self.revision += 1
+        self.mounted = True
+        return {"status": "applied", "revision": self.revision}
+
+    def remove_matching(self, **_kwargs):
+        self.revision += 1
+        self.mounted = False
+        return {"status": "applied", "removed": True, "revision": self.revision}
+
+    def contains(self, **_kwargs):
+        return self.mounted
+
+
+class _DummyResidentAssembler:
+    def __init__(self):
+        self.resident_store = _DummyResidentStore()
+
+    def preflight_resident_add(self, _item, *, content_overrides=None):
+        return {
+            "document": {},
+            "changed": True,
+            "chars": len(next(iter((content_overrides or {}).values()), "")),
+            "expected_revision": self.resident_store.revision,
+        }
+
+    @staticmethod
+    def resident_projection_chars(document=None, content_overrides=None):
+        return len(next(iter((content_overrides or {}).values()), ""))
+
+
 def test_mounted_content_uses_full_mount_payload_and_labels_full_read():
     from assembly.context_mounts import build_mounted_content
 
@@ -150,6 +192,9 @@ def test_memory_content_read_resident_reads_full_body_without_max_chars():
     class DummyMemoryRecall:
         @staticmethod
         def recall(_mem_id, **_kwargs):
+            commit = _kwargs.get("transaction_commit")
+            if callable(commit):
+                commit()
             return {
                 "source_memory_layer": "STM",
                 "stm_present": True,
@@ -158,6 +203,7 @@ def test_memory_content_read_resident_reads_full_body_without_max_chars():
             }
 
     store = DummyMemoryStore()
+    assembler = _DummyResidentAssembler()
     receipts, mounts, unmounts = apply_memory_content_read_requests(
         [{
             "tool_id": "memory_content_read",
@@ -165,23 +211,26 @@ def test_memory_content_read_resident_reads_full_body_without_max_chars():
             "mount_mode": "resident",
         }],
         {"presence": {"confirmed_subjects": ["Codex"]}},
-        {"memory_store": store, "memory_recall": DummyMemoryRecall()},
+        {
+            "memory_store": store,
+            "memory_recall": DummyMemoryRecall(),
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
+        },
     )
 
     assert receipts[0]["status"] == "accepted"
     assert receipts[0]["read_mode"] == "full"
     assert receipts[0]["total_chars"] == len(receipts[0]["body"])
     assert "不要截断" * 20 in receipts[0]["body"]
-    assert mounts == [{
-        "type": "memory",
-        "ids": "MEM-FULLREAD",
-        "mode": "resident",
-        "source": "memory_content_read",
-        "content": receipts[0]["body"],
-        "read_mode": "full",
-        "total_lines": receipts[0]["total_lines"],
-        "total_chars": receipts[0]["total_chars"],
-    }]
+    assert len(mounts) == 1
+    assert mounts[0]["type"] == "memory"
+    assert mounts[0]["ids"] == "MEM-FULLREAD"
+    assert mounts[0]["mode"] == "resident"
+    assert mounts[0]["source"] == "memory_content_read"
+    assert mounts[0]["content_projected"] is True
+    assert receipts[0]["body"] in mounts[0]["content"]
+    assert mounts[0]["read_mode"] == "full"
     assert unmounts == []
 
 
@@ -210,14 +259,19 @@ def test_relation_read_body_uses_full_notes_without_six_note_or_char_cutoff():
                 "notes": notes,
             }
 
-    receipts, mounts = apply_relation_read_requests(
+    assembler = _DummyResidentAssembler()
+    receipts, mounts, unmounts = apply_relation_read_requests(
         [{
             "tool_id": "relation_read",
             "card_id": "REL-FULL",
             "body": "resident",
             "summary": "none",
         }],
-        {"relation_store": DummyRelationStore()},
+        {
+            "relation_store": DummyRelationStore(),
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
+        },
     )
 
     assert receipts[0]["status"] == "accepted"
@@ -227,7 +281,80 @@ def test_relation_read_body_uses_full_notes_without_six_note_or_char_cutoff():
     assert receipts[0]["total_chars"] == len(receipts[0]["body"])
     body_mount = next(item for item in mounts if item["type"] == "relation")
     assert body_mount["mode"] == "resident"
-    assert body_mount["content"] == receipts[0]["body"]
+    assert "关系正文第 1 条" in body_mount["content"]
+    assert "关系正文第 8 条" in body_mount["content"]
+    assert unmounts == []
+
+
+def test_memory_content_read_rechecks_resident_capacity_after_recall():
+    from constants import RESIDENT_LIST_CHAR_LIMIT
+    from logic.memory_content_read import apply_memory_content_read_requests
+
+    class MemoryStore:
+        def read_meta_by_id(self, mem_id):
+            return {"id": mem_id, "title": "Recall growth", "access": "public"}
+
+        def read_body_by_id(self, mem_id, **_range):
+            body = "## MEM-RECALL\n**内容**：正文"
+            return {
+                "body": body,
+                "meta": {"id": mem_id, "title": "Recall growth"},
+                "memory_layer": "Full",
+                "total_lines": 2,
+                "total_chars": len(body),
+                "read_mode": "full",
+            }
+
+    class ResidentStore(_DummyResidentStore):
+        def __init__(self):
+            super().__init__()
+            self.add_calls = 0
+
+        def add(self, *args, **kwargs):
+            self.add_calls += 1
+            return super().add(*args, **kwargs)
+
+    resident = ResidentStore()
+
+    class Assembler:
+        def preflight_resident_add(self, _item, *, content_overrides=None):
+            return {
+                "document": {"items": []},
+                "changed": True,
+                "chars": RESIDENT_LIST_CHAR_LIMIT,
+                "expected_revision": resident.revision,
+            }
+
+        @staticmethod
+        def resident_projection_chars(document=None, content_overrides=None):
+            return RESIDENT_LIST_CHAR_LIMIT + 1
+
+    class Recall:
+        @staticmethod
+        def recall(_mem_id, **kwargs):
+            kwargs["transaction_commit"]()
+            raise AssertionError("capacity failure must abort recall")
+
+    receipts, mounts, unmounts = apply_memory_content_read_requests(
+        [{
+            "tool_id": "memory_content_read",
+            "mem_id": "MEM-RECALL",
+            "mount_mode": "resident",
+        }],
+        {"presence": {"confirmed_subjects": ["Codex"]}},
+        {
+            "memory_store": MemoryStore(),
+            "memory_recall": Recall(),
+            "assembler": Assembler(),
+            "resident_store": resident,
+        },
+    )
+
+    assert receipts[0]["status"] == "error"
+    assert receipts[0]["reason"].startswith("resident_list_char_limit_exceeded:")
+    assert resident.add_calls == 0
+    assert mounts == []
+    assert unmounts == []
 
 
 def test_relation_read_summary_keeps_summary_semantics_not_notes_body():
@@ -252,14 +379,19 @@ def test_relation_read_summary_keeps_summary_semantics_not_notes_body():
                 "notes": [{"content": "这是一段关系正文 notes，不应该进入 summary。"}],
             }
 
-    receipts, mounts = apply_relation_read_requests(
+    assembler = _DummyResidentAssembler()
+    receipts, mounts, unmounts = apply_relation_read_requests(
         [{
             "tool_id": "relation_read",
             "card_id": "REL-SUMMARY",
             "summary": "temporary",
             "body": "none",
         }],
-        {"relation_store": DummyRelationStore()},
+        {
+            "relation_store": DummyRelationStore(),
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
+        },
     )
 
     assert receipts[0]["status"] == "accepted"
@@ -270,6 +402,10 @@ def test_relation_read_summary_keeps_summary_semantics_not_notes_body():
         "ids": "REL-SUMMARY",
         "mode": "temporary",
         "subject": "Codex",
+    }]
+    assert unmounts == [{
+        "item_type": "relation",
+        "item_id": "REL-SUMMARY",
     }]
 
 
@@ -296,13 +432,18 @@ def test_container_read_returns_resident_mount_with_full_content_and_metadata():
                 "total_chars": len(body),
             }
 
+    assembler = _DummyResidentAssembler()
     receipts, mounts = apply_container_read_requests(
         [{
             "tool_id": "container_read",
             "container_id": "DC-329",
             "target_file": "open.md",
         }],
-        {"container_store": DummyContainerStore()},
+        {
+            "container_store": DummyContainerStore(),
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
+        },
     )
 
     assert receipts[0]["status"] == "accepted"
@@ -343,6 +484,7 @@ def test_container_read_explicit_line_range_marks_partial_and_records_range():
             })
             return result
 
+    assembler = _DummyResidentAssembler()
     receipts, mounts = apply_container_read_requests(
         [{
             "tool_id": "container_read",
@@ -351,7 +493,11 @@ def test_container_read_explicit_line_range_marks_partial_and_records_range():
             "line_start": 2,
             "line_end": 4,
         }],
-        {"container_store": DummyContainerStore()},
+        {
+            "container_store": DummyContainerStore(),
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
+        },
     )
 
     assert receipts[0]["status"] == "accepted"
@@ -367,8 +513,9 @@ def test_container_read_explicit_line_range_marks_partial_and_records_range():
         "line_end": 4,
     }
     assert receipts[0]["content"] == "第 2 行\n第 3 行\n第 4 行"
-    assert mounts[0]["read_mode"] == "partial"
-    assert mounts[0]["range_applied"] == receipts[0]["range_applied"]
+    assert mounts[0]["read_mode"] == "full"
+    assert mounts[0]["content"] == body
+    assert "range_applied" not in mounts[0]
 
 
 def test_explicit_line_and_char_ranges_conflict_is_rejected():
@@ -522,7 +669,7 @@ def test_explicit_range_requires_start_and_end_pairs_for_protocol_reads(range_re
                 "notes": [{"content": "第一行\n第二行\n第三行"}],
             }
 
-    relation_receipts, relation_mounts = apply_relation_read_requests(
+    relation_receipts, relation_mounts, relation_unmounts = apply_relation_read_requests(
         [{
             "tool_id": "relation_read",
             "card_id": "REL-333",
@@ -535,3 +682,4 @@ def test_explicit_range_requires_start_and_end_pairs_for_protocol_reads(range_re
     assert relation_receipts[0]["status"] == "rejected"
     assert relation_receipts[0]["reason"] == "range_pair_required"
     assert relation_mounts == []
+    assert relation_unmounts == []

@@ -8,7 +8,6 @@ from paths import ACTIVE_INSTANCE_ID
 
 from assembly.context_helpers import (
     format_round_id,
-    hide_empty_memory_annotation,
     join_layer_blocks,
 )
 from data.relation_store import relation_public_name
@@ -116,11 +115,17 @@ def build_mounted_content_blocks(assembler, mount_ids, current_round=None):
             meta = assembler._memory_mount_meta(ids)
             snapshot = _mount_payload(req)
             content = (
-                project_memory_body(snapshot, meta)
+                snapshot
+                if snapshot and req.get("content_projected") is True
+                else project_memory_body(snapshot, meta)
                 if snapshot else assembler._load_memory_content(ids)
             )
             if content:
-                marker = _mount_marker(current_round, meta)
+                marker_round = (
+                    None if req.get("source") == "resident_list"
+                    else current_round
+                )
+                marker = _mount_marker(marker_round, meta)
                 title = f"记忆 {ids}"
                 content = "\n".join(
                     item for item in (f"### {title}", marker, content) if item)
@@ -129,14 +134,22 @@ def build_mounted_content_blocks(assembler, mount_ids, current_round=None):
             if container_content:
                 target = str(req.get("target_file") or "").strip()
                 title = f"容器 {ids}" + (f" / {target}" if target else "")
-                marker = _mount_marker(current_round, {})
+                marker = _mount_marker(
+                    None if req.get("source") == "resident_list"
+                    else current_round,
+                    {},
+                )
                 content = "\n".join(
                     item for item in (f"### {title}", marker, container_content)
                     if item)
         elif req_type == "relation":
             rel_content = _mount_payload(req) or assembler._load_relation_content(ids)
             if rel_content:
-                marker = _mount_marker(current_round, {})
+                marker = _mount_marker(
+                    None if req.get("source") == "resident_list"
+                    else current_round,
+                    {},
+                )
                 visible_title = relation_public_name(
                     req.get("title")
                     or req.get("subject")
@@ -178,37 +191,41 @@ def build_mounted_content_blocks(assembler, mount_ids, current_round=None):
     return blocks
 
 
-def load_relation_content(relation_id):
+def project_relation_content(card, relation_id=""):
+    """Project one verified relation card into the resident CONTENT shape."""
+    if not isinstance(card, dict):
+        return ""
+    name = str(card.get("name") or relation_id or "").strip()
+    notes = card.get("notes") or []
+    note_texts = [
+        item.get("content", str(item)) if isinstance(item, dict) else str(item)
+        for item in notes
+    ]
+    summary = "\n".join(note_texts) if note_texts else str(
+        card.get("summary") or ""
+    )
+    return "\n".join(part for part in (name, summary) if part)
+
+
+def load_relation_content(relation_id, relation_store=None):
     """加载关系卡内容。"""
     from data.relation_store import RelationStore
-    rs = RelationStore()
+    rs = relation_store or RelationStore()
     try:
         card = rs.read_card(relation_id)
         if card:
-            name = card.get("name", relation_id)
-            notes = card.get("notes", [])
-            # notes 是 [{date, content}] dict 列表，取 content 字段
-            note_texts = [n.get("content", str(n)) if isinstance(n, dict) else str(n)
-                         for n in notes]
-            summary = "\n".join(note_texts) if note_texts else str(card.get("summary", ""))
-            if not summary:
-                try:
-                    path = rs.get_card_path(relation_id, card.get("category", "ours"))
-                    if os.path.isfile(path):
-                        with open(path, "r", encoding="utf-8") as f:
-                            summary = f.read()
-                except Exception:
-                    summary = ""
-            return f"{name}\n{summary}"
+            # Relation axes and substrate metadata stay isolated.  CONTENT
+            # receives the complete model-visible body: name plus every note.
+            return project_relation_content(card, relation_id)
     except Exception:
         pass
     return ""
 
 
-def load_skill_content(skill_id):
+def load_skill_content(skill_id, container_store=None):
     """加载技能卡片内容。"""
     from data.container_store import ContainerStore
-    cs = ContainerStore()
+    cs = container_store or ContainerStore()
     try:
         return cs.read_entries(skill_id, file_name="card.md")
     except Exception:
@@ -217,7 +234,7 @@ def load_skill_content(skill_id):
 
 def load_memory_content(assembler, mem_ids_str):
     from data.memory_store import MemoryStore, project_memory_body
-    ms = MemoryStore()
+    ms = getattr(assembler, "memory_store", None) or MemoryStore()
     ids = [s.strip() for s in mem_ids_str.split(",")]
     parts = []
     for mem_id in ids:
@@ -229,7 +246,7 @@ def load_memory_content(assembler, mem_ids_str):
             if not assembler._memory_meta_visible(meta):
                 continue
             parts.append(project_memory_body(
-                hide_empty_memory_annotation(ms.read_entry(mem_id)),
+                ms.read_entry(mem_id),
                 meta,
             ))
         except Exception:
@@ -237,9 +254,9 @@ def load_memory_content(assembler, mem_ids_str):
     return "\n\n".join(parts)
 
 
-def memory_mount_meta(mem_ids_str):
+def memory_mount_meta(mem_ids_str, memory_store=None):
     from data.memory_store import MemoryStore
-    ms = MemoryStore()
+    ms = memory_store or MemoryStore()
     ids = [s.strip() for s in str(mem_ids_str or "").split(",") if s.strip()]
     merged = {}
     for mem_id in ids:
@@ -259,18 +276,16 @@ def memory_mount_meta(mem_ids_str):
     return merged
 
 
-def load_container_content(container_id):
+def load_container_content(container_id, target_file=None, container_store=None):
     from data.container_store import ContainerStore
-    cs = ContainerStore()
+    cs = container_store or ContainerStore()
     try:
-        prefix = container_id.split("-")[0] if "-" in container_id else container_id[:3]
-        primary_files = {"DC": "open.md", "EC": "open.md",
-                        "PRJ": "plan.md", "SKL": "card.md",
-                        "FUT": "objectives.md"}
-        fname = primary_files.get(prefix, "open.md")
-        return cs.read_entries(container_id, file_name=fname)
+        return str(cs.read_container_content(
+            container_id,
+            target_file=str(target_file or "").strip() or None,
+        ).get("content") or "")
     except Exception:
-        return "（容器为空）"
+        return ""
 
 # ==============================================================
 # 轴描述（高频层，数值隔离）

@@ -167,39 +167,52 @@ class StateStore:
 
     def migrate_memory_compression_flags(self):
         """Replace the two retired pending flags with the shared-ledger flag."""
-        if not os.path.isfile(self.path):
-            raise ReadError(self.path, message=f"状态真源不存在: {self.path}")
-        try:
-            with open(self.path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-        except (json.JSONDecodeError, OSError) as exc:
-            raise ReadError(self.path, cause=exc)
-        try:
-            flags = data["base"]["heartbeat_flags"]
-        except (KeyError, TypeError) as exc:
-            raise ReadError(self.path, cause=exc)
-        if not isinstance(flags, dict):
-            raise ReadError(self.path, cause=ValueError("heartbeat_flags invalid"))
-        changed = False
-        for retired in (
-                "stm_degrade_pending", "evolution_pending",
-                "cache_compaction_due"):
-            if retired in flags:
-                if not isinstance(flags[retired], bool):
-                    raise ReadError(
-                        self.path,
-                        cause=ValueError(f"retired flag invalid: {retired}"),
-                    )
-                del flags[retired]
+        # Known legacy states cannot pass ``load()`` before the retired shape is
+        # normalized.  Keep the tolerant read here, but protect the complete
+        # read -> mutation -> save sequence with the same lock as every other
+        # state mutation so a heartbeat write cannot be overwritten by a stale
+        # migration snapshot.
+        with _LOCK:
+            if not os.path.isfile(self.path):
+                raise ReadError(
+                    self.path, message=f"状态真源不存在: {self.path}")
+            try:
+                with open(self.path, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except (json.JSONDecodeError, OSError) as exc:
+                raise ReadError(self.path, cause=exc)
+            try:
+                flags = data["base"]["heartbeat_flags"]
+            except (KeyError, TypeError) as exc:
+                raise ReadError(self.path, cause=exc)
+            if not isinstance(flags, dict):
+                raise ReadError(
+                    self.path, cause=ValueError("heartbeat_flags invalid"))
+            changed = False
+            for retired in (
+                    "stm_degrade_pending", "evolution_pending",
+                    "cache_compaction_due"):
+                if retired in flags:
+                    if not isinstance(flags[retired], bool):
+                        raise ReadError(
+                            self.path,
+                            cause=ValueError(
+                                f"retired flag invalid: {retired}"),
+                        )
+                    del flags[retired]
+                    changed = True
+            if "memory_compression_due" not in flags:
+                flags["memory_compression_due"] = False
                 changed = True
-        if "memory_compression_due" not in flags:
-            flags["memory_compression_due"] = False
-            changed = True
-        if changed:
-            self.save(data)
-        else:
-            self._validate(data)
-        return {"status": "migrated" if changed else "noop", "changed": changed}
+            if changed:
+                self.save(data)
+            else:
+                self._validate(data)
+                self._cache = deepcopy(data)
+            return {
+                "status": "migrated" if changed else "noop",
+                "changed": changed,
+            }
 
     def mutate(self, updater):
         """在一个临界区内读取、修改并保存完整状态。"""

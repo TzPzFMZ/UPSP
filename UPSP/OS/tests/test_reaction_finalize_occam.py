@@ -18,6 +18,30 @@ def _minimal_reaction_context(runtime, monkeypatch):
     monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
 
 
+def test_spec771_frame_settlement_carries_the_frames_actual_tool_results():
+    from engines.reaction_loop_main import ReactionFrameSettlement
+    from engines.round_context import FrameRef
+
+    settlement = ReactionFrameSettlement(
+        frame_ref=FrameRef.for_axis(7, "reaction", 2),
+        status="settled",
+        exit_signal="continue",
+        provider_call_started=True,
+        protocol_receipt_count=1,
+        general_tool_result_count=1,
+        protocol_tool_receipts=({
+            "tool_id": "memory_search", "call_id": "protocol-1", "status": "ok",
+        },),
+        general_tool_results=({
+            "tool_id": "file_read", "call_id": "general-1", "status": "ok",
+        },),
+    ).as_dict()
+
+    assert settlement["frame_id"] == "R000007:reaction:2"
+    assert settlement["protocol_tool_receipts"][0]["call_id"] == "protocol-1"
+    assert settlement["general_tool_results"][0]["call_id"] == "general-1"
+
+
 def test_spec560_reaction_finalize_schema_is_continue_handoff_only():
     from logic.native_tool_calls import export_provider_tool_schemas
 
@@ -375,7 +399,6 @@ class TestSpec560ReactionFinalizeOccam(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "ok",
                 "path": request.get("path"),
@@ -452,7 +475,6 @@ class TestSpec560ReactionFinalizeOccam(RuntimeTestMixin):
         def fake_execute(request):
             return {
                 "tool_id": request["tool_id"],
-                "tool_family": "general_tool",
                 "tool_class": "read_tool",
                 "status": "rejected",
                 "reason": "file_not_found",
@@ -520,6 +542,65 @@ class TestSpec560ReactionFinalizeOccam(RuntimeTestMixin):
         assert result["_required_context_failure"]["scope"] == "now_cache"
         assert result["_exit_signal"] == "required_context_failure"
 
+    def test_required_context_failure_does_not_commit_prepared_entry_metabolism(
+            self, tmp_path, monkeypatch):
+        from engines.round_context import RoundContext, SetupResult
+
+        rt = self._make_runtime(tmp_path)
+        _minimal_reaction_context(rt, monkeypatch)
+        rt.audit.get_store().start_round(1, "interactive")
+        current = rt.sm.load()
+        current["base"]["dynamic_axes"]["humor"]["value"] = 3
+        rt.sm.save(current)
+        context = RoundContext(1, "interactive", rt.sm.load(), {})
+        rt.reaction_metabolism.prepare_entry(context)
+        monkeypatch.setattr(
+            rt.ctx_store,
+            "get_now_entries",
+            lambda: (_ for _ in ()).throw(OSError("now unavailable")),
+        )
+        rt.executor = ScriptedExecutor({"response": "must not run"})
+
+        result = rt.reaction_loop_runner.run(
+            context,
+            SetupResult({}, {"mount_requests": []}, {}),
+        )
+
+        assert rt.executor.calls == []
+        assert result["_exit_signal"] == "required_context_failure"
+        assert rt.sm.load()["base"]["dynamic_axes"]["humor"]["value"] == 3
+        events = rt.audit.get_store().read_events(1)
+        assert not any(
+            event["event_type"] in {"state_settle_plan", "state_settle_receipt"}
+            for event in events
+        )
+
+    def test_user_stop_before_first_provider_does_not_commit_entry_metabolism(
+            self, tmp_path, monkeypatch):
+        from engines.round_context import RoundContext, SetupResult
+        from errors import ProviderCallCancelled
+
+        rt = self._make_runtime(tmp_path)
+        _minimal_reaction_context(rt, monkeypatch)
+        rt.audit.get_store().start_round(1, "interactive")
+        current = rt.sm.load()
+        current["base"]["dynamic_axes"]["humor"]["value"] = 3
+        rt.sm.save(current)
+        context = RoundContext(1, "interactive", rt.sm.load(), {})
+        rt.reaction_metabolism.prepare_entry(context)
+        executor = ScriptedExecutor({"response": "must not run"})
+        executor.cancellation_requested = True
+        rt.executor = executor
+
+        with pytest.raises(ProviderCallCancelled):
+            rt.reaction_loop_runner.run(
+                context,
+                SetupResult({}, {"mount_requests": []}, {}),
+            )
+
+        assert executor.calls == []
+        assert rt.sm.load()["base"]["dynamic_axes"]["humor"]["value"] == 3
+
     def test_general_result_survives_source_projection_failure(
             self, tmp_path, monkeypatch):
         from engines.general_tool_dispatcher import GeneralToolDispatcher
@@ -529,7 +610,6 @@ class TestSpec560ReactionFinalizeOccam(RuntimeTestMixin):
         helper = self
         result_payload = {
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "status": "ok",
             "path": "book.md",

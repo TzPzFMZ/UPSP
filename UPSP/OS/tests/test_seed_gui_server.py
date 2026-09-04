@@ -27,6 +27,7 @@ GUI_TS_MODULES = (
     "i18n.ts",
     "markdown.ts",
     "markdown-mermaid.ts",
+    "conversation-timeline.ts",
     "view.ts",
     "runtime.ts",
     "events.ts",
@@ -290,9 +291,11 @@ def _gui_root(tmp_path):
     manual = root / "manual"
     source = root / "src"
     markdown_assets = root / "assets" / "markdown"
+    font_assets = root / "assets" / "fonts"
     manual.mkdir(parents=True)
     source.mkdir()
     markdown_assets.mkdir(parents=True)
+    font_assets.mkdir(parents=True)
     (root / "assets" / "upsp-logo.png").write_bytes(b"png")
     (root / "index.html").write_text("<!doctype html><title>Seed GUI</title>", encoding="utf-8")
     (root / "styles.css").write_text("body{}", encoding="utf-8")
@@ -301,6 +304,11 @@ def _gui_root(tmp_path):
     (root / "markdown-mermaid.js").write_text("export {};", encoding="utf-8")
     (markdown_assets / "KaTeX_Test.woff2").write_bytes(b"woff2")
     (markdown_assets / "secret.txt").write_text("not served", encoding="utf-8")
+    (font_assets / "Test-Variable.woff2").write_bytes(b"font")
+    (font_assets / "font-manifest.json").write_text("{}", encoding="utf-8")
+    (font_assets / "licenses").mkdir()
+    (font_assets / "licenses" / "OFL.txt").write_text(
+        "license", encoding="utf-8")
     (manual / "intro.md").write_text("# Intro", encoding="utf-8")
     (manual / "intro.en-US.md").write_text("# Introduction", encoding="utf-8")
     (source / "app.ts").write_text("document.title = 'not served';", encoding="utf-8")
@@ -461,6 +469,8 @@ def test_spec683_static_whitelist_polling_and_runtime_status(tmp_path):
         assert _request(server, "GET", "/styles.css")[0] == 200
         assert _request(server, "GET", "/markdown.css")[0] == 200
         assert _request(server, "GET", "/markdown-mermaid.js")[0] == 200
+        assert _request(
+            server, "GET", "/assets/fonts/Test-Variable.woff2")[0] == 200
         assert _request(server, "GET", "/assets/markdown/KaTeX_Test.woff2")[0] == 200
         assert _request(server, "GET", "/assets/upsp-logo.png")[0] == 200
         assert _request(server, "GET", "/manual/intro.md")[0] == 200
@@ -471,6 +481,8 @@ def test_spec683_static_whitelist_polling_and_runtime_status(tmp_path):
         assert _request(server, "GET", "/src/markdown.ts")[0] == 404
         assert _request(server, "GET", "/src/i18n.ts")[0] == 404
         assert _request(server, "GET", "/assets/markdown/secret.txt")[0] == 404
+        assert _request(server, "GET", "/assets/fonts/font-manifest.json")[0] == 404
+        assert _request(server, "GET", "/assets/fonts/licenses/OFL.txt")[0] == 404
         assert _request(server, "GET", "/package.json")[0] == 404
         assert _request(server, "GET", "/tsconfig.json")[0] == 404
         assert _request(server, "GET", "/manual/%2e%2e/secret.txt")[0] == 404
@@ -487,17 +499,21 @@ def test_spec683_static_whitelist_polling_and_runtime_status(tmp_path):
         status, live = _request(server, "GET", "/api/live/state")
         assert status == 200
         assert live["round"] is None
-        assert live["state"]["schema_version"] == "round_live_state.v2"
+        assert live["state"]["schema_version"] == "round_live_state.v3"
 
         status, runtime = _request(server, "GET", "/api/runtime/status")
         assert status == 200
-        assert runtime["schema_version"] == "seed_gui_runtime_status.v2"
+        assert runtime["schema_version"] == "seed_gui_runtime_status.v3"
         assert runtime["host"]["connected"] is True
+        assert runtime["interrupted_recovery"] == {
+            "pending": False,
+            "round": None,
+        }
 
         status, about = _request(server, "GET", "/api/about")
         assert status == 200
         assert about["schema_version"] == "seed_gui_about.v1"
-        assert about["product"]["version"] == "0.1.1"
+        assert about["product"]["version"] == "0.1.2"
         assert about["product"]["author"]["zh-CN"] == (
             "由 TzPzFMZ 发起、设计并与 AI 协作开发"
         )
@@ -2045,6 +2061,16 @@ class FakeContainerStore:
             "path": "must-not-leak",
         }
 
+    def read_container_content(self, container_id, target_file=None):
+        assert container_id == "PRJ-001"
+        assert target_file is None
+        return {
+            "content": "项目正文",
+            "total_lines": 1,
+            "total_chars": 4,
+            "path": "must-not-leak",
+        }
+
 
 class FakeRelationStore:
     def list_cards(self, status="active"):
@@ -2143,7 +2169,7 @@ def test_spec685_deposition_projection_filters_private_and_paths():
     index = reader.index()
 
     assert index["schema_version"] == "seed_gui_deposition_index.v1"
-    assert index["focus"] == {"current": "", "previous": ""}
+    assert "focus" not in index
     assert [item["id"] for item in index["memory"]] == ["MEM-PUBLIC01"]
     assert index["memory"][0]["memory_layers"] == ["STM", "LTM/Full"]
     assert index["memory"][0]["stm_present"] is True
@@ -2203,10 +2229,10 @@ def test_spec709_top_identity_hierarchy_contract():
     assert "prototype-badge" not in index_source
     assert "persona-metrics" not in index_source
     assert "alertStrip" not in index_source
-    assert "--top-global-height: 34px;" in css_source
-    assert "--top-persona-height: 32px;" in css_source
-    assert "--top-command-height: 70px;" in css_source
-    assert "--top-height: 136px;" in css_source
+    assert "--top-global-height: 38px;" in css_source
+    assert "--top-persona-height: 34px;" in css_source
+    assert "--top-command-height: 42px;" in css_source
+    assert "--top-height: 114px;" in css_source
     assert 'const personaNameStoragePrefix = "upsp.seed_gui.persona_name_variant.v1:"' in app_source
     assert "`${personaNameStoragePrefix}${pid}`" in app_source
     assert '["name_zh", "name_en", "abbreviation"]' in app_source
@@ -2260,24 +2286,66 @@ def test_spec710_chat_consumes_visible_streams_and_polls_fast_only_when_active()
     app_source = (GUI_ROOT / "src" / "app.ts").read_text(encoding="utf-8")
     runtime_source = (GUI_ROOT / "src" / "runtime.ts").read_text(encoding="utf-8")
     view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+    timeline_source = (GUI_ROOT / "src" / "conversation-timeline.ts").read_text(encoding="utf-8")
     styles = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
 
-    assert '["reaction", "final_reply"].includes(String(card.phase || ""))' in view_source
-    assert 'card.type === "assistant-streaming" ? card.content_raw || ""' in view_source
-    assert "chatMessageAnchor(item.round, card, position)" in view_source
-    assert "stream-state-${escapeHtml(streamState)}" in view_source
-    assert 't("输出中断")' in view_source
-    assert 't("已停止")' in view_source
-    assert "reasoning_content" not in view_source
-    assert "content_raw" in view_source
+    assert "renderConversationTimeline();" in view_source
+    assert 'timeline?.schema_version !== "round_dialogue_timeline.v1"' in timeline_source
+    assert "activeText?.node_id === node.node_id" in timeline_source
+    assert "smooth.target.length - smooth.displayed.length" in timeline_source
+    assert "reasoning_content" not in timeline_source
+    assert "content_raw" in timeline_source
     assert "export function runtimePollingActive()" in runtime_source
-    assert "const liveAdvanced = previousRound !== livePayload.round" in runtime_source
+    assert "liveAdvanced = previousRound !== livePayload.round" in runtime_source
     assert "await pollTaskProjection({ force: true, ignoreVisibility: true });" in runtime_source
     assert "if (!runtimePollingActive()) void pollRuntime();" in app_source
     assert "if (runtimePollingActive()) void pollRuntime();" in app_source
     assert "}, 500);" in app_source
     assert "}, 1500);" in app_source
-    assert ".stream-state-active .markdown-body::after" in styles
+    assert '.dialogue-text[data-render-mode="plain"]::after' in styles
+
+
+def test_spec777_live_projection_failure_does_not_define_host_connectivity():
+    runtime_source = (GUI_ROOT / "src" / "runtime.ts").read_text(encoding="utf-8")
+    contracts_source = (GUI_ROOT / "src" / "contracts.ts").read_text(encoding="utf-8")
+    timeline_source = (GUI_ROOT / "src" / "conversation-timeline.ts").read_text(encoding="utf-8")
+    styles = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
+
+    status_fetch = 'status = await fetchRuntimeJson<RuntimeStatus>("./api/runtime/status")'
+    live_fetch = "const livePayload = await fetchLiveProjection("
+    assert status_fetch in runtime_source
+    assert live_fetch in runtime_source
+    assert runtime_source.index(status_fetch) < runtime_source.index(live_fetch)
+    assert "const [status, livePayload] = await Promise.all" not in runtime_source
+    assert 'runtimeProjection.host = "connected";' in runtime_source
+    assert "runtimeProjection.hostSession," in runtime_source
+    assert 'const nextHostSession = status.host_session || ""' in runtime_source
+    assert "runtimeProjection.hostSession !== nextHostSession" in runtime_source
+    assert "runtimeProjection.hostSession = nextHostSession" in runtime_source
+    round_change = runtime_source.split("activeRound !== runtimeProjection.round", 1)[1].split(
+        "runtimeProjection.host = \"connected\";", 1)[0]
+    assert 'runtimeProjection.liveError = "";' in round_change
+    assert "runtimeProjection.liveRetryAfter = 0;" in round_change
+    assert 'runtimeProjection.status?.pending_tool_approval?.approval_id || ""' in runtime_source
+    assert 'runtimeProjection.liveError = `${t("实时投影读取失败")}' in runtime_source
+    assert "LIVE_PROJECTION_RETRY_DELAY_MS = 5_000" in runtime_source
+    assert 'if (target === "live")' in runtime_source
+    assert all(field in contracts_source for field in (
+        "hostSession: string;",
+        "liveError: string;",
+        "liveErrorEventIndex: number;",
+        "liveRetryAfter: number;",
+    ))
+    assert 'data-retry-projection="live"' not in timeline_source
+    assert 'retry.dataset.retryProjection = "live"' in timeline_source
+    assert "对话投影暂不可用，Runtime 仍在运行" in timeline_source
+    assert "approvalAlreadyProjected" in timeline_source
+    assert "pendingApproval.tool_label || pendingApproval.tool_id" in timeline_source
+    assert "button.dataset.toolApprovalId = pendingApproval.approval_id" in timeline_source
+    assert "projectionStale" in timeline_source
+    assert ".chat-projection-warning" in styles
+    assert ".chat-projection-approval" in styles
+    assert ".dialogue-activity.projection-stale" in styles
 
 
 def test_spec685_memory_public_index_spans_active_layers_and_fails_private_closed(tmp_path, monkeypatch):
@@ -2357,130 +2425,24 @@ def test_spec685_deposition_store_failure_is_503(tmp_path):
         _close(server, thread)
 
 
-def test_spec686_container_focus_processor_receipt_and_store_reread(tmp_path):
-    workbench = FakeWorkbenchStore()
-    container_store = FakeContainerStore()
-    reader = _deposition_reader(workbench, container_store)
+def test_spec781_container_focus_endpoint_is_retired(tmp_path):
+    reader = _deposition_reader()
     server, thread = _server(tmp_path, FakeCli(), reader)
     try:
-        headers = _json_headers(server)
-
-        status, opened = _request(
+        status, payload = _request(
             server,
             "POST",
             "/api/container/focus",
             body=json.dumps({"action": "open", "container_id": "PRJ-001"}),
-            headers=headers,
+            headers=_json_headers(server),
         )
-        assert status == 200
-        assert opened["schema_version"] == "seed_gui_container_focus_result.v1"
-        assert opened["submission_source"] == "seed_gui"
-        assert opened["receipt"]["tool_id"] == "container_focus"
-        assert opened["receipt"]["protocol_tool_receipt"] is True
-        assert opened["receipt"]["status"] == "applied"
-        assert opened["focus"] == {"current": "PRJ-001", "previous": ""}
+        assert status == 404
+        assert payload["error"] == "not_found"
 
         status, index = _request(server, "GET", "/api/deposition")
         assert status == 200
-        assert index["focus"]["current"] == "PRJ-001"
-        assert {item["id"]: item["focus"] for item in index["containers"]} == {
-            "PRJ-001": True,
-            "DC-002": False,
-        }
-
-        status, closed = _request(
-            server,
-            "POST",
-            "/api/container/focus",
-            body=json.dumps({"action": "close", "container_id": "PRJ-001"}),
-            headers=headers,
-        )
-        assert status == 200
-        assert closed["focus"] == {"current": "", "previous": "PRJ-001"}
-
-        status, restored = _request(
-            server,
-            "POST",
-            "/api/container/focus",
-            body=json.dumps({"action": "restore", "container_id": ""}),
-            headers=headers,
-        )
-        assert status == 200
-        assert restored["receipt"]["action"] == "restore"
-        assert restored["focus"] == {"current": "PRJ-001", "previous": ""}
-        assert container_store.focus_calls == [
-            ("PRJ-001", True),
-            ("PRJ-001", False),
-            ("PRJ-001", True),
-        ]
-    finally:
-        _close(server, thread)
-
-
-def test_spec686_container_focus_validation_conflict_and_shared_lock(tmp_path):
-    workbench = FakeWorkbenchStore(current="PRJ-001")
-    reader = _deposition_reader(workbench)
-    server, thread = _server(tmp_path, FakeCli(), reader)
-    handler = server.RequestHandlerClass
-    original_send_json = handler._send_json
-    lock_state_at_response = []
-
-    def send_json_after_unlock(request_handler, status, payload):
-        if isinstance(payload, dict) and payload.get("error") in {
-            "container_not_found", "missing_focus", "focus_conflict", "missing_old_focus",
-        }:
-            lock_state_at_response.append(handler.mutation_lock.locked())
-        original_send_json(request_handler, status, payload)
-
-    handler._send_json = send_json_after_unlock
-    headers = _json_headers(server)
-    try:
-        request = lambda action, container_id: _request(
-            server,
-            "POST",
-            "/api/container/focus",
-            body=json.dumps({"action": action, "container_id": container_id}),
-            headers=headers,
-        )
-        assert _request(
-            server,
-            "POST",
-            "/api/container/focus",
-            body=json.dumps({"action": "open", "container_id": "PRJ-001"}),
-            headers={"Content-Type": "application/json"},
-        )[0] == 403
-        assert request("write", "PRJ-001")[0] == 400
-        assert request("open", "")[0] == 400
-        assert request("restore", "PRJ-001")[0] == 400
-        assert request("open", "PRJ-MISSING")[0] == 404
-        assert request("close", "DC-002")[0] == 409
-        assert workbench.current == "PRJ-001"
-
-        lock = server.RequestHandlerClass.mutation_lock
-        lock.acquire()
-        try:
-            assert request("open", "DC-002")[0] == 409
-            status, index = _request(server, "GET", "/api/deposition")
-            assert status == 200
-            assert index["focus"]["current"] == "PRJ-001"
-        finally:
-            lock.release()
-
-        workbench.current = None
-        workbench.previous = None
-        assert request("close", "PRJ-001")[0] == 409
-        assert request("restore", "")[0] == 409
-
-        workbench.current = "PRJ-001"
-        workbench.previous = "PRJ-MISSING"
-        status, rejected = request("restore", "")
-        assert status == 404
-        assert rejected["error"] == "container_not_found"
-        assert rejected["receipt"]["tool_id"] == "container_focus"
-        assert rejected["receipt"]["status"] == "rejected"
-        assert rejected["focus"] == {"current": "PRJ-001", "previous": ""}
-        assert lock_state_at_response
-        assert not any(lock_state_at_response)
+        assert "focus" not in index
+        assert all("focus" not in item for item in index["containers"])
     finally:
         _close(server, thread)
 
@@ -2964,7 +2926,7 @@ def test_spec729_runtime_status_never_scans_latest_round(tmp_path, monkeypatch):
     try:
         status, runtime = _request(server, "GET", "/api/runtime/status")
         assert status == 200
-        assert runtime["schema_version"] == "seed_gui_runtime_status.v2"
+        assert runtime["schema_version"] == "seed_gui_runtime_status.v3"
         assert runtime["cli"]["data"] == {
             "active_flags": [],
             "round_type": None,
@@ -3431,6 +3393,354 @@ def test_spec721_live_event_cache_reads_append_and_resets_on_replacement(tmp_pat
         _close(server, thread)
 
 
+def test_spec776_live_event_cache_reloads_same_size_prefix_rewrite(tmp_path):
+    server, thread = _server(tmp_path, FakeCli())
+    path = tmp_path / "round" / "round_776.jsonl"
+
+    def line(index, pad):
+        return json.dumps({
+            "round": 776,
+            "event_index": index,
+            "event_type": "runtime_audit",
+            "payload": {"pad": pad},
+        }) + "\n"
+
+    try:
+        handler = server.RequestHandlerClass
+        handler._event_cache = {}
+        first = line(1, "A" * 700)
+        tail = line(2, "tail")
+        path.write_text(first + tail, encoding="utf-8")
+        assert [
+            event["event_index"]
+            for event in handler._load_cached_round_events(776)
+        ] == [1, 2]
+
+        before = path.stat()
+        replacement_prefix = line(7, "A" * 700).encode("utf-8")
+        assert len(replacement_prefix) == len(first.encode("utf-8"))
+        with path.open("r+b") as stream:
+            stream.write(replacement_prefix)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.utime(path, ns=(
+            before.st_atime_ns,
+            max(path.stat().st_mtime_ns, before.st_mtime_ns + 1_000_000),
+        ))
+
+        assert [
+            event["event_index"]
+            for event in handler._load_cached_round_events(776)
+        ] == [7, 2]
+    finally:
+        _close(server, thread)
+
+
+def test_spec776_live_event_cache_overflow_is_bounded_and_not_reparsed(
+        tmp_path, monkeypatch):
+    server, thread = _server(tmp_path, FakeCli())
+    path = tmp_path / "round" / "round_776.jsonl"
+    path.write_text("".join(
+        json.dumps({
+            "round": 776,
+            "event_index": index,
+            "event_type": "runtime_audit",
+            "payload": {},
+        }) + "\n"
+        for index in range(1, 4)
+    ), encoding="utf-8")
+
+    try:
+        handler = server.RequestHandlerClass
+        handler._event_cache = {}
+        monkeypatch.setattr(handler, "MAX_LATEST_EVENT_CACHE_EVENTS", 2)
+
+        with pytest.raises(
+                RuntimeError, match="round_live_event_cache_limit_exceeded"):
+            handler._load_cached_round_events(776)
+
+        assert handler._event_cache["overflow"]["events"] == 3
+        assert "events" not in handler._event_cache
+        monkeypatch.setattr(
+            handler,
+            "_compact_live_event",
+            staticmethod(lambda _event: (_ for _ in ()).throw(
+                AssertionError("overflow cache must not reparse"))),
+        )
+        with pytest.raises(
+                RuntimeError, match="round_live_event_cache_limit_exceeded"):
+            handler._load_cached_round_events(776)
+    finally:
+        _close(server, thread)
+
+
+def test_spec772_latest_full_state_reuses_incremental_event_cache(
+        tmp_path, monkeypatch):
+    server, thread = _server(tmp_path, FakeCli())
+    path = tmp_path / "round" / "round_772.jsonl"
+    path.write_text(json.dumps({
+        "round": 772,
+        "event_index": 1,
+        "event_type": "round_started",
+        "payload": {},
+    }) + "\n", encoding="utf-8")
+    handler = server.RequestHandlerClass
+    calls = []
+
+    def cached(cls, round_num):
+        calls.append(round_num)
+        return [{"round": round_num, "event_index": 1}]
+
+    monkeypatch.setattr(handler, "_load_cached_round_events", classmethod(cached))
+    try:
+        round_num, events = handler._load_events_for_query(
+            object.__new__(handler), {"round": ["latest"]})
+        assert round_num == 772
+        assert events == [{"round": 772, "event_index": 1}]
+        assert calls == [772]
+    finally:
+        _close(server, thread)
+
+
+def test_spec773_live_state_is_light_and_legacy_cards_are_on_demand(tmp_path):
+    server, thread = _server(tmp_path, FakeCli())
+    path = tmp_path / "round" / "round_773.jsonl"
+    path.write_text(json.dumps({
+        "schema_version": "round_audit.v1",
+        "round": 773,
+        "event_index": 1,
+        "event_id": "R000773-000001",
+        "event_type": "round_started",
+        "recorded_at": "2026-08-23T00:00:00+08:00",
+        "payload": {"input_snapshot": {"trigger": {"messages": []}}},
+    }) + "\n", encoding="utf-8")
+    try:
+        status, live = _request(server, "GET", "/api/live/state?round=latest")
+        assert status == 200
+        assert live["state"]["schema_version"] == "round_live_state.v3"
+        assert live["state"]["display_mode"] == "legacy"
+        assert "call_frames" not in live["state"]
+        assert "context_panes" not in live["state"]
+        assert "conversation" not in live["state"]
+
+        status, detail = _request(
+            server,
+            "GET",
+            "/api/live/detail?round=773&kind=legacy_conversation",
+        )
+        assert status == 200
+        assert detail["schema_version"] == "round_live_detail.v1"
+        assert detail["kind"] == "legacy_conversation"
+        assert detail["round"] == 773
+        assert "conversation" in detail["payload"]
+        assert _request(
+            server,
+            "GET",
+            "/api/live/detail?round=773&kind=frame",
+        )[0] == 400
+    finally:
+        _close(server, thread)
+
+
+def test_spec773_light_event_cache_discards_heavy_tool_bodies():
+    module = _load_module_from_path("serve_seed_gui_spec773_compact", SERVER_PATH)
+    compact = module.RoundLiveHandler._compact_live_event({
+        "round": 773,
+        "event_index": 4,
+        "event_type": "llm_output_raw",
+        "phase": "reaction",
+        "iteration": 1,
+        "payload": {
+            "response": "x" * 100_000,
+            "provider_request_envelope": {"request_body": "y" * 100_000},
+            "tool_call_envelopes": [{
+                "tool_id": "file_read",
+                "call_id": "call-1",
+                "arguments": {"path": "huge", "body": "z" * 100_000},
+            }],
+        },
+    })
+
+    assert "response" not in compact["payload"]
+    assert "provider_request_envelope" not in compact["payload"]
+    assert compact["payload"]["tool_call_envelopes"] == [{
+        "tool_id": "file_read",
+        "call_id": "call-1",
+    }]
+
+
+def test_spec777_light_event_cache_folds_only_adjacent_identical_stream_segments():
+    module = _load_module_from_path("serve_seed_gui_spec777_fold", SERVER_PATH)
+    provider_a = {"output_index": 0, "content_index": 0}
+    provider_b = {"output_index": 0, "content_index": 1}
+    boundary = {
+        "sequence": 3,
+        "tool_id": "file_read",
+        "call_id": "call-1",
+    }
+    event = {
+        "round": 777,
+        "event_index": 4,
+        "event_type": "llm_stream_delta",
+        "phase": "reaction",
+        "iteration": 1,
+        "payload": {
+            "stream_id": "stream-777",
+            "content_delta": "可见正文",
+            "reasoning_delta": "推理正文",
+            "content_chars": 4,
+            "reasoning_chars": 4,
+            "stream_tool_boundaries": [boundary],
+            "stream_segments": [
+                {"sequence": 1, "segment_id": "seg-1", "channel": "reasoning", "provider_block": provider_a, "delta": "推"},
+                {"sequence": 1, "segment_id": "seg-1", "channel": "reasoning", "provider_block": provider_a, "delta": "理"},
+                {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_a, "delta": "可"},
+                {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_b, "delta": "见"},
+                {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_a, "delta": "正"},
+                {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_a, "delta": "文", "future_metadata": 1},
+                {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_a, "delta": "末"},
+            ],
+        },
+    }
+
+    compact = module.RoundLiveHandler._compact_live_event(event)
+
+    assert compact["payload"]["stream_segments"] == [
+        {"sequence": 1, "segment_id": "seg-1", "channel": "reasoning", "provider_block": provider_a, "delta": "推理"},
+        {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_a, "delta": "可"},
+        {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_b, "delta": "见"},
+        {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_a, "delta": "正"},
+        {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_a, "delta": "文", "future_metadata": 1},
+        {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_a, "delta": "末"},
+    ]
+    assert compact["payload"]["content_delta"] == "可见正文"
+    assert compact["payload"]["reasoning_delta"] == "推理正文"
+    assert compact["payload"]["stream_tool_boundaries"] == [boundary]
+    assert compact["payload"]["content_chars"] == 4
+    assert compact["payload"]["reasoning_chars"] == 4
+
+
+@pytest.mark.parametrize("provider_block", [
+    {"choice_index": 0, "channel_index": 0},
+    {"output_index": 0, "content_index": 0, "item_id": "item-777"},
+    {"content_block_index": 0, "content_block_type": "thinking"},
+])
+def test_spec777_stream_folding_preserves_each_provider_block(provider_block):
+    module = _load_module_from_path("serve_seed_gui_spec777_protocols", SERVER_PATH)
+    segments = [
+        {"sequence": 1, "segment_id": "seg-1", "channel": "reasoning", "provider_block": provider_block, "delta": "甲"},
+        {"sequence": 1, "segment_id": "seg-1", "channel": "reasoning", "provider_block": provider_block, "delta": "乙"},
+        {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_block, "delta": "丙"},
+        {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_block, "delta": "丁"},
+    ]
+
+    assert module.RoundLiveHandler._fold_adjacent_stream_segments(segments) == [
+        {"sequence": 1, "segment_id": "seg-1", "channel": "reasoning", "provider_block": provider_block, "delta": "甲乙"},
+        {"sequence": 2, "segment_id": "seg-2", "channel": "content", "provider_block": provider_block, "delta": "丙丁"},
+    ]
+
+    malformed = [
+        {"channel": "content", "delta": "甲"},
+        {"channel": "content", "delta": "乙"},
+    ]
+    assert module.RoundLiveHandler._fold_adjacent_stream_segments(malformed) == malformed
+
+
+def test_spec777_stream_folding_preserves_timeline_projection_exactly():
+    module = _load_module_from_path("serve_seed_gui_spec777_state", SERVER_PATH)
+    from data.round_live_viewer import build_live_state
+
+    provider = {"output_index": 0, "content_index": 0}
+    events = [{
+        "schema_version": "round_audit.v2",
+        "round": 777,
+        "event_index": 1,
+        "event_type": "round_started",
+        "recorded_at": "2026-08-24T00:00:00+08:00",
+        "payload": {
+            "dialogue_projection_schema": "round_dialogue_timeline.v1",
+            "input_snapshot": {"trigger": {"messages": []}},
+        },
+    }, {
+        "schema_version": "round_audit.v2",
+        "round": 777,
+        "event_index": 2,
+        "event_type": "llm_stream_delta",
+        "frame_id": "R000777:reaction:1",
+        "phase": "reaction",
+        "iteration": 1,
+        "recorded_at": "2026-08-24T00:00:01+08:00",
+        "payload": {
+            "stream_id": "stream-777",
+            "reasoning_delta": "先检查",
+            "stream_segments": [
+                {"sequence": 1, "segment_id": "seg-1", "channel": "reasoning", "provider_block": provider, "delta": "先"},
+                {"sequence": 1, "segment_id": "seg-1", "channel": "reasoning", "provider_block": provider, "delta": "检查"},
+            ],
+        },
+    }, {
+        "schema_version": "round_audit.v2",
+        "round": 777,
+        "event_index": 3,
+        "event_type": "llm_stream_done",
+        "frame_id": "R000777:reaction:1",
+        "phase": "reaction",
+        "iteration": 1,
+        "recorded_at": "2026-08-24T00:00:02+08:00",
+        "payload": {
+            "stream_id": "stream-777",
+            "content_chars": 0,
+            "reasoning_chars": 3,
+        },
+    }]
+    compact = [module.RoundLiveHandler._compact_live_event(event) for event in events]
+
+    assert build_live_state(events) == build_live_state(compact)
+
+
+def test_spec777_event_cache_applies_limit_after_stream_folding(
+        tmp_path, monkeypatch):
+    server, thread = _server(tmp_path, FakeCli())
+    path = tmp_path / "round" / "round_777.jsonl"
+    provider = {"output_index": 0, "content_index": 0, "item_id": "item-777"}
+    segments = [
+        {"sequence": 1, "segment_id": "seg-1", "channel": "reasoning", "provider_block": provider, "delta": "x"}
+        for _ in range(200)
+    ]
+    event = {
+        "round": 777,
+        "event_index": 1,
+        "event_type": "llm_stream_delta",
+        "payload": {
+            "stream_id": "stream-777",
+            "reasoning_delta": "x" * 200,
+            "stream_segments": segments,
+        },
+    }
+    raw = json.dumps(event, ensure_ascii=False) + "\n"
+    path.write_text(raw, encoding="utf-8")
+
+    try:
+        handler = server.RequestHandlerClass
+        handler._event_cache = {}
+        monkeypatch.setattr(handler, "MAX_LATEST_EVENT_CACHE_BYTES", 2_000)
+        events = handler._load_cached_round_events(777)
+
+        assert len(raw.encode("utf-8")) > 20_000
+        assert len(events) == 1
+        assert events[0]["payload"]["stream_segments"] == [{
+            "sequence": 1,
+            "segment_id": "seg-1",
+            "channel": "reasoning",
+            "provider_block": provider,
+            "delta": "x" * 200,
+        }]
+        assert handler._event_cache["event_bytes"] < 2_000
+        assert "overflow" not in handler._event_cache
+    finally:
+        _close(server, thread)
+
+
 def test_spec704_tick_and_stop_http_contracts(tmp_path):
     fake_cli = FakeCli(stop_receipt={
         "schema_version": "seed_gui_runtime_stop_receipt.v1",
@@ -3661,7 +3971,7 @@ def test_spec705_desktop_environment_and_ready_record(tmp_path, monkeypatch):
             "process_id": os.getpid(),
             "session_id": "b" * 32,
             "origin": f"http://127.0.0.1:{server.server_address[1]}",
-            "product_version": "0.1.1",
+            "product_version": "0.1.2",
         }
     finally:
         _close(server, thread)
@@ -3917,7 +4227,7 @@ def test_spec688_gui_incremental_recovery_accessibility_and_export_contract():
     assert "document.hidden" in app_source
     assert 'document.addEventListener("visibilitychange"' in app_source
     assert 'data-retry-projection="${escapeHtml(retryTarget)}"' in app_source
-    assert 'schema_version: "seed_gui_evidence_export.v1"' in app_source
+    assert 'fetchLiveDetail("evidence", round)' in app_source
     assert "URL.createObjectURL(new Blob" in app_source
     assert 'role="tabpanel"' in app_source
     assert 'aria-controls="systemWindowPanel"' in app_source
@@ -3940,8 +4250,8 @@ def test_spec690_gui_subject_centered_reduction_contract():
     overview_rule = css_source.split(".overview-pane {", 1)[1].split("}", 1)[0]
     dialogue_rule = css_source.split(".dialogue-backplane {", 1)[1].split("}", 1)[0]
 
-    assert "min(50vw, 820px)" in css_source
-    assert "--conversation-width: min(75vh, 960px);" in css_source
+    assert "--system-window-width: calc((100% - 24px) / 2);" in css_source
+    assert "--conversation-width: min(780px, calc(100vw - var(--rail-collapsed) - 72px));" in css_source
     assert "position: absolute;" in system_rule
     assert "position: absolute;" in overview_rule
     assert "background: transparent;" in dialogue_rule
@@ -3972,62 +4282,96 @@ def test_spec692_gui_tool_trace_compaction_contract():
     app_source = _gui_ts_source()
     css_source = (gui_root / "styles.css").read_text(encoding="utf-8")
     audit_manual = (gui_root / "manual" / "audit-tools.md").read_text(encoding="utf-8")
+    timeline_source = _gui_ts_source("conversation-timeline.ts")
 
-    trace_renderer = app_source.split("function renderChatTraceStep", 1)[1].split("function renderChat()", 1)[0]
-    trace_step_renderer = trace_renderer.split("function renderChatTraceGroup", 1)[0]
-
-    assert '"tool-call", "tool-result"' in app_source
-    disclosure_filter = app_source.split("function isChatDisclosureCard", 1)[1].split("function chatTraceSummary", 1)[0]
-    assert "settlement" not in disclosure_filter
-    assert "receipt" not in disclosure_filter
-    assert "function buildChatItems(" in app_source
-    chat_builder = app_source.split("function buildChatItems(", 1)[1].split(
-        "function renderToolApprovalCard", 1
-    )[0]
-    assert chat_builder.index("const items: ChatItem[] = []") < chat_builder.index("flushTrace();")
-    assert 'card.type === "user"\n      || visibleStream' in app_source
-    assert "currentUserIndex" not in app_source
-    assert 'text.startsWith("【本轮交互】")' in app_source
-    assert 'items.push({ type: "tool-trace", cards: trace })' in app_source
-    assert '<details class="chat-tool-group"' in trace_renderer
-    assert '<details class="chat-tool-step"' in trace_renderer
-    assert 't("工具轨迹 · {count} 次调用", { count: callCount })' in trace_renderer
-    assert 'memory_write: "写入记忆"' in app_source
-    assert 'memory_container_create: "创建记忆容器"' in app_source
-    assert 'card.content_md || card.content_raw || ""' in trace_renderer
-    assert "renderMarkdownDocument(documentId, chatTraceCode(content))" in trace_renderer
-    assert 'content.indexOf("```")' in app_source
-    assert "content_raw" in trace_step_renderer
+    assert "function updateTool(" in timeline_source
+    assert "element.dataset.dialogueNodeId = node.node_id" in timeline_source
+    assert 'node.status === "pending_approval"' in timeline_source
+    assert "argumentsValue, resultValue" in timeline_source
+    assert "button.dataset.toolApprovalDecision = decision" in timeline_source
     assert 'conversationDisclosure: new Map()' in app_source
-    assert 'details[data-conversation-card-key]' in app_source
+    assert 'details[data-dialogue-node-id]' in app_source
     assert "state.conversationDisclosure.set" in app_source
     assert 'els.chatThread.addEventListener("keydown"' in app_source
     assert '["Enter", " "].includes(event.key)' in app_source
-    assert ".chat-tool-group {" in css_source
-    assert ".chat-tool-step { border: 0; background: transparent; }" in css_source
-    assert ".chat-disclosure" not in css_source
-    assert "max-height: min(50vh, 560px);" in css_source
-    assert "主对话只把工具调用与工具结果按自然语言边界合并成一条两级原生折叠轨迹" in audit_manual
+    assert ".dialogue-tool {" in css_source
+    assert ".dialogue-tool-body {" in css_source
+    assert "每个工具调用都是时间线上的独立节点" in audit_manual
+
+
+def test_spec771_formal_chat_uses_keyed_event_timeline_and_bounded_smoothing():
+    view_source = _gui_ts_source("view.ts")
+    timeline_source = _gui_ts_source("conversation-timeline.ts")
+    events_source = _gui_ts_source("events.ts")
+    css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
+
+    render_chat = view_source.split("export function renderChat(): void {", 1)[1].split("interface StageScrollSnapshot", 1)[0]
+    assert "renderConversationTimeline();" in render_chat
+    assert "innerHTML" not in render_chat
+    assert "els.chatThread.innerHTML" not in timeline_source
+    assert "reconcileChildren(rail" in timeline_source
+    assert "node.node_id" in timeline_source
+    assert "state.conversationDisclosure.get(node.node_id)" in timeline_source
+    assert "performance.now() + 1500" in timeline_source
+    assert "const targetChanged = smooth.target !== source" in timeline_source
+    assert "if (targetChanged) smooth.deadline" in timeline_source
+    assert "node.status, argumentsValue, resultValue" in timeline_source
+    assert "prefersReducedMotion()" in timeline_source
+    assert "document.hidden" in timeline_source
+    assert "body.innerHTML = renderMarkdownDocument" in timeline_source
+    assert 'details[data-dialogue-node-id] > summary' in events_source
+    assert ".dialogue-breath-ring" in css_source
+    assert "prefers-reduced-motion: reduce" in css_source
+
+
+def test_spec773_formal_gui_loads_round_details_only_for_open_surfaces():
+    contracts_source = _gui_ts_source("contracts.ts")
+    runtime_source = _gui_ts_source("runtime.ts")
+    timeline_source = _gui_ts_source("conversation-timeline.ts")
+    view_source = _gui_ts_source("view.ts")
+
+    assert 'schema_version: "round_live_state.v3"' in contracts_source
+    assert "frame_catalog?: CallFrame[]" in contracts_source
+    assert "legacyNodes(" not in timeline_source
+    assert 'fetchLiveDetail("frame", round, frameId)' in runtime_source
+    assert 'fetchLiveDetail("ledger", round)' in runtime_source
+    assert 'fetchLiveDetail("event", round, eventRef)' in runtime_source
+    assert 'fetchLiveDetail("timeline_node", round, nodeId)' in runtime_source
+    assert 'fetchLiveDetail("legacy_conversation", round)' in runtime_source
+    assert 'fetchLiveDetail("evidence", round)' in runtime_source
+    assert "runtimeProjection.ledgerItems.get(round)" in view_source
+    assert "runtimeProjection.legacyCards.get(round)" in timeline_source
+
+
+def test_spec773_lazy_details_reject_stale_identity_and_refresh_active_round_data():
+    runtime_source = _gui_ts_source("runtime.ts")
+
+    assert "let requestGeneration = runtimeProjection.detailGeneration;" in runtime_source
+    assert "requestGeneration = runtimeProjection.detailGeneration;" in runtime_source
+    assert "if (requestGeneration !== runtimeProjection.detailGeneration) return false;" in runtime_source
+    assert "runtimeProjection.frameDetailLoading !== key" in runtime_source
+    assert "refreshAdvancedRoundDetails(runtimeProjection.round, runtimeProjection.live);" in runtime_source
+    assert "const reloadLedger = runtimeProjection.ledgerItems.delete(round);" in runtime_source
+    assert "runtimeProjection.timelineNodeDetails.delete(key);" in runtime_source
+    assert "if (cards[0]) return cards[0];" not in runtime_source
+    assert "const sections = cards.map((card) =>" in runtime_source
 
 
 def test_spec717_chat_metadata_uses_event_time_and_markdown_source():
-    app_source = _gui_ts_source()
     markdown_source = _gui_ts_source("markdown.ts")
     i18n_source = _gui_ts_source("i18n.ts")
-    css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
+    timeline_source = _gui_ts_source("conversation-timeline.ts")
 
-    assert "function renderChatMeta(" in app_source
-    assert 'hourCycle: "h23"' in app_source
-    assert "!Number.isNaN(date.getTime())" in app_source
-    assert '.find((value) => value && !Number.isNaN(new Date(value).getTime()))' in app_source
-    assert "${renderChatMeta(recordedAt)}" in app_source
-    assert 'card.type === "assistant-final" ? renderChatMeta(card.recorded_at, true) : ""' in app_source
-    assert 'data-markdown-document-copy="true"' in app_source
+    assert "function eventTime(" in timeline_source
+    assert 'hourCycle: "h23"' in timeline_source
+    assert "Number.isNaN(date.getTime())" in timeline_source
+    assert "function eventDuration(" in timeline_source
+    assert "eventTime(node.started_at)" in timeline_source
+    assert 'copy.dataset.markdownDocumentCopy = "true"' in timeline_source
+    assert "body.innerHTML = renderMarkdownDocument" in timeline_source
     assert 'button[data-markdown-copy], button[data-markdown-document-copy]' in markdown_source
     assert 'htmlCache.get(documentRoot.dataset.markdownDocumentId || "")?.source' in markdown_source
     assert '"复制最终回复": "Copy final reply"' in i18n_source
-    assert ".chat-item-meta { display: flex;" in css_source
-    assert ".chat-tool-group > .chat-item-meta { margin-left: 30px; }" in css_source
 
 
 def test_spec717_stage_refresh_preserves_primary_scroll_surfaces():
@@ -4074,10 +4418,7 @@ def test_spec717_stage_refresh_preserves_primary_scroll_surfaces():
         "containers:${tab}:detail:",
     ):
         assert scroll_key in view_source
-    assert (
-        'run:tools:evidence:${selectedEvidence?.round ?? "none"}:${selectedFrame?.frame_id || "none"}'
-        in view_source
-    )
+    assert 'run:tools:evidence:${selectedEvidence.round}:${selectedFrame?.frame_id || "none"}' in view_source
 
 
 def test_spec693_gui_retained_round_conversation_contract():
@@ -4087,25 +4428,62 @@ def test_spec693_gui_retained_round_conversation_contract():
     intro = (gui_root / "manual" / "intro.md").read_text(encoding="utf-8")
 
     history_sync = app_source.split("async function syncConversationHistory", 1)[1].split("async function fetchFullLiveProjection", 1)[0]
-    chat_renderer = app_source.split("function retainedConversationItems", 1)[1].split("function renderStage", 1)[0]
+    chat_renderer = _gui_ts_source("conversation-timeline.ts")
 
     assert "conversationRounds: new Map()" in app_source
     assert "conversationRoundOrder: []" in app_source
     assert '"./api/rounds"' in history_sync
     assert "./api/live/state?round=${round}" in history_sync
     assert ".sort((left, right) => left - right)" in history_sync
+    assert ".sort((left, right) => right - left)" in history_sync
+    assert "Promise.all(missing" not in history_sync
+    assert "force ? missing.slice(0, 2) : []" in history_sync
+    assert "await syncConversationHistory();" not in app_source
+    assert "void syncConversationHistory().then" in app_source
     assert "runtimeProjection.conversationRounds.delete(round)" in history_sync
-    assert "buildChatItems(projection?.conversation || [])" in chat_renderer
-    assert "function renderChatTraceGroup(" in app_source
-    assert '`${round ?? "none"}:trace:' in app_source
+    assert "runtimeProjection.conversationRoundOrder.forEach" in chat_renderer
+    assert "orderedNodes(live)" in chat_renderer
+    assert "runtimeProjection.legacyCards.get(round)" in chat_renderer
     assert "较早对话未完全载入" in chat_renderer
+    assert "加载较早对话" in chat_renderer
     assert 'data-retry-projection="history"' in chat_renderer
-    assert "wasAtLatest" in chat_renderer
+    assert "state.conversationStickToBottom" in chat_renderer
     assert "previousAnchorKey" in chat_renderer
     assert "data-chat-anchor" in chat_renderer
     assert "localStorage" not in history_sync
     assert ".chat-history-warning button { padding: 0; border: 0;" in css_source
     assert "当前保留的 Round 会按时间顺序组成连续对话" in intro
+
+
+def test_spec785_conversation_scroll_uses_explicit_sticky_bottom_state():
+    contracts_source = _gui_ts_source("contracts.ts")
+    state_source = _gui_ts_source("state.ts")
+    events_source = _gui_ts_source("events.ts")
+    timeline_source = _gui_ts_source("conversation-timeline.ts")
+    markdown_source = _gui_ts_source("markdown.ts")
+    runtime_source = _gui_ts_source("runtime.ts")
+    scroll_source = _gui_ts_source("conversation-scroll.ts")
+    package = json.loads((GUI_ROOT / "package.json").read_text(encoding="utf-8"))
+
+    assert "conversationStickToBottom: boolean" in contracts_source
+    assert "conversationStickToBottom: true" in state_source
+    assert 'els.chatThread.addEventListener("scroll"' in events_source
+    assert "updateConversationStickyState(els.chatThread, state)" in events_source
+    assert "distanceFromBottom <= 24" in scroll_source
+    assert 'els.chatThread.addEventListener("toggle"' in events_source
+    assert "wasAtLatest" not in timeline_source
+    assert "const stickToBottom = state.conversationStickToBottom" in timeline_source
+    assert "if (stickToBottom) els.chatThread.scrollTop = els.chatThread.scrollHeight" in timeline_source
+    assert "if (changed) scrollConversationToBottomIfSticky()" in timeline_source
+    assert "document.fonts?.ready.then(scrollConversationToBottomIfSticky)" in timeline_source
+    assert "hydrateMarkdownDocuments(body, els.chatThread, () => state.conversationStickToBottom)" in timeline_source
+    assert "const stickToBottom = shouldStickToBottom ? shouldStickToBottom() : atBottom" in scroll_source
+    assert "markdownStickResolvers.get(documentRoot)" in markdown_source
+    assert "state.conversationStickToBottom = true" in runtime_source
+    assert "updateConversationStickyState" in scroll_source
+    assert "scrollConversationToBottomIfSticky" in scroll_source
+    assert "mutateScrollLayout" in scroll_source
+    assert "test:conversation-scroll" in package["scripts"]["check"]
 
 
 def test_spec704_gui_stop_control_uses_resident_status_and_empty_post():
@@ -4116,16 +4494,38 @@ def test_spec704_gui_stop_control_uses_resident_status_and_empty_post():
     server_source = SERVER_PATH.read_text(encoding="utf-8")
 
     assert 'id="stopButton"' in index_source
-    assert '"seed_gui_runtime_status.v2"' in runtime_source
+    assert '"seed_gui_runtime_status.v3"' in runtime_source
     assert '"./api/runtime/stop"' in runtime_source
     assert 'body: "{}"' in runtime_source
     assert 'receipt.schema_version !== "seed_gui_runtime_stop_receipt.v1"' in runtime_source
     assert 'target.closest("#stopButton")' in event_source
-    assert 'stage !== "cleanup_local"' in view_source
+    assert "inFlight && runtimeProjection.awaitingProjection && !localSettlement" in view_source
     assert "stopRequested && runtimeProjection.status?.current_round != null" in view_source
-    assert "els.stopButton.disabled" in view_source
+    assert "els.stopButton.hidden = !roundActive || (!stopAvailable && !localSettlement)" in view_source
+    assert "els.stopButton.disabled = localSettlement || runtimeProjection.stopping || !stopAvailable" in view_source
     assert "subprocess" not in server_source
     assert "message-file" not in server_source
+
+
+def test_spec778_gui_terminal_waits_for_runtime_host_release():
+    timeline_source = _gui_ts_source("conversation-timeline.ts")
+    view_source = _gui_ts_source("view.ts")
+    i18n_source = _gui_ts_source("i18n.ts")
+
+    assert "function projectedActivity(" in timeline_source
+    assert 'activity?.terminal !== true' in timeline_source
+    assert 'status?.stage !== "cleanup_local"' in timeline_source
+    assert "Number(status.current_round) !== round" in timeline_source
+    assert 'activity: "local_settlement"' in timeline_source
+    assert 'terminal: false' in timeline_source
+    assert 'round_ended_at: ""' in timeline_source
+    assert 'local_settlement: t("本地结算")' in timeline_source
+    assert '"本地结算": "Local settlement"' in i18n_source
+    assert "inFlight && runtimeProjection.awaitingProjection && !localSettlement" in view_source
+    assert "els.stopButton.hidden = !roundActive || (!stopAvailable && !localSettlement)" in view_source
+    assert "els.stopButton.disabled = localSettlement || runtimeProjection.stopping || !stopAvailable" in view_source
+    assert 'els.stopButton.title = localSettlement ? t("本地结算不可中断") : ""' in view_source
+    assert '"本地结算不可中断": "Local settlement cannot be interrupted"' in i18n_source
 
 
 def test_spec694_gui_substage_animation_only_tracks_open_transition():
@@ -4149,8 +4549,8 @@ def test_spec694_gui_substage_open_system_page_reflows_dialogue_without_moving_n
     assert "width: var(--rail-expanded);" in nav_expanded_rule
     assert "grid-template-columns" not in nav_expanded_rule
     assert ".app-shell.system-open .dialogue-backplane {" in desktop_open_rule
-    assert "left: var(--system-window-width);" in desktop_open_rule
-    assert "padding-inline: var(--space-lg);" in desktop_open_rule
+    assert "left: calc(var(--system-window-width) + 24px);" in desktop_open_rule
+    assert "padding-inline: 24px 18px;" in desktop_open_rule
     assert "max-width: 100%;" in reading_column_rule
 
 
@@ -4158,11 +4558,56 @@ def test_spec694_gui_substage_three_by_four_stages_when_room_allows():
     css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
     shell_rule = css_source.split(".app-shell {", 1)[1].split("}", 1)[0]
 
-    assert "--conversation-width: min(75vh, 960px);" in css_source
-    assert "--system-window-width: clamp(" in shell_rule
-    assert "75vh" in shell_rule
-    assert "100vw - var(--rail-collapsed) - var(--conversation-width)" in shell_rule
-    assert "min(50vw, 820px)" in shell_rule
+    assert "--conversation-width: min(780px, calc(100vw - var(--rail-collapsed) - 72px));" in css_source
+    assert "--system-window-width: calc((100% - 24px) / 2);" in shell_rule
+    assert "58vw" not in shell_rule
+
+
+def test_spec787_system_window_split_is_resizable_persistent_and_accessible():
+    package = json.loads((GUI_ROOT / "package.json").read_text(encoding="utf-8"))
+    css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
+    index_source = (GUI_ROOT / "index.html").read_text(encoding="utf-8")
+    controller = (GUI_ROOT / "src" / "system-window-split.ts").read_text(encoding="utf-8")
+    model = (GUI_ROOT / "src" / "system-window-split-model.ts").read_text(encoding="utf-8")
+    view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+    browser_test = (GUI_ROOT / "scripts" / "test-system-window-split-browser.mjs").read_text(encoding="utf-8")
+
+    assert package["scripts"]["test:system-window-split"] == "node scripts/test-system-window-split.mjs"
+    assert package["scripts"]["test:system-window-split-browser"] == "node scripts/test-system-window-split-browser.mjs"
+    assert 'id="systemWindowSplitter"' in index_source
+    assert 'role="separator"' in index_source
+    assert 'aria-orientation="vertical"' in index_source
+    assert 'tabindex="-1"' in index_source
+    assert "upsp.v5.systemWindowRatio" in model
+    assert "MIN_SYSTEM_WINDOW_PX = 480" in model
+    assert "MIN_DIALOGUE_PX = 520" in model
+    assert "MIN_SYSTEM_WINDOW_RATIO = 0.3" in model
+    assert "MAX_SYSTEM_WINDOW_RATIO = 0.7" in model
+    assert 'key === "ArrowLeft"' in model
+    assert 'key === "ArrowRight"' in model
+    assert 'key === "Home"' in model
+    assert 'key === "End"' in model
+    assert 'splitter.addEventListener("pointercancel"' in controller
+    assert 'splitter.addEventListener("lostpointercapture"' in controller
+    assert 'splitter.addEventListener("dblclick"' in controller
+    assert 'localStorage.removeItem(SYSTEM_WINDOW_RATIO_STORAGE_KEY)' in controller
+    assert 'els.app.style.setProperty("--system-window-width"' in controller
+    assert "initialSystemWidth" in controller
+    assert "startClientX" in controller
+    assert "deferSystemWindowRender" in controller
+    assert "flushDeferredRender" in controller
+    assert "deferSystemWindowRender(() => renderStage(pageId))" in view_source
+    assert "  desiredRatio: number;" not in model
+    assert "constrained" not in model
+    assert "resizeObserver?.disconnect()" not in controller
+    assert 'import { renderStage } from "./src/view.ts"' in browser_test
+    assert "window.qa.requestRender('mem')" in browser_test
+    assert ".system-window-splitter {" in css_source
+    assert "touch-action: none;" in css_source
+    mobile_rule = css_source.split("@media (max-width: 760px) {", 1)[1]
+    assert ".system-window-splitter { display: none !important; }" in mobile_rule
+    reduced_motion_rule = css_source.split("@media (prefers-reduced-motion: reduce) {", 1)[1].split("/* Spec702", 1)[0]
+    assert "system-window-splitter" not in reduced_motion_rule
 
 
 def test_spec695_typescript_is_the_only_gui_source_and_bundle_stays_host_compatible():
@@ -4181,7 +4626,8 @@ def test_spec695_typescript_is_the_only_gui_source_and_bundle_stays_host_compati
     assert tsconfig["compilerOptions"]["noEmit"] is True
     assert source_names == {
         "app.ts", "bootstrap.ts", "contracts.ts", "events.ts", "markdown-mermaid.ts",
-        "i18n.ts", "markdown.ts", "runtime.ts", "state.ts", "view.ts",
+        "i18n.ts", "markdown.ts", "runtime.ts", "state.ts", "view.ts", "conversation-timeline.ts",
+        "conversation-scroll.ts", "system-window-split.ts", "system-window-split-model.ts",
     }
     assert bundle.startswith("/* Generated from src/app.ts. Do not edit app.js directly. */")
     assert "sourceMappingURL" not in bundle
@@ -4197,6 +4643,7 @@ def test_spec696_rich_markdown_uses_one_sanitized_typed_pipeline():
     markdown_source = (GUI_ROOT / "src" / "markdown.ts").read_text(encoding="utf-8")
     mermaid_source = (GUI_ROOT / "src" / "markdown-mermaid.ts").read_text(encoding="utf-8")
     view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
+    timeline_source = (GUI_ROOT / "src" / "conversation-timeline.ts").read_text(encoding="utf-8")
     index_source = (GUI_ROOT / "index.html").read_text(encoding="utf-8")
     markdown_css = (GUI_ROOT / "markdown.css").read_text(encoding="utf-8")
     host_source = SERVER_PATH.read_text(encoding="utf-8")
@@ -4219,8 +4666,8 @@ def test_spec696_rich_markdown_uses_one_sanitized_typed_pipeline():
     assert 'const path = "./markdown-mermaid.js"' in markdown_source
     assert 'securityLevel: "strict"' in mermaid_source
     assert "startOnLoad: false" in mermaid_source
-    assert 'card.type === "assistant-streaming" ? card.content_raw || "" : card.content_md || card.content_raw || ""' in view_source
-    assert 'card.type === "user"' in view_source
+    assert "body.innerHTML = renderMarkdownDocument" in timeline_source
+    assert 'node.type === "user"' in timeline_source
     assert "function renderMarkdown(" not in view_source
     assert '<link rel="stylesheet" href="./markdown.css" />' in index_source
     assert ".md-document" in markdown_css
@@ -4334,19 +4781,22 @@ def test_runtime_composer_clears_immediately_and_restores_failed_submission():
     assert 'if (!els.messageInput.value) els.messageInput.value = message;' in runtime_source
 
 
-def test_spec705_context_frame_selector_uses_embedded_frame_snapshots():
+def test_spec773_context_frame_selector_uses_on_demand_frame_details():
     gui_root = GUI_ROOT
     contracts_source = (gui_root / "src" / "contracts.ts").read_text(encoding="utf-8")
     state_source = (gui_root / "src" / "state.ts").read_text(encoding="utf-8")
     events_source = (gui_root / "src" / "events.ts").read_text(encoding="utf-8")
     view_source = (gui_root / "src" / "view.ts").read_text(encoding="utf-8")
 
-    assert "context_panes?: ContextPane[]" in contracts_source
+    assert "frame_catalog?: CallFrame[]" in contracts_source
+    assert 'schema_version: "round_live_detail.v1"' in contracts_source
     assert "manifest?: JsonObject" in contracts_source
     assert "selectedContextFrame: null" in state_source
     assert 'closest<HTMLSelectElement>("[data-context-frame]")' in events_source
     assert "state.selectedContextFrame = null" in events_source
     assert "frame.context_panes || []" in view_source
+    assert "runtimeProjection.frameDetail" in view_source
+    assert "loadFrameDetail(round, frameId" in events_source
     assert "JSON.stringify(frame.manifest || {}, null, 2)" in view_source
     assert "renderRuntimeFrames([frame])" in view_source
     assert "data-context-frame" in view_source
@@ -4371,10 +4821,10 @@ def test_spec722_task_evidence_round_frame_review_uses_real_frame_snapshot():
     assert "data-task-round" in view_source
     assert "data-task-frame" in view_source
     assert 'item.id === "40_high_freq"' in view_source
-    assert 'source.indexOf("## 当前任务清单状态")' in view_source
-    assert 'source.indexOf("\\n<!-- [STEP_TOOLBELT:", start)' in view_source
-    assert "card.frame_id === selectedFrame.frame_id" in view_source
-    assert 'card.type === "tool-call"' in view_source
+    assert 'block.block_id === "high_freq:task_board"' in view_source
+    assert "item.frame_id === selectedFrame.frame_id" in view_source
+    assert "runtimeProjection.ledgerItems.get(selectedEvidence.round)" in view_source
+    assert 'item.type === "tool"' in view_source
     assert "renderMarkdownDocument(`task-snapshot:" in view_source
 
 

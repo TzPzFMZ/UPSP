@@ -15,7 +15,6 @@ def _envelope(tool_id, arguments=None, tool_class="sync_tool", index=0):
         "tool_id": tool_id,
         "arguments": arguments or {},
         "arguments_json": "{}",
-        "tool_family": "protocol_tool",
         "tool_class": tool_class,
         "risk": "high",
         "parse_status": "ok",
@@ -36,7 +35,7 @@ def test_spec244_native_exports_protocol_tools_without_guide_gate():
     assert "memory_write" in names
     assert "memory_container_create" in names
     assert "memory_container_write" in names
-    assert "container_focus" in names
+    assert "container_focus" not in names
     assert "relation_card_write" in names
 
 
@@ -80,18 +79,22 @@ def test_spec244_docs_do_not_expose_retired_guide_markers():
     assert "反应循环指南" in popup
 
 
-def test_spec246_native_focus_tools_have_single_iteration_slot():
+def test_spec781_multiple_container_sync_tools_route_without_focus_conflict():
     from logic.native_tool_calls import apply_native_tool_calls_to_parsed_reaction
 
     routed = apply_native_tool_calls_to_parsed_reaction({}, [
         _envelope(
-            "container_focus",
+            "memory_container_create",
             {
-                "action": "open",
-                "container_id": "PRJ-1",
-                "reason": "prepare focused rewrite",
+                "mem_id": "MEM-1",
+                "container_type": "PRJ",
+                "title": "create",
+                "target_file": "plan.md",
+                "container_body": "body",
+                "current_overview": "overview",
+                "reason": "create resident container",
             },
-            tool_class="focus_tool",
+            tool_class="sync_tool",
             index=0,
         ),
         _envelope(
@@ -105,47 +108,23 @@ def test_spec246_native_focus_tools_have_single_iteration_slot():
                 "current_overview": "overview",
                 "reason": "same iteration conflict",
             },
-            tool_class="focus_tool",
+            tool_class="sync_tool",
             index=1,
         ),
     ], native_mode=True, active_protocol_tool_guides=[
-        "container_focus",
+        "memory_container_create",
         "memory_container_write",
     ])
 
-    assert routed["protocol_tool_submissions"] == ["container_focus"]
-    assert routed["container_focus_declarations"]
-    assert routed["memory_container_write_declarations"] == []
-    assert any(
-        item.get("tool_id") == "memory_container_write"
-        and item.get("reason") == "focus_tool_iteration_conflict"
-        and item.get("accepted_focus_tool") == "container_focus"
-        for item in routed["invalid_tool_requests"]
-    )
-
-    from engines.reaction_helpers import native_tool_feedback_action
-    from engines.reaction_protocol_tool_execution import model_visible_error_hint
-
-    conflict = next(
-        item for item in routed["invalid_tool_requests"]
-        if item.get("reason") == "focus_tool_iteration_conflict"
-    )
-    hint = model_visible_error_hint(conflict)
-    action, messages = native_tool_feedback_action(conflict["reason"], conflict)
-    assert hint == {
-        "kind": "validation",
-        "retry": "next_frame",
-        "attempted": {"tool_id": "memory_container_write"},
-        "current": {"accepted_focus_tool": "container_focus"},
-        "expected": {"max_focus_tools_per_iteration": 1},
-        "next_action": "本帧已有焦点工具被接受；等待其回执，下一帧只提交一个焦点工具。",
-    }
-    assert action == "wait_next_frame_single_focus_tool"
-    assert any("container_focus" in message for message in messages)
-    assert any("下一帧只提交一个焦点工具" in message for message in messages)
+    assert routed["invalid_tool_requests"] == []
+    assert routed["protocol_tool_submissions"] == [
+        "memory_container_create", "memory_container_write",
+    ]
+    assert routed["memory_container_create_declarations"]
+    assert routed["memory_container_write_declarations"]
 
 
-def test_spec756_focus_tool_headers_forbid_same_frame_batching():
+def test_spec781_container_tool_headers_have_no_focus_batching_rule():
     from logic.native_tool_calls import export_provider_tool_schemas
 
     schemas = export_provider_tool_schemas(
@@ -157,14 +136,11 @@ def test_spec756_focus_tool_headers_forbid_same_frame_batching():
         item.get("name"): str(item.get("description") or "")
         for item in schemas
     }
-    for tool_id in (
-        "container_focus",
-        "memory_container_create",
-        "memory_container_write",
-    ):
+    assert "container_focus" not in descriptions
+    for tool_id in ("memory_container_create", "memory_container_write"):
         description = descriptions[tool_id]
-        assert "每个 provider Frame/反应迭代最多调用一个焦点工具" in description
-        assert "下一帧" in description
+        assert "焦点工具" not in description
+        assert "最多调用一个" not in description
 
 
 def test_spec246_multiple_sync_tools_can_route_in_one_iteration():

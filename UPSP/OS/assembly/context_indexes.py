@@ -222,81 +222,6 @@ def build_container_index(assembler):
     return "\n".join(parts)
 
 
-def find_recent_child(cdir, prefix):
-    """在容器目录中找最近修改的子条目。返回描述文本或空字符串"""
-    import os as _os, json as _json
-    # 1. 先看注册表
-    reg_file = _os.path.join(cdir, "registry.json")
-    children = []
-    if _os.path.isfile(reg_file):
-        try:
-            with open(reg_file, "r", encoding="utf-8") as f:
-                cr = _json.load(f)
-            children = cr.get("chains") or cr.get("items") or cr.get("records") or []
-        except Exception:
-            pass
-    if children:
-        latest = children[-1]
-        if isinstance(latest, dict):
-            title = latest.get("title", latest.get("id", "?"))
-            status = latest.get("status", "")
-            return f"{title} ({status})" if status else title
-        return str(latest)[:60]
-
-    # 2. DC/EC: 检查子目录（如 DC-R34-001/）
-    if prefix in ("DC", "EC"):
-        try:
-            subdirs = []
-            for item in _os.listdir(cdir):
-                ipath = _os.path.join(cdir, item)
-                if _os.path.isdir(ipath) and item.startswith(prefix + "-"):
-                    mtime = _os.path.getmtime(ipath)
-                    subdirs.append((mtime, item))
-            if subdirs:
-                subdirs.sort(reverse=True)
-                latest_name = subdirs[0][1]
-                # 尝试读子目录内的 open.md 第一行标题
-                open_md = _os.path.join(cdir, latest_name, "open.md")
-                if _os.path.isfile(open_md):
-                    try:
-                        with open(open_md, "r", encoding="utf-8") as f:
-                            first_line = f.readline().strip().lstrip("#").strip()
-                        if first_line:
-                            return f"{latest_name} → {first_line[:50]}"
-                    except Exception:
-                        pass
-                return latest_name
-        except Exception:
-            pass
-
-    # 3. IMM/CHR/COR/FUT: 列出目录内的 .md 文件（排除 registry/index）
-    try:
-        md_files = []
-        for item in _os.listdir(cdir):
-            ipath = _os.path.join(cdir, item)
-            if _os.path.isfile(ipath) and item.endswith(".md") and item not in ("index.md", "registry.md"):
-                mtime = _os.path.getmtime(ipath)
-                md_files.append((mtime, item))
-        if md_files:
-            md_files.sort(reverse=True)
-            return md_files[0][1].replace(".md", "")
-    except Exception:
-        pass
-
-    # 4. 递归检查子目录中有无 .md 文件
-    try:
-        for item in _os.listdir(cdir):
-            subpath = _os.path.join(cdir, item)
-            if _os.path.isdir(subpath):
-                for subitem in _os.listdir(subpath):
-                    if subitem.endswith(".md"):
-                        return f"{item}/{subitem}"[:60]
-    except Exception:
-        pass
-
-    return ""
-
-
 def build_ltm_heat_index(assembler, limit=16, offset=0):
     """LTM 热度索引：按 last_recalled_at 排序，分钟粒度相对时间"""
     parts = ["## LTM 热度索引"]
@@ -753,34 +678,6 @@ def build_association_index(assembler, limit=16, input_keywords=None, offset=0):
         return ""
 
 
-def build_explorer_index(assembler):
-    parts = ["## EXPLORER（索引区）"]
-    try:
-        from data.container_store import ContainerStore
-        reg = ContainerStore().load_registry()
-        parts.append("### 容器")
-        for i, c in enumerate(reg.get("containers", [])):
-            if i >= 16:
-                parts.append(f"（另有 {len(reg['containers']) - 16} 个容器已折叠）")
-                break
-            cid = c.get("id", c.get("prefix", "?"))
-            parts.append(
-                f"- [{cid}] {c.get('name', '')} "
-                f"({c.get('status', 'open')})")
-    except Exception:
-        parts.append("（容器注册表读取失败）")
-    try:
-        from data.relation_store import RelationStore
-        reg = RelationStore().load_registry()
-        parts.append("### 关系")
-        for card in reg.get("cards", []):
-            parts.append(
-                f"- [{card.get('category', '?')}] {card.get('id', '')} "
-                f"— {card.get('name', '')}")
-    except Exception:
-        pass
-    return "\n".join(parts)
-
 # ==============================================================
 # STM 热度索引（高频层）
 # ==============================================================
@@ -790,13 +687,19 @@ def build_stm_heat_index(assembler, limit=STM_INDEX_DISPLAY_LIMIT, offset=0):
     parts = ["## STM 索引"]
     heat, meta = {}, {}
     try:
-        from data.memory_heat import MemoryHeat
-        heat = MemoryHeat().load_heat()
+        memory_heat = getattr(assembler, "memory_heat", None)
+        if memory_heat is None:
+            from data.memory_heat import MemoryHeat
+            memory_heat = MemoryHeat()
+        heat = memory_heat.load_heat()
     except Exception:
         pass
     try:
-        from data.memory_store import MemoryStore
-        meta = MemoryStore().load_meta()
+        memory_store = getattr(assembler, "memory_store", None)
+        if memory_store is None:
+            from data.memory_store import MemoryStore
+            memory_store = MemoryStore()
+        meta = memory_store.load_meta()
     except Exception:
         pass
     entries = heat.get("entries", {})

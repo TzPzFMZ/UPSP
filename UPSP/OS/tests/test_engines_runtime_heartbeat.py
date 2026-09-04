@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 import pytest
@@ -110,6 +111,33 @@ class TestHeartbeat:
         assert hb._paused is True
         hb.resume()
         assert hb._paused is False
+
+    def test_spec778_resume_without_tick_wakes_background_thread_only(
+            self, tmp_path, monkeypatch):
+        from engines.heartbeat import HeartbeatManager
+        from data.state_store import StateStore
+
+        sm = StateStore(str(tmp_path / "state.json"))
+        sm.init_if_missing()
+        hb = HeartbeatManager(sm, interval=60)
+        ticked = threading.Event()
+        tick_threads = []
+
+        def tick():
+            tick_threads.append(threading.current_thread().name)
+            ticked.set()
+            return True
+
+        monkeypatch.setattr(hb, "_do_tick", tick)
+        hb.pause()
+        hb.start()
+        try:
+            hb.resume(run_tick=False)
+            assert ticked.wait(1)
+            assert tick_threads == ["heartbeat"]
+            assert hb.wait_for_wakeup(timeout=1) is True
+        finally:
+            hb.stop()
 
     def test_tick_sets_rhythm_due(self, tmp_path, monkeypatch):
         from engines.heartbeat import HeartbeatManager

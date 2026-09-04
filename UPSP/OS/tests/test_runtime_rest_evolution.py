@@ -32,11 +32,10 @@ class TestRuntimeRestEvolution(RuntimeTestMixin):
 
         assert rt.workbench is wb
 
-    def test_runtime_fatigue_hooks_are_inert(self, tmp_path):
+    def test_runtime_rest_cycle_is_inert(self, tmp_path):
         rt = self._make_runtime(tmp_path)
         before = rt.sm.load()
         assert rt._process_rest_cycle() is None
-        assert rt._wake_if_sleeping() is None
         assert rt.sm.load() == before
 
     def test_chronicle_state_sample_no_longer_projects_fatigue(self):

@@ -34,8 +34,8 @@ def test_spec756_tool_counts_and_permission_tiers() -> None:
     guarded_names = {item["name"] for item in guarded}
     unlimited_names = {item["name"] for item in unlimited}
 
-    assert len(limited) == 21
-    assert len(guarded) == len(unlimited) == 25
+    assert len(limited) == 20
+    assert len(guarded) == len(unlimited) == 24
     assert "memory_search" in limited_names
     assert "shell_command" not in limited_names
     assert "shell_command" in guarded_names == unlimited_names

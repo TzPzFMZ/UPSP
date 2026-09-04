@@ -20,7 +20,7 @@ An agent may possess tools, plans, and loops and still be reset to zero when the
 UPSP builds a local, portable, and auditable material substrate for that question. Models may change, conversations may break, and carriers may migrate. As long as the profile, state, memories, relationships, rules, and record of practice remain, a persona does not have to be born again from nothing.
 
 > Auditable · Portable · Continuable · Extensible<br>
-> Base / Seed · Windows Stable `0.1.1`
+> Base / Seed · Windows Stable `0.1.2`
 
 ---
 
@@ -142,7 +142,7 @@ FMZ is the continuing practice, FMA is the first public demonstration, and Alyos
 
 ## Quick start
 
-1. Download `UPSP-Setup-0.1.1-win-x64.exe` from [GitHub Releases](https://github.com/TzPzFMZ/UPSP/releases).
+1. Download `UPSP-Setup-0.1.2-win-x64.exe` from the [0.1.2 release page](https://github.com/TzPzFMZ/UPSP/releases/tag/v0.1.2). The installer is unsigned; verify its SHA-256 against the release notes.
 2. Verify the installer against the SHA-256 published on the Release page, then install and launch UPSP.
 3. Start quickly with Alyosha or create your own persona.
 4. Configure your own model service and API key, or skip model setup to inspect the local interface and persona structure first.
@@ -172,18 +172,18 @@ LocalAppData\UPSP\
 
 ## Current stage
 
-`0.1.1` is at **Base / Seed**:
+Version `0.1.2` is at **Base / Seed**:
 
 - multiple personas may be stored locally, with exactly one active at a time;
 - each persona may have `meta` plus multiple new, forked, archived, and restored branches, with exactly one active branch at a time;
 - core identity, rules, protocol documents, and LTM memory entries remain shared within one PID, while branch state, STM, relationships, containers, Rounds, and caches stay isolated;
 - a strictly serial Setup / Reaction / Cleanup Runtime.
 
-Parallel personas or branches, branch merging, automatic project binding, and the Arbor organ system belong to later stages. Pause/resume, automatic updates, and cloud synchronization are also not implemented. These boundaries locate Seed within Subjectivation Engineering; they do not negate the substrate already established.
+Parallel personas or branches, branch merging, automatic project binding, and the Arbor organ system belong to later stages. After an interruption, recorded actions can be checked before a user requests continuation; this is not a process or model-session checkpoint. Automatic task resumption, automatic updates, and cloud synchronization are not implemented.
 
 The currently verified environment is Windows 11 x64 with the system Evergreen WebView2 Runtime. OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages protocols are supported. Windows 10, enterprise-policy environments, and every third-party compatible gateway have not yet been individually verified.
 
-See the [0.1.1 Release Notes](docs/public/releases/0.1.1.md) for the full change list, upgrade boundaries, and known limitations.
+See the [0.1.2 Update Notes](docs/public/releases/0.1.2.md) for this version's changes, upgrade boundaries, and known limitations. The [0.1.1 Release Notes](docs/public/releases/0.1.1.md) remain available.
 
 ---
 

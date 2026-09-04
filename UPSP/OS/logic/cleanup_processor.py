@@ -214,72 +214,6 @@ def _prework_trace_index(result):
     return item_ids, refs
 
 
-def _pairwise(values):
-    values = [str(value or "").strip() for value in values or [] if str(value or "").strip()]
-    pairs = []
-    for index, left in enumerate(values):
-        for right in values[index + 1:]:
-            if left != right:
-                pairs.append((left, right))
-    return pairs
-
-
-def build_association_counts_from_receipts(memory_write_receipts):
-    """联想集五表：只从本轮有效 memory_write 回执做脚本计数。"""
-    counts = {
-        "assoc_kw_kw": [],
-        "assoc_kw_ifeel": [],
-        "assoc_kw_rfeel": [],
-        "assoc_ifeel_rfeel": [],
-        "assoc_object_rfeel": [],
-    }
-    for receipt in memory_write_receipts or []:
-        if receipt.get("status") != "applied":
-            continue
-        keywords = list(dict.fromkeys(receipt.get("keywords") or []))
-        interaction_feelings = list(dict.fromkeys(receipt.get("interaction_feelings") or []))
-        relationship_feelings = []
-        for item in receipt.get("relationship_feelings") or []:
-            if not isinstance(item, dict):
-                continue
-            subject = str(item.get("subject") or "").strip()
-            feeling = str(item.get("word") or "").strip()
-            if subject and feeling and (subject, feeling) not in relationship_feelings:
-                relationship_feelings.append((subject, feeling))
-        # 历史 receipt 只有 relation_feelings 字符串，归属回退到记忆 subject。
-        if not relationship_feelings:
-            legacy_subject = str(receipt.get("subject") or "").strip()
-            relationship_feelings = [
-                (legacy_subject, str(feeling or "").strip())
-                for feeling in receipt.get("relation_feelings") or []
-                if legacy_subject and str(feeling or "").strip()
-            ]
-        relation_feelings = list(dict.fromkeys(
-            feeling for _subject, feeling in relationship_feelings))
-        counts["assoc_kw_kw"].extend(_pairwise(keywords))
-        counts["assoc_kw_ifeel"].extend(
-            (keyword, feeling)
-            for keyword in keywords
-            for feeling in interaction_feelings
-        )
-        counts["assoc_kw_rfeel"].extend(
-            (keyword, feeling)
-            for keyword in keywords
-            for feeling in relation_feelings
-        )
-        counts["assoc_ifeel_rfeel"].extend(
-            (interaction, relation)
-            for interaction in interaction_feelings
-            for relation in relation_feelings
-        )
-        counts["assoc_object_rfeel"].extend(
-            (subject, feeling)
-            for subject, feeling in relationship_feelings
-            if subject not in EMPTY_CELLS
-        )
-    return {key: value for key, value in counts.items() if value}
-
-
 def _has_prework_ref(item_id, evidence_refs, prework_ids, prework_refs):
     if item_id in prework_ids:
         return True
@@ -394,10 +328,6 @@ def process_cleanup(parsed, state, round_num, result, data_modules):
         if receipt.get("status") == "applied" and receipt.get("mem_id"):
             report["memory_ids"].append(receipt["mem_id"])
             report.setdefault("_memory_write_receipts", []).append(receipt)
-    association_counts = build_association_counts_from_receipts(
-        report.get("_memory_write_receipts", []))
-    if association_counts:
-        report["_association_counts"] = association_counts
     for receipt in result.get("_relation_card_receipts", []) if isinstance(result, dict) else []:
         if receipt.get("status") in {"applied", "degraded"} and receipt.get("card_id"):
             report.setdefault("_relation_card_receipts", []).append(receipt)

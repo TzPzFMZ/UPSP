@@ -368,7 +368,6 @@ def test_missing_usage_keeps_one_4k_file_read_then_stops_the_batch():
 
     dispatcher = GeneralToolDispatcher(execute_fn=lambda call, **kwargs: {
         "tool_id": "file_read",
-        "tool_family": "general_tool",
         "tool_class": "read_tool",
         "status": "ok",
         "content": "x" * 4096,
@@ -391,6 +390,47 @@ def test_missing_usage_keeps_one_4k_file_read_then_stops_the_batch():
     assert results[1]["status"] == "rejected"
     assert results[1]["reason"] == "file_read_batch_budget_exhausted"
     assert results[1]["window_budget_status"] == "batch_floor_exhausted"
+
+
+def test_spec774_file_read_frame_budget_does_not_poison_next_frame():
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+    calls = []
+
+    def fake_execute(call, **_kwargs):
+        calls.append(call["path"])
+        return {
+            "tool_id": "file_read",
+            "tool_class": "read_tool",
+            "status": "ok",
+            "content": "x" * 4096,
+            "returned_chars": 4096,
+            "window_legacy_floor_chars": 4096,
+        }
+
+    dispatcher = GeneralToolDispatcher(execute_fn=fake_execute)
+    first_frame = dispatcher.handle_requests(
+        [
+            {"tool_id": "file_read", "path": "first.md"},
+            {"tool_id": "file_read", "path": "next.md"},
+        ],
+        [],
+        runtime_context={"current_tokens": 0, "context_window": 0},
+    )
+    legacy_first_frame = [dict(item) for item in first_frame]
+    legacy_first_frame[1].pop("dispatch_stage")
+    next_frame = dispatcher.handle_requests(
+        [{"tool_id": "file_read", "path": "next.md"}],
+        [],
+        prior_results=legacy_first_frame,
+        runtime_context={"current_tokens": 0, "context_window": 0},
+    )
+
+    assert first_frame[1]["reason"] == "file_read_batch_budget_exhausted"
+    assert first_frame[1]["dispatch_stage"] == "frame_budget"
+    assert next_frame[0]["status"] == "ok"
+    assert next_frame[0]["dispatch_stage"] == "handler"
+    assert calls == ["first.md", "next.md"]
 
 
 def test_provider_preflight_blocks_only_newly_retained_material():
@@ -447,7 +487,6 @@ def test_dispatcher_injects_budget_after_signature_calculation():
         captured.update(call)
         return {
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "status": "ok",
             "content": "fixture",
@@ -478,7 +517,6 @@ def test_dispatcher_shares_and_decrements_file_read_batch_budget():
         planned_windows.append(plan["window_chars"])
         return {
             "tool_id": "file_read",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "status": "ok",
             "content": "x" * 4000,
@@ -533,6 +571,7 @@ def test_tool_settlement_passes_state_budget_to_dispatcher():
     class Runner:
         sm = Store()
         general_tool_dispatcher = Dispatcher()
+        action_recovery_store = None
 
         @staticmethod
         def _native_tool_failure_feedbacks(_results):

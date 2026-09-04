@@ -1,9 +1,6 @@
 """工具事务验账纯逻辑。"""
 
-from logic.protocol_tools import (
-    normalize_tool_id,
-    tool_metadata_for,
-)
+from logic.protocol_tools import normalize_tool_id, tool_metadata_for
 
 
 TERMINAL_PROCESSOR_STATUSES = {
@@ -135,22 +132,16 @@ def audit_tool_transactions(
         status = receipt.get("status", "")
         source = receipt.get("source", "")
         meta = tool_metadata_for(tool_id)
-        expected_family = meta.get("tool_family", "")
         expected_class = meta.get("tool_class", "")
-        receipt_family = receipt.get("tool_family", "")
         receipt_class = receipt.get("tool_class", "")
-        if (
-            (receipt_family and expected_family and receipt_family != expected_family)
-            or (receipt_class and expected_class and receipt_class != expected_class)
-        ):
+        if receipt_class and expected_class and receipt_class != expected_class:
             issues.append(_issue(
                 "metadata_mismatch",
                 tool_id,
                 source=source,
                 severity="error",
                 detail=(
-                    f"expected={expected_family}/{expected_class}; "
-                    f"actual={receipt_family}/{receipt_class}"
+                    f"expected={expected_class};actual={receipt_class}"
                 ),
             ))
         if status == "rejected_missing_guide" and source not in invalid_seen:
@@ -162,8 +153,8 @@ def audit_tool_transactions(
             ))
         if (
             status not in {"rejected_missing_guide", "guide_missing"}
-            and expected_family
-            and expected_family != "protocol_tool"
+            and meta
+            and meta.get("execution_route") != "internal_processor"
         ):
             issues.append(_issue(
                 "non_protocol_protocol_receipt",
@@ -177,7 +168,7 @@ def audit_tool_transactions(
         if not tool_id:
             continue
         meta = tool_metadata_for(tool_id)
-        if meta and meta.get("tool_family") != "protocol_tool":
+        if meta and meta.get("execution_route") != "internal_processor":
             issues.append(_issue(
                 "non_protocol_request_ignored",
                 tool_id,
@@ -206,7 +197,7 @@ def audit_tool_transactions(
         if not tool_id:
             continue
         meta = tool_metadata_for(tool_id)
-        if meta.get("tool_family") != "protocol_tool":
+        if meta.get("execution_route") != "internal_processor":
             issues.append(_issue(
                 "non_protocol_submission_accepted",
                 tool_id,
@@ -243,10 +234,11 @@ def audit_tool_transactions(
                 severity="error",
             ))
 
+    audit_meta = tool_metadata_for("tool_transaction_audit")
     return {
         "tool_id": "tool_transaction_audit",
-        "tool_family": "substrate_tool",
-        "tool_class": "sync_tool",
+        "tool_class": audit_meta.get("tool_class", ""),
+        "execution_route": audit_meta.get("execution_route", ""),
         "status": "ok" if not issues else "issues_found",
         "counts": {
             "requests": len(requests),

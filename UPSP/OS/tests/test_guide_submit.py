@@ -65,11 +65,24 @@ def test_spec593_task_bootstrap_visible_schema_contains_minimal_ledger_shape(tmp
     message = render_active_guide_feedback(guide, workbench=store)
 
     assert "source_requirements=[{requirement_id, source_ref, summary}]" in message
-    assert "items=[{item_id, title, requirement_refs:[...]}]" in message
+    assert "items=[{item_id, title}]" in message
     assert "acceptance=[{acceptance_id, description, item_refs:[...]}]" in message
-    assert "source_ref 必须来自已读来源" in message
+    assert "source_refs 只是计划准备读取或核验的稳定坐标" in message
+    assert "同一 response 的其他工具不会阻止建账" in message
     assert "reason/evidence_refs 属于每条 submission 外层" in message
     assert "每个 item_id 都必须至少被一条 acceptance.item_refs 覆盖" in message
+
+
+def test_spec779_retired_same_frame_reason_is_absent_from_active_runtime():
+    os_root = Path(__file__).resolve().parents[1]
+    active_sources = [
+        os_root / "logic" / "guide_submit.py",
+        os_root / "engines" / "reaction_guide_feedback.py",
+        os_root / "engines" / "reaction_tool_settlement.py",
+    ]
+
+    for path in active_sources:
+        assert "bootstrap_wait_for_tool_results" not in path.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("reason,details", [
@@ -86,9 +99,6 @@ def test_spec593_task_bootstrap_visible_schema_contains_minimal_ledger_shape(tmp
     }),
     ("missing_guide_fields", {"fields": ["items"]}),
     ("undeclared_guide_fields", {"fields": ["reason"], "allowed_fields": ["items"]}),
-    ("bootstrap_wait_for_tool_results", {"current_tool_ids": ["file_read"]}),
-    ("bootstrap_source_not_read", {"missing_source_refs": ["task.md"], "prior_source_refs": []}),
-    ("bootstrap_source_requirements_required", {"source_refs": ["task.md"]}),
     ("bootstrap_invalid_source_requirements", {"invalid_requirements": [{"requirement_id": "req_01"}]}),
     ("bootstrap_source_requirement_ref_unknown", {"unknown_source_refs": ["future/output.md"], "source_refs": ["task.md"]}),
     ("bootstrap_item_requirement_refs_required", {"items": ["item_01"]}),
@@ -333,8 +343,8 @@ def test_spec464_rhythm_guide_submit_writes_chronicle(tmp_path):
         def __init__(self):
             self.entries = []
 
-        def write_focused_entry(self, focus, content):
-            self.entries.append((dict(focus), content))
+        def commit_write_scope(self, scope, content):
+            self.entries.append((dict(scope), content))
             return str(tmp_path / "chronicle.md")
 
     store = WorkbenchStore(root_dir=str(tmp_path / "workbench"))
@@ -361,7 +371,8 @@ def test_spec464_rhythm_guide_submit_writes_chronicle(tmp_path):
             "round_num": 464,
             "round_type": "rhythm",
             "chronicle_store": chronicle,
-            "chronicle_focus": {
+            "chronicle_write_scope": {
+                "schema_version": "chronicle_write_scope.v1",
                 "layer": "rhythms",
                 "round_num": 464,
                 "round_type": "rhythm",
@@ -1333,7 +1344,7 @@ def test_spec541_direct_completed_alias_still_requires_evidence(tmp_path):
     assert receipt["reason"] == "task_completion_evidence_required"
 
 
-def test_spec439_task_bootstrap_rejects_file_source_without_prior_read_evidence(tmp_path):
+def test_spec780_task_bootstrap_accepts_unread_file_as_plan_source(tmp_path):
     from data.workbench import WorkbenchStore
     from logic.guide_submit import apply_guide_submit
     from logic.task_guide import create_task_bootstrap_guide
@@ -1354,7 +1365,7 @@ def test_spec439_task_bootstrap_rejects_file_source_without_prior_read_evidence(
                         "task_title": "日常能力测试",
                         "task_goal": "读取任务文件并执行",
                         "items": ["读取任务文件", "完成任务"],
-                        "acceptance": ["输出产物"],
+                        "acceptance": ["文件已读取", "输出产物"],
                         "source_refs": [source_path],
                     },
                 }
@@ -1363,20 +1374,13 @@ def test_spec439_task_bootstrap_rejects_file_source_without_prior_read_evidence(
         evidence_context={"prior_general_tool_results": []},
     )
 
-    assert receipt["status"] == "rejected"
-    assert receipt["reason"] == "bootstrap_source_not_read"
-    assert receipt["details"]["missing_source_refs"] == [source_path]
-    assert "file_read" in receipt["details"]["message"]
-    assert "web_fetch" in receipt["details"]["message"]
-    assert "file_read" in receipt["details"]["repair_hint"]
-    assert "web_fetch" in receipt["details"]["repair_hint"]
-    assert "need_more_sources" not in receipt["details"]["message"]
-    assert "blocked_by_missing_access" not in receipt["details"]["message"]
-    assert store.get("base.active_guide") == "task_bootstrap"
-    assert store.get("base.active_task") in (None, "")
+    assert receipt["status"] == "accepted"
+    guide = store.load_task_guide(store.get("base.active_task"))
+    assert guide["source_refs"] == [source_path]
+    assert store.load_source_read_evidence() == []
 
 
-def test_spec439_task_bootstrap_rejects_same_iteration_source_tools(tmp_path):
+def test_spec780_same_frame_read_does_not_turn_plan_pointer_into_read_evidence(tmp_path):
     from data.workbench import WorkbenchStore
     from logic.guide_submit import apply_guide_submit
     from logic.task_guide import create_task_bootstrap_guide
@@ -1397,7 +1401,7 @@ def test_spec439_task_bootstrap_rejects_same_iteration_source_tools(tmp_path):
                         "task_title": "日常能力测试",
                         "task_goal": "读取任务文件并执行",
                         "items": ["读取任务文件", "完成任务"],
-                        "acceptance": ["输出产物"],
+                        "acceptance": ["文件已读取", "输出产物"],
                         "source_refs": [source_path],
                     },
                 }
@@ -1411,13 +1415,11 @@ def test_spec439_task_bootstrap_rejects_same_iteration_source_tools(tmp_path):
         },
     )
 
-    assert receipt["status"] == "rejected"
-    assert receipt["reason"] == "bootstrap_wait_for_tool_results"
-    assert receipt["details"]["current_tool_ids"] == ["file_read"]
-    assert store.get("base.active_guide") == "task_bootstrap"
+    assert receipt["status"] == "accepted"
+    assert store.load_source_read_evidence() == []
 
 
-def test_spec593_task_bootstrap_waits_even_with_workbench_source_evidence(tmp_path):
+def test_spec779_task_bootstrap_coexists_with_same_frame_general_tools(tmp_path):
     from data.workbench import WorkbenchStore
     from logic.guide_submit import apply_guide_submit
     from logic.task_guide import create_task_bootstrap_guide
@@ -1478,13 +1480,85 @@ def test_spec593_task_bootstrap_waits_even_with_workbench_source_evidence(tmp_pa
             "task_root": str(task_root),
             "prior_general_tool_results": [],
             "current_general_tool_requests": [
-                {"tool_id": "file_read", "path": str(source_path)}
+                {"tool_id": "file_read", "path": str(source_path)},
+                {"tool_id": "web_search", "query": "SealGate requirements"},
+                {"tool_id": "web_fetch", "url": "https://example.com/reference"},
             ],
         },
     )
 
+    assert receipt["status"] == "accepted"
+    task_id = store.get("base.active_task")
+    assert task_id
+    guide = store.load_task_guide(task_id)
+    assert guide["source_refs"] == ["00_BRIEF.md"]
+    assert guide["source_requirements"][0]["source_ref"] == "00_BRIEF.md"
+    assert guide["items"][0]["requirement_refs"] == ["req_01"]
+    assert guide["acceptance"][0]["item_refs"] == ["item_01"]
+
+
+def test_spec779_same_frame_tools_do_not_bypass_acceptance_coverage(tmp_path):
+    from data.workbench import WorkbenchStore
+    from logic.guide_submit import apply_guide_submit
+    from logic.task_guide import create_task_bootstrap_guide
+
+    store = WorkbenchStore(root_dir=str(tmp_path / "workbench"))
+    source_url = "https://example.com/task-brief"
+    create_task_bootstrap_guide(store, reason="用户要求读取任务来源后执行")
+
+    receipt = apply_guide_submit(
+        store,
+        {
+            "guide_id": "task_bootstrap",
+            "submissions": [{
+                "item_id": "build_initial_task_guide",
+                "option_id": "submit_initial_guide",
+                "fields": {
+                    "task_title": "覆盖校验回归",
+                    "task_goal": "完成两项任务",
+                    "source_refs": [source_url],
+                    "source_requirements": [{
+                        "requirement_id": "req_01",
+                        "source_ref": source_url,
+                        "summary": "完成来源要求",
+                    }],
+                    "items": [
+                        {
+                            "item_id": "item_01",
+                            "title": "第一项",
+                            "requirement_refs": ["req_01"],
+                        },
+                        {
+                            "item_id": "item_02",
+                            "title": "第二项",
+                            "requirement_refs": ["req_01"],
+                        },
+                    ],
+                    "acceptance": [{
+                        "acceptance_id": "acc_01",
+                        "description": "只覆盖第一项",
+                        "item_refs": ["item_01"],
+                    }],
+                },
+            }],
+        },
+        evidence_context={
+            "prior_general_tool_results": [{
+                "tool_id": "web_fetch",
+                "status": "ok",
+                "url": source_url,
+            }],
+            "current_general_tool_requests": [{
+                "tool_id": "web_search",
+                "query": "unrelated lookup",
+            }],
+        },
+    )
+
     assert receipt["status"] == "rejected"
-    assert receipt["reason"] == "bootstrap_wait_for_tool_results"
+    assert receipt["reason"] == "bootstrap_item_acceptance_coverage_missing"
+    assert receipt["details"]["items"] == ["item_02"]
+    assert store.get("base.active_task") in (None, "")
 
 
 def test_spec439_task_bootstrap_accepts_file_source_after_prior_read_evidence(tmp_path):
@@ -1625,7 +1699,7 @@ def test_spec593_task_bootstrap_accepts_workbench_source_evidence_across_rounds(
     assert guide["source_requirements"][0]["source_ref"] == "00_BRIEF.md"
 
 
-def test_spec593_workbench_source_evidence_is_scoped_by_task_root(tmp_path):
+def test_spec780_bootstrap_plan_does_not_depend_on_workbench_read_scope(tmp_path):
     from data.workbench import WorkbenchStore
     from logic.guide_submit import apply_guide_submit
     from logic.task_guide import create_task_bootstrap_guide
@@ -1692,9 +1766,9 @@ def test_spec593_workbench_source_evidence_is_scoped_by_task_root(tmp_path):
         },
     )
 
-    assert receipt["status"] == "rejected"
-    assert receipt["reason"] == "bootstrap_source_not_read"
-    assert receipt["details"]["missing_source_refs"] == ["00_BRIEF.md"]
+    assert receipt["status"] == "accepted"
+    guide = store.load_task_guide(store.get("base.active_task"))
+    assert guide["source_refs"] == ["00_BRIEF.md"]
 
 
 def test_spec514_bootstrap_defaults_single_source_and_one_to_one_refs(tmp_path):
@@ -2465,7 +2539,7 @@ def test_spec532_task_bootstrap_still_rejects_unknown_requirement_source_ref(tmp
     assert receipt["details"]["unknown_source_refs"] == ["unread_notes.md#01"]
 
 
-def test_spec511_task_bootstrap_rejects_uncovered_glob_source(tmp_path):
+def test_spec780_task_bootstrap_accepts_unread_glob_as_plan_source(tmp_path):
     from data.workbench import WorkbenchStore
     from logic.guide_submit import apply_guide_submit
     from logic.task_guide import create_task_bootstrap_guide
@@ -2526,10 +2600,10 @@ def test_spec511_task_bootstrap_rejects_uncovered_glob_source(tmp_path):
         },
     )
 
-    assert receipt["status"] == "rejected"
-    assert receipt["reason"] == "bootstrap_source_not_read"
-    assert receipt["details"]["missing_source_refs"] == ["DFT_AGENT_EVAL/inbox/*.md"]
-    assert str(unread_note) in receipt["details"]["unread_glob_matches"]
+    assert receipt["status"] == "accepted"
+    assert store.load_task_guide(store.get("base.active_task"))["source_refs"] == [
+        "DFT_AGENT_EVAL/inbox/*.md"
+    ]
 
 
 def test_spec511_task_bootstrap_invalid_requirement_feedback_is_actionable(tmp_path):
@@ -2597,7 +2671,7 @@ def test_spec511_task_bootstrap_invalid_requirement_feedback_is_actionable(tmp_p
     ]
 
 
-def test_spec452_task_bootstrap_rejects_file_source_without_source_requirements(tmp_path):
+def test_spec780_task_bootstrap_accepts_source_without_source_requirements(tmp_path):
     from data.workbench import WorkbenchStore
     from logic.guide_submit import apply_guide_submit
     from logic.task_guide import create_task_bootstrap_guide
@@ -2618,7 +2692,7 @@ def test_spec452_task_bootstrap_rejects_file_source_without_source_requirements(
                         "task_title": "日常能力测试",
                         "task_goal": "读取任务文件并执行",
                         "items": ["完成本地任务", "完成检索任务"],
-                        "acceptance": ["输出产物"],
+                        "acceptance": ["本地任务完成", "检索任务完成"],
                         "source_refs": [source_path],
                     },
                 }
@@ -2636,11 +2710,9 @@ def test_spec452_task_bootstrap_rejects_file_source_without_source_requirements(
         },
     )
 
-    assert receipt["status"] == "rejected"
-    assert receipt["reason"] == "bootstrap_source_requirements_required"
-    assert "source_requirements=[{requirement_id, source_ref, summary}]" in receipt["details"]["repair_hint"]
-    assert store.get("base.active_guide") == "task_bootstrap"
-    assert store.get("base.active_task") in (None, "")
+    assert receipt["status"] == "accepted"
+    guide = store.load_task_guide(store.get("base.active_task"))
+    assert guide["source_requirements"] == []
 
 
 def test_spec452_task_bootstrap_rejects_uncovered_source_requirements(tmp_path):
@@ -2806,7 +2878,7 @@ def test_spec439_task_bootstrap_does_not_treat_runtime_refs_as_source_files(tmp_
                         "task_title": "日常能力测试",
                         "task_goal": "根据已知用户请求执行任务",
                         "items": ["确认任务目标", "完成任务"],
-                        "acceptance": ["输出产物"],
+                        "acceptance": ["任务目标已确认", "输出产物"],
                         "source_refs": ["round:591", "interaction_debt"],
                     },
                 }
@@ -2866,12 +2938,14 @@ def test_spec434_bootstrap_string_checklists_become_required_records(tmp_path):
             "acceptance_id": "acc_01",
             "description": "报告文件存在",
             "required": True,
+            "item_refs": ["item_01"],
             "status": "pending",
         },
         {
             "acceptance_id": "acc_02",
             "description": "最终回复给出证据路径",
             "required": True,
+            "item_refs": ["item_02"],
             "status": "pending",
         },
     ]
@@ -3481,10 +3555,10 @@ def test_spec551_task_progress_rejects_empty_update_without_changing_ledger(tmp_
         task_title="12 项任务狗粮",
         task_goal="完成产物并登记账本。",
         guide={
-            "items": [{"item_id": "task_01", "required": True, "status": "open"}],
+            "items": [{"item_id": "it-01", "required": True, "status": "open"}],
             "acceptance": [
                 {
-                    "acceptance_id": "acc_01",
+                    "acceptance_id": "acc-01",
                     "required": True,
                     "status": "pending",
                 }
@@ -3528,6 +3602,9 @@ def test_spec551_task_progress_rejects_empty_update_without_changing_ledger(tmp_
     assert receipt["reason"] == "task_status_update_empty"
     assert "fields.items" in receipt["details"]["hint"]
     assert "fields.acceptance" in receipt["details"]["hint"]
+    assert 'fields.items={"it-01"' in receipt["details"]["hint"]
+    assert 'fields.acceptance={"acc-01"' in receipt["details"]["hint"]
+    assert "task_01" not in receipt["details"]["hint"]
     assert "不要只写 reason" in receipt["details"]["hint"]
     guide = store.load_task_guide(task_id)
     assert guide["items"][0]["status"] == "open"
@@ -5647,8 +5724,8 @@ def test_spec434_reaction_runner_exposes_active_guide_submit_popup(tmp_path):
     assert "submit_initial_guide" in feedback
 
 
-def test_spec719_declared_root_is_satisfied_by_read_child_only(tmp_path):
-    from logic.guide_submit import _source_ref_satisfied
+def test_spec780_declared_root_can_anchor_planned_child_requirement(tmp_path):
+    from logic.task_guide import validate_task_plan_structure
 
     root = tmp_path / "project"
     child = root / "docs" / "spec.md"
@@ -5657,12 +5734,27 @@ def test_spec719_declared_root_is_satisfied_by_read_child_only(tmp_path):
     sibling.parent.mkdir(parents=True)
     child.write_text("read", encoding="utf-8")
     sibling.write_text("not read", encoding="utf-8")
-    prior = {str(child.resolve()).lower()}
-    context = {"task_root": str(root)}
+    result = validate_task_plan_structure({
+        "source_refs": [str(root)],
+        "source_requirements": [{
+            "requirement_id": "req_01",
+            "source_ref": str(child),
+            "summary": "读取子文件",
+        }],
+        "items": [{
+            "item_id": "item_01",
+            "title": "处理子文件",
+            "requirement_refs": ["req_01"],
+        }],
+        "acceptance": [{
+            "acceptance_id": "acc_01",
+            "description": "处理完成",
+            "item_refs": ["item_01"],
+        }],
+    })
 
-    assert _source_ref_satisfied(str(root), prior, context)
-    assert _source_ref_satisfied(str(child), prior, context)
-    assert not _source_ref_satisfied(str(sibling), prior, context)
+    assert result["status"] == "accepted"
+    assert str(sibling) not in result["normalized_plan"]["source_refs"]
 
 
 def test_spec476_reaction_resident_task_guidance_creates_bootstrap(tmp_path):

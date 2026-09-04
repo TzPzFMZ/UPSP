@@ -30,4 +30,12 @@ GUI 的完整锁定依赖见 `UPSP/gui/package-lock.json`。当前直接依赖�
 | rehype-sanitize | 6.0.0 | MIT |
 | rehype-stringify | 10.0.1 | MIT |
 
+界面随包提供以下 Google Fonts 字体文件，均适用 SIL Open Font License 1.1；固定来源提交、源文件与随包文件 SHA-256 记录在 `UPSP/gui/assets/fonts/font-manifest.json`，许可正文同时进入发行包的 `licenses/fonts/`。
+
+| 字体 | 随包字重 | 许可 |
+| --- | --- | --- |
+| Noto Sans SC | 100–900 | OFL-1.1 |
+| Orbitron | 400–900 | OFL-1.1 |
+| M PLUS 1 Code | 100–700 | OFL-1.1 |
+
 esbuild、TypeScript 与 type-fest 仅参与构建，不作为独立运行时服务安装。构建逐项核对 `npm ci` 从锁文件实际安装出的全部直接与传递依赖，在 `GUI_DEPENDENCY_LICENSE_INDEX.tsv` 中登记包名、版本和许可标识，并归集安装包中可取得的许可正文；缺失包身份或许可依据时构建失败。

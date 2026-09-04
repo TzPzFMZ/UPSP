@@ -21,6 +21,92 @@ def _assert_exact_block_index(text, block_index):
         previous_end = item["char_end"]
 
 
+def test_spec786_stm_index_uses_runtime_injected_stores(monkeypatch):
+    from assembly.context import ContextAssembler
+    import data.memory_heat as memory_heat_module
+    import data.memory_store as memory_store_module
+
+    class Heat:
+        def load_heat(self):
+            return {"entries": {}}
+
+    class Memory:
+        def load_meta(self):
+            return {}
+
+    assembler = ContextAssembler()
+    assembler.memory_heat = Heat()
+    assembler.memory_store = Memory()
+    monkeypatch.setattr(
+        memory_heat_module, "MemoryHeat",
+        lambda: (_ for _ in ()).throw(AssertionError("global heat used")),
+    )
+    monkeypatch.setattr(
+        memory_store_module, "MemoryStore",
+        lambda: (_ for _ in ()).throw(AssertionError("global memory used")),
+    )
+
+    assert "（无 STM 条目）" in assembler._build_stm_heat_index()
+
+
+def test_spec786_resident_bodies_use_runtime_injected_stores(monkeypatch):
+    from assembly.context import ContextAssembler
+    import data.container_store as container_store_module
+    import data.memory_store as memory_store_module
+    import data.relation_store as relation_store_module
+
+    class Memory:
+        def read_meta_by_id(self, _mem_id):
+            return {
+                "id": "MEM-A",
+                "title": "已注入记忆",
+                "access": "public",
+                "weight": 5,
+                "tags": ["注入"],
+                "created_round": 7,
+            }
+
+        def read_entry(self, _mem_id):
+            return {"内容": "记忆正文来自注入 store"}
+
+    class Containers:
+        def read_container_content(self, _container_id, target_file=None):
+            return {"content": f"容器正文:{target_file}"}
+
+        def read_entries(self, _container_id, file_name=None):
+            return f"技能卡正文:{file_name}"
+
+    class Relations:
+        def read_card(self, _relation_id):
+            return {"name": "关系正文", "notes": [{"content": "公开备注"}]}
+
+    assembler = ContextAssembler(
+        memory_store=Memory(),
+        container_store=Containers(),
+        relation_store=Relations(),
+    )
+    assembler._memory_meta_visible = lambda _meta: True
+    monkeypatch.setattr(
+        memory_store_module, "MemoryStore",
+        lambda: (_ for _ in ()).throw(AssertionError("global memory used")),
+    )
+    monkeypatch.setattr(
+        container_store_module, "ContainerStore",
+        lambda: (_ for _ in ()).throw(AssertionError("global container used")),
+    )
+    monkeypatch.setattr(
+        relation_store_module, "RelationStore",
+        lambda: (_ for _ in ()).throw(AssertionError("global relation used")),
+    )
+
+    assert "记忆正文来自注入 store" in assembler._load_memory_content("MEM-A")
+    assert assembler._memory_mount_meta("MEM-A")["created_round"] == 7
+    assert assembler._load_container_content("PRJ-A", "plan.md") == (
+        "容器正文:plan.md")
+    assert assembler._load_skill_content("SKL-A") == "技能卡正文:card.md"
+    assert assembler._load_relation_content("REL-A") == "关系正文\n公开备注"
+
+
 def test_spec462_rendered_corpus_entries_get_visible_short_ids_without_mutating_source():
     from assembly.context_helpers import render_corpus_entries_for_context
 
@@ -365,13 +451,12 @@ def test_spec521_high_freq_contains_readonly_task_board(monkeypatch, tmp_path):
     monkeypatch.setattr(assembler, "_build_association_index", lambda *a, **kw: "")
     monkeypatch.setattr(assembler, "_build_relation_inverted_index", lambda *a, **kw: "")
     monkeypatch.setattr(assembler, "_build_relation_domain_index", lambda *a, **kw: "")
-    monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda *a, **kw: "")
 
     high_freq = assembler._build_high_freq(
         {},
         "reaction",
         "interactive",
-        include_content=False,
+        content_scope="none",
         mount_ids=[],
     )
 
@@ -380,15 +465,17 @@ def test_spec521_high_freq_contains_readonly_task_board(monkeypatch, tmp_path):
     assert "item_01：已完成" in high_freq
     assert "acc_02：待验收" in high_freq
     assert "缺口" in high_freq
-    assert high_freq.index("## 当前任务清单状态") < high_freq.index("## 反应步短工具带")
-    board_section = high_freq.split("## 反应步短工具带", 1)[0]
+    assert "STEP_TOOLBELT" not in high_freq
+    board_section = high_freq
     assert "guide_submit(guide_id=" in board_section
     assert "item_id=task_progress" in board_section
     assert "option_id=update_task_status" in board_section
     assert "不要只写 reason" in board_section
     assert "fields.items" in board_section
     assert "fields.acceptance" in board_section
-    assert "task_01" in board_section
+    assert 'fields.items={"item_01":{"status":"done"' in board_section
+    assert 'fields.acceptance={"acc_01":{"status":"passed"' in board_section
+    assert "逐字复制当前看板中的真实 ID" in board_section
     assert "acc_01" in board_section
     assert "evidence_refs" in board_section
     assert "不要把用户原始目标改写成更小的阶段性目标" in board_section
@@ -437,8 +524,10 @@ def test_spec553_task_board_uses_shared_task_progress_copy(
 
     board = render_active_task_board(store)
 
-    assert TASK_ITEM_UPDATE_EXAMPLE in board
-    assert TASK_ACCEPTANCE_UPDATE_EXAMPLE in board
+    assert 'fields.items={"task_01":{"status":"done"' in board
+    assert 'fields.acceptance={"acc_01":{"status":"passed"' in board
+    assert TASK_ITEM_UPDATE_EXAMPLE not in board
+    assert TASK_ACCEPTANCE_UPDATE_EXAMPLE not in board
     assert "reason 不会改变账本状态" in board
     assert "不要把用户原始目标改写成更小的阶段性目标" in board
     assert "部分完成不能登记为全部 done/passed" in board
@@ -580,13 +669,12 @@ def test_spec530_assembler_passes_recent_tool_facts_to_task_board(
     monkeypatch.setattr(assembler, "_build_association_index", lambda *a, **kw: "")
     monkeypatch.setattr(assembler, "_build_relation_inverted_index", lambda *a, **kw: "")
     monkeypatch.setattr(assembler, "_build_relation_domain_index", lambda *a, **kw: "")
-    monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda *a, **kw: "")
 
     high_freq = assembler._build_high_freq(
         {},
         "reaction",
         "interactive",
-        include_content=False,
+        content_scope="none",
         mount_ids=[],
     )
 
@@ -783,7 +871,7 @@ def test_spec522_task_execution_action_guide_keeps_open_pending_inputs(
             "items": [],
             "acceptance": [],
             "pending_inputs": [{
-                "pending_input_id": "input_01",
+                "pending_input_id": "input-01",
                 "status": "pending",
                 "summary": "需要追加材料。",
             }],
@@ -796,9 +884,10 @@ def test_spec522_task_execution_action_guide_keeps_open_pending_inputs(
     )
 
     assert "当前有待整合输入" in text
-    assert "当前待整合ID：input_01" in text
-    assert 'fields.pending_inputs=[{"pending_input_id":"input_01"' in text
+    assert "当前待整合ID：input-01" in text
+    assert 'fields={"pending_inputs":[{"pending_input_id":"input-01"' in text
     assert '"status":"integrated"' in text
+    assert "不得改变连字符或下划线" in text
     assert "option_id=integrate_pending_input" in text
 
 
@@ -1278,29 +1367,15 @@ def test_spec723_permanent_cache_keeps_file_boundaries(monkeypatch, tmp_path):
     _assert_exact_block_index(first, first_index)
 
 
-def test_spec405_internal_handoff_is_not_model_visible(tmp_path, monkeypatch):
+def test_spec776_retired_internal_handoff_is_not_an_assembler_parameter():
+    import inspect
     from assembly.context import ContextAssembler
 
-    assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
-    monkeypatch.setattr(assembler, "_build_permanent", lambda *args: "永固")
-    monkeypatch.setattr(assembler, "_build_periodic", lambda *args: "定期")
-    monkeypatch.setattr(assembler, "_build_high_freq", lambda *args: "高频")
-    monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
-    state = {"base": {"runtime": {"total_round": 405}}}
-
-    _system, messages = assembler.assemble_reaction(
-        state,
-        "interactive",
-        internal_handoff=[{
-            "role": "system",
-            "kind": "handoff",
-            "content": "SHADOW_LAYER_SHOULD_NOT_RENDER",
-        }],
-    )
-    combined = "\n".join(m.get("content", "") for m in messages)
-
-    assert "SHADOW_LAYER_SHOULD_NOT_RENDER" not in combined
-    assert "【内部接力】" not in combined
+    for method in (
+            ContextAssembler.assemble_setup,
+            ContextAssembler.assemble_reaction,
+            ContextAssembler.assemble_cleanup):
+        assert "internal_handoff" not in inspect.signature(method).parameters
 
 
 def test_spec287_step_guide_popup_is_plain_chinese_without_structure_fields(tmp_path):
@@ -1813,6 +1888,12 @@ class TestContextAssembler:
         base.update(overrides)
         return {"base": base}
 
+    @staticmethod
+    def _resident_store(tmp_path):
+        from data.resident_list_store import ResidentListStore
+
+        return ResidentListStore(str(tmp_path / "resident_list.json"))
+
     def test_spec400_container_index_distinguishes_types_from_instances(
             self, monkeypatch):
         from assembly.context_indexes import build_container_index
@@ -2075,69 +2156,6 @@ class TestContextAssembler:
             for content in retired.values():
                 assert content not in combined
 
-    def test_spec283_internal_native_replay_handoff_is_filtered_from_payload(
-            self, tmp_path, monkeypatch):
-        from assembly.context import ContextAssembler
-
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
-        monkeypatch.setattr(assembler, "_build_permanent", lambda *args: "")
-        monkeypatch.setattr(assembler, "_build_periodic", lambda *args: "")
-        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args: "")
-        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
-
-        _system, messages = assembler.assemble_reaction(
-            self._make_state(meta={"total_round": 283}),
-            "interactive",
-            internal_handoff=[{
-                "role": "tool",
-                "kind": "native_tool_result",
-                "content": "provider_native_tool_result: call_283",
-                "native_tool_call_envelopes": [{
-                    "call_id": "call_283",
-                    "tool_id": "file_read",
-                }],
-                "native_tool_outputs": [{
-                    "call_id": "call_283",
-                    "tool_id": "file_read",
-                    "status": "ok",
-                }],
-            }],
-        )
-
-        combined = "\n".join(str(m.get("content") or "") for m in messages)
-        assert "provider_native_tool_result" not in combined
-        assert not any(m.get("native_tool_call_envelopes") for m in messages)
-        assert not any(m.get("native_tool_outputs") for m in messages)
-
-    def test_spec405_setup_fact_internal_handoff_no_longer_enters_now_layer(
-            self, tmp_path, monkeypatch):
-        from assembly.context import ContextAssembler
-
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
-        monkeypatch.setattr(assembler, "_build_permanent", lambda *args: "")
-        monkeypatch.setattr(assembler, "_build_periodic", lambda *args: "")
-        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args: "")
-        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
-
-        _system, messages = assembler.assemble_reaction(
-            self._make_state(meta={"total_round": 318}),
-            "interactive",
-            internal_handoff=[{
-                "role": "system",
-                "kind": "setup_fact",
-                "content": "[setup_fact] security_verdict=pass; mount=MEM-SETUP318",
-                "interaction_object": "system",
-                "identity_status": "system",
-                "interaction_source": "setup_finalize",
-            }],
-        )
-
-        combined = "\n".join(str(m.get("content") or "") for m in messages)
-        assert "<!-- 当前缓存 now -->" not in combined
-        assert "MEM-SETUP318" not in combined
-        assert "setup_fact" not in combined
-        assert "【Runtime 调用占位】" in combined
-
     def test_spec261_current_entries_are_marked_as_current_round_blocks(self, tmp_path):
         from assembly.context_helpers import render_corpus_entries_for_context
 
@@ -2220,7 +2238,7 @@ class TestContextAssembler:
             step="reaction",
             round_type="relay",
             state=state,
-            include_content=False,
+            content_scope="none",
             mount_ids=None,
         )
 
@@ -2256,7 +2274,7 @@ class TestContextAssembler:
             step="reaction",
             round_type="interactive",
             state=state,
-            include_content=False,
+            content_scope="none",
             mount_ids=None,
         )
 
@@ -2297,7 +2315,7 @@ class TestContextAssembler:
             step="reaction",
             round_type="relay",
             state=state,
-            include_content=False,
+            content_scope="none",
             mount_ids=None,
         )
 
@@ -2328,7 +2346,7 @@ class TestContextAssembler:
             step="setup",
             round_type="interactive",
             state=self._make_state(),
-            include_content=False,
+            content_scope="none",
             mount_ids=None,
             user_messages=["这条只用于索引，不应临时造可见输入"],
         )
@@ -2374,7 +2392,7 @@ class TestContextAssembler:
             step="reaction",
             round_type="interactive",
             state=self._make_state(),
-            include_content=False,
+            content_scope="none",
             mount_ids=None,
         )
 
@@ -2429,7 +2447,7 @@ class TestContextAssembler:
             step="reaction",
             round_type="interactive",
             state=self._make_state(),
-            include_content=True,
+            content_scope="reaction",
             mount_ids=[],
             user_messages=None,
         )
@@ -2469,7 +2487,7 @@ class TestContextAssembler:
             step="reaction",
             round_type="interactive",
             state=self._make_state(),
-            include_content=True,
+            content_scope="reaction",
             mount_ids=[],
             user_messages=None,
         )
@@ -2519,7 +2537,7 @@ class TestContextAssembler:
             step="reaction",
             round_type="rhythm",
             state=state,
-            include_content=True,
+            content_scope="reaction",
             mount_ids=[],
             user_messages=None,
         )
@@ -2573,7 +2591,10 @@ class TestContextAssembler:
         monkeypatch.setattr(paths, "ASSOCIATION_SET_DIR", str(association_dir))
         monkeypatch.setattr(paths, "CONNECTION_SET_DIR", str(connection_dir))
 
-        assembler = ContextAssembler(context_dir=str(tmp_path))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path),
+            resident_store=self._resident_store(tmp_path),
+        )
         monkeypatch.setattr(assembler, "_build_container_index", lambda: "")
         monkeypatch.setattr(assembler, "_build_ltm_heat_index", lambda **kwargs: "")
         monkeypatch.setattr(assembler, "_build_stm_heat_index", lambda **kwargs: "")
@@ -2585,7 +2606,7 @@ class TestContextAssembler:
             self._make_state(),
             "reaction",
             "interactive",
-            include_content=True,
+            content_scope="reaction",
             mount_ids=None,
             current_input_text="alpha",
         )
@@ -2593,7 +2614,7 @@ class TestContextAssembler:
             self._make_state(),
             "reaction",
             "interactive",
-            include_content=True,
+            content_scope="reaction",
             mount_ids=None,
             current_input_text="gamma",
         )
@@ -2601,7 +2622,7 @@ class TestContextAssembler:
         assert "BODY::MEM-BETA" in triple_text
         assert "BODY::MEM-GAMMA" not in ordinary_text
 
-    def test_spec087_high_freq_hides_relation_inverted_index_and_focus_card_moves_to_statusbar(self, tmp_path, monkeypatch):
+    def test_spec781_high_freq_hides_relation_inverted_and_context_card_moves_to_statusbar(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
         from data.relation_store import RelationStore
 
@@ -2615,13 +2636,14 @@ class TestContextAssembler:
         monkeypatch.setattr(RelationStore, "get_card_path",
                            lambda self, cid, cat="ours": str(tmp_path / f"{cid}.md"))
 
-        assembler = ContextAssembler(context_dir=str(tmp_path))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path),
+            resident_store=self._resident_store(tmp_path),
+        )
         monkeypatch.setattr(assembler, "_build_container_index", lambda: "")
         monkeypatch.setattr(assembler, "_build_ltm_heat_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_stm_heat_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args: "")
-        monkeypatch.setattr(assembler, "_build_step_toolbelt_index", lambda *args: "")
-        monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda: "")
 
         def fake_keyword_index(source, limit=8):
             if source == "relation":
@@ -2640,7 +2662,7 @@ class TestContextAssembler:
             self._make_state(),
             "reaction",
             "interactive",
-            include_content=True,
+            content_scope="reaction",
             mount_ids=None,
             current_input_text="我是 Codex，继续验证",
             interaction_meta={
@@ -2667,7 +2689,7 @@ class TestContextAssembler:
             },
         )
         assert "## 关系卡" in statusbar
-        assert "Codex [present]" in statusbar
+        assert "Codex [interaction]" in statusbar
 
     def test_spec088_folded_inverted_index_exposes_index_view_hint(self, tmp_path, monkeypatch):
         import paths
@@ -2723,21 +2745,22 @@ class TestContextAssembler:
         ]
         monkeypatch.setattr(RelationStore, "load_registry", lambda self: {"cards": cards})
 
-        assembler = ContextAssembler(context_dir=str(tmp_path))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path),
+            resident_store=self._resident_store(tmp_path),
+        )
         monkeypatch.setattr(assembler, "_build_container_index", lambda: "")
         monkeypatch.setattr(assembler, "_build_ltm_heat_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_stm_heat_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_keyword_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_step_toolbelt_index", lambda *args: "")
-        monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda: "")
         monkeypatch.setattr(assembler, "_build_statusbar_with_relations", lambda *args, **kwargs: "")
 
         text = assembler._build_high_freq(
             self._make_state(),
             "reaction",
             "interactive",
-            include_content=True,
+            content_scope="reaction",
             mount_ids=None,
             current_input_text="我是 Codex，继续做 GPT-5.3-Codex-Spark 审查",
             interaction_meta={
@@ -2822,8 +2845,9 @@ class TestContextAssembler:
         assert "创建轮次：meta/R000472" in text
         assert "最近召回轮次：meta/R000473" in text
 
-    def test_spec089_resident_relation_body_enters_content_with_summary(self, tmp_path, monkeypatch):
+    def test_spec781_resident_relation_body_enters_content_with_summary(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
+        from data.resident_list_store import ResidentListStore
         from data.relation_store import RelationStore
 
         cards = [{
@@ -2832,17 +2856,19 @@ class TestContextAssembler:
             "category": "them",
             "status": "active",
             "summary_resident": True,
-            "body_resident": True,
         }]
         monkeypatch.setattr(RelationStore, "load_registry", lambda self: {"cards": cards})
-        monkeypatch.setattr(RelationStore, "get_card_path",
-                           lambda self, cid, cat="them": str(tmp_path / f"{cid}.md"))
-        (tmp_path / "REL-Codex.md").write_text(
-            "# Codex\n\n## 现在\n我们正在审查 UPSP。\n",
-            encoding="utf-8",
-        )
+        resident_store = ResidentListStore(str(tmp_path / "resident_list.json"))
+        resident_store.reconcile()
+        resident_store.add({"item_type": "relation", "item_id": "REL-Codex"})
 
-        assembler = ContextAssembler(context_dir=str(tmp_path))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path), resident_store=resident_store)
+        monkeypatch.setattr(
+            assembler,
+            "_load_relation_content",
+            lambda _card_id: "# Codex\n\n## 现在\n我们正在审查 UPSP。",
+        )
         monkeypatch.setattr(assembler, "_build_container_index", lambda: "")
         monkeypatch.setattr(assembler, "_build_ltm_heat_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_stm_heat_index", lambda *args, **kwargs: "")
@@ -2850,14 +2876,12 @@ class TestContextAssembler:
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_inverted_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_domain_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_step_toolbelt_index", lambda *args: "")
-        monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda: "")
 
         text = assembler._build_high_freq(
             self._make_state(),
             "reaction",
             "interactive",
-            include_content=True,
+            content_scope="reaction",
             mount_ids=None,
         )
 
@@ -3193,7 +3217,10 @@ class TestContextAssembler:
         with open(tmp_path / "core.md", "w", encoding="utf-8") as f:
             f.write("PID：FMZ\n中文名：零号广播员\n位格编码：SCVARB\n## 6. 位格自述\n测试自述")
 
-        assembler = ctx.ContextAssembler(context_dir=str(tmp_path / "context"))
+        assembler = ctx.ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=self._resident_store(tmp_path),
+        )
         state = self._make_state()
         system, messages = assembler.assemble_setup(state, "interactive")
         rendered = (tmp_path / "context" / "setup" / "step.md").read_text(encoding="utf-8")
@@ -3234,6 +3261,7 @@ class TestContextAssembler:
         assembler = ctx.ContextAssembler(
             context_dir=str(tmp_path / "context"),
             context_store=store,
+            resident_store=self._resident_store(tmp_path),
         )
         state = self._make_state()
         result = {"response": "测试回复内容"}
@@ -3351,69 +3379,6 @@ class TestContextAssembler:
         assert "connection_candidate_entries" not in combined
         assert "added_prework_traces" not in combined
 
-    def test_spec276_final_reply_handoff_is_retired_from_model_context(
-            self, tmp_path, monkeypatch):
-        from assembly.context import ContextAssembler
-
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
-        monkeypatch.setattr(assembler, "_build_permanent", lambda *args: "永久")
-        monkeypatch.setattr(assembler, "_build_periodic", lambda *args: "定期")
-        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args: "高频")
-        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
-
-        _system, messages = assembler.assemble_reaction(
-            {"base": {"context_cache": {}}},
-            "interactive",
-            internal_handoff=[{
-                "role": "user",
-                "kind": "final_reply_handoff",
-                "content": "只给最终回复调用看的交接。",
-            }],
-        )
-
-        combined = "\n".join(m.get("content", "") for m in messages)
-        now_layer = (
-            tmp_path / "context" / "reaction" / "layers" / "50_now.md"
-        ).read_text(encoding="utf-8")
-
-        assert "只给最终回复调用看的交接" not in combined
-        assert "只给最终回复调用看的交接" not in now_layer
-
-    def test_internal_handoff_is_ignored_without_received_handoff_popup(self, tmp_path, monkeypatch):
-        from assembly.context import ContextAssembler
-
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
-        monkeypatch.setattr(assembler, "_build_permanent", lambda *args: "永固")
-        monkeypatch.setattr(assembler, "_build_periodic", lambda *args: "定期")
-        monkeypatch.setattr(assembler, "_build_high_freq", lambda *args: "高频")
-        monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
-
-        assembler.assemble_cleanup(
-            {"base": {"context_cache": {}}},
-            "interactive",
-            {"response": "收到"},
-            internal_handoff=[{
-                "role": "user",
-                "kind": "handoff",
-                "content": "交接：请善后步结算终端证据",
-            }],
-        )
-
-        popup = (tmp_path / "context" / "cleanup" / "layers" / "99_popup.md").read_text(
-            encoding="utf-8")
-        now = (tmp_path / "context" / "cleanup" / "layers" / "50_now.md").read_text(
-            encoding="utf-8")
-
-        assert "### 待处理交接" not in popup
-        assert "received_handoff" not in popup
-        assert "交接：请善后步结算终端证据" not in popup
-        assert "kind:" not in popup
-        assert "tier:" not in popup
-        assert "交接：请善后步结算终端证据" not in now
-        assert "【Runtime 调用占位】" in now
-        assert "这不是用户原始输入" in now
-        assert "请根据上下文继续本次调用。" in now
-
     def test_reaction_result_output_template_moves_to_popup(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
 
@@ -3485,10 +3450,13 @@ class TestContextAssembler:
         assert "继续读书。" not in step_md
         assert "具体事务以当前中继目标卡" in step_md
 
-    def test_reaction_tool_index_moves_to_high_freq(self, tmp_path, monkeypatch):
+    def test_reaction_high_freq_has_no_duplicate_tool_catalog(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
 
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=self._resident_store(tmp_path),
+        )
         monkeypatch.setattr(assembler, "_load_core_identity", lambda: "位格核心")
         monkeypatch.setattr(assembler, "_load_rules_for_layers", lambda *a, **kw: "")
         monkeypatch.setattr(assembler, "_build_periodic", lambda *args: "")
@@ -3497,7 +3465,6 @@ class TestContextAssembler:
         monkeypatch.setattr(assembler, "_build_stm_heat_index", lambda **kwargs: "")
         monkeypatch.setattr(assembler, "_build_keyword_index", lambda *args: "")
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args: "")
-        monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda: "")
         monkeypatch.setattr(assembler, "_build_statusbar_with_relations", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
 
@@ -3510,41 +3477,19 @@ class TestContextAssembler:
 
         assert "<!-- [PROTOCOL_TOOLS:index] -->" not in permanent
         assert "<!-- [GENERAL_TOOLS:index] -->" not in permanent
-        assert "<!-- [PROTOCOL_TOOLS:index] -->" in high_freq
-        protocol_index = high_freq.split("<!-- [PROTOCOL_TOOLS:index] -->", 1)[1].split(
-            "<!-- [GENERAL_TOOLS:index] -->", 1
-        )[0]
-        assert "memory_write" in protocol_index
-        assert "relation_card_write" in protocol_index
-        assert "relation_read" in protocol_index
-        assert "index_view" in protocol_index
-        assert "relation_card_read" not in protocol_index
-        assert "relation_content_read" not in protocol_index
-        assert "state_update" not in protocol_index
-        assert "| tool_id | 姿态 | 领域 | 何时请求 | guide/边界提示 |" in protocol_index
-        assert "| tool_family |" not in protocol_index
-        assert "| handler |" not in protocol_index
-        assert "| result_kind |" not in protocol_index
-        assert "general_tool" not in protocol_index
-        assert "substrate_tool" not in protocol_index
-        assert "| tool_class |" not in protocol_index
-        assert "<!-- [GENERAL_TOOLS:index] -->" in high_freq
-        general_index = high_freq.split("<!-- [GENERAL_TOOLS:index] -->", 1)[1]
-        assert "| tool_id | 姿态 | 领域 | 何时请求 | guide/边界提示 |" in general_index
-        assert "file_read" in general_index
-        assert "general_tool_result" in general_index
-        assert "protocol_tool_receipt" not in general_index
-        assert "| backend_type |" not in general_index
-        assert "| permission_scope |" not in general_index
-        assert "web_fetch" in general_index
-        assert "web_search" in general_index
+        assert "<!-- [PROTOCOL_TOOLS:index] -->" not in high_freq
+        assert "<!-- [GENERAL_TOOLS:index] -->" not in high_freq
+        assert "STEP_TOOLBELT" not in combined
         assert "### 工具唤醒提醒" not in combined
         assert "### 协议工具提醒" not in combined
 
-    def test_setup_and_cleanup_toolbelts_are_high_freq_step_scoped(self, tmp_path, monkeypatch):
+    def test_setup_and_cleanup_have_no_high_freq_tool_catalog(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
 
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=self._resident_store(tmp_path),
+        )
         monkeypatch.setattr(assembler, "_load_core_identity", lambda: "persona core")
         monkeypatch.setattr(assembler, "_load_rules_for_layers", lambda *a, **kw: "")
         monkeypatch.setattr(assembler, "_build_periodic", lambda *args: "")
@@ -3553,7 +3498,6 @@ class TestContextAssembler:
         monkeypatch.setattr(assembler, "_build_stm_heat_index", lambda **kwargs: "")
         monkeypatch.setattr(assembler, "_build_keyword_index", lambda *args: "")
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args: "")
-        monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda: "")
         monkeypatch.setattr(assembler, "_build_statusbar_with_relations", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
 
@@ -3565,12 +3509,8 @@ class TestContextAssembler:
         setup_popup = (tmp_path / "context" / "setup" / "layers" / "99_popup.md").read_text(
             encoding="utf-8")
 
-        assert "<!-- [STEP_TOOLBELT:setup] -->" not in setup_permanent
-        assert "<!-- [STEP_TOOLBELT:setup] -->" in setup_high_freq
-        assert "setup_mount_apply" in setup_high_freq
-        assert "setup_security_gate" in setup_high_freq
-        assert "setup_handoff" in setup_high_freq
-        assert "reaction_loop" not in setup_high_freq
+        assert "STEP_TOOLBELT" not in setup_permanent
+        assert "STEP_TOOLBELT" not in setup_high_freq
         assert "### 起手步指南" in setup_popup
         assert "<!-- [STEP_GUIDE:setup] -->" not in setup_popup
 
@@ -3586,22 +3526,34 @@ class TestContextAssembler:
         cleanup_popup = (tmp_path / "context" / "cleanup" / "layers" / "99_popup.md").read_text(
             encoding="utf-8")
 
-        assert "<!-- [STEP_TOOLBELT:cleanup] -->" not in cleanup_permanent
-        assert "<!-- [STEP_TOOLBELT:cleanup] -->" in cleanup_high_freq
-        assert "connection_material_settle" in cleanup_high_freq
-        assert "tacit_material_settle" in cleanup_high_freq
-        assert "cache_compact" not in cleanup_high_freq
-        assert "cleanup_handoff" in cleanup_high_freq
+        assert "STEP_TOOLBELT" not in cleanup_permanent
+        assert "STEP_TOOLBELT" not in cleanup_high_freq
         assert "tool_request_card" not in cleanup_popup
         assert "### 善后步指南" in cleanup_popup
         assert "<!-- [STEP_GUIDE:cleanup] -->" not in cleanup_popup
 
-    def test_spec077_reaction_mounts_workbench_focus_projection(self, tmp_path, monkeypatch):
+    def test_spec786_all_three_steps_mount_all_resident_body_types(
+            self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
-        from data.workbench import WorkbenchStore
-        from data.container_store import ContainerStore
+        from data.resident_list_store import ResidentListStore
 
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+        resident_store = ResidentListStore(str(tmp_path / "resident_list.json"))
+        resident_store.reconcile()
+        resident_store.add({
+            "item_type": "container",
+            "item_id": "PRJ-20260525-01",
+            "target_file": "plan.md",
+        })
+        resident_store.add({
+            "item_type": "memory",
+            "item_id": "MEM-20260525-01",
+        })
+        resident_store.add({
+            "item_type": "relation",
+            "item_id": "REL-TZPZ",
+        })
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"), resident_store=resident_store)
         monkeypatch.setattr(assembler, "_load_core_identity", lambda: "位格核心")
         monkeypatch.setattr(assembler, "_load_rules_for_layers", lambda *a, **kw: "")
         monkeypatch.setattr(assembler, "_build_periodic", lambda *args: "")
@@ -3615,35 +3567,34 @@ class TestContextAssembler:
         monkeypatch.setattr(assembler, "_build_statusbar_with_relations", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
         monkeypatch.setattr(
-            WorkbenchStore,
-            "load_status",
-            lambda self: {"base": {"focus": "PRJ-20260525-01", "old_focus": None}},
+            assembler,
+            "_load_container_content",
+            lambda container_id, target_file=None: "已有计划片段",
         )
         monkeypatch.setattr(
-            ContainerStore,
-            "read_focus_projection",
-            lambda self, cid: {
-                "container_id": cid,
-                "container_type": "PRJ",
-                "status": "active",
-                "title": "Spec 077",
-                "allowed_targets": ["plan.md", "notes.md"],
-                "default_target": "plan.md",
-                "content": "已有计划片段",
-                "format_hint": "memory_container_write via visible WB focus",
-            },
+            assembler, "_load_memory_content", lambda mem_id: "已有记忆正文")
+        monkeypatch.setattr(
+            assembler, "_load_relation_content", lambda relation_id: "已有关系备注")
+
+        calls = (
+            assembler.assemble_setup(self._make_state(), "interactive"),
+            assembler.assemble_reaction(self._make_state(), "interactive"),
+            assembler.assemble_cleanup(
+                self._make_state(), "interactive", {"response": "ok"}),
         )
 
-        _, messages = assembler.assemble_reaction(self._make_state(), "interactive")
-        combined = "\n".join(m.get("content", "") for m in messages)
-
-        assert "WB 焦点投影" in combined
-        assert "PRJ-20260525-01" in combined
-        assert "plan.md" in combined
-        assert "已有计划片段" in combined
-        assert "memory_container_write" in combined
-        assert "CONTAINER_FOCUS_CONTENT_START" not in combined
-        assert "container_focus_table" not in combined
+        for _, messages in calls:
+            combined = "\n".join(m.get("content", "") for m in messages)
+            assert "CONTENT（已挂载正文）" in combined
+            assert "容器 PRJ-20260525-01 / plan.md" in combined
+            assert "PRJ-20260525-01" in combined
+            assert "plan.md" in combined
+            assert "已有计划片段" in combined
+            assert "MEM-20260525-01" in combined
+            assert "已有记忆正文" in combined
+            assert "已有关系备注" in combined
+            assert "WB 焦点投影" not in combined
+            assert "container_focus_table" not in combined
 
     def test_general_tool_reminder_is_not_default_popup_injected(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
@@ -4078,7 +4029,10 @@ class TestContextAssembler:
             self, tmp_path):
         from assembly.context import ContextAssembler
 
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=self._resident_store(tmp_path),
+        )
         state = self._make_state()
 
         _, setup_messages = assembler.assemble_setup(
@@ -4555,7 +4509,7 @@ class TestContextAssembler:
         assembler._current_interaction_meta = {"interaction_object": "TzPz"}
         assert assembler._load_memory_content("MEM-PRIVATE1") == ""
 
-    def test_memory_content_hides_null_annotation_but_keeps_non_empty_annotation(self, monkeypatch):
+    def test_memory_content_hides_all_historical_annotation_fields(self, monkeypatch):
         from assembly.context import ContextAssembler
         from data.memory_store import MemoryStore
 
@@ -4571,12 +4525,15 @@ class TestContextAssembler:
         note_content = assembler._load_memory_content("MEM-NOTE0001")
 
         assert "注释：null" not in null_content
-        assert "注释：旧判断已订正，参见 DC-12" in note_content
+        assert "注释：旧判断已订正，参见 DC-12" not in note_content
 
     def test_reaction_output_template_missing_uses_exit_guide_in_popup(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
 
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=self._resident_store(tmp_path),
+        )
         monkeypatch.setattr(assembler, "_load_core_identity", lambda: "位格核心")
         monkeypatch.setattr(assembler, "_load_rules_for_layers", lambda *a, **kw: "")
         monkeypatch.setattr(assembler, "_build_periodic", lambda *args: "")
@@ -4624,7 +4581,10 @@ class TestContextAssembler:
         with open(tmp_path / "cr.json", "w", encoding="utf-8") as f:
             json.dump({"containers": []}, f)
 
-        assembler = ctx.ContextAssembler(context_dir=str(tmp_path / "context"))
+        assembler = ctx.ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=self._resident_store(tmp_path),
+        )
         state = self._make_state()
         system, messages = assembler.assemble_setup(state, "interactive")
         combined = "\n".join(m.get("content", "") for m in messages)
@@ -4675,7 +4635,7 @@ class TestContextAssembler:
         assert [item["source_block_id"] for item in block_index] == ["MEM-A"]
         _assert_exact_block_index(periodic, block_index)
 
-    def test_spec723_high_freq_blocks_follow_real_modules_and_mounts(
+    def test_spec781_high_freq_blocks_follow_real_modules_and_two_mount_routes(
             self, monkeypatch):
         from assembly.context import ContextAssembler
 
@@ -4689,8 +4649,6 @@ class TestContextAssembler:
             ("_build_relation_inverted_index", "RELATION_INVERTED"),
             ("_build_relation_domain_index", "RELATION_DOMAIN"),
             ("_build_task_board_projection", "TASK_BOARD"),
-            ("_build_step_toolbelt_index", "TOOLBELT"),
-            ("_build_workbench_focus_projection", "WORKBENCH"),
         ):
             monkeypatch.setattr(assembler, name, lambda *args, _value=value, **kwargs: _value)
         monkeypatch.setattr(
@@ -4707,18 +4665,13 @@ class TestContextAssembler:
         monkeypatch.setattr(assembler, "_load_container_content", lambda _ids: "CONTAINER")
 
         text = assembler._build_high_freq(
-            self._make_state(), "reaction", "interactive", True, [],
+            self._make_state(), "reaction", "interactive", "reaction", [],
             input_keywords=[],
-            runtime_focus_entries=[
-                {"source_block_id": "same", "title": "焦点甲", "content": "FOCUS_A"},
-                {"source_block_id": "same", "title": "焦点乙", "content": "FOCUS_B"},
-            ],
         )
         block_index = assembler._current_layer_block_index["high_freq"]
 
-        assert [item["kind"] for item in block_index[-4:]] == [
-            "runtime_focus", "runtime_focus", "memory_mount", "container_mount"]
-        assert block_index[-4]["block_id"] != block_index[-3]["block_id"]
+        assert [item["kind"] for item in block_index[-2:]] == [
+            "memory_mount", "container_mount"]
         _assert_exact_block_index(text, block_index)
 
     def test_periodic_layer_ignores_retired_skill_tool_projection(self, monkeypatch):
@@ -4897,7 +4850,7 @@ class TestContextAssembler:
             step="reaction",
             round_type="interactive",
             state=self._make_state(),
-            include_content=True,
+            content_scope="reaction",
             mount_ids=None,
             popup_fragments=[
                 "- kind: statusbar_order_probe\n  tier: reminder\n  message: POPUP顺序探针"
@@ -4991,7 +4944,7 @@ class TestContextAssembler:
             step="reaction",
             round_type="interactive",
             state=self._make_state(),
-            include_content=True,
+            content_scope="reaction",
             mount_ids=None,
             native_tool_feedbacks=feedbacks,
         )
@@ -5008,7 +4961,10 @@ class TestContextAssembler:
             self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
 
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=self._resident_store(tmp_path),
+        )
         monkeypatch.setattr(assembler, "_build_statusbar_with_relations",
                             lambda *args, **kwargs: "## STATUSBAR\n状态栏层")
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
@@ -5019,7 +4975,7 @@ class TestContextAssembler:
                 step="reaction",
                 round_type="interactive",
                 state=self._make_state(),
-                include_content=True,
+                content_scope="reaction",
                 mount_ids=None,
                 current_reaction_iteration=iteration,
             )
@@ -5125,7 +5081,10 @@ class TestContextAssembler:
     def test_high_freq_does_not_include_feeling_vocabulary_by_default(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
 
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=self._resident_store(tmp_path),
+        )
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
 
         _system, messages = assembler.assemble_cleanup(
@@ -5212,7 +5171,10 @@ class TestContextAssembler:
         from assembly.context import ContextAssembler
         from assembly.popup import PopupManager
 
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=self._resident_store(tmp_path),
+        )
         monkeypatch.setattr(
             PopupManager,
             "load_guide_template",
@@ -5243,7 +5205,10 @@ class TestContextAssembler:
     def test_now_lately_layers_are_rendered_without_retired_layer_names(self, tmp_path, monkeypatch):
         from assembly.context import ContextAssembler
 
-        assembler = ContextAssembler(context_dir=str(tmp_path / "context"))
+        assembler = ContextAssembler(
+            context_dir=str(tmp_path / "context"),
+            resident_store=self._resident_store(tmp_path),
+        )
         monkeypatch.setattr(assembler, "_get_now_entries", lambda: [{
             "round": 1,
             "role": "user",

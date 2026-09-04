@@ -69,14 +69,12 @@ class ReactionLoopResultState:
     all_alert_mode_settle_receipts: list = field(default_factory=list)
     all_fault_record_declarations: list = field(default_factory=list)
     all_fault_record_receipts: list = field(default_factory=list)
-    all_container_focus_declarations: list = field(default_factory=list)
-    all_container_focus_receipts: list = field(default_factory=list)
     all_identity_resolutions: list = field(default_factory=list)
-    all_memory_annotation_declarations: list = field(default_factory=list)
-    all_memory_annotation_receipts: list = field(default_factory=list)
     last_reaction_loop: dict = field(default_factory=dict)
     iteration_records: list = field(default_factory=list)
     frame_settlements: list = field(default_factory=list)
+    state_settle_receipts: list = field(default_factory=list)
+    reaction_metabolism_enabled: bool = False
     exit_signal: str = "done"
     reaction_finalize_validated: bool = False
     final_reply_pending: bool = False
@@ -163,15 +161,12 @@ def build_reaction_loop_result(state):
         "_alert_mode_settle_receipts": state.all_alert_mode_settle_receipts,
         "_fault_record_declarations": state.all_fault_record_declarations,
         "_fault_record_receipts": state.all_fault_record_receipts,
-        "_container_focus_declarations": state.all_container_focus_declarations,
-        "_container_focus_receipts": state.all_container_focus_receipts,
         "_identity_resolutions": state.all_identity_resolutions,
         "_interaction_meta": state.interaction_meta or {},
-        "_memory_annotation_declarations": state.all_memory_annotation_declarations,
-        "_memory_annotation_receipts": state.all_memory_annotation_receipts,
         "_reaction_loop": state.last_reaction_loop,
         "_reaction_iterations": state.iteration_records,
         "_frame_settlements": state.frame_settlements,
+        "_reaction_frame_state_settle_receipts": state.state_settle_receipts,
         "_exit_signal": state.exit_signal,
         "_reaction_finalize_validated": state.reaction_finalize_validated,
         "_final_reply_pending": state.final_reply_pending,

@@ -38,11 +38,11 @@ POPUP 只保留三层，从前到后稳定排序：
 
 > active rhythm guide、task guide、resident reaction guide 的可见内容必须是中文动作卡，不是后端 schema 展示。active guide 应用 typed guide fragment 进入指南层；可见卡只保留必要调用坐标 `guide_id / item_id / option_id`，说明当前处理什么、可选动作是什么、需要填写什么。不要把 `Active guide:`、`kind:`、`required_fields=`、`allowed_fields=`、`fields example`、`source_refs:` 这类后端字段原样灌给模型。
 > 节律指南前台时，只显示当前节律清单和等待中的工作指南提示；等待中的 work/task guide 不能抢前台。
-> task_bootstrap 是建账专用卡，不是执行期说明书。顶部只保留：先读材料；`source_refs` 是已读材料目录，`source_requirements` 是任务需求账，`items` 是执行项，`acceptance` 是验收项；`submit_initial_guide` 必须一次完整提交初始账本；不要把用户原始目标改写成更小的阶段性目标；只完成部分内容时不能报全完成；读取材料和提交清单不要同一 response 混做；工具调用走 native 通道。
-> task_bootstrap 必须保留任务源锚定：用户输入可以是开放任务来源；路径、URL、图片、PDF 名称只是入口，不等于已经读到内容；需要读取材料时先调用读取工具；清单的 `summary/title/description` 必须用中文自然语言写入。长别名清单、执行期证据登记、任务验收 checkpoint、记忆/容器提示不放进建账卡。
-> `40_high_freq` 的任务看板顶部必须固定说明：这是只读任务看板，不是普通执行入口；任务项状态只用 `done / blocked`，验收项状态只用 `passed / blocked`；批量登记入口固定为 `guide_submit(guide_id=<当前task>, item_id=task_progress, option_id=update_task_status)`；`done / passed` 必须带 `evidence_refs`，已产出未登记时不要重复写文件，checkpoint 时登记证据；登记格式必须直白写出 `fields.items={"task_01":{"status":"done","evidence_refs":["EV-..."]}}` 与 `fields.acceptance={"acc_01":{"status":"passed","evidence_refs":["EV-..."]}}`，并明确不要只写 `reason`，`reason` 不会改变账本状态。
+> task_bootstrap 是建账专用卡，不是执行期说明书。初始清单是可修订工作计划：`source_refs` 是计划来源坐标，`source_requirements` 是可选来源需求账，`items` 是执行项，`acceptance` 是验收项；可以先按用户请求、路径、URL 或文件名建立粗计划，不要求在未知信息下假装一次写对；`submit_initial_guide` 仍须一次带齐任务标题、执行项和验收项。不要把用户原始目标改写成更小的阶段性目标；只完成部分内容时不能报全完成；同一 response 的其他工具不阻止建账，但尚未返回的结果不能写成已知事实；工具调用走 native 通道。
+> task_bootstrap 必须保留任务源锚定：用户输入可以是开放任务来源；路径、URL、图片、PDF 名称只是计划入口，不等于已经读到内容或取得证据。真正改变来源、任务拆分、验收或风险的后续工具结果可通过 `guide_submit(guide_id=<当前task>, item_id=task_progress, option_id=revise_task_plan)` 修订相应完整目标片段，并在 submission 外层填写 `reason`；不要每次调用后机械修订，也不要用计划修订登记进度。清单的 `summary/title/description` 必须用中文自然语言写入。长别名清单、执行期证据登记、任务验收 checkpoint、记忆/容器提示不放进建账卡。
+> `40_high_freq` 的任务看板顶部必须固定说明：这是只读任务看板，不是普通执行入口；计划结构修订与状态登记是两个入口，前者固定为 `guide_submit(guide_id=<当前task>, item_id=task_progress, option_id=revise_task_plan)`，提交需要替换的完整目标片段与外层 `reason`，且不得提交 `status/evidence_refs`；批量状态登记入口固定为 `guide_submit(guide_id=<当前task>, item_id=task_progress, option_id=update_task_status)`。任务项状态只用 `done / blocked`，验收项状态只用 `passed / blocked`；`done / passed` 必须带 `evidence_refs`，已产出未登记时不要重复写文件，checkpoint 时登记证据；登记格式必须直接使用当前看板中的真实首项 ID 展示 `fields.items={"<真实任务项ID>":{"status":"done","evidence_refs":["EV-..."]}}` 与 `fields.acceptance={"<真实验收项ID>":{"status":"passed","evidence_refs":["EV-..."]}}`。任务项与验收项 ID 是不透明标识，必须逐字复制，禁止改变大小写、连字符、下划线或补零；不要只写 `reason`，`reason` 不会改变账本状态。
 > task execution guide 不再在 POPUP 铺完整任务账本；清单状态只读投影到 `40_high_freq` 看板。POPUP 里的任务执行指南应作为“任务执行指南｜行动卡”显示：真实工作优先，证据后登记；缺产物就写/改文件，缺验证就运行命令，缺来源正文就搜索或抓取。不要在普通任务执行 POPUP 中反复列 direct entries 或把 `guide_submit` 写成第一动作；收束时若被任务验收 checkpoint 拦截，阻断说明必须进入 POPUP warning/checkpoint 模块，并按 checkpoint 坐标批量更新任务账本；账本闭合后该阻断 warning 自然撤下。工具调用走 native 通道；自然语言正文只写简短进展，不承载 DSML/JSON/完整参数。
-> task execution guide 有待整合输入时，POPUP 行动卡必须显示当前待整合 ID，并给出固定填写形态：`fields.pending_inputs=[{"pending_input_id":"input_01","status":"integrated","summary":"已整合该输入"}]`；入口固定为 `guide_submit`、`item_id=task_progress`、`option_id=integrate_pending_input`。不要让模型猜 `input_01_status` 这类表单形态，但 Runtime 可以把无歧义别名正规化回 canonical 字段。
+> task execution guide 有待整合输入时，POPUP 行动卡必须显示当前待整合 ID，并用该真实 ID 给出固定填写形态：`fields={"pending_inputs":[{"pending_input_id":"<逐字复制当前待整合ID>","status":"integrated","summary":"已整合该输入"}]}`；入口固定为 `guide_submit`、`item_id=task_progress`、`option_id=integrate_pending_input`。待整合 ID 同样是不透明标识，禁止改变连字符、下划线或大小写；不要让模型猜 `input_01_status` 这类表单形态，但 Runtime 可以把无歧义别名正规化回 canonical 字段。
 > resident reaction guide 只是短入口：没有 active work guide 时默认显示 `guide_submit(guide_id="reaction_loop_guide", item_id="task_guidance_entry", option_id="request_task_guidance")`，用于显式请求建账卡。已有 `task_bootstrap` / task execution guide、节律指南前台、或同轮刚出现 `task_guide_completed` 完成提示时，resident 入口必须隐藏。
 
 ### reaction_step_guide
@@ -71,10 +71,10 @@ POPUP 只保留三层，从前到后稳定排序：
   ## 每轮记忆节奏
   记忆沉淀看 POPUP 提醒层的“记忆提醒”；工具字段、权重和回执纪律以 provider-native schema、processor 回执为准。
 
-  ## 工具三轴
-  - 只读工具：file_read、file_glob、file_grep、memory_content_read、container_read、relation_read。
-  - 同步工具：memory_write、memory_link_update、relation_card_write。
-  - 焦点工具：container_focus；同一反应迭代谨慎保持单焦点。
+  ## 三种工具姿态
+  - 读工具：file_read、file_glob、file_grep、web_fetch、web_search、memory_search、memory_content_read、container_read、relation_read。读取可带既定的召回、加热或常驻生命周期。
+  - 同步工具：guide_submit、memory_write、memory_link_update、memory_container_create、memory_container_write、relation_card_write、mount_cancel 等位格内事务。多个合法同步工具可在同一 Frame 分别结算。
+  - 行动工具：file_edit、file_write、shell_command、subagent_dispatch，操作宿主或外部环境并受当前权限门约束。
 
   ## 四容器自觉
   - DC 辩证链：理解推进/判断修正，新 MEM 订正旧 MEM。
@@ -108,6 +108,8 @@ POPUP 只保留三层，从前到后稳定排序：
 >
 > 必须调用 `guide_submit`，使用当前卡片给出的 `guide_id`、`item_id=memory_reconsolidation_due`、`option_id=submit_memory_reconsolidations`，并在 `fields.results` 中覆盖全部当前待办 ID。每项只提交 `mem_id`、纯语义正文 `semantic_content` 和最终关键词 `final_keywords`。
 >
+> 精确形状：`fields={"results":[{"mem_id":"<当前MEM-ID>","semantic_content":"重整后的纯语义正文","final_keywords":["关键词1"]}]}`。字段名固定，不得使用 `body`、`content` 或其他别名。
+>
 > 有充分正文或原始证据时，只恢复证据能够确认的事实与细节；当前证据不足时，保留仍能确认的主体与事件，并明确时间久远、哪些细节已经模糊。不得凭空补写，也不得只写一句空泛的“记不清”。需要精确日期、原话、轻量事实或多跳关系时，可按 `created_instance_id + created_round` 追溯创建分身原始语料，再提交重整结果。
 >
 > 重整正文会恢复到记忆 immutable weight 对应层，但字数上限只是边界，不是扩写目标；无需为接近上限而补齐、重复或编造。Full 最多 2048 字、Summary 最多 512 字、Abstract 最多 128 字。关键词必须由正文或已核验证据支持，规范化后不得重复；Full 1–8 个、Summary 1–6 个、Abstract 1–4 个。允许恢复压缩时丢失但证据支持的关键词。每条由处理器独立验收；看清回执里的 `completed_ids` 与 `remaining_ids`，未通过项须留在当前指南中纠正。
@@ -118,6 +120,8 @@ POPUP 只保留三层，从前到后稳定排序：
 >
 > 必须调用 `guide_submit`，使用当前卡片给出的 `guide_id`、`item_id=memory_write_rewrite_due`、`option_id=submit_memory_write_rewrites`，并在 `fields.results` 中覆盖全部当前 `rewrite_id`。每项恰好一次：要写入时填 `action=rewrite` 和不超过原上限的纯语义正文；确实不应写时填 `action=not_written` 且正文为空。不得借重写修改已冻结字段，不得合并多条候选。
 >
+> 精确形状：`fields={"results":[{"rewrite_id":"<当前rewrite_id>","action":"rewrite","semantic_content":"不超过冻结上限的纯语义正文"}]}`。选择 `not_written` 时仍保留这三个字段，并令 `action="not_written"`、`semantic_content=""`。字段名固定，禁止用 `body` 或 `content` 代替 `semantic_content`。
+>
 > 字数上限只是容量边界，不是目标篇幅；无需为了接近上限而扩写、补齐或重复。保留原正文中的耐久事实、主体、时间、范围、否定与不确定性，删除重复、对话噪声和过程流水；禁止截断或补造。看清回执中的 `completed_ids` 与 `remaining_ids`，只纠正仍待处理项。
 
 最近缓存压缩指南：
@@ -126,11 +130,15 @@ POPUP 只保留三层，从前到后稳定排序：
 >
 > 调用 `guide_submit`，使用卡片给出的 `guide_id`、`item_id=cache_compaction_due`、`option_id=submit_cache_compaction_batch`。`fields.results` 可覆盖当前批次中的一项或多项：每项填写 `shard_id`；需要压缩时填 `action=replace` 与不超过该分片 `summary_limit` 的 `semantic_content`，允许空正文表示删除；确实不应改写时填 `action=keep`、正文留空并给出非空 `reason`。遗漏表示尚未处理，重复或未知 ID 会被拒绝。
 >
+> 精确形状：`fields={"results":[{"shard_id":"<当前分片ID>","action":"replace","semantic_content":"压缩后的语义正文","reason":""}]}`。选择 `keep` 时仍保留这四个字段，令 `semantic_content=""` 并填写非空 `reason`。
+>
 > 按交互段和材料中的原位置指针理解上下文关系。保留决定、事实、时间、约束、否定、未决点、工具结论与因果联系，删除重复回执、机械字段、过程噪声和已经失效的中间状态；不得发明原文没有的事实。最近受保护交互的用户输入原文由 Runtime 单独保留，不要在摘要里机械复写。每片上限是硬边界而不是扩写目标；若保护原文本身使全局目标不可达，Runtime 会以受保护下限闭合并提示用户调整保护数量。
 
 记忆语义压缩节律指南：
 
 > 该指南只在日志已经成功写入且 Runtime 挂出冻结的“记忆语义压缩材料”批次时出现。必须调用 `guide_submit`，使用当前 `guide_id`、`item_id=memory_compression_due`、`option_id=submit_memory_compressions`，并在 `fields.results` 中覆盖全部且仅当前批次 ID。每项只提交 `mem_id`、`semantic_content` 与 `retained_keywords`。
+>
+> 精确形状：`fields={"results":[{"mem_id":"<当前批次MEM-ID>","semantic_content":"压缩后的纯语义正文","retained_keywords":["当前已有关键词"]}]}`。字段名固定，不得使用重整指南的 `final_keywords` 或其他别名。
 >
 > 每条记忆必须独立压缩，不能合并、拆分或遗漏。只保留该条源正文已经存在的事实，不引入其他记忆、推断或新结论；保留主体、对象、事件、时间、地点、因果、结果、限制、否定、条件、范围、不确定性和轻量事实，删除重复、对话噪声、修辞和过程描述。`semantic_content` 只能是纯语义正文，不带标题、ID、层级标签、Markdown 标题或 HTML 控制注释。Summary 最多 512 字，Abstract 最多 128 字；精确边界允许，禁止截断。
 >

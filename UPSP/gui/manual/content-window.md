@@ -1,19 +1,18 @@
 ---
 id: content-window
-title: 内容窗口三通道
+title: 内容窗口与单次材料
 page: context
-summary: 当前内容窗口只区分 focus、resident_list 和 instant_list；定期层不是内容窗口常驻清单。
-sourceRefs: UPSP_Base_DDS.md §19; Spec297; OS/persona/rules/protocol/base/workbench.md
+summary: 正文挂载只区分跨轮 resident_list 与当轮 instant_list；定向处理材料另以单次 C 轨出现。
+sourceRefs: UPSP_Base_DDS.md §20; Spec781; OS/persona/rules/protocol/base/workbench.md
 ---
 
-# 内容窗口三通道
+# 内容窗口与单次材料
 
-当前内容窗口只区分三条路：
+当前正文挂载只区分两种生命周期：
 
-- `focus`：工作台焦点。最多一个，用于当前可编辑容器正文。
-- `resident_list`：常驻清单。跨轮只读正文，持续到取消。
-- `instant_list`：即时清单。本轮或本步临时挂载材料。
+- `resident_list`：跨轮常驻引用。每个 Reaction Frame 从记忆条目、工作容器或关系卡真源重读正文，持续到显式取消。
+- `instant_list`：当前 Round 的内存挂载。本轮结束后自然消失，不存在活动持久文件。
 
-这三条路都属于高频层 CONTENT 的可见材料，不等同于定期层。
+编年史、记忆压缩等定向事务的参考内容使用单次可见 C 轨材料；它们不写入两份挂载清单，也不进入最近缓存或语料库。定期层仍是独立层，不等同于正文常驻清单。
 
-GUI 上的含义是：用户应该能看见当前页面为什么有这些材料、它们来自哪条通道、是否只是本轮临时可见、是否具备写入权限。
+容器写权不来自某个全局焦点，而来自该 Frame 起点已经装配的容器目标文件。GUI 上的含义是：用户应该能看见材料来自哪种生命周期、是否只是本轮临时可见，以及对应工具回执是否真的完成了写入。

@@ -84,6 +84,7 @@ PRIVATE_TESTS = {
     "test_protocol_tool_registration_audit.py",
     "test_rules_workbench.py",
     "test_spec721_recovery_tool.py",
+    "test_spec790_action_recovery_dogfood.py",
     "test_spec599_restore_portability.py",
     "test_visible_dogfood_context_profile.py",
     "test_visible_dogfood_entrypoint.py",

@@ -140,6 +140,8 @@ class ConfigStore:
                 loaded = self._normalise_models(loaded)
             elif name == "periodic":
                 loaded = self._normalise_periodic(loaded)
+            elif name == "relation":
+                loaded = self._normalise_relation(loaded)
             elif name == "now":
                 loaded = self._normalise_now(loaded)
             elif name == "lately":
@@ -160,6 +162,8 @@ class ConfigStore:
             data = self._normalise_models(data)
         elif name == "periodic":
             data = self._normalise_periodic(data)
+        elif name == "relation":
+            data = self._normalise_relation(data)
         elif name == "now":
             data = self._normalise_now(data)
         elif name == "lately":
@@ -218,6 +222,38 @@ class ConfigStore:
             return normalized, normalized != current
         except (OSError, ValueError) as exc:
             raise ReadError(path, cause=exc)
+
+    def migrate_relation_context_policy(self):
+        """Upgrade only the known relation_focus shape to relation_context."""
+        path, _ = _CONFIG_MAP["relation"]
+        current = self._read_json_object(path)
+        original_text = None
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                original_text = handle.read()
+            normalized = self._normalise_relation(current)
+            self._validate("relation", normalized)
+            if normalized != current:
+                atomic_write_json(path, normalized)
+                verified = self._read_json_object(path)
+                if verified != normalized:
+                    raise ValueError("relation migration readback mismatch")
+            return normalized, normalized != current
+        except Exception as exc:
+            if original_text is not None:
+                try:
+                    atomic_write_text(path, original_text)
+                except Exception as rollback_exc:
+                    raise WriteError(
+                        path,
+                        message=(
+                            "relation_migration_rollback_failed:"
+                            f"{type(rollback_exc).__name__}"
+                        ),
+                    ) from rollback_exc
+            if isinstance(exc, (ReadError, WriteError)):
+                raise
+            raise ReadError(path, cause=exc) from exc
 
     def migrate_now_policy(self):
         """Replace the one known watermark-era shape before Runtime starts."""
@@ -353,6 +389,25 @@ class ConfigStore:
             token_usage.pop("warning_ratio")
         result["_version"] = SYSTEM_CONFIG_VERSION
         return result
+
+    @staticmethod
+    def _normalise_relation(data):
+        if not isinstance(data, dict):
+            raise ValueError("relation config must be an object")
+        keys = set(data)
+        shared = {"_comment", "_version", "relation_card_write"}
+        old_keys = shared | {"relation_focus"}
+        new_keys = shared | {"relation_context"}
+        if keys == old_keys and data.get("_version") == "Base-0.10.0":
+            result = deepcopy(data)
+            result["_version"] = "Base-0.11.0"
+            result["relation_context"] = result.pop("relation_focus")
+            return result
+        if keys == new_keys and data.get("_version") == "Base-0.11.0":
+            return deepcopy(data)
+        if "relation_focus" in data and "relation_context" in data:
+            raise ValueError("mixed relation focus/context shape")
+        raise ValueError("unknown relation config shape")
 
     @staticmethod
     def _normalise_models(data):
@@ -537,6 +592,8 @@ class ConfigStore:
                     self.migrate_system_audit_policy()
                 elif name == "periodic":
                     self.migrate_periodic_policy()
+                elif name == "relation":
+                    self.migrate_relation_context_policy()
                 elif name == "now":
                     self.migrate_now_policy()
                 elif name == "lately":
@@ -1399,7 +1456,7 @@ class ConfigStore:
     def get_relation_params(self):
         """P1-6: 关系域参数（DDS §9 / config/relation.json）"""
         cfg = self.load("relation")
-        return {"max_slots": cfg["relation_focus"]["max_slots"]}
+        return {"max_slots": cfg["relation_context"]["max_slots"]}
 
     def get_relation_card_write_guard(self):
         """关系卡写入护栏配置。Base 默认关闭大改动拦截。"""

@@ -94,6 +94,18 @@ class DummyMemoryStore:
         self.meta[mem_id] = entry
         return dict(entry)
 
+    def read_body_by_id(self, mem_id):
+        meta = dict(self.meta[mem_id])
+        return {
+            "mem_id": mem_id,
+            "memory_layer": "LTM/Summary",
+            "meta": meta,
+            "body": (
+                f"## {mem_id} {meta.get('title') or mem_id}\n"
+                f"**正文**：{meta.get('title') or mem_id}"
+            ),
+        }
+
 
 class DummyMemoryIndex:
     def __init__(self):
@@ -134,19 +146,21 @@ class DummyContainerStore:
         self.append_entry_calls = []
         self.create_calls = []
         self.write_calls = []
-        self.focus_calls = []
         self.existing = {"DC-OLD", "DC-NEW", "PRJ-NEW"}
+        self.bodies = {}
 
     def append_entry(self, container_id, title, content, file_name="open.md"):
         self.append_entry_calls.append((container_id, title, content, file_name))
 
-    def create_focus_container(
+    def create_container(
             self, container_type, title, target_file=None,
-            anchor_refs=None, round_num=0):
+            anchor_refs=None, round_num=0, **kwargs):
         self.create_calls.append(
             (container_type, title, target_file, list(anchor_refs or []), round_num))
         container_id = "PRJ-NEW" if str(container_type).upper() == "PRJ" else "DC-NEW"
+        self.existing.add(container_id)
         return {
+            "status": "applied",
             "container_id": container_id,
             "container_type": str(container_type or "").upper(),
             "title": title,
@@ -155,15 +169,28 @@ class DummyContainerStore:
             "link_required": False,
         }
 
-    def append_focus_content(self, container_id, target_file, title, content):
+    def append_container_content(
+            self, container_id, target_file, title, content, **kwargs):
         self.write_calls.append((container_id, target_file, title, content))
+        key = (container_id, target_file)
+        self.bodies[key] = self.bodies.get(key, "") + str(content)
         return {
             "path": f"/fake/{container_id}/{target_file}",
             "chars_written": len(str(content).strip()),
         }
 
-    def set_container_focus(self, container_id, focus):
-        self.focus_calls.append((container_id, bool(focus)))
+    def read_container_content(self, container_id, target_file=None):
+        return {
+            "container_id": container_id,
+            "target_file": target_file,
+            "content": self.bodies.get((container_id, target_file), ""),
+        }
+
+    def snapshot_mutation_files(self):
+        return deepcopy((self.existing, self.bodies, self.create_calls, self.write_calls))
+
+    def restore_mutation_files(self, snapshot):
+        self.existing, self.bodies, self.create_calls, self.write_calls = deepcopy(snapshot)
 
     def container_exists(self, container_id):
         return container_id in self.existing
@@ -172,53 +199,74 @@ class DummyContainerStore:
         return str(container_id or "").split("-", 1)[0].upper()
 
 
-class StaleFocusContainerStore(DummyContainerStore):
+class DummyResidentStore:
     def __init__(self):
-        super().__init__()
-        self.existing = {"DC-NEW", "PRJ-NEW"}
+        self.items = []
+        self.revision = 0
 
-    def set_container_focus(self, container_id, focus):
-        if container_id not in self.existing:
-            from errors import ContainerNotFoundError
-            raise ContainerNotFoundError(f"container missing: {container_id}")
-        super().set_container_focus(container_id, focus)
+    def snapshot_bytes(self):
+        return deepcopy((self.items, self.revision))
+
+    def restore_bytes(self, snapshot):
+        self.items, self.revision = deepcopy(snapshot)
+
+    def contains(self, *, item_type, item_id, target_file=None):
+        return any(
+            item == (item_type, item_id, target_file or "")
+            for item in self.items
+        )
+
+    def add(self, item, *, candidate=None, expected_revision=None):
+        item_type = item["item_type"]
+        item_id = item["item_id"]
+        target_file = item.get("target_file")
+        key = (item_type, item_id, target_file or "")
+        if key not in self.items:
+            self.items.append(key)
+            self.revision += 1
+        return {"status": "applied", "revision": self.revision}
+
+    def load(self):
+        return {"revision": self.revision}
 
 
-class DummyWorkbenchStore:
-    def __init__(self, focus=None):
-        self.focus = focus
-        self.old_focus = None
-        self.mount_calls = []
+class DummyAssembler:
+    def __init__(self):
+        self.resident_store = DummyResidentStore()
+        self.persist_overrides = []
+        self.preflight_overrides = []
 
-    def get(self, dotpath, default=None):
-        if dotpath == "base.focus":
-            return self.focus
-        if dotpath == "base.old_focus":
-            return self.old_focus
-        return default
+    def preflight_resident_add(self, item, content_overrides=None):
+        self.persist_overrides.append(dict(content_overrides or {}))
+        return {
+            "document": {"items": [item]},
+            "changed": True,
+            "chars": sum(len(str(value or "")) for value in
+                         (content_overrides or {}).values()),
+            "expected_revision": self.resident_store.revision,
+        }
 
-    def set(self, dotpath, value):
-        if dotpath == "base.focus":
-            self.focus = value
-        elif dotpath == "base.old_focus":
-            self.old_focus = value
+    def preflight_resident_source_update(self, item, body, require_resident=True):
+        assert self.resident_store.contains(
+            item_type=item["item_type"],
+            item_id=item["item_id"],
+            target_file=item.get("target_file"),
+        ) is require_resident
+        return {"chars": len(body)}
 
-    def mount_focus(self, container_id):
-        if self.focus and self.focus != container_id:
-            self.old_focus = self.focus
-        self.focus = container_id
-        self.mount_calls.append(container_id)
-
-    def unmount_focus(self, container_id=None):
-        if self.focus and (container_id is None or self.focus == container_id):
-            self.old_focus = self.focus
-            self.focus = None
-
-    def restore_focus(self):
-        if self.old_focus:
-            self.focus = self.old_focus
-            self.old_focus = None
-        return self.focus
+    def preflight_resident_source_updates(
+            self, content_overrides, *, required_keys=None):
+        self.preflight_overrides.append(dict(content_overrides or {}))
+        required_keys = set(required_keys or ())
+        for item_type, item_id, target_file in required_keys:
+            assert self.resident_store.contains(
+                item_type=item_type,
+                item_id=item_id,
+                target_file=target_file,
+            )
+        return {
+            "chars": sum(len(str(value or "")) for value in content_overrides.values())
+        }
 
 
 def test_spec243_memory_write_no_longer_directly_links_or_writes_container_stub(
@@ -288,10 +336,10 @@ def test_spec243_memory_link_update_add_set_are_retired_but_remove_still_applies
         data_modules={"memory_store": memory_store},
     )
 
-    assert receipts[0]["status"] == "rejected"
-    assert receipts[0]["reason"] == "retired_use_memory_container_create_or_write"
-    assert receipts[1]["status"] == "rejected"
-    assert receipts[1]["reason"] == "retired_use_memory_container_create_or_write"
+    assert receipts[0]["status"] == "error"
+    assert receipts[0]["reason"] == "invalid_operation"
+    assert receipts[1]["status"] == "error"
+    assert receipts[1]["reason"] == "invalid_operation"
     assert receipts[2]["status"] == "applied"
     assert memory_store.link_calls == [("MEM-243LINK", "remove", ["DC-OLD"], None)]
 
@@ -314,12 +362,13 @@ def test_private_memory_container_and_link_side_paths_require_owner_presence():
     memory_store.private_owners["MEM-PRIVATE"] = ["TzPz"]
     relation_store = DummyRelationStore()
     container_store = DummyContainerStore()
-    workbench_store = DummyWorkbenchStore(focus="DC-OLD")
+    assembler = DummyAssembler()
     modules = {
         "memory_store": memory_store,
         "container_store": container_store,
-        "workbench_store": workbench_store,
-        "visible_focus_id": "DC-OLD",
+        "assembler": assembler,
+        "resident_store": assembler.resident_store,
+        "visible_container_targets": {("DC-OLD", "open.md")},
         "relation_store": relation_store,
     }
     hidden_state = {"presence": {"confirmed_subjects": ["Codex"]}}
@@ -367,44 +416,14 @@ def test_private_memory_container_and_link_side_paths_require_owner_presence():
     assert memory_store.link_calls == []
 
 
-def test_spec243_container_focus_create_write_are_retired_focus_hygiene_only():
-    from logic.container_focus import apply_container_focus_declarations
+def test_spec781_container_focus_has_no_active_processor_or_metadata():
+    from logic import protocol_tools
 
-    container_store = DummyContainerStore()
-    workbench_store = DummyWorkbenchStore(focus="DC-OLD")
-
-    receipts = apply_container_focus_declarations(
-        [{
-            "action": "create",
-            "container_type": "PRJ",
-            "title": "旧创建",
-            "target_file": "plan.md",
-            "content": "旧正文",
-            "reason": "旧 create 路径",
-        }, {
-            "action": "write",
-            "container_id": "DC-OLD",
-            "target_file": "open.md",
-            "content": "旧追加",
-            "reason": "旧 write 路径",
-        }],
-        {
-            "container_store": container_store,
-            "workbench_store": workbench_store,
-        },
-        round_num=243,
-    )
-
-    assert receipts[0]["status"] == "rejected"
-    assert receipts[0]["reason"] == "retired_container_focus_action"
-    assert receipts[1]["status"] == "rejected"
-    assert receipts[1]["reason"] == "retired_container_focus_action"
-    assert container_store.create_calls == []
-    assert container_store.write_calls == []
-    assert workbench_store.focus == "DC-OLD"
+    assert "container_focus" not in protocol_tools.TOOL_DEFINITIONS
+    assert protocol_tools.tool_metadata_for("container_focus") == {}
 
 
-def test_spec243_memory_container_create_writes_body_links_mem_and_replaces_focus():
+def test_spec781_memory_container_create_writes_body_links_mem_and_resident():
     from logic.memory_container_tools import apply_memory_container_create_declarations
 
     memory_store = DummyMemoryStore()
@@ -414,7 +433,7 @@ def test_spec243_memory_container_create_writes_body_links_mem_and_replaces_focu
         "linked_containers": [],
     }
     container_store = DummyContainerStore()
-    workbench_store = DummyWorkbenchStore(focus="DC-OLD")
+    assembler = DummyAssembler()
 
     receipts = apply_memory_container_create_declarations(
         [{
@@ -429,7 +448,8 @@ def test_spec243_memory_container_create_writes_body_links_mem_and_replaces_focu
         {
             "memory_store": memory_store,
             "container_store": container_store,
-            "workbench_store": workbench_store,
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
         },
         round_num=243,
     )
@@ -437,12 +457,18 @@ def test_spec243_memory_container_create_writes_body_links_mem_and_replaces_focu
     receipt = receipts[0]
     assert receipt["status"] == "applied"
     assert receipt["tool_id"] == "memory_container_create"
-    assert receipt["tool_class"] == "focus_tool"
+    assert "tool_class" not in receipt
     assert receipt["mem_id"] == "MEM-243CREATE"
     assert receipt["container_id"] == "PRJ-NEW"
-    assert receipt["previous_focus"] == "DC-OLD"
+    assert "previous_focus" not in receipt
     assert receipt["container_body_written"] is True
     assert receipt["memory_link_applied"] is True
+    assert receipt["visibility_verified"] is False
+    assert receipt["resident_persisted"] is True
+    assert set(assembler.persist_overrides[-1]) == {
+        ("container", "PRJ-NEW", "plan.md"),
+        ("memory", "MEM-243CREATE", ""),
+    }
     assert container_store.create_calls[0][3] == ["MEM-243CREATE"]
     assert container_store.write_calls == [(
         "PRJ-NEW",
@@ -456,170 +482,26 @@ def test_spec243_memory_container_create_writes_body_links_mem_and_replaces_focu
         ["PRJ-NEW"],
         "PRJ-NEW：作为项目首段被引用组织。",
     )]
-    assert container_store.focus_calls == [("DC-OLD", False), ("PRJ-NEW", True)]
-    assert workbench_store.focus == "PRJ-NEW"
-
-
-def test_spec323_container_focus_open_clears_stale_current_focus_without_crashing():
-    from logic.container_focus import apply_container_focus_declarations
-
-    container_store = StaleFocusContainerStore()
-    workbench_store = DummyWorkbenchStore(focus="FUT-predictions-12")
-
-    receipts = apply_container_focus_declarations(
-        [{
-            "action": "open",
-            "container_id": "DC-NEW",
-            "reason": "打开存在的新焦点",
-        }],
-        {
-            "container_store": container_store,
-            "workbench_store": workbench_store,
-        },
-        round_num=323,
-    )
-
-    receipt = receipts[0]
-    assert receipt["status"] == "applied"
-    assert receipt["container_id"] == "DC-NEW"
-    assert receipt["previous_focus"] == "FUT-predictions-12"
-    assert receipt["stale_previous_focus"] == "FUT-predictions-12"
-    assert container_store.focus_calls == [("DC-NEW", True)]
-    assert workbench_store.focus == "DC-NEW"
-    assert workbench_store.old_focus is None
-
-
-def test_spec323_container_focus_close_clears_stale_current_focus():
-    from logic.container_focus import apply_container_focus_declarations
-
-    container_store = StaleFocusContainerStore()
-    workbench_store = DummyWorkbenchStore(focus="FUT-predictions-12")
-
-    receipts = apply_container_focus_declarations(
-        [{"action": "close"}],
-        {
-            "container_store": container_store,
-            "workbench_store": workbench_store,
-        },
-        round_num=323,
-    )
-
-    receipt = receipts[0]
-    assert receipt["status"] == "applied"
-    assert receipt["container_id"] == "FUT-predictions-12"
-    assert receipt["stale_focus_cleared"] == "FUT-predictions-12"
-    assert workbench_store.focus is None
-    assert workbench_store.old_focus is None
-
-
-def test_spec323_container_focus_restore_rejects_stale_old_focus():
-    from logic.container_focus import apply_container_focus_declarations
-
-    container_store = StaleFocusContainerStore()
-    workbench_store = DummyWorkbenchStore(focus="DC-NEW")
-    workbench_store.old_focus = "FUT-predictions-12"
-
-    receipts = apply_container_focus_declarations(
-        [{"action": "restore"}],
-        {
-            "container_store": container_store,
-            "workbench_store": workbench_store,
-        },
-        round_num=323,
-    )
-
-    receipt = receipts[0]
-    assert receipt["status"] == "rejected"
-    assert receipt["reason"] == "container_not_found"
-    assert workbench_store.focus == "DC-NEW"
-    assert workbench_store.old_focus is None
-
-
-def test_spec400_container_focus_open_missing_instance_names_create_recovery():
-    from logic.container_focus import apply_container_focus_declarations
-
-    container_store = DummyContainerStore()
-    workbench_store = DummyWorkbenchStore()
-
-    receipts = apply_container_focus_declarations(
-        [{
-            "action": "open",
-            "container_id": "DC-1",
-            "reason": "误把示例当实例",
-        }],
-        {
-            "container_store": container_store,
-            "workbench_store": workbench_store,
-        },
-        round_num=400,
-    )
-
-    receipt = receipts[0]
-    assert receipt["status"] == "rejected"
-    assert receipt["reason"] == "container_not_found"
-    assert receipt["recovery_tool"] == "memory_container_create"
-    assert "不存在" in receipt["message"]
-    assert "不要继续 open 这个 ID" in receipt["message"]
-    assert "memory_container_create" in receipt["message"]
-    assert workbench_store.focus is None
-    assert container_store.focus_calls == []
-
-
-def test_spec323_memory_container_create_clears_stale_current_focus():
-    from logic.memory_container_tools import apply_memory_container_create_declarations
-
-    memory_store = DummyMemoryStore()
-    memory_store.meta["MEM-323CREATE"] = {
-        "id": "MEM-323CREATE",
-        "title": "引用源",
-        "linked_containers": [],
-    }
-    container_store = StaleFocusContainerStore()
-    workbench_store = DummyWorkbenchStore(focus="FUT-predictions-12")
-
-    receipts = apply_memory_container_create_declarations(
-        [{
-            "mem_id": "MEM-323CREATE",
-            "container_type": "PRJ",
-            "title": "悬空焦点后的项目",
-            "target_file": "plan.md",
-            "container_body": "基于 MEM 创建的新项目正文。",
-            "current_overview": "{container_id}：用于验证悬空旧焦点降级。",
-            "reason": "旧焦点已清理但工作台仍残留",
-        }],
-        {
-            "memory_store": memory_store,
-            "container_store": container_store,
-            "workbench_store": workbench_store,
-        },
-        round_num=323,
-    )
-
-    receipt = receipts[0]
-    assert receipt["status"] == "applied"
-    assert receipt["container_id"] == "PRJ-NEW"
-    assert receipt["previous_focus"] == "FUT-predictions-12"
-    assert receipt["stale_previous_focus"] == "FUT-predictions-12"
-    assert container_store.focus_calls == [("PRJ-NEW", True)]
-    assert workbench_store.focus == "PRJ-NEW"
-    assert workbench_store.old_focus is None
+    assert assembler.resident_store.contains(
+        item_type="container", item_id="PRJ-NEW", target_file="plan.md")
 
 
 def test_spec250_memory_container_create_rejection_names_allowed_target_files():
     from logic.memory_container_tools import apply_memory_container_create_declarations
 
     class TargetCheckingContainerStore(DummyContainerStore):
-        def create_focus_container(
+        def create_container(
                 self, container_type, title, target_file=None,
-                anchor_refs=None, round_num=0):
+                anchor_refs=None, round_num=0, **kwargs):
             if str(container_type).upper() == "DC" and target_file != "open.md":
                 raise ValueError("invalid_target_file")
-            return super().create_focus_container(
+            return super().create_container(
                 container_type,
                 title,
                 target_file=target_file,
                 anchor_refs=anchor_refs,
                 round_num=round_num,
+                **kwargs,
             )
 
     memory_store = DummyMemoryStore()
@@ -629,6 +511,7 @@ def test_spec250_memory_container_create_rejection_names_allowed_target_files():
         "linked_containers": [],
     }
 
+    assembler = DummyAssembler()
     receipts = apply_memory_container_create_declarations(
         [{
             "mem_id": "MEM-250CREATE",
@@ -642,7 +525,8 @@ def test_spec250_memory_container_create_rejection_names_allowed_target_files():
         {
             "memory_store": memory_store,
             "container_store": TargetCheckingContainerStore(),
-            "workbench_store": DummyWorkbenchStore(),
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
         },
         round_num=250,
     )
@@ -654,7 +538,7 @@ def test_spec250_memory_container_create_rejection_names_allowed_target_files():
     assert receipts[0]["target_file"] == "notes.md"
 
 
-def test_spec243_memory_container_write_requires_entry_visible_focus_then_links():
+def test_spec781_memory_container_write_requires_frame_visible_target_then_links():
     from logic.memory_container_tools import apply_memory_container_write_declarations
 
     memory_store = DummyMemoryStore()
@@ -664,7 +548,7 @@ def test_spec243_memory_container_write_requires_entry_visible_focus_then_links(
         "linked_containers": [],
     }
     container_store = DummyContainerStore()
-    workbench_store = DummyWorkbenchStore(focus="DC-NEW")
+    assembler = DummyAssembler()
     declaration = {
         "mem_id": "MEM-243WRITE",
         "container_id": "DC-NEW",
@@ -680,22 +564,29 @@ def test_spec243_memory_container_write_requires_entry_visible_focus_then_links(
         {
             "memory_store": memory_store,
             "container_store": container_store,
-            "workbench_store": workbench_store,
-            "visible_focus_id": "DC-OLD",
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
+            "visible_container_targets": {("DC-OLD", "open.md")},
         },
         round_num=243,
     )
     assert rejected[0]["status"] == "rejected"
-    assert rejected[0]["reason"] == "focus_not_visible_at_iteration_start"
+    assert rejected[0]["reason"] == "container_not_visible_at_frame_start"
     assert container_store.write_calls == []
 
+    assembler.resident_store.add({
+        "item_type": "container",
+        "item_id": "DC-NEW",
+        "target_file": "open.md",
+    })
     applied = apply_memory_container_write_declarations(
         [declaration],
         {
             "memory_store": memory_store,
             "container_store": container_store,
-            "workbench_store": workbench_store,
-            "visible_focus_id": "DC-NEW",
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
+            "visible_container_targets": {("DC-NEW", "open.md")},
         },
         round_num=244,
     )
@@ -705,6 +596,12 @@ def test_spec243_memory_container_write_requires_entry_visible_focus_then_links(
     assert receipt["tool_id"] == "memory_container_write"
     assert receipt["container_body_written"] is True
     assert receipt["memory_link_applied"] is True
+    assert receipt["visibility_verified"] is True
+    assert receipt["resident_persisted"] is True
+    assert set(assembler.preflight_overrides[-1]) == {
+        ("container", "DC-NEW", "open.md"),
+        ("memory", "MEM-243WRITE", ""),
+    }
     assert container_store.write_calls == [(
         "DC-NEW",
         "open.md",
@@ -717,6 +614,44 @@ def test_spec243_memory_container_write_requires_entry_visible_focus_then_links(
         ["DC-NEW"],
         "DC-NEW：已作为续写段落引用组织。",
     )]
+
+
+def test_spec781_memory_container_write_allows_visible_nonresident_target():
+    from logic.memory_container_tools import apply_memory_container_write_declarations
+
+    memory_store = DummyMemoryStore()
+    memory_store.meta["MEM-243INSTANT"] = {
+        "id": "MEM-243INSTANT",
+        "title": "即时引用源",
+        "linked_containers": [],
+    }
+    container_store = DummyContainerStore()
+    assembler = DummyAssembler()
+
+    receipts = apply_memory_container_write_declarations(
+        [{
+            "mem_id": "MEM-243INSTANT",
+            "container_id": "DC-NEW",
+            "target_file": "open.md",
+            "title": "即时可见续写",
+            "container_body": "目标由本轮 CONTENT 提供，但不在跨轮清单中。",
+            "current_overview": "DC-NEW：即时可见续写。",
+            "reason": "验证写权来自 Frame 可见性而非常驻状态。",
+        }],
+        {
+            "memory_store": memory_store,
+            "container_store": container_store,
+            "assembler": assembler,
+            "resident_store": assembler.resident_store,
+            "visible_container_targets": {("DC-NEW", "open.md")},
+        },
+        round_num=245,
+    )
+
+    assert receipts[0]["status"] == "applied"
+    assert receipts[0]["visibility_verified"] is True
+    assert receipts[0]["resident_persisted"] is False
+    assert assembler.resident_store.items == []
 
 
 def test_spec243_obligations_close_memory_route_only_after_container_reference_write():

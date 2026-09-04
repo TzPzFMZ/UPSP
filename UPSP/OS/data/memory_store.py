@@ -67,8 +67,6 @@ def memory_is_admitted(meta):
     return bool(str((meta or {}).get("stored_at") or "").strip())
 
 
-def memory_tier_is_aligned(tier, weight):
-    return tier == memory_target_tier(weight)
 LTM_META_PATHS = {
     os.path.abspath(path) for path in (
         LTM_FULL_META_JSON, LTM_SUMMARY_META_JSON,
@@ -201,7 +199,7 @@ def project_memory_body(body, meta):
         "**入库**：", "**最后调用**：", "现状概况：", "创建时间：", "入库时间：", "关联容器：",
         "**入库轮次**：", "**创建轮次**：", "**创建时间**：", "**入库时间**：", "**最近调用轮次**：",
         "**最近调用时间**：", "**挂接备注**：", "**挂接备注更新时间**：",
-        "**关联容器**：",
+        "**关联容器**：", "注释：", "**注释**：",
     )
     lines = str(body or "").splitlines()
     heading = next((

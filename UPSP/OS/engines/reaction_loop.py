@@ -76,16 +76,16 @@ GUIDE_ALERT_FLAGS = {
 
 class ReactionLoopRunner(EngineComponent):
     # 循环 helper 只做判断、投影和反馈文本；主循环状态机仍留在本类。
-    def _sync_chronicle_focus_for_current_guide(
+    def _sync_chronicle_write_scope_for_current_guide(
             self,
             *,
             round_type,
             current_state,
             round_num,
             completed_flags):
-        """让 chronicle_write 的隐藏写入焦点跟随当前 Runtime GUIDE。"""
+        """让隐藏写入范围跟随当前 Runtime GUIDE，不预写目标文件。"""
         if str(round_type or "").strip().lower() != "rhythm":
-            self.chronicle_focus = None
+            self.chronicle_write_scope = None
             return {}
         try:
             guide_id = str(
@@ -96,9 +96,9 @@ class ReactionLoopRunner(EngineComponent):
             guide = {}
         kind = str(guide.get("kind") or "").strip()
         if kind == "main_axis_rhythm_guide":
-            return getattr(self, "chronicle_focus", None) or {}
+            return getattr(self, "chronicle_write_scope", None) or {}
         if kind != "calendar_rhythm_guide":
-            self.chronicle_focus = None
+            self.chronicle_write_scope = None
             return {}
         target = {}
         completed = {str(item or "").strip() for item in completed_flags or []}
@@ -111,8 +111,17 @@ class ReactionLoopRunner(EngineComponent):
         flag = str(target.get("item_id") or "").strip()
         layer = GUIDE_CALENDAR_FLAG_TO_LAYER.get(flag, "")
         if not layer:
-            self.chronicle_focus = None
+            self.chronicle_write_scope = None
             return {}
+        current_scope = getattr(self, "chronicle_write_scope", None)
+        if (
+            isinstance(current_scope, dict)
+            and current_scope.get("schema_version") == "chronicle_write_scope.v1"
+            and str(current_scope.get("calendar_flag") or "").strip() == flag
+            and str(current_scope.get("layer") or "").strip() == layer
+            and int(current_scope.get("round_num") or 0) == int(round_num or 0)
+        ):
+            return current_scope
         store = getattr(self, "chronicle_store", None)
         if store is None:
             try:
@@ -120,40 +129,28 @@ class ReactionLoopRunner(EngineComponent):
                 store = ChronicleStore()
                 self.chronicle_store = store
             except Exception:
-                self.chronicle_focus = None
-                return {}
+                raise RequiredContextError(
+                    "read", "chronicle_write_scope", "chronicle_store_unavailable"
+                )
         closed_at = local_now().isoformat()
         title = str(target.get("title") or flag or layer).strip()
         source_layer = GUIDE_CALENDAR_SOURCE_LAYER.get(layer, "")
         try:
-            refresher = getattr(store, "refresh_active_calendar", None)
-            if callable(refresher):
-                path = refresher(
-                    layer=layer,
-                    title=title,
-                    round_num=round_num,
-                    closed_at=closed_at,
-                    source_layer=source_layer,
-                )
-            else:
-                path = ""
-        except Exception:
-            self.chronicle_focus = None
-            return {}
-        focus = {
-            "layer": layer,
-            "path": path,
-            "round_num": int(round_num or 0),
-            "round_type": "rhythm",
-            "calendar_flag": flag,
-            "title": title,
-            "source_layer": source_layer,
-            "source_refs": [f"calendar:{flag}", f"round:{int(round_num or 0)}"],
-            "range_end_round": int(round_num or 0),
-            "range_end_time": closed_at,
-        }
-        self.chronicle_focus = focus
-        return focus
+            scope = store.build_calendar_write_scope(
+                layer=layer,
+                title=title,
+                round_num=round_num,
+                closed_at=closed_at,
+                calendar_flag=flag,
+                source_layer=source_layer,
+                guide_id=guide_id,
+            )
+        except Exception as exc:
+            raise RequiredContextError(
+                "read", "chronicle_write_scope", exc
+            ) from exc
+        self.chronicle_write_scope = scope
+        return scope
 
     def _materialize_next_runtime_rhythm_guide_if_needed(
             self,
@@ -189,33 +186,21 @@ class ReactionLoopRunner(EngineComponent):
         except Exception:
             return None
 
-    def _chronicle_focus_content_projection(self):
-        focus = getattr(self, "chronicle_focus", None)
-        if not isinstance(focus, dict) or not focus:
+    def _chronicle_write_material(self):
+        scope = getattr(self, "chronicle_write_scope", None)
+        if not isinstance(scope, dict) or not scope:
             return {}
-        path = str(focus.get("path") or "").strip()
-        if not path:
-            return {}
+        store = getattr(self, "chronicle_store", None)
+        if store is None:
+            raise RequiredContextError(
+                "read", "chronicle_write_scope", "chronicle_store_unavailable"
+            )
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read().strip()
-        except OSError:
-            content = ""
-        if not content:
-            return {}
-        return {
-            "role": "user",
-            "content": "\n".join([
-                "## 编年史写入焦点（Runtime 预填）",
-                f"- layer: {focus.get('layer')}",
-                f"- path: {path}",
-                f"- title: {focus.get('title') or ''}",
-                "- 提交约束：按当前节律 guide 调用 guide_submit；只填写 guide 要求的正文，Runtime 使用本焦点决定写入层与路径。",
-                "",
-                "### 当前正文写入框",
-                content,
-            ]).rstrip(),
-        }
+            return store.render_write_scope_material(scope)
+        except Exception as exc:
+            raise RequiredContextError(
+                "read", "chronicle_write_scope", exc
+            ) from exc
 
     def _append_to_context_cache(self, *args, **kwargs):
         stores = []
@@ -681,8 +666,6 @@ class ReactionLoopRunner(EngineComponent):
     def _relay_target_unfulfilled_receipt(source, target, correction_count):
         return {
             "tool_id": "reaction_finalize",
-            "tool_family": "substrate_tool",
-            "tool_class": "sync_tool",
             "status": "relay_target_unfulfilled",
             "source": source,
             "target": target or {},
@@ -717,6 +700,8 @@ class ReactionLoopRunner(EngineComponent):
                 memory_write_rewrite_tracker=(
                     context.memory_write_rewrite_tracker
                 ),
+                reaction_metabolism_enabled=(context.round_type != "standby"),
+                round_context=context,
             )
         return self._run_loop(*args, **kwargs)
 
@@ -727,7 +712,8 @@ class ReactionLoopRunner(EngineComponent):
             final_response_length_rejections=0,
             response_contract=None, memory_heat_boosted_ids=None,
             memory_reconsolidation_tracker=None,
-            memory_write_rewrite_tracker=None):
+            memory_write_rewrite_tracker=None,
+            reaction_metabolism_enabled=False, round_context=None):
         session = self.start_session(
             state,
             round_type,
@@ -743,6 +729,8 @@ class ReactionLoopRunner(EngineComponent):
             memory_heat_boosted_ids=memory_heat_boosted_ids,
             memory_reconsolidation_tracker=memory_reconsolidation_tracker,
             memory_write_rewrite_tracker=memory_write_rewrite_tracker,
+            reaction_metabolism_enabled=reaction_metabolism_enabled,
+            round_context=round_context,
         )
         while not session.completed:
             self.run_frame(session)
@@ -755,7 +743,8 @@ class ReactionLoopRunner(EngineComponent):
             final_response_length_rejections=0,
             response_contract=None, memory_heat_boosted_ids=None,
             memory_reconsolidation_tracker=None,
-            memory_write_rewrite_tracker=None):
+            memory_write_rewrite_tracker=None,
+            reaction_metabolism_enabled=False, round_context=None):
         return ReactionSession(ReactionLoopState(
             runner=self,
             state=state,
@@ -778,6 +767,8 @@ class ReactionLoopRunner(EngineComponent):
             ),
             memory_reconsolidation_tracker=memory_reconsolidation_tracker,
             memory_write_rewrite_tracker=memory_write_rewrite_tracker,
+            reaction_metabolism_enabled=reaction_metabolism_enabled,
+            round_context=round_context,
         ))
 
     @staticmethod
@@ -903,7 +894,6 @@ class ReactionLoopRunner(EngineComponent):
             item = {}
             for key in (
                     "tool_id",
-                    "tool_family",
                     "tool_class",
                     "risk",
                     "source",

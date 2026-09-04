@@ -46,7 +46,11 @@ from initialization.instance_service import (  # noqa: E402
 )
 from initialization.persona_initializer import PersonaInitializationError  # noqa: E402
 from assembly.statusbar import StatusBarBuilder  # noqa: E402
-from data.container_store import ContainerStore  # noqa: E402
+from data.container_store import (  # noqa: E402
+    CONTAINER_TARGET_FILES,
+    DEFAULT_CONTAINER_TARGET,
+    ContainerStore,
+)
 from data.config_store import API_CONFIG_OVERRIDE_ENV, ConfigStore  # noqa: E402
 from data.memory_store import MemoryStore, project_memory_body  # noqa: E402
 from data.periodic_mount_store import PeriodicMountStore  # noqa: E402
@@ -65,7 +69,6 @@ from engines.resident_runtime import (  # noqa: E402
     RuntimeSupervisorCorrupt,
 )
 from engines.tool_approval import ToolApprovalConflict  # noqa: E402
-from logic.container_focus import apply_container_focus_declarations  # noqa: E402
 from logic.periodic_memory_mount import PeriodicMemoryMountError  # noqa: E402
 from errors import APIBridgeError, ReadError, WriteError  # noqa: E402
 from paths import (  # noqa: E402
@@ -256,7 +259,8 @@ SETTINGS_FIELDS = {
         "content_limits.reference_window_chars": _setting("content_limits.reference_window_chars", "int", 1, 16777216),
     },
     "relation": {
-        "relation_focus.max_slots": _setting("relation_focus.max_slots", "int", 1, 32),
+        "relation_context.max_slots": _setting(
+            "relation_context.max_slots", "int", 1, 32),
     },
     "memory": {
         "heat.zone_thresholds.significant": _setting("heat.zone_thresholds.significant", "int", 1, 100),
@@ -1192,7 +1196,6 @@ class DepositionReader:
         periodic_mount_store=None,
         periodic_owner_store=None,
         active_instance_id=ACTIVE_INSTANCE_ID,
-        focus_processor=apply_container_focus_declarations,
     ):
         self.memory_store = memory_store or MemoryStore()
         self.container_store = container_store or ContainerStore()
@@ -1201,7 +1204,6 @@ class DepositionReader:
         self.periodic_mount_store = periodic_mount_store or PeriodicMountStore()
         self.periodic_owner_store = periodic_owner_store or PeriodicPinOwnerStore()
         self.active_instance_id = str(active_instance_id or "meta")
-        self.focus_processor = focus_processor
 
     @staticmethod
     def _memory_summary(raw: dict) -> dict:
@@ -1258,7 +1260,6 @@ class DepositionReader:
             "prefix": _text(raw.get("prefix")),
             "title": _text(raw.get("title") or raw.get("name")),
             "status": _text(raw.get("status")),
-            "focus": bool(raw.get("focus")),
             "created_at": _text(raw.get("created_at")),
             "updated_at": _text(raw.get("updated_at")),
             "entries": entries,
@@ -1275,7 +1276,6 @@ class DepositionReader:
         }
 
     def index(self) -> dict:
-        focus = self.focus_projection()
         mount_doc = self.periodic_mount_store.load()
         mounted_ids = {
             _text(item.get("id"))
@@ -1318,8 +1318,6 @@ class DepositionReader:
             for item in self.container_store.list_containers()
             if isinstance(item, dict)
         ]
-        for item in containers:
-            item["focus"] = bool(item.get("id") and item["id"] == focus["current"])
         relations = [
             self._relation_summary(item)
             for item in self.relation_store.list_cards(status="active")
@@ -1330,40 +1328,6 @@ class DepositionReader:
             "memory": memories,
             "containers": containers,
             "relations": relations,
-            "focus": focus,
-        }
-
-    def focus_projection(self) -> dict:
-        return {
-            "current": _text(self.workbench_store.get("base.focus")),
-            "previous": _text(self.workbench_store.get("base.old_focus")),
-        }
-
-    def container_exists(self, container_id: str) -> bool:
-        return bool(self.container_store.container_exists(container_id))
-
-    def apply_focus(self, action: str, container_id: str) -> dict:
-        declaration = {"action": action}
-        if container_id:
-            declaration["container_id"] = container_id
-        receipts = self.focus_processor(
-            [declaration],
-            {
-                "container_store": self.container_store,
-                "workbench_store": self.workbench_store,
-            },
-            round_num=0,
-        )
-        receipt = receipts[0] if receipts else {
-            "tool_id": "container_focus",
-            "status": "rejected",
-            "reason": "missing_processor_receipt",
-        }
-        return {
-            "schema_version": "seed_gui_container_focus_result.v1",
-            "submission_source": "seed_gui",
-            "receipt": receipt,
-            "focus": self.focus_projection(),
         }
 
     @staticmethod
@@ -1519,12 +1483,15 @@ class DepositionReader:
                 "total_chars": raw.get("total_chars"),
             }
         elif kind == "container":
-            raw = self.container_store.read_focus_projection(item_id)
+            prefix = self.container_store.resolve_container_type(item_id)
+            raw = self.container_store.read_container_content(item_id)
             content = _text(raw.get("content"))
             item = {
                 **summary,
-                "allowed_targets": _string_list(raw.get("allowed_targets")),
-                "default_target": _text(raw.get("default_target")),
+                "allowed_targets": sorted(
+                    CONTAINER_TARGET_FILES.get(prefix, frozenset())),
+                "default_target": _text(
+                    DEFAULT_CONTAINER_TARGET.get(prefix, "")),
                 "content": content[:MAX_DEPOSITION_CONTENT_CHARS],
                 "content_truncated": len(content) > MAX_DEPOSITION_CONTENT_CHARS,
                 "total_lines": raw.get("total_lines"),
@@ -1603,6 +1570,11 @@ def _static_files(gui_root: Path) -> dict[str, tuple[Path, str]]:
     add("/app.js", root / "app.js", "application/javascript; charset=utf-8")
     add("/markdown-mermaid.js", root / "markdown-mermaid.js", "application/javascript; charset=utf-8")
     add("/assets/upsp-logo.png", root / "assets" / "upsp-logo.png", "image/png")
+    font_assets = root / "assets" / "fonts"
+    if font_assets.is_dir():
+        for path in font_assets.glob("*.woff2"):
+            if path.is_file():
+                add(f"/assets/fonts/{path.name}", path, "font/woff2")
     markdown_assets = root / "assets" / "markdown"
     if markdown_assets.is_dir():
         content_types = {
@@ -1750,7 +1722,7 @@ class SeedGuiHandler(RoundLiveHandler):
             "active_guides": {"rhythm": "", "work": ""},
         }
         self._send_json(200, {
-            "schema_version": "seed_gui_runtime_status.v2",
+            "schema_version": "seed_gui_runtime_status.v3",
             "host": {
                 "connected": True,
                 "address": "127.0.0.1",
@@ -1777,6 +1749,10 @@ class SeedGuiHandler(RoundLiveHandler):
                 service["relay_in_flight"] or self.relay_lock.locked()),
             "mutation_in_flight": self.mutation_lock.locked(),
             "restart_requested": self.server.restart_requested.is_set(),
+            "interrupted_recovery": service.get("interrupted_recovery") or {
+                "pending": False,
+                "round": None,
+            },
             "cli": {
                 "ok": True,
                 "command": "status",
@@ -2004,7 +1980,10 @@ class SeedGuiHandler(RoundLiveHandler):
                 return
             self._deposition_detail(detail_kind)
             return
-        if path in {"/api/rounds", "/api/live/state", "/api/live/events"}:
+        if path in {
+            "/api/rounds", "/api/live/state", "/api/live/events",
+            "/api/live/detail",
+        }:
             super().do_GET()
             return
         static_file = self.static_files.get(path)
@@ -2043,7 +2022,6 @@ class SeedGuiHandler(RoundLiveHandler):
             "/api/runtime/execution-permission",
             "/api/runtime/relay",
             "/api/runtime/tick",
-            "/api/container/focus",
             "/api/deposition/memory/periodic",
             "/api/settings",
             "/api/settings/model-catalog",
@@ -2108,9 +2086,6 @@ class SeedGuiHandler(RoundLiveHandler):
             return
         if not self._require_initialized_persona():
             self._discard_bounded_request_body()
-            return
-        if path == "/api/container/focus":
-            self._container_focus()
             return
         if path == "/api/deposition/memory/periodic":
             self._periodic_memory()
@@ -2470,69 +2445,6 @@ class SeedGuiHandler(RoundLiveHandler):
             self._send_json(200, response_payload)
         else:
             self._error(response_status, *response_error)
-
-    def _container_focus(self) -> None:
-        payload = self._json_object({"action", "container_id"})
-        if payload is None:
-            return
-        action = payload.get("action")
-        container_id = payload.get("container_id")
-        if action not in {"open", "close", "restore"}:
-            self._error(400, "invalid_focus_action")
-            return
-        if not isinstance(container_id, str) or len(container_id) > 128:
-            self._error(400, "invalid_container_id")
-            return
-        container_id = container_id.strip()
-        if action in {"open", "close"} and not container_id:
-            self._error(400, "container_id_required")
-            return
-        if action == "restore" and container_id:
-            self._error(400, "restore_container_id_forbidden")
-            return
-        if not self.mutation_lock.acquire(blocking=False):
-            self._error(409, self._mutation_conflict_code())
-            return
-        response_status = 200
-        response_payload = None
-        response_error = ""
-        try:
-            focus = self.deposition_reader.focus_projection()
-            if action == "open" and not self.deposition_reader.container_exists(container_id):
-                response_status = 404
-                response_error = "container_not_found"
-            elif action == "close":
-                if not focus["current"]:
-                    response_status = 409
-                    response_error = "missing_focus"
-                elif focus["current"] != container_id:
-                    response_status = 409
-                    response_error = "focus_conflict"
-            elif action == "restore" and not focus["previous"]:
-                response_status = 409
-                response_error = "missing_old_focus"
-            if not response_error:
-                result = self.deposition_reader.apply_focus(action, container_id)
-                receipt = result.get("receipt") or {}
-                if receipt.get("status") == "applied":
-                    response_payload = result
-                else:
-                    response_status = (
-                        404 if receipt.get("reason") == "container_not_found" else 409
-                    )
-                    response_payload = {
-                        **result,
-                        "error": receipt.get("reason") or "container_focus_rejected",
-                    }
-        except Exception:
-            response_status = 503
-            response_error = "container_focus_failed"
-        finally:
-            self.mutation_lock.release()
-        if response_payload is not None:
-            self._send_json(response_status, response_payload)
-        else:
-            self._error(response_status, response_error)
 
     def _periodic_memory(self) -> None:
         payload = self._json_object({"action", "mem_id"})

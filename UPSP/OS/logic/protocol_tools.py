@@ -1,8 +1,5 @@
 """协议工具注册表与反应步提交校验。"""
-import os
 import re
-
-from paths import DOCS_PROTOCOL_TOOLS
 
 
 def _python_backend(handler, permission_scope, status="enabled"):
@@ -15,10 +12,10 @@ def _python_backend(handler, permission_scope, status="enabled"):
     }]
 
 
-# 与 docs/protocol/base/tools.md 的短索引同步；新增工具时必须同时补齐这里。
+# 活动工具注册真源；模型可见清单由 provider-native 01_tool_header 生成。
 TOOL_DEFINITIONS = {
     "context_assemble": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "read_tool",
         "domain": "context",
         "risk": "high",
@@ -26,7 +23,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "step_messages",
     },
     "file_read": {
-        "tool_family": "general_tool",
+        "execution_route": "host_dispatch",
         "tool_class": "read_tool",
         "domain": "filesystem",
         "risk": "medium",
@@ -42,7 +39,7 @@ TOOL_DEFINITIONS = {
         "status": "enabled",
     },
     "file_glob": {
-        "tool_family": "general_tool",
+        "execution_route": "host_dispatch",
         "tool_class": "read_tool",
         "domain": "filesystem",
         "risk": "medium",
@@ -58,7 +55,7 @@ TOOL_DEFINITIONS = {
         "status": "enabled",
     },
     "file_grep": {
-        "tool_family": "general_tool",
+        "execution_route": "host_dispatch",
         "tool_class": "read_tool",
         "domain": "filesystem",
         "risk": "medium",
@@ -74,8 +71,8 @@ TOOL_DEFINITIONS = {
         "status": "enabled",
     },
     "file_edit": {
-        "tool_family": "general_tool",
-        "tool_class": "focus_tool",
+        "execution_route": "host_dispatch",
+        "tool_class": "action_tool",
         "domain": "filesystem",
         "risk": "high",
         "active_backend": "python",
@@ -90,8 +87,8 @@ TOOL_DEFINITIONS = {
         "status": "enabled",
     },
     "file_write": {
-        "tool_family": "general_tool",
-        "tool_class": "focus_tool",
+        "execution_route": "host_dispatch",
+        "tool_class": "action_tool",
         "domain": "filesystem",
         "risk": "high",
         "active_backend": "python",
@@ -106,7 +103,7 @@ TOOL_DEFINITIONS = {
         "status": "enabled",
     },
     "web_fetch": {
-        "tool_family": "general_tool",
+        "execution_route": "host_dispatch",
         "tool_class": "read_tool",
         "domain": "web",
         "risk": "medium",
@@ -134,7 +131,7 @@ TOOL_DEFINITIONS = {
         "status": "enabled",
     },
     "web_search": {
-        "tool_family": "general_tool",
+        "execution_route": "host_dispatch",
         "tool_class": "read_tool",
         "domain": "web",
         "risk": "medium",
@@ -162,8 +159,8 @@ TOOL_DEFINITIONS = {
         "status": "enabled",
     },
     "shell_command": {
-        "tool_family": "general_tool",
-        "tool_class": "focus_tool",
+        "execution_route": "host_dispatch",
+        "tool_class": "action_tool",
         "domain": "shell",
         "risk": "high",
         "active_backend": "python",
@@ -178,8 +175,8 @@ TOOL_DEFINITIONS = {
         "status": "enabled",
     },
     "subagent_dispatch": {
-        "tool_family": "general_tool",
-        "tool_class": "focus_tool",
+        "execution_route": "host_dispatch",
+        "tool_class": "action_tool",
         "domain": "agent",
         "risk": "high",
         "active_backend": "python",
@@ -194,7 +191,7 @@ TOOL_DEFINITIONS = {
         "status": "enabled",
     },
     "memory_write": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "memory",
         "risk": "high",
@@ -202,7 +199,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "relation_card_write": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "relation",
         "risk": "high",
@@ -210,7 +207,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "memory_content_read": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "read_tool",
         "domain": "memory",
         "risk": "medium",
@@ -218,7 +215,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "mount_cancel": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "context_mount",
         "risk": "medium",
@@ -226,7 +223,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "relay_intent_settle": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "relay",
         "risk": "medium",
@@ -234,7 +231,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "memory_link_update": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "memory",
         "risk": "high",
@@ -242,23 +239,23 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "memory_container_create": {
-        "tool_family": "protocol_tool",
-        "tool_class": "focus_tool",
+        "execution_route": "internal_processor",
+        "tool_class": "sync_tool",
         "domain": "memory",
         "risk": "high",
         "handler": "memory_container_create_processor",
         "result_kind": "protocol_tool_receipt",
     },
     "memory_container_write": {
-        "tool_family": "protocol_tool",
-        "tool_class": "focus_tool",
+        "execution_route": "internal_processor",
+        "tool_class": "sync_tool",
         "domain": "memory",
         "risk": "high",
         "handler": "memory_container_write_processor",
         "result_kind": "protocol_tool_receipt",
     },
     "memory_privacy_mark": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "memory",
         "risk": "high",
@@ -267,7 +264,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "memory_privacy_declassify": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "memory",
         "risk": "high",
@@ -276,7 +273,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "chronicle_write": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "chronicle",
         "risk": "medium",
@@ -284,7 +281,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "alert_mode_settle": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "immune",
         "risk": "medium",
@@ -292,23 +289,15 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "fault_record": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "immune",
         "risk": "medium",
         "handler": "fault_record_processor",
         "result_kind": "protocol_tool_receipt",
     },
-    "container_focus": {
-        "tool_family": "protocol_tool",
-        "tool_class": "focus_tool",
-        "domain": "workbench",
-        "risk": "high",
-        "handler": "workbench_processor",
-        "result_kind": "protocol_tool_receipt",
-    },
     "container_read": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "read_tool",
         "domain": "workbench",
         "risk": "medium",
@@ -316,7 +305,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "corpus_read": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "read_tool",
         "domain": "context",
         "risk": "low",
@@ -324,7 +313,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "index_view": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "read_tool",
         "domain": "context",
         "risk": "low",
@@ -332,7 +321,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "memory_search": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "read_tool",
         "domain": "memory",
         "risk": "low",
@@ -340,7 +329,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "relation_read": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "read_tool",
         "domain": "relation",
         "risk": "low",
@@ -348,7 +337,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "protocol_tool_receipt",
     },
     "setup_mount_apply": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "read_tool",
         "domain": "context",
         "risk": "high",
@@ -356,7 +345,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "setup_mount_package",
     },
     "setup_security_gate": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "security",
         "risk": "high",
@@ -364,7 +353,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "control_flow",
     },
     "setup_handoff": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "setup",
         "risk": "medium",
@@ -372,7 +361,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "now_handoff",
     },
     "standby_setup_handoff": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "setup",
         "risk": "medium",
@@ -380,7 +369,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "control_flow",
     },
     "setup_finalize": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "runtime",
         "risk": "high",
@@ -391,7 +380,7 @@ TOOL_DEFINITIONS = {
         "step_terminal": "setup",
     },
     "reaction_loop": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "reaction",
         "risk": "high",
@@ -399,7 +388,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "now_handoff",
     },
     "reaction_finalize": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "runtime",
         "risk": "high",
@@ -410,7 +399,7 @@ TOOL_DEFINITIONS = {
         "step_terminal": "reaction",
     },
     "guide_submit": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "workbench",
         "risk": "high",
@@ -420,7 +409,7 @@ TOOL_DEFINITIONS = {
         "native_only": True,
     },
     "tool_transaction_audit": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "audit",
         "risk": "high",
@@ -428,7 +417,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "round_snapshot_runtime",
     },
     "cleanup_handoff": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "cleanup",
         "risk": "medium",
@@ -436,7 +425,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "now_handoff",
     },
     "cleanup_finalize": {
-        "tool_family": "protocol_tool",
+        "execution_route": "internal_processor",
         "tool_class": "sync_tool",
         "domain": "runtime",
         "risk": "high",
@@ -447,7 +436,7 @@ TOOL_DEFINITIONS = {
         "step_terminal": "cleanup",
     },
     "heartbeat_tick": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "heartbeat",
         "risk": "high",
@@ -455,7 +444,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "heartbeat_flags",
     },
     "connection_material_settle": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "training",
         "risk": "high",
@@ -463,7 +452,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "raw_connection",
     },
     "tacit_material_settle": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "training",
         "risk": "high",
@@ -471,7 +460,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "raw_tacit",
     },
     "association_count_update": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "training",
         "risk": "high",
@@ -479,7 +468,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "raw_association_counts",
     },
     "heartbeat_restart": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "heartbeat",
         "risk": "high",
@@ -487,7 +476,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "runtime_state",
     },
     "registry_reload": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "registry",
         "risk": "medium",
@@ -495,7 +484,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "runtime_state",
     },
     "migration_guard": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "migration",
         "risk": "high",
@@ -503,7 +492,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "migration_report",
     },
     "state_settle": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "state",
         "risk": "high",
@@ -511,7 +500,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "runtime_state",
     },
     "state_coordinate": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "state",
         "risk": "high",
@@ -519,7 +508,7 @@ TOOL_DEFINITIONS = {
         "result_kind": "runtime_state",
     },
     "state_reconcile": {
-        "tool_family": "substrate_tool",
+        "execution_route": "substrate",
         "tool_class": "sync_tool",
         "domain": "state",
         "risk": "high",
@@ -543,12 +532,12 @@ TOOL_IDS = set(TOOL_DEFINITIONS)
 PROTOCOL_TOOL_IDS = {
     tool_id
     for tool_id, meta in TOOL_DEFINITIONS.items()
-    if meta.get("tool_family") == "protocol_tool"
+    if meta.get("execution_route") == "internal_processor"
 }
 GENERAL_TOOL_IDS = {
     tool_id
     for tool_id, meta in TOOL_DEFINITIONS.items()
-    if meta.get("tool_family") == "general_tool"
+    if meta.get("execution_route") == "host_dispatch"
 }
 
 
@@ -557,9 +546,10 @@ def tool_class_for(tool_id):
     normalized = normalize_tool_id(tool_id)
     return TOOL_DEFINITIONS.get(normalized, {}).get("tool_class", "")
 
+
 def _metadata_with_backend_projection(metadata):
     data = dict(metadata or {})
-    if data.get("tool_family") != "general_tool":
+    if data.get("execution_route") != "host_dispatch":
         return data
 
     active_backend = data.get("active_backend") or data.get("backend_type", "")
@@ -585,10 +575,26 @@ def tool_metadata_for(tool_id):
     return _metadata_with_backend_projection(metadata) if metadata else {}
 
 
+def attach_registered_tool_metadata(receipts):
+    """Attach current registry posture at the Runtime settlement boundary."""
+    items = [receipts] if isinstance(receipts, dict) else list(receipts or [])
+    for receipt in items:
+        if not isinstance(receipt, dict):
+            continue
+        metadata = tool_metadata_for(receipt.get("tool_id", ""))
+        if not metadata:
+            receipt.pop("tool_class", None)
+            receipt.pop("execution_route", None)
+            continue
+        receipt["tool_class"] = metadata.get("tool_class", "")
+        receipt["execution_route"] = metadata.get("execution_route", "")
+    return receipts
+
+
 def general_tool_backend_for(tool_id):
     """返回通用工具当前 active backend 元数据；非通用工具或缺后端返回空 dict。"""
     metadata = tool_metadata_for(tool_id)
-    if metadata.get("tool_family") != "general_tool":
+    if metadata.get("execution_route") != "host_dispatch":
         return {}
     active_backend = metadata.get("active_backend") or metadata.get("backend_type", "")
     for candidate in metadata.get("backend_candidates") or []:
@@ -605,10 +611,6 @@ def general_tool_backend_for(tool_id):
     return {}
 
 
-def is_focus_tool(tool_id):
-    return tool_class_for(tool_id) == "focus_tool"
-
-
 def is_sync_tool(tool_id):
     return tool_class_for(tool_id) == "sync_tool"
 
@@ -617,44 +619,8 @@ def is_read_tool(tool_id):
     return tool_class_for(tool_id) == "read_tool"
 
 
-def _read_tools_doc():
-    if not os.path.isfile(DOCS_PROTOCOL_TOOLS):
-        return ""
-    try:
-        with open(DOCS_PROTOCOL_TOOLS, "r", encoding="utf-8") as f:
-            return f.read()
-    except (OSError, UnicodeError):
-        return ""
-
-
-def _extract_between(content, start_marker, end_marker):
-    start = content.find(start_marker)
-    if start == -1:
-        return ""
-    end = content.find(end_marker, start + len(start_marker))
-    if end == -1:
-        return ""
-    return content[start + len(start_marker):end].strip()
-
-
-def load_protocol_tool_index():
-    """读取常驻短索引，供永固层/高频层注入。"""
-    content = _read_tools_doc()
-    return _extract_between(
-        content,
-        "<!-- PROTOCOL_TOOL_INDEX_START -->",
-        "<!-- PROTOCOL_TOOL_INDEX_END -->",
-    )
-
-
-def load_general_tool_index():
-    """Read the general tool short index for reaction context injection."""
-    content = _read_tools_doc()
-    return _extract_between(
-        content,
-        "<!-- GENERAL_TOOL_INDEX_START -->",
-        "<!-- GENERAL_TOOL_INDEX_END -->",
-    )
+def is_action_tool(tool_id):
+    return tool_class_for(tool_id) == "action_tool"
 
 
 def normalize_tool_id(value):

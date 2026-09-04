@@ -47,7 +47,7 @@ def test_fake_round_acceptance_runner_reports_real_context(tmp_path):
     assert report["provider_calls"] == []
     assert report["live_persona_touched"] is False
     assert report["checks"]["user_input_visible"]["passed"] is True
-    assert report["checks"]["chronicle_focus_visible"]["passed"] is True
+    assert report["checks"]["chronicle_material_visible"]["passed"] is True
     assert report["checks"]["natural_final_reply_projected"]["passed"] is True
     assert report["checks"]["cleanup_preserves_or_clears_correctly"]["passed"] is True
     assert report["checks"]["calendar_rhythm_settled"]["passed"] is True
@@ -167,7 +167,7 @@ def test_spark_report_import_attaches_observation(tmp_path):
         json.dumps({
             "schema_version": "spark_observation.v1",
             "seen_user_input": True,
-            "seen_chronicle_focus": True,
+            "seen_chronicle_material": True,
             "seen_natural_final_reply": True,
             "would_handle_user_task": True,
             "trapped_or_confused": False,
@@ -183,7 +183,7 @@ def test_spark_report_import_attaches_observation(tmp_path):
     updated = acceptance.import_spark_report(report_path, spark_report)
 
     assert updated["spark_observation"]["seen_user_input"] is True
-    assert updated["spark_observation"]["seen_chronicle_focus"] is True
+    assert updated["spark_observation"]["seen_chronicle_material"] is True
 
 
 def test_spark_required_gate_rejects_missing_observation(tmp_path):
@@ -223,7 +223,7 @@ def test_spark_required_gate_accepts_imported_observation(tmp_path):
         json.dumps({
             "schema_version": "spark_observation.v1",
             "seen_user_input": True,
-            "seen_chronicle_focus": True,
+            "seen_chronicle_material": True,
             "seen_natural_final_reply": True,
             "would_handle_user_task": True,
             "trapped_or_confused": False,

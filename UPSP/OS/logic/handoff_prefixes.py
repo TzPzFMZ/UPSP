@@ -10,7 +10,7 @@ RELAY_REACTION_EXECUTION_PREFIX = (
 
 SETUP_TO_REACTION_RELAY_PREFIX = (
     "起手步只完成放行、挂载和入口确认，不代表本轮任务已执行。"
-    "反应步必须接手执行下面便签；不要把旧 CONTENT、WB 焦点或缓存"
+    "反应步必须接手执行下面便签；不要把旧 CONTENT、跨轮常驻正文或缓存"
     "当成本轮新执行结果。"
 )
 

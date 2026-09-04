@@ -97,6 +97,37 @@ def test_unadmitted_abstract_forgetting_is_immediate_without_batch(
     assert not env["ledger"].exists()
 
 
+def test_spec781_daily_backup_refuses_to_orphan_resident_memory(
+        compression_layout):
+    from data.memory_compression_store import MemoryCompressionManager
+
+    env = compression_layout
+    mem_id = "MEM-75700020"
+    _add_ltm(env, "Abstract", mem_id, weight=2, semantic="仍在常驻层的轻量事实。")
+    current = env["store"].ltm_entry_state(mem_id)
+    meta = dict(current["meta"])
+    meta["decay_countdown_days"] = 1
+    env["store"].replace_ltm_entry(
+        "Abstract", mem_id, current["body"], meta)
+    before = env["store"].ltm_entry_state(mem_id)
+
+    class Assembler:
+        @staticmethod
+        def resident_item_present(*, item_type, item_id, target_file=""):
+            return item_type == "memory" and item_id == mem_id
+
+    manager = MemoryCompressionManager(
+        memory_store=env["store"], assembler=Assembler())
+
+    with pytest.raises(ValueError, match="resident_memory_backup_conflict"):
+        manager.prepare_daily_cycle(
+            local_date="2026-08-17", round_num=9,
+            chronicle_receipt_hash="chronicle-sha")
+
+    assert env["store"].ltm_entry_state(mem_id) == before
+    assert not env["ledger"].exists()
+
+
 def test_admitted_pinned_stm_forgetting_removes_only_branch_copy(
         compression_layout):
     from data.memory_compression_store import MemoryCompressionManager
@@ -150,6 +181,45 @@ def test_daily_degradation_queues_full_and_keeps_weight(compression_layout):
     assert current["tier"] == "Summary"
     assert current["meta"]["weight"] == 5
     assert current["meta"]["decay_countdown_days"] == current["meta"]["decay_period_days"]
+
+
+def test_resident_memory_compression_capacity_failure_rolls_back_batch(
+        compression_layout):
+    from data.memory_compression_store import MemoryCompressionManager
+
+    class RejectingAssembler:
+        def __init__(self):
+            self.calls = []
+
+        def preflight_resident_source_update(self, item, body):
+            self.calls.append((dict(item), body))
+            raise ValueError("resident_list_char_limit_exceeded:max=65536;actual=65537")
+
+    env = compression_layout
+    mem_id = "MEM-75700017"
+    _add_ltm(env, "Full", mem_id, weight=5, semantic="到期但仍常驻的长期正文。")
+    state = env["store"].ltm_entry_state(mem_id)
+    meta = dict(state["meta"])
+    meta["decay_countdown_days"] = 1
+    env["store"].replace_ltm_entry("Full", mem_id, state["body"], meta)
+    assembler = RejectingAssembler()
+    manager = MemoryCompressionManager(
+        memory_store=env["store"], assembler=assembler)
+    manager.prepare_daily_cycle(local_date="2026-08-17", round_num=10)
+    before = env["store"].ltm_entry_state(mem_id)
+
+    with pytest.raises(ValueError, match="resident_list_char_limit_exceeded"):
+        manager.apply_batch([{
+            "mem_id": mem_id,
+            "semantic_content": "常驻长期正文摘要。",
+            "retained_keywords": ["LTM标签"],
+        }], round_num=10)
+
+    assert assembler.calls[0][0] == {
+        "item_type": "memory", "item_id": mem_id}
+    assert env["store"].ltm_entry_state(mem_id) == before
+    pending = json.loads(env["ledger"].read_text(encoding="utf-8"))
+    assert pending["entries"][0]["phase"] == "pending"
 
 
 def test_batch_rejects_unknown_keyword_without_partial_write(compression_layout):
@@ -274,6 +344,76 @@ def test_memory_compression_guide_submit_applies_current_frozen_batch(
         "memory_compression_batch_receipt.v1")
     assert state.flags["memory_compression_due"] is False
     assert workbench.get("base.active_guides.rhythm") is None
+
+
+def test_spec775_memory_compression_shape_rejection_keeps_batch_ids(
+        compression_layout, tmp_path):
+    from data.memory_compression_store import MemoryCompressionManager
+    from data.workbench import WorkbenchStore
+    from logic.guide_submit import apply_guide_submit
+    from logic.rhythm_guide_materializer import materialize_current_rhythm_guide
+    from logic.rhythm_guidance import current_guide
+
+    env = compression_layout
+    mem_id = "MEM-75700775"
+    meta = _meta(mem_id, weight=3, tags=["主体", "事件"])
+    meta["stored_at"] = ""
+    body = "**标题**：节律形状\n**摘要**：主体完成了需要压缩的事件。"
+    env["store"].store_ltm_entry("Summary", mem_id, body, meta)
+    _add_stm(env, mem_id, body, meta)
+    manager = MemoryCompressionManager(memory_store=env["store"])
+    manager.settle_stm_forgetting(mem_id, round_num=775)
+    manager.prepare_daily_cycle(local_date="2026-08-24", round_num=775)
+    workbench = WorkbenchStore(root_dir=str(tmp_path / "workbench"))
+    guide_id = materialize_current_rhythm_guide(
+        workbench,
+        {"calendar_day_due": True, "memory_compression_due": True},
+        round_num=775,
+    )
+
+    missing = apply_guide_submit(
+        workbench,
+        {
+            "guide_id": guide_id,
+            "submissions": [{
+                "item_id": "memory_compression_due",
+                "option_id": "submit_memory_compressions",
+                "fields": {},
+            }],
+        },
+        evidence_context={
+            "round_num": 775,
+            "round_type": "rhythm",
+            "memory_store": env["store"],
+        },
+    )
+    receipt = apply_guide_submit(
+        workbench,
+        {
+            "guide_id": guide_id,
+            "submissions": [{
+                "item_id": "memory_compression_due",
+                "option_id": "submit_memory_compressions",
+                "fields": {"results": {"body": "错误旧字段"}},
+            }],
+        },
+        evidence_context={
+            "round_num": 775,
+            "round_type": "rhythm",
+            "memory_store": env["store"],
+        },
+    )
+    visible = current_guide(
+        {"calendar_day_due": True, "memory_compression_due": True}
+    )["text"]
+
+    assert missing["status"] == "rejected"
+    assert missing["remaining_ids"] == [mem_id]
+    assert receipt["status"] == "rejected"
+    assert receipt["remaining_ids"] == [mem_id]
+    assert receipt["completed_ids"] == []
+    assert '"semantic_content"' in visible
+    assert '"retained_keywords"' in visible
 
 
 def test_real_recall_cancels_pending_compression_and_admits_original_truth(

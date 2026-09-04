@@ -12,7 +12,6 @@ from errors import ProviderCallCancelled
 from engines.cleanup_helpers import (
     round_text,
 )
-from data.memory_compression_store import MemoryCompressionManager
 from engines.round_context import FrameRef, RoundContext
 from engines.runtime_services import EngineComponent
 from logic.interaction_meta import cache_interaction_meta
@@ -20,7 +19,6 @@ from logic.cleanup_processor import process_cleanup
 from logic.native_tool_calls import project_step_finalize, terminal_finalize_from_envelopes
 from logic.task_acceptance import DONE_ITEM_STATUSES, PASSED_ACCEPTANCE_STATUSES
 from logic.mem_id import make_meta_template
-from logic.state_settlement import StateSettlementError, settle_state
 from logic.relay_target import normalize_pending_target
 from logic.runtime_channels import closeout_final_response_source
 from logic.sandbox_grant import load_sandbox_grant
@@ -357,14 +355,7 @@ class CleanupPipeline(EngineComponent):
 
         frame_ref = cleanup_frame_ref(cleanup_iteration)
 
-        # ① 热度衰减（独立——失败不阻断后续）
-        if not user_stop:
-            try:
-                self.heat.tick_decay(round_num=round_num)
-            except Exception as exc:
-                fatal_reasons.append(failure_reason("heat_decay", exc))
-
-        # ② 语义压缩不再进入 Cleanup provider 输入；这里只保留机械结算。
+        # ① Cleanup 只保留语义审计与本地收尾；记忆/感受代谢已归 Reaction。
         result["_user_input"] = user_input_text
         interaction_meta = result.get("_interaction_meta", {}) if isinstance(result, dict) else {}
         cache_meta = cache_interaction_meta(interaction_meta)
@@ -384,6 +375,16 @@ class CleanupPipeline(EngineComponent):
                 failed_phase == "setup"
                 or error_text.startswith("setup step exception:")
             )
+            if result.get("_setup_cache_write_failed"):
+                fatal_reasons.append("setup_cache_write_failed")
+            if result.get("_reaction_entry_metabolism_failed"):
+                fatal_reasons.append("reaction_entry_metabolism_failed")
+            if result.get("_reaction_frame_metabolism_failed"):
+                fatal_reasons.append("reaction_frame_metabolism_failed")
+            if result.get("_reaction_terminal_metabolism_failed"):
+                fatal_reasons.append("reaction_terminal_metabolism_failed")
+            if result.get("_action_recovery_failed_after_effect"):
+                fatal_reasons.append("action_recovery_failed_after_effect")
             if (
                     result.get("_setup_reject_reason")
                     or result.get("standby_skipped_reaction")
@@ -542,58 +543,7 @@ class CleanupPipeline(EngineComponent):
             set_stage("cleanup_local")
             self._clear_cleanup_round_material(round_num, result)
 
-        # ④ 主体状态结算：所有 Round 都执行；任何失败都使本轮保持 unsettled。
-        try:
-            state_settle_receipt = settle_state(
-                self.sm,
-                self.relation_store,
-                self._get_round_audit_store(),
-                round_num,
-                round_type,
-                memory_write_receipts=(
-                    result.get("_memory_write_receipts", [])
-                    if isinstance(result, dict) else []
-                ),
-                user_input_text=user_input_text,
-                external_interaction=external_interaction,
-            )
-            if isinstance(result, dict):
-                result["_state_settle_receipt"] = state_settle_receipt
-        except StateSettlementError as exc:
-            if isinstance(result, dict):
-                result["_state_settle_receipt"] = exc.receipt
-            fatal_reasons.append(f"state_settle:{exc}")
-        except Exception as exc:
-            fatal_reasons.append(f"state_settle:{type(exc).__name__}:{exc}")
-
-        # ⑤ STM 遗忘机械结算：需语义压缩者先记共享账本再删除 STM。
-        if not user_stop:
-            try:
-                self._process_forgetting_settlement(
-                    round_num, settlement_result=result)
-            except Exception as exc:
-                degraded_reasons.append(failure_reason("forgetting_settle", exc))
-
-        # ⑥ 升格检查（独立）
-        if not user_stop:
-            try:
-                self._process_memory_lifecycle(
-                    round_num, settlement_result=result)
-            except Exception as exc:
-                degraded_reasons.append(failure_reason("memory_lifecycle", exc))
-
-        try:
-            for receipt in result.get("_memory_lifecycle_receipts", []):
-                self._get_round_audit_store().append_event(
-                    round_num,
-                    str(receipt.get("event") or "memory_lifecycle_receipt"),
-                    receipt,
-                    phase="cleanup",
-                )
-        except Exception as exc:
-            fatal_reasons.append(failure_reason("memory_lifecycle_audit", exc))
-
-        # ⑦ 保存语料缓冲（独立）
+        # ④ 保存语料缓冲（独立）
         no_progress_block = self._guard_no_progress_relay(
             round_type, result, round_num)
         if no_progress_block and "no_progress_relay" not in degraded_reasons:
@@ -640,7 +590,7 @@ class CleanupPipeline(EngineComponent):
                 fatal_reasons.append(
                     failure_reason("lately_pressure_compaction", exc))
 
-        # ⑧ round 审计事件流（写入 round_{N}.jsonl）
+        # ⑤ round 审计事件流（写入 round_{N}.jsonl）
         try:
             runtime_snapshot = {}
             if isinstance(result, dict) and result.get("_tool_transaction_audit"):
@@ -1141,8 +1091,8 @@ class CleanupPipeline(EngineComponent):
         elif round_type == "relay":
             if "continue_requested" not in flags_to_clear:
                 flags_to_clear.append("continue_requested")
-        elif round_type == "autonomous":
-            flags_to_clear.append("feeling_settle_due")
+        # feeling_settle_due 只由 Reaction 入口或 idle timer 消费；Cleanup
+        # 不论轮型都不得清理它。
 
         # checkpoint + 日历更新时间戳
         update_meta = {}
@@ -1259,8 +1209,6 @@ class CleanupPipeline(EngineComponent):
             relay_intent = {"status": "relay_intent_create_error", "reason": str(exc)}
         receipt = {
             "tool_id": "cleanup_pipeline",
-            "tool_family": "substrate_tool",
-            "tool_class": "sync_tool",
             "status": "continue_requested_rearmed",
             "source": "closeout_form",
             "round_type": round_type,
@@ -1312,8 +1260,6 @@ class CleanupPipeline(EngineComponent):
             return
         receipt = {
             "tool_id": "cleanup_pipeline",
-            "tool_family": "substrate_tool",
-            "tool_class": "sync_tool",
             "status": "continue_requested_rearmed_from_open_relay_intents",
             "source": "relay_intent_pool",
             "round_type": round_type,
@@ -1370,8 +1316,6 @@ class CleanupPipeline(EngineComponent):
         except Exception as exc:
             receipt = {
                 "tool_id": "cleanup_pipeline",
-                "tool_family": "substrate_tool",
-                "tool_class": "sync_tool",
                 "status": "relay_terminal_closeout_intent_settle_error",
                 "reason": str(exc),
                 "closeout_decision": closeout_decision,
@@ -1381,8 +1325,6 @@ class CleanupPipeline(EngineComponent):
             receipt = {
                 **receipt,
                 "tool_id": "cleanup_pipeline",
-                "tool_family": "substrate_tool",
-                "tool_class": "sync_tool",
                 "status": "relay_terminal_closeout_intents_settled",
                 "closeout_decision": closeout_decision,
                 "set_flags": [],
@@ -1401,8 +1343,6 @@ class CleanupPipeline(EngineComponent):
     def _set_pending_relay_target(self, target, result, round_num, *, status, source):
         receipt = {
             "tool_id": "cleanup_pipeline",
-            "tool_family": "substrate_tool",
-            "tool_class": "sync_tool",
             "status": status,
             "source": source,
             "target": target or {},
@@ -1512,108 +1452,6 @@ class CleanupPipeline(EngineComponent):
                         _os.rmdir(dpath)
                 except OSError:
                     pass
-
-    def _process_memory_lifecycle(self, round_num, settlement_result=None):
-        """Promote STM only after LTM body, meta and indexes verify."""
-        candidates = self.heat.check_upgrade()
-        receipts = []
-        failures = []
-        ms = self.memory_store
-        for mem_id in candidates:
-            try:
-                source = ms.read_stm_meta_by_id(mem_id)
-                if str(source.get("access") or "public").strip().lower() != "public":
-                    raise ValueError("private_memory_deferred")
-                ltm = ms.ltm_entry_state(mem_id, include_backup=False)
-                if ltm is None:
-                    raise ValueError("ltm_canonical_truth_missing")
-                if int(ltm["meta"].get("weight")) != int(source.get("weight")):
-                    raise ValueError("memory_weight_conflict")
-                admission = ms.admit_ltm_entry(mem_id)
-                receipts.append({
-                    "event": "memory_lifecycle_stored",
-                    "status": "stored",
-                    "mem_id": mem_id,
-                    "tier": ltm["tier"],
-                    "stored_at": admission["stored_at"],
-                    "stm_retained": True,
-                })
-            except Exception as exc:
-                failures.append(mem_id)
-                receipts.append({
-                    "event": "memory_lifecycle_failed",
-                    "status": "failed",
-                    "mem_id": mem_id,
-                    "tier": "Full",
-                    "reason": f"{type(exc).__name__}:{exc}",
-                })
-        if isinstance(settlement_result, dict) and receipts:
-            settlement_result.setdefault(
-                "_memory_lifecycle_receipts", []).extend(receipts)
-        if failures:
-            raise RuntimeError(
-                "memory_lifecycle_failed:" + ",".join(failures))
-        return receipts
-
-    def _process_forgetting_settlement(
-            self, round_num, settlement_result=None):
-        """Settle every due STM entry without reading provider prose."""
-        _to_delete, _to_abstract, _need_compress = self._forgetting_candidates()
-        ordered = list(dict.fromkeys(
-            list(_to_delete) + list(_to_abstract) + list(_need_compress)))
-        manager = MemoryCompressionManager(
-            memory_store=self.memory_store,
-            instance_id=getattr(self.memory_store, "instance_id", None),
-        )
-        receipts = []
-        failures = []
-        for mem_id in ordered:
-            try:
-                settled = manager.settle_stm_forgetting(
-                    mem_id, round_num=round_num)
-                receipts.append({
-                    "event": "memory_lifecycle_settled",
-                    "status": "applied",
-                    **settled,
-                })
-            except Exception as exc:
-                failures.append(mem_id)
-                receipts.append({
-                    "event": "memory_lifecycle_failed",
-                    "status": "failed",
-                    "mem_id": mem_id,
-                    "reason": f"{type(exc).__name__}:{exc}",
-                })
-        if isinstance(settlement_result, dict) and receipts:
-            settlement_result.setdefault(
-                "_memory_lifecycle_receipts", []).extend(receipts)
-        if failures:
-            raise RuntimeError(
-                "memory_lifecycle_failed:" + ",".join(failures))
-        return receipts
-
-    def _forgetting_candidates(self):
-        """Exclude dormant private entries from every cleanup forgetting path."""
-        from data.stm_heat_calculator import STMHeatCalculator
-        from logic.memory_privacy import MEMORY_PRIVACY_ENABLED
-
-        entries = self.heat.load_heat().get("entries", {})
-        memory_store = self.memory_store
-        canonical_meta = memory_store.active_ltm_meta_by_id()
-        public_entries = {}
-        public_meta = {}
-        for mem_id, heat_entry in entries.items():
-            if not heat_entry.get("degrade"):
-                continue
-            meta_entry = canonical_meta.get(mem_id)
-            if not isinstance(meta_entry, dict):
-                raise ValueError(f"ltm_canonical_truth_missing:{mem_id}")
-            access = str(meta_entry.get("access") or "public").strip().lower()
-            if MEMORY_PRIVACY_ENABLED or access != "private":
-                public_entries[mem_id] = heat_entry
-                public_meta[mem_id] = meta_entry
-        calculator = getattr(self.heat, "calculator", None) or STMHeatCalculator()
-        return calculator.process_forgetting(public_entries, public_meta)
 
     @staticmethod
     def _cleanup_finalize_retry_parse(cleanup_result, state=None, result=None):
@@ -1791,13 +1629,6 @@ class CleanupPipeline(EngineComponent):
                     f"tacit_associations[{index}].drop_reason",
                     item.get("drop_reason"),
                 )
-        compression = parsed.get("lately_compression") or {}
-        if isinstance(compression, dict):
-            yield "lately_compression.reason", compression.get("reason")
-            yield (
-                "lately_compression.replacement_text",
-                compression.get("replacement_text"),
-            )
 
     @staticmethod
     def _is_false_completion_claim(text):
@@ -1938,16 +1769,6 @@ class CleanupPipeline(EngineComponent):
 
         # Raw/Tacit 与 Raw/Connection 已退役为历史只读材料；保留 wire
         # 兼容，但不再生成新的 pending/processed 记录。
-        from paths import ASSOCIATION_SET_DIR
-        from data.training_material_store import write_association_counts
-        # 联想集五表落盘（同条目内暴力计数）
-        if report.get("_association_counts"):
-            try:
-                write_association_counts(ASSOCIATION_SET_DIR, report["_association_counts"])
-                report.setdefault("warnings", []).append("联想集: 已更新五表")
-            except Exception as e:
-                report.setdefault("errors", []).append(f"联想集写入失败: {e}")
-
         # 处理悬空容器 POPUP（#24：持久化给下一轮 + 写入 popup store）
         if report.get("popup"):
             result["_popup"] = report["popup"]

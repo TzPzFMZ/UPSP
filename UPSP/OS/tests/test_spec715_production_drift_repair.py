@@ -202,20 +202,28 @@ def test_attic_moves_only_expired_yearly_pairs_by_stable_filename(
 
 def test_raw_log_archives_one_rhythm_pair_then_clears_buffer(tmp_path):
     from data.context_store import ContextStore
+    from runtime_test_helpers import ConfigStoreStub
 
     raw_jsonl = tmp_path / "STM" / "buffer" / "raw_log.jsonl"
     raw_md = raw_jsonl.with_suffix(".md")
     rhythms = tmp_path / "LTM" / "Corpus" / "public" / "rhythms"
     store = ContextStore(
+        config_store=ConfigStoreStub(),
+        cache_dir=str(tmp_path / "STM" / "context" / "cache"),
         raw_log_jsonl=str(raw_jsonl),
         raw_log_md=str(raw_md),
         corpus_rhythms_dir=str(rhythms),
     )
-    first = _record("K1", "第一段")
-    last = _record("K2", "第二段")
-    last["loc"]["round"] = 3
-
-    store._mirror_lately_blocks_to_raw_log([first, last])
+    store.append_to_cache(1, "user", "第一段", kind="interaction")
+    store.transition_current_cache(
+        boundary="reaction_provider_return",
+        consumer_frame_id="R000001:reaction:1",
+    )
+    store.append_to_cache(3, "tool", "第二段", kind="tool_fact")
+    store.transition_current_cache(
+        boundary="reaction_provider_return",
+        consumer_frame_id="R000003:reaction:1",
+    )
     assert len(raw_jsonl.read_text(encoding="utf-8").splitlines()) == 2
     assert not rhythms.exists()
 

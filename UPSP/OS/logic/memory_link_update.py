@@ -3,7 +3,7 @@
 from logic.memory_privacy import memory_visible_to_state
 
 
-ALLOWED_OPERATIONS = {"add", "remove", "set"}
+ALLOWED_OPERATIONS = {"remove"}
 
 
 def _clean_text(value):
@@ -46,8 +46,6 @@ def _receipt(status, declaration, reason="", mem_id=None, linked_containers=None
     raw_mem_id = _clean_text(declaration.get("mem_id")) if isinstance(declaration, dict) else ""
     return {
         "tool_id": "memory_link_update",
-        "tool_family": "protocol_tool",
-        "tool_class": "sync_tool",
         "status": status,
         "source": "memory_link_update_declaration",
         "mem_id": mem_id or raw_mem_id,
@@ -71,8 +69,6 @@ def apply_memory_link_update_declarations(
     if not declarations:
         return receipts
     memory_store = data_modules["memory_store"]
-    container_store = data_modules.get("container_store")
-
     for declaration in declarations:
         if not isinstance(declaration, dict):
             receipts.append(_receipt("error", {}, reason="invalid_declaration"))
@@ -84,38 +80,14 @@ def apply_memory_link_update_declarations(
         if mem_id is None:
             receipts.append(_receipt("invalid_pending_mem_id", declaration, mem_id=raw_mem_id))
             continue
-        operation = _clean_text(declaration.get("operation")).lower() or "add"
+        operation = _clean_text(declaration.get("operation")).lower()
         if operation not in ALLOWED_OPERATIONS:
             receipts.append(_receipt("error", declaration, reason="invalid_operation", mem_id=mem_id))
-            continue
-        if operation in {"add", "set"}:
-            receipts.append(_receipt(
-                "rejected",
-                declaration,
-                reason="retired_use_memory_container_create_or_write",
-                mem_id=mem_id,
-            ))
             continue
         refs = _clean_refs(declaration.get("container_refs"))
         if not refs:
             receipts.append(_receipt("error", declaration, reason="missing_container_refs", mem_id=mem_id))
             continue
-        overview = _clean_text(declaration.get("current_overview"))
-        if operation in {"add", "set"}:
-            if not overview:
-                receipts.append(_receipt(
-                    "error", declaration, reason="missing_current_overview", mem_id=mem_id))
-                continue
-            if len(overview) > 128:
-                receipts.append(_receipt(
-                    "error", declaration, reason="current_overview_too_long", mem_id=mem_id))
-                continue
-            if not any(ref in overview for ref in refs):
-                receipts.append(_receipt(
-                    "error", declaration, reason="overview_missing_container_ref", mem_id=mem_id))
-                continue
-        else:
-            overview = None
         try:
             if not memory_visible_to_state(
                     memory_store, mem_id, state,
@@ -128,14 +100,7 @@ def apply_memory_link_update_declarations(
                 ))
                 continue
             updated = memory_store.update_linked_containers(
-                mem_id, operation, refs, current_overview=overview)
-            if container_store is not None and operation in {"add", "set"}:
-                title = str((updated or {}).get("title") or mem_id)
-                for container_id in refs:
-                    try:
-                        container_store.append_entry(container_id, mem_id, title, file_name="open.md")
-                    except Exception:
-                        pass
+                mem_id, "remove", refs, current_overview=None)
             receipts.append(_receipt(
                 "applied",
                 declaration,

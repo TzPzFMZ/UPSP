@@ -5,8 +5,11 @@ General tool 执行与 dispatcher 测试。
 """
 import os
 import json
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -28,6 +31,224 @@ def _spec596_sandbox_env(monkeypatch, task_root: Path, run_id: str = "DFTest-dem
         }),
     )
     return write_root
+
+
+def test_action_journal_precedes_file_replacement(tmp_path):
+    from data.action_recovery_store import ActionRecoveryStore
+    from logic.general_tools import execute_general_tool_call
+
+    target = tmp_path / "artifact.txt"
+    target.write_bytes(b"old")
+    store = ActionRecoveryStore(tmp_path / "action_recovery_pending.json")
+    result = execute_general_tool_call(
+        {
+            "tool_id": "file_write",
+            "path": str(target),
+            "content": "new",
+            "encoding": "utf-8",
+            "reason": "test journal boundary",
+        },
+        allowed_roots=[str(tmp_path)],
+        action_recovery={
+            "store": store,
+            "request_sha256": "a" * 64,
+            "runtime_context": {
+                "round_num": 12,
+                "iteration": 3,
+                "frame_id": "R000012:reaction:3",
+            },
+            "call_id": "call-write",
+        },
+    )
+
+    assert result["status"] == "ok"
+    assert result["action_id"].startswith("ACT-R000012")
+    assert target.read_bytes() == b"new"
+    prepared = store.load()["items"][0]
+    assert prepared["phase"] == "prepared"
+    assert prepared["target"].startswith("artifact.txt#")
+    assert prepared["target_path"] == str(target)
+
+
+@pytest.mark.parametrize(
+    "tool_id",
+    ["file_write", "file_edit", "shell_command", "subagent_dispatch"],
+)
+def test_action_does_not_start_when_journal_fails(tmp_path, monkeypatch, tool_id):
+    from logic.general_tools import execute_general_tool_call
+
+    class BrokenStore:
+        @staticmethod
+        def prepare_file(**_kwargs):
+            raise OSError("journal offline")
+
+        prepare_opaque = prepare_file
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("shell must not launch"),
+    )
+    target = tmp_path / "artifact.txt"
+    target.write_text("old\n", encoding="utf-8")
+    requests = {
+        "file_write": {
+            "tool_id": "file_write", "path": str(target), "content": "new\n",
+            "purpose": "must not write",
+        },
+        "file_edit": {
+            "tool_id": "file_edit", "path": str(target),
+            "patch": "@@ -1 +1 @@\n-old\n+new", "purpose": "must not edit",
+        },
+        "shell_command": {
+            "tool_id": "shell_command",
+            "command": "echo must-not-run",
+            "cwd": str(tmp_path),
+            "purpose": "verify journal boundary",
+        },
+        "subagent_dispatch": {
+            "tool_id": "subagent_dispatch",
+            "task_goal": "must not launch",
+            "expected_artifacts": "none",
+            "allowed_paths": str(tmp_path),
+            "purpose": "verify journal boundary",
+        },
+    }
+    result = execute_general_tool_call(
+        requests[tool_id],
+        allowed_roots=[str(tmp_path)],
+        subagent_dispatch_fn=lambda *_args: pytest.fail("subagent must not launch"),
+        action_recovery={
+            "store": BrokenStore(),
+            "request_sha256": "b" * 64,
+            "runtime_context": {
+                "round_num": 12,
+                "iteration": 3,
+                "frame_id": "R000012:reaction:3",
+            },
+            "call_id": "call-shell",
+        },
+    )
+    expected_reason = (
+        "write_failed" if tool_id.startswith("file_")
+        else "action_recovery_prepare_failed"
+    )
+    assert result["reason"] == expected_reason
+    assert "journal offline" in result["detail"]
+    assert target.read_text(encoding="utf-8") == "old\n"
+
+
+def test_file_edit_rejects_drift_after_its_source_snapshot(tmp_path, monkeypatch):
+    from data.action_recovery_store import ActionRecoveryStore
+    from logic.general_tools import execute_general_tool_call
+
+    target = tmp_path / "artifact.txt"
+    target.write_text("before\n", encoding="utf-8")
+    real_read = Path.read_bytes
+    changed = False
+
+    def read_then_change(path):
+        nonlocal changed
+        payload = real_read(path)
+        if Path(path) == target and not changed:
+            changed = True
+            target.write_text("external\n", encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", read_then_change)
+    result = execute_general_tool_call(
+        {"tool_id": "file_edit", "path": str(target),
+         "patch": "@@ -1 +1 @@\n-before\n+after", "encoding": "utf-8",
+         "reason": "test drift"},
+        allowed_roots=[str(tmp_path)],
+        action_recovery={
+            "store": ActionRecoveryStore(tmp_path / "action_recovery_pending.json"),
+            "request_sha256": "c" * 64,
+            "runtime_context": {"round_num": 12, "iteration": 3,
+                                "frame_id": "R000012:reaction:3"},
+            "call_id": "call-edit",
+        },
+    )
+    assert result["status"] == "failed"
+    assert result["action_id"].startswith("ACT-R000012")
+    assert "target_drift" in result["detail"]
+    assert target.read_text(encoding="utf-8") == "external\n"
+
+
+def test_action_signatures_preserve_effect_identity(tmp_path):
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+    write = {
+        "tool_id": "file_write",
+        "path": str(tmp_path / "artifact.txt"),
+        "content": "same",
+        "purpose": "identity",
+    }
+    assert GeneralToolDispatcher._request_signature(
+        "file_write", write | {"encoding": "utf-8"},
+    ) != GeneralToolDispatcher._request_signature(
+        "file_write", write | {"encoding": "utf-16"},
+    )
+    shell = {
+        "tool_id": "shell_command",
+        "cwd": str(tmp_path),
+        "purpose": "identity",
+    }
+    assert GeneralToolDispatcher._request_signature(
+        "shell_command", shell | {"command": 'echo "a  b"'},
+    ) != GeneralToolDispatcher._request_signature(
+        "shell_command", shell | {"command": 'echo "a b"'},
+    )
+    assert GeneralToolDispatcher._duplicate_result(
+        "subagent_dispatch", {"status": "completed"}, "a" * 64,
+    )["reason"] == "duplicate_tool_result_satisfied"
+
+
+def test_recovered_actions_recheck_permission_then_reuse_or_block(tmp_path):
+    from data.action_recovery_store import ActionRecoveryStore
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+    store = ActionRecoveryStore(tmp_path / "action_recovery_pending.json")
+    target = tmp_path / "output.txt"
+    target.write_bytes(b"before")
+    write = {"tool_id": "file_write", "path": str(target),
+             "content": "after", "purpose": "resume write"}
+    context = {"round_num": 12, "iteration": 3,
+               "frame_id": "R000012:reaction:3"}
+    action_id = store.prepare_file(
+        tool_id="file_write",
+        request_sha256=GeneralToolDispatcher._request_signature("file_write", write),
+        runtime_context=context, call_id="old-write", target_path=str(target),
+        before_bytes=b"before", candidate_bytes=b"after")
+    store.commit_file(action_id, target, b"before", b"after")
+    shell = {"tool_id": "shell_command", "command": "echo once",
+             "cwd": str(tmp_path), "purpose": "do not replay unknown"}
+    store.prepare_opaque(
+        tool_id="shell_command",
+        request_sha256=GeneralToolDispatcher._request_signature("shell_command", shell),
+        runtime_context=context | {"iteration": 4}, call_id="old-shell",
+        target="shell")
+    store.classify_interrupted(12)
+    executed = []
+    dispatcher = GeneralToolDispatcher(
+        execute_fn=lambda call, **_kwargs: executed.append(call) or {
+            "tool_id": call["tool_id"], "status": "ok"})
+    runtime = {"round_num": 13,
+               "action_recovery_results": store.recovered_results()}
+
+    limited = dispatcher.handle_requests(
+        [write], [], runtime_context=runtime | {
+            "execution_permission_level": "limited"})[0]
+    reused = dispatcher.handle_requests(
+        [write], [], runtime_context=runtime | {
+            "execution_permission_level": "unlimited"})[0]
+    blocked = dispatcher.handle_requests(
+        [shell], [], runtime_context=runtime | {
+            "execution_permission_level": "unlimited"})[0]
+    assert limited["reason"] == "permission_level_required"
+    assert reused["reason"] == "duplicate_tool_result_satisfied"
+    assert blocked["reason"] == "duplicate_tool_failure_repeated"
+    assert executed == []
 
 
 def test_spec663_successful_general_tool_facts_expose_one_evidence_handle():
@@ -220,7 +441,6 @@ def test_file_read_general_tool_reads_allowed_text_file(tmp_path):
     )
 
     assert result["tool_id"] == "file_read"
-    assert result["tool_family"] == "general_tool"
     assert result["status"] == "ok"
     assert result["result_kind"] == "general_tool_result"
     assert result["backend_type"] == "python"
@@ -1342,8 +1562,7 @@ def test_file_edit_general_tool_applies_unified_diff_in_allowlist(tmp_path):
     )
 
     assert result["tool_id"] == "file_edit"
-    assert result["tool_family"] == "general_tool"
-    assert result["tool_class"] == "focus_tool"
+    assert result["tool_class"] == "action_tool"
     assert result["handler"] == "file_edit_handler"
     assert result["permission_scope"] == "workspace_patch_allowlist"
     assert result["status"] == "ok"
@@ -1370,8 +1589,7 @@ def test_spec430_file_write_general_tool_writes_workspace_file(tmp_path):
     )
 
     assert result["tool_id"] == "file_write"
-    assert result["tool_family"] == "general_tool"
-    assert result["tool_class"] == "focus_tool"
+    assert result["tool_class"] == "action_tool"
     assert result["handler"] == "file_write_handler"
     assert result["permission_scope"] == "workspace_patch_allowlist"
     assert result["status"] == "ok"
@@ -1897,7 +2115,6 @@ def test_spec444_dispatcher_allows_multiple_distinct_engineering_tools_per_itera
         calls.append(request)
         return {
             "tool_id": request["tool_id"],
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "status": "ok",
             "source": "general_tool_call",
@@ -1947,8 +2164,7 @@ def test_spec303_dispatcher_rejects_duplicate_success_without_execute():
         calls.append(dict(request))
         return {
             "tool_id": request["tool_id"],
-            "tool_family": "general_tool",
-            "tool_class": "focus_tool",
+            "tool_class": "read_tool",
             "status": "ok",
             "source": "general_tool_call",
             "backend_type": "python",
@@ -1997,7 +2213,6 @@ def test_spec303_dispatcher_rejects_duplicate_failure_without_execute():
         calls.append(dict(request))
         return {
             "tool_id": request["tool_id"],
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "status": "failed",
             "source": "general_tool_call",
@@ -2037,6 +2252,151 @@ def test_spec303_dispatcher_rejects_duplicate_failure_without_execute():
     assert len(calls) == 1
 
 
+def test_spec774_capability_rejection_is_rechecked_before_duplicate_guard():
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+    calls = []
+
+    def fake_execute(request, **_kwargs):
+        calls.append(dict(request))
+        return {"tool_id": request["tool_id"], "status": "ok"}
+
+    dispatcher = GeneralToolDispatcher(execute_fn=fake_execute)
+    request = {
+        "tool_id": "file_write",
+        "path": "artifact.md",
+        "content": "stable body",
+        "call_id": "call-write-blocked",
+    }
+    blocked = dispatcher.handle_requests(
+        [request],
+        ["task_bootstrap"],
+        runtime_context={"execution_permission_level": "unlimited"},
+    )
+    legacy_blocked = [dict(blocked[0])]
+    legacy_blocked[0].pop("dispatch_stage")
+    allowed = dispatcher.handle_requests(
+        [dict(request, call_id="call-write-allowed")],
+        [],
+        prior_results=legacy_blocked,
+        runtime_context={"execution_permission_level": "unlimited"},
+    )
+    duplicate = dispatcher.handle_requests(
+        [dict(request, call_id="call-write-duplicate")],
+        [],
+        prior_results=legacy_blocked + allowed,
+        runtime_context={"execution_permission_level": "unlimited"},
+    )
+
+    assert blocked[0]["reason"] == "task_bootstrap_required_before_execution"
+    assert blocked[0]["dispatch_stage"] == "capability_gate"
+    assert allowed[0]["status"] == "ok"
+    assert allowed[0]["dispatch_stage"] == "handler"
+    assert duplicate[0]["reason"] == "duplicate_tool_result_satisfied"
+    assert duplicate[0]["dispatch_stage"] == "duplicate_guard"
+    assert [item["call_id"] for item in calls] == ["call-write-allowed"]
+
+
+def test_spec774_limited_rejection_does_not_poison_unlimited_execution():
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+    calls = []
+    dispatcher = GeneralToolDispatcher(execute_fn=lambda request, **_kwargs: (
+        calls.append(dict(request))
+        or {"tool_id": request["tool_id"], "status": "ok"}
+    ))
+    request = {
+        "tool_id": "file_write",
+        "path": "permission-change.md",
+        "content": "allowed later",
+    }
+    blocked = dispatcher.handle_requests(
+        [request],
+        [],
+        runtime_context={"execution_permission_level": "limited"},
+    )
+    allowed = dispatcher.handle_requests(
+        [request],
+        [],
+        prior_results=blocked,
+        runtime_context={"execution_permission_level": "unlimited"},
+    )
+
+    assert blocked[0]["reason"] == "permission_level_required"
+    assert blocked[0]["dispatch_stage"] == "capability_gate"
+    assert allowed[0]["status"] == "ok"
+    assert allowed[0]["dispatch_stage"] == "handler"
+    assert len(calls) == 1
+
+
+def test_spec774_unknown_dispatch_stage_is_not_reused():
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+
+    calls = []
+    dispatcher = GeneralToolDispatcher(execute_fn=lambda request, **_kwargs: (
+        calls.append(dict(request))
+        or {"tool_id": request["tool_id"], "status": "ok"}
+    ))
+    request = {"tool_id": "file_read", "path": "unknown-stage.md"}
+    signature = dispatcher._request_signature("file_read", request)
+    prior = [{
+        "tool_id": "file_read",
+        "status": "failed",
+        "reason": "future_result_shape",
+        "dispatch_stage": "future_stage",
+        "tool_signature": signature,
+    }]
+
+    result = dispatcher.handle_requests(
+        [request],
+        [],
+        prior_results=prior,
+        runtime_context={"current_tokens": 0, "context_window": 100000},
+    )[0]
+
+    assert result["status"] == "ok"
+    assert result["dispatch_stage"] == "handler"
+    assert len(calls) == 1
+
+
+def test_spec774_sandbox_rejection_does_not_poison_later_unrestricted_execution(
+        tmp_path, monkeypatch):
+    from engines.general_tool_dispatcher import GeneralToolDispatcher
+    from logic.sandbox_grant import SANDBOX_GRANT_ENV
+
+    task_root = tmp_path / "sandboxed-task"
+    _spec596_sandbox_env(monkeypatch, task_root, run_id="Spec774")
+    target = task_root / "outside-write-root.md"
+    calls = []
+    dispatcher = GeneralToolDispatcher(execute_fn=lambda request, **_kwargs: (
+        calls.append(dict(request))
+        or {"tool_id": request["tool_id"], "status": "ok"}
+    ))
+    request = {
+        "tool_id": "file_write",
+        "path": str(target),
+        "content": "allowed only without the grant",
+    }
+    blocked = dispatcher.handle_requests(
+        [request],
+        [],
+        runtime_context={"execution_permission_level": "unlimited"},
+    )
+    monkeypatch.delenv(SANDBOX_GRANT_ENV)
+    allowed = dispatcher.handle_requests(
+        [request],
+        [],
+        prior_results=blocked,
+        runtime_context={"execution_permission_level": "unlimited"},
+    )
+
+    assert blocked[0]["reason"] == "outside_allowlist"
+    assert blocked[0]["dispatch_stage"] == "capability_gate"
+    assert allowed[0]["status"] == "ok"
+    assert allowed[0]["dispatch_stage"] == "handler"
+    assert len(calls) == 1
+
+
 def test_spec455_dispatcher_allows_same_web_params_when_backend_untried():
     from engines.general_tool_dispatcher import GeneralToolDispatcher
 
@@ -2065,7 +2425,6 @@ def test_spec455_dispatcher_allows_same_web_params_when_backend_untried():
         calls.append(dict(call))
         return {
             "tool_id": "web_fetch",
-            "tool_family": "general_tool",
             "tool_class": "read_tool",
             "status": "ok",
             "source": "general_tool_call",
@@ -2212,8 +2571,8 @@ def test_general_tool_dispatcher_rejects_missing_backend_metadata(monkeypatch):
     from engines import general_tool_dispatcher as gtd
 
     meta = {
-        "tool_family": "general_tool",
         "tool_class": "read_tool",
+        "execution_route": "host_dispatch",
         "status": "enabled",
         "backend_type": "python",
         "handler": "handler",
@@ -2534,8 +2893,7 @@ def test_spec756_general_tool_dispatcher_passes_shell_to_handler():
         calls.append(request)
         return {
             "tool_id": request["tool_id"],
-            "tool_family": "general_tool",
-            "tool_class": "focus_tool",
+            "tool_class": "action_tool",
             "status": "ok",
             "source": "general_tool_call",
             "backend_type": "python",
@@ -2562,7 +2920,7 @@ def test_spec756_general_tool_dispatcher_passes_shell_to_handler():
     assert blocked["status"] == "ok"
     assert calls == [{
         "tool_id": "shell_command",
-        "cwd": ".",
+        "cwd": GeneralToolDispatcher._canonical_shell_cwd("."),
         "command": "git reset --hard",
         "purpose": "dangerous reset",
     }]
@@ -2580,8 +2938,10 @@ def test_spec756_general_tool_dispatcher_passes_shell_to_handler():
     assert len(calls) == 2
 
 def test_shell_command_general_tool_runs_low_risk_command(tmp_path):
+    from data.action_recovery_store import ActionRecoveryStore
     from logic.general_tools import execute_general_tool_call
 
+    store = ActionRecoveryStore(tmp_path / "action_recovery_pending.json")
     result = execute_general_tool_call(
         {
             "tool_id": "shell_command",
@@ -2592,17 +2952,27 @@ def test_shell_command_general_tool_runs_low_risk_command(tmp_path):
             "risk_level": "low",
         },
         allowed_roots=[tmp_path],
+        action_recovery={
+            "store": store,
+            "request_sha256": "a" * 64,
+            "runtime_context": {
+                "round_num": 12, "iteration": 3,
+                "frame_id": "R000012:reaction:3"},
+            "call_id": "call-shell",
+        },
     )
 
     assert result["tool_id"] == "shell_command"
-    assert result["tool_family"] == "general_tool"
-    assert result["tool_class"] == "focus_tool"
+    assert result["tool_class"] == "action_tool"
     assert result["handler"] == "shell_command_handler"
     assert result["permission_scope"] == "workspace_shell_allowlist"
     assert result["status"] == "ok"
     assert result["exit_code"] == 0
     assert "shell ok" in result["stdout"]
     assert result["protocol_tool_receipt"] is False
+    target = store.load()["items"][0]["target"]
+    assert target == "shell:unit test low-risk command#aaaaaaaaaaaa"
+    assert str(tmp_path) not in target
 
 
 def test_spec445_shell_command_captures_bytes_and_decodes_gbk_stderr(
@@ -2737,9 +3107,8 @@ def test_spec445_shell_tool_fact_hides_legacy_replacement_chars():
     assert "输出含无法解码字符" in fact
 
 
-def test_spec756_windows_does_not_special_case_posix_python_heredoc(
+def test_spec784_windows_rejects_multiline_posix_heredoc_before_subprocess(
         tmp_path, monkeypatch):
-    import subprocess
     from logic import general_tools
     from logic.general_tools import execute_general_tool_call, format_general_tool_fact
 
@@ -2747,7 +3116,7 @@ def test_spec756_windows_does_not_special_case_posix_python_heredoc(
 
     def fake_run(*_args, **_kwargs):
         called.append(True)
-        return subprocess.CompletedProcess(_args[0], 1, stdout=b"", stderr=b"bad syntax")
+        raise AssertionError("multiline command must be rejected before subprocess")
 
     monkeypatch.setattr(general_tools.os, "name", "nt", raising=False)
     monkeypatch.setattr(general_tools.subprocess, "run", fake_run)
@@ -2762,9 +3131,10 @@ def test_spec756_windows_does_not_special_case_posix_python_heredoc(
         allowed_roots=[tmp_path],
     )
 
-    assert called == [True]
-    assert result["status"] == "failed"
-    assert "bad syntax" in format_general_tool_fact(result)
+    assert called == []
+    assert result["status"] == "rejected"
+    assert result["reason"] == "shell_multiline_unsupported"
+    assert "shell_multiline_unsupported" in format_general_tool_fact(result)
 
 
 def test_shell_command_general_tool_rejects_unsafe_or_invalid_requests(tmp_path):
@@ -2866,8 +3236,7 @@ def test_subagent_dispatch_general_tool_returns_injected_backend_report(tmp_path
     )
 
     assert result["tool_id"] == "subagent_dispatch"
-    assert result["tool_family"] == "general_tool"
-    assert result["tool_class"] == "focus_tool"
+    assert result["tool_class"] == "action_tool"
     assert result["handler"] == "subagent_dispatch_handler"
     assert result["permission_scope"] == "subagent_task_scope"
     assert result["status"] == "ok"

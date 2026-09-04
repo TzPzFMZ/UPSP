@@ -11,6 +11,7 @@ from logic.memory_container_tools import (
 from logic.memory_link_update import apply_memory_link_update_declarations
 from logic.memory_write import apply_memory_write_declarations
 from logic.interaction_meta import active_relation_card, interaction_meta_for_card
+from logic.protocol_tools import attach_registered_tool_metadata
 
 
 ORGAN_PRODUCT_TOOLS = frozenset({
@@ -49,9 +50,9 @@ class RuntimeProductCommitter:
 
     def commit(
             self, tool_id, declarations, *, round_num, interaction_meta=None,
-            pending_memory_ids=None, visible_focus_id="",
+            pending_memory_ids=None, visible_container_targets=(),
             visible_relation_body_ids=(), chronicle_store=None,
-            chronicle_focus=None, memory_heat_boosted_ids=None):
+            chronicle_write_scope=None, memory_heat_boosted_ids=None):
         s = self.services
         tool_id = str(tool_id or "").strip()
         declarations = list(declarations or [])
@@ -76,7 +77,8 @@ class RuntimeProductCommitter:
             return apply_memory_container_create_declarations(declarations, {
                 "memory_store": s.memory_store,
                 "container_store": s.container_store,
-                "workbench_store": s.workbench,
+                "assembler": s.assembler,
+                "resident_store": s.resident_store,
                 "relation_store": s.relation_store,
                 "pending_memory_ids": pending_memory_ids or {},
             }, round_num=round_num, state=state)
@@ -84,15 +86,16 @@ class RuntimeProductCommitter:
             return apply_memory_container_write_declarations(declarations, {
                 "memory_store": s.memory_store,
                 "container_store": s.container_store,
-                "workbench_store": s.workbench,
-                "visible_focus_id": visible_focus_id,
+                "assembler": s.assembler,
+                "resident_store": s.resident_store,
+                "visible_container_targets": visible_container_targets,
                 "relation_store": s.relation_store,
                 "pending_memory_ids": pending_memory_ids or {},
             }, round_num=round_num, state=state)
         if tool_id == "chronicle_write":
             return apply_chronicle_write_declarations(declarations, {
                 "chronicle_store": chronicle_store,
-                "chronicle_focus": chronicle_focus,
+                "chronicle_write_scope": chronicle_write_scope,
             })
         if tool_id == "alert_mode_settle":
             return apply_alert_mode_settlement_declarations(declarations, round_num, {
@@ -112,6 +115,7 @@ class RuntimeProductCommitter:
             visible_relation_body_ids=visible_relation_body_ids,
             relation_store_factory=lambda: s.relation_store,
             relation_index_factory=lambda: s.memory_index,
+            assembler=s.assembler,
         )
         meta = interaction_meta if isinstance(interaction_meta, dict) else {}
         if str(meta.get("identity_status") or "") == "unregistered":
@@ -135,8 +139,8 @@ class RuntimeProductCommitter:
     def commit_product(
             self, product, *, frame_ref, role_id, sequence, allowed_tools,
             round_num, interaction_meta=None, pending_memory_ids=None,
-            visible_focus_id="", visible_relation_body_ids=(),
-            chronicle_store=None, chronicle_focus=None,
+            visible_container_targets=(), visible_relation_body_ids=(),
+            chronicle_store=None, chronicle_write_scope=None,
             memory_heat_boosted_ids=None):
         product = product if isinstance(product, dict) else {}
         tool_id = str(product.get("tool_id") or "").strip()
@@ -156,20 +160,19 @@ class RuntimeProductCommitter:
             round_num=round_num,
             interaction_meta=interaction_meta,
             pending_memory_ids=pending_memory_ids,
-            visible_focus_id=visible_focus_id,
+            visible_container_targets=visible_container_targets,
             visible_relation_body_ids=visible_relation_body_ids,
             chronicle_store=chronicle_store,
-            chronicle_focus=chronicle_focus,
+            chronicle_write_scope=chronicle_write_scope,
             memory_heat_boosted_ids=memory_heat_boosted_ids,
         )
+        attach_registered_tool_metadata(receipts)
         return [{**dict(receipt or {}), **meta} for receipt in receipts]
 
     @staticmethod
     def _rejected(tool_id, reason="organ_product_tool_not_allowed"):
         return {
             "tool_id": tool_id,
-            "tool_family": "protocol_tool",
-            "tool_class": "write_tool",
             "status": "rejected",
             "reason": reason,
             "source": "organ_product_committer",

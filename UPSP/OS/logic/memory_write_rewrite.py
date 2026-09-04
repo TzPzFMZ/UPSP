@@ -40,8 +40,6 @@ def memory_write_rewrite_pending_receipts(declarations):
             continue
         receipts.append({
             "tool_id": "memory_write",
-            "tool_family": "protocol_tool",
-            "tool_class": "sync_tool",
             "status": "error",
             "source": "memory_write_declaration",
             "mem_id": None,
@@ -159,10 +157,21 @@ class MemoryWriteRewriteTracker:
                 f"actual={item['original_chars']}｜max={item['body_limit']}｜"
                 f"source_call={coordinate}"
             )
+        example_id = self.pending_ids()[0]
         lines.extend([
             "",
             "使用 guide_submit 的 fields.results 覆盖全部当前 rewrite_id；"
-            "每项选择 rewrite 或 not_written。",
+            "每项只能使用 rewrite_id、action、semantic_content 三个字段。",
+            (
+                '精确形状：fields={"results":[{"rewrite_id":"'
+                f'{example_id}","action":"rewrite","semantic_content":'
+                '"不超过冻结上限的纯语义正文"}]}。'
+            ),
+            (
+                "选择 not_written 时仍使用同一三个字段，"
+                '并令 action="not_written"、semantic_content=""；'
+                "不要使用 body 或 content 代替 semantic_content。"
+            ),
         ])
         return "\n".join(lines)
 
@@ -218,17 +227,19 @@ def apply_memory_write_rewrite_guide(arguments, evidence_context):
     if not isinstance(tracker, MemoryWriteRewriteTracker):
         return _result("rejected", "memory_write_rewrite_context_unavailable")
     if _text(arguments.get("guide_id")) != tracker.guide_id:
-        return _result("rejected", "memory_write_rewrite_guide_not_active")
+        return _result(
+            "rejected", "memory_write_rewrite_guide_not_active", tracker
+        )
     if _text(arguments.get("item_id")) != GUIDE_ITEM_ID:
-        return _result("rejected", "memory_write_rewrite_item_invalid")
+        return _result("rejected", "memory_write_rewrite_item_invalid", tracker)
     if _text(arguments.get("option_id")) != GUIDE_OPTION_ID:
-        return _result("rejected", "memory_write_rewrite_option_invalid")
+        return _result("rejected", "memory_write_rewrite_option_invalid", tracker)
     fields = arguments.get("fields")
     if not isinstance(fields, dict) or set(fields) != {"results"}:
-        return _result("rejected", "memory_write_rewrite_fields_invalid")
+        return _result("rejected", "memory_write_rewrite_fields_invalid", tracker)
     results = fields.get("results")
     if not isinstance(results, list):
-        return _result("rejected", "memory_write_rewrite_results_invalid")
+        return _result("rejected", "memory_write_rewrite_results_invalid", tracker)
 
     submitted = {}
     backend_receipts = []
@@ -354,13 +365,17 @@ def apply_memory_write_rewrite_guide(arguments, evidence_context):
     }
 
 
-def _result(status, reason):
+def _result(status, reason, tracker=None):
     return {
         "status": status,
         "reason": reason,
         "backend_receipts": [],
         "completed_ids": [],
-        "remaining_ids": [],
+        "remaining_ids": (
+            tracker.pending_ids()
+            if isinstance(tracker, MemoryWriteRewriteTracker)
+            else []
+        ),
         "created_memory_ids": [],
         "not_written_ids": [],
     }

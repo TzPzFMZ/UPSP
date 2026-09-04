@@ -1,7 +1,7 @@
 # 热度公式与记忆生命周期
 
 > 消费方式：Runtime 读取配置并管理当前分身 STM `heat.json`；LTM 没有热度。
-> 触发：召回时加热，每轮 cleanup 后衰减与结算。
+> 触发：Reaction 真实召回时加热；自然回复、审计阻断或已验证中继形成语义终态后衰减与结算。
 
 ## 一、STM 热度
 
@@ -42,8 +42,8 @@ GUI 查看详情和人工定期挂载都不是模型召回，不创建 STM、不
 `degrade=false` 时始终保留 STM。`degrade=true` 时：
 
 - LTM `stored_at` 非空：核验 LTM 后删除当前分身 STM 五件套；
-- `stored_at` 为空且 W5：Cleanup 先把 Full→Summary/W4 事项写入共享压缩账本，核验后删除 STM；日节律按冻结材料完成语义压缩与关键词裁剪，成功后填写 `stored_at` 并重置周期；
-- `stored_at` 为空且 W3/4：Cleanup 先把 Summary→Abstract/W2 事项写入共享压缩账本，核验后删除 STM；日节律完成压缩后才填写 `stored_at` 并重置周期；
+- `stored_at` 为空且 W5：Reaction 语义终态先把 Full→Summary/W4 事项写入共享压缩账本，核验后删除 STM；日节律按冻结材料完成语义压缩与关键词裁剪，成功后填写 `stored_at` 并重置周期；
+- `stored_at` 为空且 W3/4：Reaction 语义终态先把 Summary→Abstract/W2 事项写入共享压缩账本，核验后删除 STM；日节律完成压缩后才填写 `stored_at` 并重置周期；
 - `stored_at` 为空且 W1/2：保持既有 LTM Abstract 正文，填写 `stored_at`，重置周期，再删除 STM。
 
 账本落盘失败时不得删除 STM；账本成功后，LTM 原文、原 tags、原层级和空 `stored_at` 保持到日节律 apply。日节律中 STM 阶段先于 LTM 阶段，任一批次失败都不得越过到周志。模型只能从每条现有 tags 中选择保留项，不能在压缩阶段创造关键词；处理器按原 tags 顺序落盘。事务成功后层级与新 weight 对齐，不触发回忆重整。LTM 日衰减跳过 `stored_at=""` 的条目；已入库 LTM 日衰减只降层、不降权，由它造成的合法错位在真实召回时进入回忆重整指南。

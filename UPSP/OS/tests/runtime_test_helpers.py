@@ -89,7 +89,8 @@ class RuntimeTestMixin:
 
             def recall(
                     self, mem_id, *, round_num=None, boosted_ids=None,
-                    reconsolidation_tracker=None, periodic_requested=False):
+                    reconsolidation_tracker=None, periodic_requested=False,
+                    transaction_commit=None, transaction_rollback=None):
                 if isinstance(boosted_ids, set) and mem_id in boosted_ids:
                     return {
                         "source_memory_layer": "STM",
@@ -97,6 +98,8 @@ class RuntimeTestMixin:
                         "heat_boost_applied": False,
                         "heat_boost_deduplicated": True,
                     }
+                if callable(transaction_commit):
+                    transaction_commit()
                 runtime.heat.recall_boost(mem_id, round_num=round_num)
                 if isinstance(boosted_ids, set):
                     boosted_ids.add(mem_id)
@@ -114,6 +117,7 @@ class RuntimeTestMixin:
         from data.state_store import StateStore
         from data.context_store import ContextStore
         from data.chronicle_store import ChronicleStore
+        from data.resident_list_store import ResidentListStore
         from data.workbench import WorkbenchStore
         from data.connectivity_store import ConnectivityStore
         from assembly.context import ContextAssembler
@@ -126,10 +130,13 @@ class RuntimeTestMixin:
             raw_log_jsonl=str(tmp_path / "buffer" / "raw_log.jsonl"),
             raw_log_md=str(tmp_path / "buffer" / "raw_log.md"),
         )
+        resident_store = ResidentListStore(str(tmp_path / "resident_list.json"))
+        resident_store.reconcile()
         assembler = ContextAssembler(
             state_store=sm,
             context_dir=str(tmp_path / "context"),
             context_store=ctx_store,
+            resident_store=resident_store,
         )
         workbench = WorkbenchStore(str(tmp_path / "workbench"))
 
@@ -157,6 +164,12 @@ class RuntimeTestMixin:
 
             def get_entry(self, mem_id):
                 return deepcopy(self.entries.get(mem_id))
+
+            def load_heat(self):
+                return {"entries": deepcopy(self.entries)}
+
+            def check_upgrade(self):
+                return []
 
             def recall_boost(self, mem_id, round_num=None):
                 self.boosted.append((mem_id, round_num))
@@ -403,5 +416,7 @@ class RuntimeTestMixin:
         runtime.memory_store = memory_store
         runtime.memory_index = memory_index
         runtime.container_store = container_store
+        runtime.assembler.memory_store = memory_store
+        runtime.assembler.container_store = container_store
         runtime.memory_recall = self._memory_recall_stub(runtime)
         return memory_store, memory_index, container_store

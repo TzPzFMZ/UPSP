@@ -158,8 +158,12 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
 
         assert receipts[0]["tool_id"] == "memory_write"
         assert receipts[0]["status"] == "submission_received"
+        assert receipts[0]["tool_class"] == "sync_tool"
+        assert receipts[0]["execution_route"] == "internal_processor"
         assert receipts[1]["tool_id"] == "relation_card_write"
         assert receipts[1]["status"] == "invalid_tool_request"
+        assert receipts[1]["tool_class"] == "sync_tool"
+        assert receipts[1]["execution_route"] == "internal_processor"
         assert receipts[1]["reason"] == "retired_text_protocol_submission"
 
     def test_reaction_loop_rejects_unresolved_memory_preselection_before_provider(
@@ -499,7 +503,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
 
         setup_result = runner.run(context)
 
-        handoff = setup_result.internal_handoff
+        handoff = setup_result.setup_facts
         assert len(handoff) == 1
         assert handoff[0]["kind"] == "setup_fact"
         assert handoff[0]["handoff_target"] == "reaction"
@@ -915,7 +919,7 @@ class TestRuntimeDelegationIdentity(RuntimeTestMixin):
         assert setup_result.intent["security_verdict"] == "pass"
         assert setup_result.intent["mount_requests"] == []
         assert "MEM-OLD-FALLBACK" not in "\n".join(
-            entry.get("content", "") for entry in setup_result.internal_handoff
+            entry.get("content", "") for entry in setup_result.setup_facts
         )
         assert settlements[0][2]["retry_requested"] == "setup_finalize_missing_or_invalid"
 

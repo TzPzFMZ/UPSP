@@ -1,0 +1,41 @@
+{
+  "schema_version": "upsp_gui_font_bundle.v1",
+  "source_repository": "https://github.com/google/fonts",
+  "source_commit": "ec626514f79f831f1ab848a82114a0ce7e2d6372",
+  "license": "OFL-1.1",
+  "conversion": {
+    "tool": "fonttools",
+    "version": "4.59.2",
+    "format": "woff2",
+    "subsetted": false
+  },
+  "files": [
+    {
+      "family": "Noto Sans SC",
+      "weights": "100-900",
+      "source_path": "ofl/notosanssc/NotoSansSC[wght].ttf",
+      "source_sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+      "bundled_path": "NotoSansSC-Variable.woff2",
+      "bundled_sha256": "aef8c34277afad81ecd0227138a830263c0caea65b7aea66d1195395f097b55a",
+      "license_path": "licenses/notosanssc-OFL.txt"
+    },
+    {
+      "family": "Orbitron",
+      "weights": "400-900",
+      "source_path": "ofl/orbitron/Orbitron[wght].ttf",
+      "source_sha256": "f42db2dd16e642258e35782916eceb1dcdbea06fb958d77ad71dc5963587e8fd",
+      "bundled_path": "Orbitron-Variable.woff2",
+      "bundled_sha256": "206601dd7476a038ad4038f8c45f07c59bf2189b8733e328b79697a09e846bc0",
+      "license_path": "licenses/orbitron-OFL.txt"
+    },
+    {
+      "family": "M PLUS 1 Code",
+      "weights": "100-700",
+      "source_path": "ofl/mplus1code/MPLUS1Code[wght].ttf",
+      "source_sha256": "ff68678c5bd7e9d9d6ab6d57e4355aabe30f6b8f8bff9bd59baf6a7807dcfd36",
+      "bundled_path": "MPLUS1Code-Variable.woff2",
+      "bundled_sha256": "1e76b836d610578691efff0d56a3ca07f668005522bd5b3818f681661dd35409",
+      "license_path": "licenses/mplus1code-OFL.txt"
+    }
+  ]
+}

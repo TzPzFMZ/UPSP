@@ -86,7 +86,7 @@
 - 主体自身的自省／自主思考写当前关系 Registry 中 `category=self` 的规范 ID；当前对象或已登记但缺席的关系主体也可写。缺席不阻断记忆生产，关系域无卡、歧义或 archived 主体不得写入，也不得改填当前对象伪造归属或自动建卡。
 - 候选关键词至少一个，优先覆盖稳定实体及别名、独特对象或事件、地点、时间锚、结果和约束；不得用“记忆”“用户”“任务”等泛词占位。每个关键词独立提交；脚本只清洗、去重、裁剪和写索引，不从标题或正文补语义词。
 - 交互感受词只能从 provider-native schema description 注入的近位清单中选词，最多 3 个。`relationship_feelings` 必须是 `{subject, word}` 对象数组：每项明确活动关系卡主体，每对象最多 2 个；处理器保存规范主体 ID。感受项无效或超额时只拒绝该项并在回执列明原因，不连带否定合法记忆正文。模型不写任何轴数值。
-- 只有 `memory_write applied` 回执中的合法感受会在本轮 cleanup 进入脚本状态结算；模型不得根据自然语言自行声称六轴或工化指数已经改变。
+- 只有 `memory_write applied` 回执中的合法感受会在该 Reaction Frame 结束时由脚本立即结算；下一 Frame 开始前必须已有 `state_settle_receipt.v2` 且 `settlement_scope=reaction_frame`。模型不得根据自然语言自行声称六轴或工化指数已经改变。
 
 候选关键词上限由初始形态决定：[F] 最多 8 个，[S] 最多 6 个，[A] 最多 4 个。
 
@@ -94,7 +94,7 @@
 
 只有拿到 `memory_write` 的真实 applied 回执，并出现具体 MEM-* 编号，才能声称记忆已写入。
 
-工作容器不能直接挂裸证据、工具结果、临时块或旧 source ticket。需要把记忆挂接到工作容器时，通常必须作用于真实 `MEM-*`：新容器走 `memory_container_create`（挂接创建），已有容器先 `container_focus.open`，下一迭代看到焦点投影后走 `memory_container_write`（挂接写入）。唯一例外是同一 Frame 正在用记忆写入重写指南成功写入新记忆：此时可用 `PENDING` 指向该 Frame 最后一个成功写入的记忆，由 Runtime 在容器结算前解析；指南没有成功写入、要引用更早条目或离开当前 Frame 后，仍必须使用真实 `MEM-*`。
+工作容器不能直接挂裸证据、工具结果、临时块或旧 source ticket。需要把记忆挂接到工作容器时，通常必须作用于真实 `MEM-*`：新容器走 `memory_container_create`，已有容器若尚未装配则先 `container_read`，下一 Frame 看见目标正文后走 `memory_container_write`。唯一例外是同一 Frame 正在用记忆写入重写指南成功写入新记忆：此时可用 `PENDING` 指向该 Frame 最后一个成功写入的记忆，由 Runtime 在容器结算前解析；指南没有成功写入、要引用更早条目或离开当前 Frame 后，仍必须使用真实 `MEM-*`。
 
 没有真实 `MEM-*` 时，只能说明“本轮有候选材料”，不能假装已经沉淀。
 

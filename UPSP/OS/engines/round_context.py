@@ -131,5 +131,5 @@ class SetupResult:
     interaction_meta: dict[str, Any]
     user_input_text: str = ""
     setup_messages: list[dict[str, Any]] = field(default_factory=list)
-    internal_handoff: list[dict[str, Any]] = field(default_factory=list)
+    setup_facts: list[dict[str, Any]] = field(default_factory=list)
     frame_ref: FrameRef | None = None

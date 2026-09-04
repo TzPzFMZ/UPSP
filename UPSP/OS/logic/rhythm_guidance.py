@@ -140,8 +140,8 @@ def _main_axis_guide(flags, completed_flags=None):
             "",
             "本轮需要处理主轴节律事项。请根据当前可见材料完成下面项目。",
             "",
-            f"{marker} 检查当前编年史焦点是否已经由 Runtime 挂出。",
-            "如果没有可用的编年史焦点，guide_submit 回执会返回当前无需写入。",
+            f"{marker} 检查当前 Frame 是否已经出现“编年史写入材料”。",
+            "材料由 Runtime 以单次可见资料块装配；若当前没有合法写入范围，guide_submit 回执会返回无需写入。",
             "",
             f"{marker} 按当前 active guide 选择 option_id=write_chronicle，提交本次主轴节志正文。",
             "正文只写模型需要概括和判断的部分；轮次、时间、状态数值由 Runtime 预填。",
@@ -186,6 +186,11 @@ def _memory_compression_guide(flags, completed_flags=None):
             "",
             f"{marker} 调用 guide_submit，使用当前 guide_id、item_id=memory_compression_due、option_id=submit_memory_compressions。",
             "fields.results 必须覆盖全部且仅当前批次条目；每项提交 mem_id、semantic_content、retained_keywords。",
+            (
+                '精确形状：fields={"results":[{"mem_id":"<当前批次MEM-ID>",'
+                '"semantic_content":"压缩后的纯语义正文",'
+                '"retained_keywords":["当前已有关键词"]}]}。'
+            ),
             "正文与关键词选择必须遵守永久 POPUP 合同和本轮资料列出的目标层上限。",
             "提交失败时按回执纠正同一批次；不得越过失败项进入周志。",
         ]).rstrip(),

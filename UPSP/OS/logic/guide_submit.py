@@ -1,10 +1,6 @@
 """Apply Spec434 guide_submit answer sheets."""
 
-import fnmatch
-import glob
-import os
 import re
-from pathlib import Path
 
 from errors import ReadError
 from logic.alert_mode_settle import apply_alert_mode_settlement_declarations
@@ -23,17 +19,20 @@ from logic.task_guide import (
     BOOTSTRAP_ITEM_ID,
     BOOTSTRAP_SUBMIT_OPTION_ID,
     TASK_PENDING_INPUT_OPTION_ID,
+    TASK_PLAN_REVISE_OPTION_ID,
     TASK_PROGRESS_ITEM_ID,
     TASK_PROGRESS_UPDATE_OPTION_ID,
     _adapt_pending_input_update_fields,
     append_task_pending_input,
     apply_pending_input_integration,
+    apply_task_plan_revision,
     apply_task_status_update,
     create_task_bootstrap_guide,
     has_open_pending_inputs,
     materialize_initial_task_guide,
     open_pending_input_ids,
     refresh_task_execution_active_guide,
+    validate_task_plan_structure,
 )
 from logic.reaction_resident_guide import (
     REACTION_LOOP_GUIDE_ID,
@@ -66,7 +65,6 @@ GUIDE_SUBMIT_RESERVED_ARGUMENT_KEYS = {
     "provider_item_id_is_synthetic",
     "index",
     "tool_id",
-    "tool_family",
     "tool_class",
     "risk",
     "parse_status",
@@ -93,7 +91,7 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                 guide_id != expected_guide_id
                 or item_id != "cache_compaction_due"
                 or option_id != "submit_cache_compaction_batch"):
-            return _reject(
+            receipt = _reject(
                 guide_id,
                 "cache_compaction_pending",
                 {
@@ -105,6 +103,12 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     "next_action": "先按当前最近缓存压缩指南提交本批分片。",
                 },
             )
+            from data.progressive_cache_compaction import pending_shards
+            receipt["remaining_ids"] = [
+                str(item.get("shard_id") or "")
+                for item in pending_shards(progressive_debt)
+            ]
+            return receipt
         fields = arguments.get("fields") if isinstance(
             arguments.get("fields"), dict) else {}
         stager = getattr(context_store, "stage_progressive_cache_compaction", None)
@@ -146,7 +150,7 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     )
     if reconsolidation_pending:
         if guide_id != reconsolidation_tracker.guide_id:
-            return _reject(
+            receipt = _reject(
                 guide_id,
                 "memory_reconsolidation_pending",
                 {
@@ -159,6 +163,8 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     ),
                 },
             )
+            receipt["remaining_ids"] = _pending_ids(reconsolidation_tracker)
+            return receipt
         backend = apply_memory_reconsolidation_guide(
             arguments, evidence_context
         )
@@ -182,7 +188,10 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     "current": {"guide_id": guide_id},
                     "expected": {
                         "guide_id": reconsolidation_tracker.guide_id,
-                        "pending_ids": reconsolidation_tracker.pending_ids(),
+                        "pending_ids": _pending_ids(reconsolidation_tracker),
+                        "result_fields": [
+                            "mem_id", "semantic_content", "final_keywords"
+                        ],
                     },
                     "next_action": (
                         "按回执修正 semantic_content/final_keywords，"
@@ -205,7 +214,7 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     )
     if rewrite_pending:
         if guide_id != rewrite_tracker.guide_id:
-            return _reject(
+            receipt = _reject(
                 guide_id,
                 "memory_write_rewrite_pending",
                 {
@@ -214,6 +223,8 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     "next_action": "先按当前记忆写入重写指南结清全部待办。",
                 },
             )
+            receipt["remaining_ids"] = _pending_ids(rewrite_tracker)
+            return receipt
         backend = apply_memory_write_rewrite_guide(
             arguments, evidence_context
         )
@@ -239,7 +250,10 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     "current": {"guide_id": guide_id},
                     "expected": {
                         "guide_id": rewrite_tracker.guide_id,
-                        "pending_ids": rewrite_tracker.pending_ids(),
+                        "pending_ids": _pending_ids(rewrite_tracker),
+                        "result_fields": [
+                            "rewrite_id", "action", "semantic_content"
+                        ],
                     },
                     "next_action": (
                         "按回执修正 action/semantic_content，并重新提交"
@@ -266,7 +280,7 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
         active_guide_id = str(workbench_store.get("base.active_guide") or "").strip()
     if not guide_id or guide_id != active_guide_id:
         expected = _guide_coordinates(workbench_store, active_guide_id)
-        return _reject(
+        receipt = _reject(
             guide_id,
             "guide_not_active",
             {
@@ -279,6 +293,16 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                 "retry": "after_correction",
             },
         )
+        try:
+            active_guide = workbench_store.load_guide(active_guide_id)
+        except (ReadError, FileNotFoundError, ValueError):
+            active_guide = {}
+        if str((active_guide or {}).get("kind") or "").strip() == (
+                "memory_compression_rhythm_guide"):
+            receipt["remaining_ids"] = _memory_compression_pending_ids(
+                evidence_context
+            )
+        return receipt
 
     try:
         guide = workbench_store.load_guide(guide_id)
@@ -290,16 +314,27 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
 
     submissions = _coerce_guide_submissions(arguments)
     if not isinstance(submissions, list):
-        return _reject(guide_id, "invalid_guide_submission", {"field": "submissions"})
+        receipt = _reject(
+            guide_id, "invalid_guide_submission", {"field": "submissions"}
+        )
+        if str(guide.get("kind") or "").strip() == (
+                "memory_compression_rhythm_guide"):
+            receipt["remaining_ids"] = _memory_compression_pending_ids(
+                evidence_context
+            )
+        return receipt
 
     validation = _validate_submissions(guide, submissions)
     if validation.get("status") == "rejected":
         validation["tool_id"] = "guide_submit"
-        validation["tool_family"] = "protocol_tool"
-        validation["tool_class"] = "sync_tool"
         validation["protocol_tool_receipt"] = True
         validation["source"] = "guide_submit"
         validation["guide_id"] = guide_id
+        if str(guide.get("kind") or "").strip() == (
+                "memory_compression_rhythm_guide"):
+            validation["remaining_ids"] = _memory_compression_pending_ids(
+                evidence_context
+            )
         workbench_store.append_guide_ledger(guide_id, {
             "event": "guide_submission_rejected",
             "reason": validation.get("reason"),
@@ -311,6 +346,7 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     task_id = None
     task_update = None
     pending_input_update = None
+    task_plan_revisions = []
     backend_receipts = []
     completed_flags = []
     reopened_flags = []
@@ -318,6 +354,7 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     backend_applied = False
     for submission in submissions:
         normalized = _normalize_submission(submission)
+        accepted_ledger_extra = {}
         if (
                 guide.get("kind") == "task_bootstrap"
                 and normalized.get("item_id") == BOOTSTRAP_ITEM_ID
@@ -354,10 +391,11 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                 normalized,
                 evidence_context,
             )
-            bootstrap_validation = _validate_bootstrap_source_evidence(
-                guide,
-                normalized,
-                evidence_context,
+            bootstrap_validation = validate_task_plan_structure(
+                normalized.get("fields") or {},
+                strict_sections={
+                    "source_requirements", "items", "acceptance",
+                },
             )
             if bootstrap_validation.get("status") == "rejected":
                 workbench_store.append_guide_ledger(guide_id, {
@@ -370,6 +408,9 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     bootstrap_validation,
                     guide=guide,
                 )
+            normalized["fields"].update(
+                bootstrap_validation.get("normalized_plan") or {}
+            )
             task_id = materialize_initial_task_guide(
                 workbench_store,
                 normalized.get("fields") or {},
@@ -426,6 +467,47 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                 workbench_store,
                 str(guide.get("task_id") or "").strip(),
             )
+
+        elif (
+                guide.get("kind") == "task_execution"
+                and normalized.get("item_id") == TASK_PROGRESS_ITEM_ID
+                and normalized.get("option_id") == TASK_PLAN_REVISE_OPTION_ID):
+            pending_block = _pending_interaction_first_block(
+                workbench_store,
+                str(guide.get("task_id") or "").strip(),
+            )
+            if pending_block:
+                return _task_pending_first_receipt(
+                    workbench_store,
+                    guide_id,
+                    pending_block,
+                    status="rejected",
+                )
+            normalized = _adapt_task_bootstrap_submission(
+                normalized,
+                evidence_context,
+            )
+            revision = apply_task_plan_revision(
+                workbench_store,
+                str(guide.get("task_id") or "").strip(),
+                normalized.get("fields") or {},
+                reason=normalized.get("reason") or "",
+            )
+            if revision.get("status") == "rejected":
+                workbench_store.append_guide_ledger(guide_id, {
+                    "event": "guide_submission_rejected",
+                    "reason": revision.get("reason"),
+                    "details": revision.get("details") or {},
+                })
+                return _rejection_receipt(guide_id, revision, guide=guide)
+            task_plan_revision = revision.get("task_plan_revision") or {}
+            task_plan_revisions.append(task_plan_revision)
+            accepted_ledger_extra["task_plan_revision"] = task_plan_revision
+            if task_plan_revision.get("action") == "applied":
+                refresh_task_execution_active_guide(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                )
 
         elif (
                 guide.get("kind") == "task_execution"
@@ -517,6 +599,8 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                     guide=guide,
                     extra={
                         "backend_receipts": backend.get("backend_receipts") or [],
+                        "completed_ids": backend.get("completed_ids") or [],
+                        "remaining_ids": backend.get("remaining_ids") or [],
                     },
                 )
             backend_receipts.extend(backend.get("backend_receipts") or [])
@@ -528,14 +612,16 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
                 backend_applied = True
 
         accepted.append(normalized)
-        workbench_store.append_guide_ledger(guide_id, {
+        accepted_ledger_entry = {
             "event": "guide_submission_accepted",
             "item_id": normalized.get("item_id"),
             "option_id": normalized.get("option_id"),
             "fields": normalized.get("fields") or {},
             "evidence_refs": normalized.get("evidence_refs") or [],
             "reason": normalized.get("reason") or "",
-        })
+        }
+        accepted_ledger_entry.update(accepted_ledger_extra)
+        workbench_store.append_guide_ledger(guide_id, accepted_ledger_entry)
 
     receipt = _base_receipt(guide_id)
     receipt.update({
@@ -568,6 +654,10 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     if task_id:
         receipt["task_id"] = task_id
         receipt["active_guide"] = f"task:{task_id}"
+    if task_plan_revisions:
+        receipt["task_plan_revision"] = task_plan_revisions[-1]
+        if len(task_plan_revisions) > 1:
+            receipt["task_plan_revisions"] = task_plan_revisions
     if task_update:
         receipt["task_update"] = task_update
         task_acceptance = validate_task_closeout(
@@ -685,8 +775,6 @@ def _apply_reaction_loop_resident_submit(
     validation = _validate_submissions(guide, submissions)
     if validation.get("status") == "rejected":
         validation["tool_id"] = "guide_submit"
-        validation["tool_family"] = "protocol_tool"
-        validation["tool_class"] = "sync_tool"
         validation["protocol_tool_receipt"] = True
         validation["source"] = "guide_submit"
         validation["guide_id"] = guide_id
@@ -1024,7 +1112,8 @@ def _apply_rhythm_guide_submission(
             }],
             {
                 "chronicle_store": evidence_context.get("chronicle_store"),
-                "chronicle_focus": evidence_context.get("chronicle_focus"),
+                "chronicle_write_scope": evidence_context.get(
+                    "chronicle_write_scope"),
             },
         )
         if item_id == "calendar_day_due" and any(
@@ -1037,6 +1126,7 @@ def _apply_rhythm_guide_submission(
 
             manager = MemoryCompressionManager(
                 memory_store=evidence_context.get("memory_store"),
+                assembler=evidence_context.get("assembler"),
             )
             chronicle_hash = hashlib.sha256(json.dumps(
                 receipts, ensure_ascii=False, sort_keys=True,
@@ -1120,18 +1210,31 @@ def _apply_rhythm_guide_submission(
 
         manager = MemoryCompressionManager(
             memory_store=evidence_context.get("memory_store"),
+            assembler=evidence_context.get("assembler"),
         )
+        remaining_ids = []
         try:
+            batch = manager.current_batch()
+            remaining_ids = [
+                str(item.get("mem_id") or "")
+                for item in (batch or {}).get("items") or []
+            ]
             receipt = manager.apply_batch(
                 fields.get("results"),
                 expected_batch_id=str(fields.get("batch_id") or ""),
                 round_num=evidence_context.get("round_num"),
             )
         except Exception as exc:
-            return _backend_reject(
+            rejected = _backend_reject(
                 str(exc) or "memory_compression_batch_rejected",
-                {"error_type": type(exc).__name__},
+                {
+                    "error_type": type(exc).__name__,
+                    "expected_ids": remaining_ids,
+                },
             )
+            rejected["remaining_ids"] = remaining_ids
+            rejected["completed_ids"] = []
+            return rejected
         remaining = manager.has_active_cycle()
         state_store = evidence_context.get("state_store")
         if state_store is not None:
@@ -1294,13 +1397,13 @@ def _validate_submissions(guide, submissions):
                     "message": (
                         "submit_initial_guide creates the initial task ledger in "
                         "one complete submission. Include task_title, items, "
-                        "acceptance, and source_requirements when file/URL "
-                        "sources are used; do not submit only source_refs or a "
-                        "partial first batch."
+                        "and acceptance. source_refs and source_requirements are "
+                        "optional planning fields; do not submit only source_refs "
+                        "or a partial first batch."
                     ),
                     "required_shape": (
-                        "fields={task_title, source_refs, source_requirements, "
-                        "items, acceptance}"
+                        "fields={task_title, items, acceptance, "
+                        "optional source_refs/source_requirements}"
                     ),
                 })
             return _validation_reject(
@@ -1390,7 +1493,6 @@ def _adapt_task_bootstrap_submission(submission, evidence_context=None):
         fields["source_requirements"] = [
             _adapt_source_requirement_record(record, index, evidence_context)
             for index, record in enumerate(_as_sequence(fields.get("source_requirements")), start=1)
-            if isinstance(record, dict)
         ]
     if "items" in fields:
         fields["items"] = [
@@ -1410,6 +1512,9 @@ def _adapt_task_bootstrap_submission(submission, evidence_context=None):
 def _normalize_bootstrap_source_refs(value, evidence_context=None):
     refs = []
     for ref in _as_sequence(value):
+        if not isinstance(ref, str):
+            refs.append(ref)
+            continue
         text = _strip_source_ref_annotation(str(ref or "").strip())
         if not text:
             continue
@@ -1422,6 +1527,8 @@ def _normalize_bootstrap_source_refs(value, evidence_context=None):
 
 
 def _adapt_source_requirement_record(record, index, evidence_context=None):
+    if not isinstance(record, dict):
+        return record
     adapted = dict(record or {})
     requirement_id = str(
         adapted.get("requirement_id")
@@ -1489,7 +1596,10 @@ def _looks_like_source_ref(value):
 
 def _adapt_task_item_record(record, index):
     if not isinstance(record, dict):
-        return record
+        return {
+            "item_id": f"item_{index:02d}",
+            "title": str(record or "").strip(),
+        }
     adapted = dict(record)
     item_id = str(adapted.get("item_id") or adapted.get("id") or "").strip()
     if not item_id:
@@ -1512,7 +1622,10 @@ def _adapt_task_item_record(record, index):
 
 def _adapt_acceptance_record(record, index):
     if not isinstance(record, dict):
-        return record
+        return {
+            "acceptance_id": f"acc_{index:02d}",
+            "description": str(record or "").strip(),
+        }
     adapted = dict(record)
     acceptance_id = str(
         adapted.get("acceptance_id")
@@ -1536,6 +1649,9 @@ def _adapt_acceptance_record(record, index):
         ).strip()
     if description:
         adapted["description"] = description
+    if "item_refs" not in adapted and str(adapted.get("item_ref") or "").strip():
+        adapted["item_refs"] = [str(adapted.get("item_ref") or "").strip()]
+    adapted.pop("item_ref", None)
     return adapted
 
 
@@ -1689,411 +1805,12 @@ def _default_one_to_one_acceptance_item_refs(fields):
         acceptance_item["item_refs"] = [item_id]
 
 
-def _validate_bootstrap_source_evidence(guide, submission, evidence_context):
-    context = evidence_context if isinstance(evidence_context, dict) else {}
-    current_tool_ids = _current_general_tool_ids(context)
-    if current_tool_ids:
-        return _validation_reject(
-            "bootstrap_wait_for_tool_results",
-            {
-                "current_tool_ids": current_tool_ids,
-                "message": (
-                    "submit_initial_guide must be based on prior visible "
-                    "tool results; do not submit it in the same response as "
-                    "read, search, shell, or write tools."
-                ),
-            },
-        )
-
-    source_refs = _bootstrap_source_refs(guide, submission)
-    refs_requiring_read = [
-        ref for ref in source_refs if _source_ref_requires_prior_evidence(ref)
-    ]
-    if not refs_requiring_read:
-        return {"status": "accepted"}
-    prior_refs = _prior_source_evidence_refs(context)
-    missing_details = [
-        detail for ref in refs_requiring_read
-        for detail in [_missing_source_ref_detail(ref, prior_refs, context)]
-        if detail is not None
-    ]
-    missing = [item["source_ref"] for item in missing_details]
-    if missing:
-        unread_glob_matches = []
-        for detail in missing_details:
-            unread_glob_matches.extend(detail.get("unread_glob_matches") or [])
-        return _validation_reject(
-            "bootstrap_source_not_read",
-            {
-                "missing_source_refs": missing,
-                **(
-                    {"unread_glob_matches": unread_glob_matches}
-                    if unread_glob_matches else {}
-                ),
-                "prior_source_refs": sorted(prior_refs),
-                "message": (
-                    "File or URL source_refs in submit_initial_guide must "
-                    "already be visible from a previous successful read result. "
-                    "For a local path, call file_read first; for a URL, call "
-                    "web_fetch first. After the result is visible, submit "
-                    "submit_initial_guide."
-                ),
-                "repair_hint": (
-                    "先对 missing_source_refs 调用 file_read/web_fetch；等待读取回执"
-                    "进入下一次反应后，再用已读来源提交 submit_initial_guide。"
-                ),
-            },
-        )
-    coverage = _validate_bootstrap_source_requirement_coverage(
-        submission,
-        refs_requiring_read,
-        context,
-    )
-    if coverage.get("status") == "rejected":
-        return coverage
-    return {"status": "accepted"}
-
-
-def _current_general_tool_ids(context):
-    values = []
-    for request in context.get("current_general_tool_requests") or []:
-        if not isinstance(request, dict):
-            continue
-        tool_id = str(request.get("tool_id") or "").strip()
-        if tool_id and tool_id not in values:
-            values.append(tool_id)
-    return values
-
-
-def _bootstrap_source_refs(guide, submission):
-    refs = []
-    fields = submission.get("fields") or {}
-    for value in (
-            fields.get("source_refs"),
-            submission.get("evidence_refs"),
-            guide.get("source_refs") if isinstance(guide, dict) else None,
-    ):
-        refs.extend(str(item).strip() for item in _as_sequence(value) if str(item).strip())
-    result = []
-    for ref in refs:
-        if ref not in result:
-            result.append(ref)
-    return result
-
-
 def _as_sequence(value):
     if value is None:
         return []
     if isinstance(value, list):
         return value
     return [value]
-
-
-def _missing_source_ref_detail(ref, prior_refs, evidence_context=None):
-    if _source_ref_satisfied(ref, prior_refs, evidence_context):
-        return None
-    detail = {"source_ref": str(ref or "").strip()}
-    glob_status = _glob_source_ref_status(ref, prior_refs, evidence_context)
-    if glob_status.get("is_glob") and glob_status.get("unread_glob_matches"):
-        detail["unread_glob_matches"] = glob_status.get("unread_glob_matches")
-    return detail
-
-
-def _source_ref_requires_prior_evidence(ref):
-    text = str(ref or "").strip()
-    lowered = text.lower()
-    if lowered == "interaction_debt":
-        return False
-    if lowered.startswith(("round:", "task_root:", "calendar:")):
-        return False
-    if lowered.startswith(("http://", "https://")):
-        return True
-    if re.match(r"^[a-zA-Z]:[\\/]", text):
-        return True
-    if text.startswith(("\\\\", "/")):
-        return True
-    if _source_ref_has_glob(text):
-        return True
-    if re.search(r"\.[A-Za-z0-9]{1,8}$", _strip_ref_fragment(text)):
-        return True
-    return "\\" in text or "/" in text
-
-
-def _validate_bootstrap_source_requirement_coverage(
-        submission,
-        refs_requiring_read,
-        evidence_context=None):
-    fields = submission.get("fields") or {}
-    requirements = fields.get("source_requirements")
-    if not isinstance(requirements, list) or not requirements:
-        return _validation_reject(
-            "bootstrap_source_requirements_required",
-            {
-                "source_refs": refs_requiring_read,
-                "message": (
-                    "File or URL source_refs require source_requirements. "
-                    "The model must state the requirements it understood from "
-                    "the source before creating task items and acceptance."
-                ),
-                "repair_hint": (
-                    "补 source_requirements=[{requirement_id, source_ref, summary}]；"
-                    "source_ref 必须指向已读 source_refs。"
-                ),
-            },
-        )
-
-    source_keys = _declared_source_refs_for_coverage(
-        refs_requiring_read,
-        evidence_context,
-    )
-    requirement_ids = []
-    invalid_requirements = []
-    unknown_source_refs = []
-    for index, requirement in enumerate(requirements, start=1):
-        if not isinstance(requirement, dict):
-            invalid_requirements.append(_invalid_requirement_detail(
-                f"req_{index:02d}",
-                index,
-                ["object"],
-            ))
-            continue
-        requirement_id = str(
-            requirement.get("requirement_id")
-            or requirement.get("req_id")
-            or requirement.get("id")
-            or ""
-        ).strip()
-        source_ref = str(requirement.get("source_ref") or "").strip()
-        summary = str(
-            requirement.get("summary")
-            or requirement.get("title")
-            or requirement.get("description")
-            or requirement.get("text")
-            or ""
-        ).strip()
-        missing_fields = []
-        if not requirement_id:
-            missing_fields.append("requirement_id")
-        if not source_ref:
-            missing_fields.append("source_ref")
-        if not summary:
-            missing_fields.append("summary")
-        if missing_fields:
-            invalid_requirements.append(_invalid_requirement_detail(
-                requirement_id or f"req_{index:02d}",
-                index,
-                missing_fields,
-            ))
-            continue
-        if requirement_id in requirement_ids:
-            invalid_requirements.append(_invalid_requirement_detail(
-                requirement_id,
-                index,
-                ["unique_requirement_id"],
-            ))
-            continue
-        if not _source_ref_satisfied(source_ref, source_keys):
-            unknown_source_refs.append(source_ref)
-            continue
-        requirement_ids.append(requirement_id)
-    if invalid_requirements:
-        return _validation_reject(
-            "bootstrap_invalid_source_requirements",
-            {
-                "invalid_requirements": invalid_requirements,
-                "message": (
-                    "Each source requirement needs a stable id, source_ref, "
-                    "and Chinese natural-language summary/title/description."
-                ),
-                "repair_hint": (
-                    "逐条补 source_requirements=[{requirement_id, source_ref, summary}]；"
-                    "source_ref 用已读来源，summary/title/description 用中文自然语言。"
-                ),
-            },
-        )
-    if unknown_source_refs:
-        example_ref = next(iter(sorted(source_keys)), "")
-        return _validation_reject(
-            "bootstrap_source_requirement_ref_unknown",
-            {
-                "unknown_source_refs": unknown_source_refs,
-                "source_refs": refs_requiring_read,
-                "prior_source_refs": sorted(
-                    _prior_source_evidence_refs(evidence_context or {})
-                ),
-                "corrected_example": {
-                    "source_requirements": [{
-                        "requirement_id": "req_01",
-                        "source_ref": example_ref,
-                        "summary": "概括该已读来源中与任务有关的要求",
-                    }],
-                },
-                "next_action": (
-                    "只引用已读来源；目录声明可由其已读后代文件满足，"
-                    "然后完整重提 bootstrap。"
-                ),
-            },
-        )
-    items = _as_sequence(fields.get("items"))
-    item_ids = []
-    requirement_covered_by_items = set()
-    items_missing_requirement_refs = []
-    unknown_requirement_refs = []
-    for index, item in enumerate(items, start=1):
-        item_id = _submitted_item_id(item, index)
-        item_ids.append(item_id)
-        refs = _submitted_requirement_refs(item)
-        if not refs:
-            items_missing_requirement_refs.append(item_id)
-            continue
-        for ref in refs:
-            if ref in requirement_ids:
-                requirement_covered_by_items.add(ref)
-            elif ref not in unknown_requirement_refs:
-                unknown_requirement_refs.append(ref)
-    if items_missing_requirement_refs:
-        return _validation_reject(
-            "bootstrap_item_requirement_refs_required",
-            {"items": items_missing_requirement_refs},
-            hint_details={
-                "known_requirements": requirement_ids,
-            },
-        )
-    if unknown_requirement_refs:
-        return _validation_reject(
-            "bootstrap_unknown_requirement_refs",
-            {
-                "requirement_refs": unknown_requirement_refs,
-                "known_requirements": requirement_ids,
-            },
-        )
-    missing_requirement_coverage = [
-        requirement_id for requirement_id in requirement_ids
-        if requirement_id not in requirement_covered_by_items
-    ]
-    if missing_requirement_coverage:
-        return _validation_reject(
-            "bootstrap_source_requirement_coverage_missing",
-            {"requirement_ids": missing_requirement_coverage},
-        )
-
-    acceptance = _as_sequence(fields.get("acceptance"))
-    acceptance_missing_refs = []
-    unknown_acceptance_item_refs = []
-    unknown_acceptance_requirement_refs = []
-    item_covered_by_acceptance = set()
-    for index, entry in enumerate(acceptance, start=1):
-        acc_id = _submitted_acceptance_id(entry, index)
-        item_refs = _submitted_list_field(entry, "item_refs")
-        requirement_refs = _submitted_requirement_refs(entry)
-        if not item_refs and not requirement_refs:
-            acceptance_missing_refs.append(acc_id)
-            continue
-        for ref in item_refs:
-            if ref in item_ids:
-                item_covered_by_acceptance.add(ref)
-            elif ref not in unknown_acceptance_item_refs:
-                unknown_acceptance_item_refs.append(ref)
-        for ref in requirement_refs:
-            if ref not in requirement_ids and ref not in unknown_acceptance_requirement_refs:
-                unknown_acceptance_requirement_refs.append(ref)
-    if acceptance_missing_refs:
-        return _validation_reject(
-            "bootstrap_acceptance_refs_required",
-            {"acceptance": acceptance_missing_refs},
-            hint_details={
-                "known_items": item_ids,
-                "known_requirements": requirement_ids,
-            },
-        )
-    if unknown_acceptance_item_refs or unknown_acceptance_requirement_refs:
-        return _validation_reject(
-            "bootstrap_acceptance_refs_unknown",
-            {
-                "item_refs": unknown_acceptance_item_refs,
-                "requirement_refs": unknown_acceptance_requirement_refs,
-            },
-            hint_details={
-                "known_items": item_ids,
-                "known_requirements": requirement_ids,
-            },
-        )
-    missing_item_acceptance = [
-        item_id for item_id in item_ids
-        if item_id not in item_covered_by_acceptance
-    ]
-    if missing_item_acceptance:
-        return _validation_reject(
-            "bootstrap_item_acceptance_coverage_missing",
-            {"items": missing_item_acceptance},
-        )
-    return {"status": "accepted"}
-
-
-def _declared_source_refs_for_coverage(refs_requiring_read, evidence_context=None):
-    source_keys = {
-        _source_ref_key(ref)
-        for ref in refs_requiring_read
-        if _source_ref_key(ref)
-    }
-    prior_refs = _prior_source_evidence_refs(evidence_context or {})
-    for ref in refs_requiring_read or []:
-        key = _source_ref_key(ref)
-        if _source_ref_is_directory(ref, evidence_context):
-            source_keys.update(
-                prior for prior in prior_refs if _path_is_under_root(prior, key)
-            )
-    for ref in refs_requiring_read or []:
-        if not _source_ref_has_glob(ref):
-            continue
-        for candidate in _glob_source_candidate_paths(ref, evidence_context):
-            key = _source_ref_key(candidate)
-            if key:
-                source_keys.add(key)
-    return source_keys
-
-
-def _submitted_item_id(item, index):
-    if isinstance(item, dict):
-        item_id = str(item.get("item_id") or item.get("id") or "").strip()
-        if item_id:
-            return item_id
-    return f"item_{index:02d}"
-
-
-def _submitted_acceptance_id(item, index):
-    if isinstance(item, dict):
-        acceptance_id = str(
-            item.get("acceptance_id")
-            or item.get("acc_id")
-            or item.get("id")
-            or ""
-        ).strip()
-        if acceptance_id:
-            return acceptance_id
-    return f"acc_{index:02d}"
-
-
-def _invalid_requirement_detail(requirement_id, index, missing_fields):
-    missing = [str(item) for item in missing_fields or [] if str(item).strip()]
-    return {
-        "requirement_id": str(requirement_id or f"req_{index:02d}").strip(),
-        "index": index,
-        "missing_fields": missing,
-        "repair_hint": _requirement_repair_hint(missing),
-    }
-
-
-def _requirement_repair_hint(missing_fields):
-    if "summary" in (missing_fields or []):
-        return "为该来源需求补充中文自然语言 summary/title/description。"
-    if "source_ref" in (missing_fields or []):
-        return "为该来源需求补充已读取来源的 source_ref。"
-    if "requirement_id" in (missing_fields or []):
-        return "为该来源需求补充稳定 ID，例如 req_01。"
-    if "unique_requirement_id" in (missing_fields or []):
-        return "为该来源需求换一个不重复的稳定 ID。"
-    return "按 task_bootstrap 提示补齐该来源需求。"
 
 
 def _submitted_requirement_refs(item):
@@ -2113,137 +1830,6 @@ def _submitted_list_field(item, field):
     ]
 
 
-def _source_ref_key(ref):
-    text = str(ref or "").strip()
-    if text.lower().startswith(("http://", "https://")):
-        return _canonical_url_ref(text)
-    return _canonical_file_ref(text)
-
-
-def _prior_source_evidence_refs(context):
-    refs = set()
-    for result in context.get("prior_general_tool_results") or []:
-        if not isinstance(result, dict):
-            continue
-        status = str(result.get("status") or "").strip().lower()
-        if status not in {"ok", "success", "accepted", "applied"}:
-            continue
-        tool_id = str(result.get("tool_id") or "").strip()
-        if tool_id == "file_read":
-            path = str(result.get("path") or "").strip()
-            key = _canonical_file_ref(path)
-            if key:
-                refs.add(key)
-        elif tool_id == "web_fetch":
-            url = str(result.get("url") or "").strip()
-            key = _canonical_url_ref(url)
-            if key:
-                refs.add(key)
-    refs.update(_workbench_source_evidence_refs(context))
-    return refs
-
-
-def _workbench_source_evidence_refs(context):
-    if not isinstance(context, dict):
-        return set()
-    workbench_store = context.get("workbench_store")
-    if not hasattr(workbench_store, "load_source_read_evidence"):
-        return set()
-    try:
-        entries = workbench_store.load_source_read_evidence()
-    except Exception:
-        return set()
-    refs = set()
-    for entry in entries or []:
-        if not isinstance(entry, dict):
-            continue
-        status = str(entry.get("status") or "").strip().lower()
-        if status not in {"ok", "success", "accepted", "applied"}:
-            continue
-        tool_id = str(entry.get("tool_id") or "").strip()
-        if tool_id == "file_read":
-            value = (
-                entry.get("path")
-                or entry.get("file_path")
-                or entry.get("source_ref")
-            )
-            key = _canonical_file_ref(value)
-        elif tool_id == "web_fetch":
-            value = (
-                entry.get("url")
-                or entry.get("source_url")
-                or entry.get("source_ref")
-            )
-            key = _canonical_url_ref(value)
-        else:
-            key = ""
-        if key and _source_evidence_matches_task_root(entry, key, tool_id, context):
-            refs.add(key)
-    return refs
-
-
-def _source_evidence_matches_task_root(entry, key, tool_id, context):
-    task_root = _canonical_file_ref((context or {}).get("task_root"))
-    if not task_root:
-        return True
-    entry_root = _canonical_file_ref((entry or {}).get("task_root"))
-    if entry_root:
-        return entry_root == task_root
-    if tool_id != "file_read":
-        return True
-    if not os.path.isabs(key):
-        return False
-    return _path_is_under_root(key, task_root)
-
-
-def _path_is_under_root(path, root):
-    try:
-        path = _canonical_file_ref(path)
-        root = _canonical_file_ref(root)
-        return os.path.commonpath([path, root]) == root
-    except (OSError, ValueError):
-        return False
-
-
-def _source_ref_satisfied(ref, prior_refs, evidence_context=None):
-    glob_status = _glob_source_ref_status(ref, prior_refs, evidence_context)
-    if glob_status.get("is_glob"):
-        return bool(glob_status.get("satisfied"))
-    key = _source_ref_key(ref)
-    if not key:
-        return False
-    if key in prior_refs:
-        return True
-    if str(ref or "").strip().lower().startswith(("http://", "https://")):
-        return False
-    if _source_ref_is_directory(ref, evidence_context):
-        return any(_path_is_under_root(prior, key) for prior in prior_refs)
-    if os.path.isabs(key):
-        return False
-    basename = os.path.basename(key)
-    if not basename:
-        return False
-    basename_matches = [
-        prior for prior in prior_refs
-        if os.path.basename(prior) == basename
-    ]
-    if len(basename_matches) == 1:
-        return True
-    return _relative_source_path_suffix_known(key, prior_refs)
-
-
-def _source_ref_is_directory(ref, evidence_context=None):
-    key = _source_ref_key(ref)
-    if not key or str(ref or "").strip().lower().startswith(("http://", "https://")):
-        return False
-    task_root = _canonical_file_ref((evidence_context or {}).get("task_root"))
-    return (
-        key == task_root
-        or str(ref or "").rstrip().endswith(("/", "\\"))
-        or os.path.isdir(key)
-    )
-
-
 def _resolve_source_ref_alias(ref, evidence_context=None):
     text = str(ref or "").strip()
     if not text:
@@ -2252,129 +1838,6 @@ def _resolve_source_ref_alias(ref, evidence_context=None):
     # adapter boundary: it verifies common aliases are acceptable without
     # rewriting task content or inventing source semantics.
     return text
-
-
-def _relative_source_path_suffix_known(canonical_path, prior_refs):
-    return any(
-        _relative_source_path_suffix_matches(canonical_path, prior)
-        for prior in prior_refs or []
-    )
-
-
-def _relative_source_path_suffix_matches(canonical_path, prior):
-    if not canonical_path or os.path.isabs(canonical_path):
-        return False
-    if "\\" not in canonical_path and "/" not in canonical_path:
-        return False
-    prior_path = _canonical_file_ref(prior)
-    if not prior_path or not os.path.isabs(prior_path):
-        return False
-    suffix = os.sep + canonical_path.strip("\\/")
-    if prior_path.endswith(suffix):
-        return True
-    parts = canonical_path.strip("\\/").split(os.sep)
-    if len(parts) > 1:
-        trimmed = os.sep.join(parts[1:])
-        return prior_path.endswith(os.sep + trimmed)
-    return False
-
-
-def _glob_source_ref_status(ref, prior_refs, evidence_context=None):
-    text = str(ref or "").strip()
-    if not _source_ref_has_glob(text):
-        return {"is_glob": False, "satisfied": False}
-    candidates = _glob_source_candidate_paths(text, evidence_context)
-    if candidates:
-        unread = [
-            candidate for candidate in candidates
-            if not _source_ref_satisfied(candidate, prior_refs)
-        ]
-        return {
-            "is_glob": True,
-            "satisfied": not unread,
-            "unread_glob_matches": unread,
-        }
-    patterns = _glob_source_patterns(text, evidence_context)
-    matched_prior = []
-    for prior in prior_refs or []:
-        for pattern in patterns:
-            if fnmatch.fnmatch(prior, pattern):
-                matched_prior.append(prior)
-                break
-    return {
-        "is_glob": True,
-        "satisfied": bool(matched_prior),
-        "unread_glob_matches": [],
-    }
-
-
-def _glob_source_candidate_paths(ref, evidence_context=None):
-    candidates = []
-    known = set()
-    for pattern in _glob_source_patterns(ref, evidence_context):
-        for match in glob.glob(pattern):
-            try:
-                path = Path(match).resolve()
-            except (OSError, RuntimeError, ValueError):
-                continue
-            if not path.is_file():
-                continue
-            canonical = _canonical_file_ref(str(path))
-            if canonical and canonical not in known:
-                known.add(canonical)
-                candidates.append(str(path))
-    return candidates
-
-
-def _glob_source_patterns(ref, evidence_context=None):
-    text = _strip_ref_fragment(str(ref or "").strip())
-    if not text:
-        return []
-    raw = text.replace("\\", os.sep).replace("/", os.sep)
-    patterns = []
-    if os.path.isabs(raw) or re.match(r"^[a-zA-Z]:[\\/]", text):
-        patterns.append(_canonical_file_ref(raw))
-    else:
-        context = evidence_context if isinstance(evidence_context, dict) else {}
-        task_root_value = str(context.get("task_root") or "").strip()
-        task_root = None
-        if task_root_value:
-            try:
-                task_root = Path(task_root_value).resolve()
-            except (OSError, RuntimeError, ValueError):
-                task_root = None
-        roots = []
-        if task_root is not None:
-            roots.extend([task_root, task_root.parent])
-        if not roots:
-            patterns.append(_canonical_file_ref(raw))
-        for root in roots:
-            patterns.append(_canonical_file_ref(str(root / raw)))
-    result = []
-    for pattern in patterns:
-        if pattern and pattern not in result:
-            result.append(pattern)
-    return result
-
-
-def _source_ref_has_glob(value):
-    text = _strip_ref_fragment(str(value or "").strip())
-    return any(char in text for char in ("*", "?"))
-
-
-def _canonical_url_ref(value):
-    text = str(value or "").strip()
-    if not text.lower().startswith(("http://", "https://")):
-        return ""
-    return _strip_ref_fragment(text).rstrip("/").lower()
-
-
-def _canonical_file_ref(value):
-    text = _strip_ref_fragment(str(value or "").strip())
-    if not text:
-        return ""
-    text = re.sub(r":\d+(?:-\d+)?$", "", text)
-    return os.path.normcase(os.path.normpath(text))
 
 
 def _strip_ref_fragment(value):
@@ -2387,8 +1850,6 @@ def _strip_ref_fragment(value):
 def _base_receipt(guide_id):
     return {
         "tool_id": "guide_submit",
-        "tool_family": "protocol_tool",
-        "tool_class": "sync_tool",
         "source": "guide_submit",
         "protocol_tool_receipt": True,
         "guide_id": guide_id,
@@ -2549,6 +2010,37 @@ def _guide_definition_coordinates(guide):
     ]
 
 
+def _pending_ids(tracker):
+    loader = getattr(tracker, "pending_ids", None)
+    if not callable(loader):
+        return []
+    values = loader()
+    return [
+        str(value or "").strip()
+        for value in values or []
+        if str(value or "").strip()
+    ]
+
+
+def _memory_compression_pending_ids(evidence_context):
+    memory_store = (evidence_context or {}).get("memory_store")
+    if memory_store is None:
+        return []
+    from data.memory_compression_store import MemoryCompressionManager
+
+    try:
+        batch = MemoryCompressionManager(
+            memory_store=memory_store
+        ).current_batch()
+    except Exception:
+        return []
+    return [
+        str(item.get("mem_id") or "")
+        for item in (batch or {}).get("items") or []
+        if str(item.get("mem_id") or "")
+    ]
+
+
 def _validation_reject(reason, details=None, *, hint_details=None):
     details = details or {}
     hint_source = {**details, **(hint_details or {})}
@@ -2623,33 +2115,27 @@ def _guide_error_hint(reason, details=None):
             if misplaced else
             "删除未声明字段，只保留 expected.allowed_fields 后完整重提。"
         )
-    elif reason == "bootstrap_wait_for_tool_results":
-        retry = "next_frame"
-        attempted = attempted or {"current_tool_ids": details.get("current_tool_ids") or []}
-        current = current or {"tool_results_visible": False}
+    elif reason in {
+            "task_plan_revision_reason_required",
+            "task_plan_revision_empty",
+            "task_plan_revision_fields_unknown",
+            "task_plan_revision_lifecycle_fields_forbidden",
+            "task_plan_revision_settled_record_immutable",
+            "task_plan_record_fields_unknown",
+    }:
+        attempted = attempted or details
         expected = expected or {
-            "current_tool_ids": [],
-            "submission_frame": "next_reaction",
+            "option_id": TASK_PLAN_REVISE_OPTION_ID,
+            "reason": "说明结构变化原因",
+            "allowed_fields": [
+                "source_refs", "source_requirements", "items",
+                "acceptance", "risk_notes",
+            ],
         }
-        next_action = "等待本帧工具结果进入下一帧，再基于可见结果提交 submit_initial_guide。"
-    elif reason == "bootstrap_source_not_read":
-        retry = "after_tool_result"
-        attempted = attempted or {
-            "source_refs": details.get("missing_source_refs") or [],
-        }
-        current = current or {"read_source_refs": details.get("prior_source_refs") or []}
-        expected = expected or {"read_source_refs": details.get("missing_source_refs") or []}
-        next_action = "先逐项 file_read/web_fetch missing_source_refs，等待结果进入下一帧，再用真实已读来源完整重提。"
-    elif reason == "bootstrap_source_requirements_required":
-        attempted = attempted or {"source_refs": details.get("source_refs") or []}
-        expected = expected or {
-            "source_requirements": [{
-                "requirement_id": "req_01",
-                "source_ref": "已读 source_ref",
-                "summary": "从该来源实际读到的要求",
-            }],
-        }
-        next_action = "为每个已读 source_ref 提交 requirement_id/source_ref/summary，再完整重提 bootstrap。"
+        next_action = (
+            "只提交需要替换的完整计划片段并补充外层 reason；"
+            "不得提交 status/evidence_refs，也不得删除或改写已完成记录。"
+        )
     elif reason == "bootstrap_invalid_source_requirements":
         attempted = attempted or {
             "invalid_requirements": details.get("invalid_requirements") or [],
@@ -2662,12 +2148,11 @@ def _guide_error_hint(reason, details=None):
         attempted = attempted or {
             "source_refs": details.get("unknown_source_refs") or [],
         }
-        current = current or {"read_source_refs": details.get("prior_source_refs") or []}
         expected = expected or {
             "source_refs": details.get("source_refs") or [],
             "corrected_example": details.get("corrected_example") or {},
         }
-        next_action = next_action or "只引用已读真实来源，按 corrected_example 完整重提 bootstrap。"
+        next_action = next_action or "只引用当前计划声明的 source_refs，修正后完整重提。"
     elif reason == "bootstrap_item_requirement_refs_required":
         attempted = attempted or {"items": details.get("items") or []}
         expected = expected or {"requirement_refs": "每个 item 至少一个已声明 requirement_id"}
@@ -2732,7 +2217,10 @@ def _guide_error_hint(reason, details=None):
             "item_ids": details.get("known_item_ids") or [],
             "acceptance_ids": details.get("known_acceptance_ids") or [],
         }
-        next_action = "使用 expected 中的真实记录 ID，提交结构化 items/acceptance 状态更新。"
+        next_action = (
+            "逐字复制 expected 中的真实记录 ID，提交结构化 items/acceptance "
+            "状态更新；禁止改变大小写、连字符、下划线或补零。"
+        )
     elif reason == "task_completion_evidence_required":
         retry = "after_new_evidence"
         attempted = attempted or {"records": details.get("missing_evidence_refs") or []}

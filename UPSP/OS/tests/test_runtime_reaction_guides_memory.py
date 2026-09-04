@@ -252,8 +252,6 @@ class TestRuntimeReactionGuidesMemory(RuntimeTestMixin):
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_inverted_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_domain_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_step_toolbelt_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda: "")
         monkeypatch.setattr(assembler, "_build_statusbar_with_relations", lambda *args, **kwargs: "")
 
         hidden_snapshots = []
@@ -336,8 +334,6 @@ class TestRuntimeReactionGuidesMemory(RuntimeTestMixin):
         monkeypatch.setattr(assembler, "_build_association_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_inverted_index", lambda *args, **kwargs: "")
         monkeypatch.setattr(assembler, "_build_relation_domain_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_step_toolbelt_index", lambda *args, **kwargs: "")
-        monkeypatch.setattr(assembler, "_build_workbench_focus_projection", lambda: "")
         monkeypatch.setattr(assembler, "_build_statusbar_with_relations", lambda *args, **kwargs: "")
 
         hidden_snapshots = []

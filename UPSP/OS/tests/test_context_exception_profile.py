@@ -172,9 +172,8 @@ def test_required_context_natural_absence_remains_empty(tmp_path):
     assert assembler._task_board_recent_context_entries() == []
 
 
-def test_task_board_and_active_focus_read_fail_closed(tmp_path, monkeypatch):
+def test_task_board_and_resident_source_read_fail_closed(tmp_path, monkeypatch):
     from assembly.context import ContextAssembler
-    from data import container_store as container_store_module
     from data import workbench as workbench_module
     from errors import RequiredContextError
 
@@ -190,23 +189,23 @@ def test_task_board_and_active_focus_read_fail_closed(tmp_path, monkeypatch):
     with pytest.raises(RequiredContextError, match="task_board"):
         assembler._build_task_board_projection()
 
-    monkeypatch.setattr(
-        workbench_module,
-        "WorkbenchStore",
-        lambda: type("FocusedWorkbench", (), {
-            "load_status": lambda self: {"base": {"focus": "PRJ-1"}}
-        })(),
-    )
-    monkeypatch.setattr(
-        container_store_module,
-        "ContainerStore",
-        lambda: type("BrokenContainers", (), {
-            "read_focus_projection": lambda self, focus: (
-                (_ for _ in ()).throw(OSError("focus unavailable")))
-        })(),
-    )
-    with pytest.raises(RequiredContextError, match="workbench_focus"):
-        assembler._build_workbench_focus_projection()
+    assembler.resident_store = type("ResidentStore", (), {
+        "load": lambda self: {
+            "schema_version": "resident_list.v1",
+            "revision": 1,
+            "next_sequence": 2,
+            "items": [{
+                "sequence": 1,
+                "item_type": "container",
+                "item_id": "PRJ-1",
+                "target_file": "plan.md",
+            }],
+        }
+    })()
+    monkeypatch.setattr(assembler, "_load_container_content", lambda *_: "")
+    with pytest.raises(RequiredContextError, match="resident_list") as exc_info:
+        assembler.resident_mount_requests()
+    assert str(exc_info.value.cause) == "resident_source_missing:PRJ-1"
 
 
 def test_execution_permission_read_failure_never_falls_back_to_unlimited():

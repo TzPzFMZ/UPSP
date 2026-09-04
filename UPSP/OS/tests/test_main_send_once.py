@@ -85,7 +85,7 @@ def test_spec607_runtime_round_start_audits_actual_context_profile():
         def pause(self):
             pass
 
-        def resume(self):
+        def resume(self, run_tick=True):
             pass
 
     class FakeAudit:
@@ -111,7 +111,10 @@ def test_spec607_runtime_round_start_audits_actual_context_profile():
     object.__setattr__(runtime, "services", SimpleNamespace(
         sm=FakeStateStore(),
         hb=FakeHeartbeat(),
-        assembler=SimpleNamespace(context_profile="full"),
+            assembler=SimpleNamespace(
+                context_profile="full",
+                visible_container_targets=lambda: (),
+            ),
         executor=SimpleNamespace(round_context_window_tokens=None),
         cfg=SimpleNamespace(
             get_round_context_window_tokens=lambda: 1_000_000),
@@ -136,7 +139,7 @@ def test_spec607_runtime_round_start_audits_actual_context_profile():
             user_input_text="profile probe",
             interaction_meta={},
             setup_messages=[],
-            internal_handoff="",
+            setup_facts="",
             frame_ref=FrameRef.for_axis(
                 607, "setup", 1, trigger_id="T00000001"),
             intent={
@@ -147,11 +150,10 @@ def test_spec607_runtime_round_start_audits_actual_context_profile():
     )
     object.__setattr__(runtime, "reaction_loop_runner", SimpleNamespace())
     object.__setattr__(runtime, "cleanup_pipeline", SimpleNamespace())
-    object.__setattr__(runtime, "_wake_if_sleeping", lambda: None)
     object.__setattr__(runtime, "_update_daily_if_needed", lambda *_args: None)
     object.__setattr__(
         runtime,
-        "_prepare_chronicle_focus_for_round",
+        "_prepare_chronicle_write_scope_for_round",
         lambda *_args: None,
     )
     object.__setattr__(runtime, "_run_cleanup", lambda *_args, **_kwargs: None)

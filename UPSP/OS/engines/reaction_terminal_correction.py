@@ -20,7 +20,6 @@ REACTION_ACTIVITY_KEYS = (
     "tool_summaries",
     "relation_card_declarations",
     "memory_write_declarations",
-    "memory_annotation_declarations",
     "memory_link_update_declarations",
     "memory_container_create_declarations",
     "memory_container_write_declarations",
@@ -29,7 +28,6 @@ REACTION_ACTIVITY_KEYS = (
     "chronicle_write_declarations",
     "alert_mode_settle_declarations",
     "fault_record_declarations",
-    "container_focus_declarations",
     "mount_cancel_requests",
 )
 

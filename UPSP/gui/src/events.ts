@@ -9,12 +9,19 @@ import type {
 import { t } from "./i18n";
 import { initMarkdownInteractions } from "./markdown";
 import { openPersonaCreation } from "./bootstrap";
+import { rememberTimelineDisclosure } from "./conversation-timeline";
+import { scrollConversationToBottomIfSticky, updateConversationStickyState } from "./conversation-scroll";
 import { els, personaCatalogProjection, runtimeProjection, settingsProjection, state } from "./state";
+import { initSystemWindowSplit } from "./system-window-split";
 import {
   depositionPage,
   exportCurrentEvidence,
   loadActiveDepositionDetail,
   loadDepositionDetail,
+  loadTimelineNodeDetail,
+  loadFrameDetail,
+  fetchLedgerEventCard,
+  loadSelectedRuntimeDetails,
   pollAbout,
   pollDeposition,
   pollPersonaCore,
@@ -28,7 +35,6 @@ import {
   refreshRuntimeUi,
   retryProjection,
   resolveModelContextWindow,
-  submitContainerFocus,
   submitPeriodicMemory,
   submitRuntimeMessage,
   submitRuntimePermissionChange,
@@ -173,6 +179,7 @@ function settingValues(root: ParentNode): Record<string, SettingValue> {
 }
 
 export function initEvents(): void {
+  initSystemWindowSplit();
   document.addEventListener("scroll", (event) => {
     const nav = event.target instanceof HTMLElement
       ? event.target.closest<HTMLElement>(".runtime-context-workspace > nav")
@@ -180,8 +187,26 @@ export function initEvents(): void {
     const rail = nav?.parentElement?.querySelector<HTMLElement>(".context-diff-rail");
     if (nav && rail) rail.scrollTop = nav.scrollTop;
   }, true);
+  els.chatThread.addEventListener("scroll", () => {
+    updateConversationStickyState(els.chatThread, state);
+  }, { passive: true });
+  els.chatThread.addEventListener("toggle", () => {
+    window.requestAnimationFrame(() => {
+      scrollConversationToBottomIfSticky(els.chatThread, state);
+    });
+  }, true);
   els.chatThread.addEventListener("click", (event) => {
-    const button = eventElement(event)?.closest<HTMLButtonElement>("[data-tool-approval-decision]");
+    const target = eventElement(event);
+    const summary = target?.closest<HTMLElement>("details[data-dialogue-node-id] > summary");
+    const details = summary?.parentElement;
+    if (details instanceof HTMLDetailsElement) {
+      const opening = !details.open;
+      rememberTimelineDisclosure(details, opening);
+      const round = Number(details.dataset.timelineDetailRound);
+      const ref = details.dataset.timelineDetailRef || "";
+      if (opening && Number.isInteger(round) && ref) void loadTimelineNodeDetail(round, ref);
+    }
+    const button = target?.closest<HTMLButtonElement>("[data-tool-approval-decision]");
     if (!button) return;
     const approvalId = button.dataset.toolApprovalId || "";
     const decision = button.dataset.toolApprovalDecision;
@@ -434,7 +459,14 @@ export function initEvents(): void {
     if (ledgerEvent) {
       const round = Number(ledgerEvent.dataset.ledgerRound);
       const cardId = ledgerEvent.dataset.ledgerCardId || "";
-      if (Number.isInteger(round) && cardId) openLedgerEvent(round, cardId);
+      if (Number.isInteger(round) && cardId) {
+        void fetchLedgerEventCard(round, cardId).then((card) => {
+          if (card) openLedgerEvent(round, cardId, card);
+        }).catch((error: unknown) => {
+          runtimeProjection.exportFeedback = `${t("读取事件详情失败")}：${error instanceof Error ? error.message : String(error)}`;
+          if (state.activePage === "audit") renderStage("audit");
+        });
+      }
       return;
     }
 
@@ -461,6 +493,14 @@ export function initEvents(): void {
 
     if (target.closest("[data-runtime-relay]")) {
       submitRuntimeRelay();
+      return;
+    }
+
+    const frameDetail = target.closest<HTMLButtonElement>("[data-load-frame-detail]");
+    if (frameDetail) {
+      const round = Number(frameDetail.dataset.detailRound);
+      const frameId = frameDetail.dataset.detailFrame || "";
+      if (Number.isInteger(round) && frameId) void loadFrameDetail(round, frameId, { force: true });
       return;
     }
 
@@ -492,6 +532,7 @@ export function initEvents(): void {
         return;
       }
       setPage(pageId, tabId);
+      loadSelectedRuntimeDetails(pageId, tabId || getActivePageTab(pageId));
       if (pageId === "persona") void pollPersonaProjection();
       loadActiveDepositionDetail(pageId);
       requestContextPrefixDiffIfVisible();
@@ -510,6 +551,7 @@ export function initEvents(): void {
     if (tabButton) {
       setActivePageTab(state.activePage, tabButton.dataset.pageTab || "");
       renderStageAndFocus(state.activePage, `[data-page-tab="${CSS.escape(state.activeTabs[state.activePage])}"]`);
+      loadSelectedRuntimeDetails(state.activePage, getActivePageTab(state.activePage));
       if (state.activePage === "persona") void pollPersonaProjection();
       loadActiveDepositionDetail(state.activePage);
       requestContextPrefixDiffIfVisible();
@@ -528,12 +570,6 @@ export function initEvents(): void {
       setActivePageTab("context", "content");
       renderStageAndFocus("context", `[data-runtime-pane="${CSS.escape(state.activeRuntimePane)}"]`);
       requestContextPrefixDiffIfVisible();
-      return;
-    }
-
-    const focusButton = target.closest<HTMLElement>("[data-container-focus-action]");
-    if (focusButton) {
-      submitContainerFocus(focusButton.dataset.containerFocusAction || "", focusButton.dataset.containerId || "");
       return;
     }
 
@@ -623,11 +659,17 @@ export function initEvents(): void {
 
   els.chatThread.addEventListener("keydown", (event) => {
     const target = eventElement(event);
-    const summary = target?.closest<HTMLElement>(".chat-tool-group > summary, .chat-tool-step > summary");
+    const summary = target?.closest<HTMLElement>("details[data-dialogue-node-id] > summary");
     if (!summary || !["Enter", " "].includes(event.key)) return;
     event.preventDefault();
     const details = summary.parentElement;
-    if (details instanceof HTMLDetailsElement) details.open = !details.open;
+    if (details instanceof HTMLDetailsElement) {
+      details.open = !details.open;
+      rememberTimelineDisclosure(details, details.open);
+      const round = Number(details.dataset.timelineDetailRound);
+      const ref = details.dataset.timelineDetailRef || "";
+      if (details.open && Number.isInteger(round) && ref) void loadTimelineNodeDetail(round, ref);
+    }
   });
 
   els.runtimeComposer.addEventListener("submit", (event) => void submitRuntimeMessage(event as SubmitEvent));
@@ -795,6 +837,7 @@ export function initEvents(): void {
     if (!selector) return;
     state.selectedLedgerRound = selector.value === "latest" ? null : Number(selector.value);
     renderStageAndFocus("audit", "[data-ledger-round]");
+    loadSelectedRuntimeDetails("audit", "ledger");
   });
   document.addEventListener("change", (event) => {
     const selector = eventElement(event)?.closest<HTMLSelectElement>("[data-context-round]");
@@ -802,6 +845,7 @@ export function initEvents(): void {
     state.selectedContextRound = selector.value === "latest" ? null : Number(selector.value);
     state.selectedContextFrame = null;
     renderStageAndFocus("context", "[data-context-round]");
+    loadSelectedRuntimeDetails("context", getActivePageTab("context"));
     requestContextPrefixDiffIfVisible();
   });
   document.addEventListener("change", (event) => {
@@ -809,6 +853,7 @@ export function initEvents(): void {
     if (!selector) return;
     state.selectedContextFrame = selector.value === "latest" ? null : selector.value;
     renderStageAndFocus("context", "[data-context-frame]");
+    loadSelectedRuntimeDetails("context", getActivePageTab("context"));
     requestContextPrefixDiffIfVisible();
   });
   document.addEventListener("change", (event) => {
@@ -817,12 +862,14 @@ export function initEvents(): void {
     state.selectedTaskRound = selector.value === "latest" ? null : Number(selector.value);
     state.selectedTaskFrame = null;
     renderStageAndFocus("run", "[data-task-round]");
+    loadSelectedRuntimeDetails("run", "tools");
   });
   document.addEventListener("change", (event) => {
     const selector = eventElement(event)?.closest<HTMLSelectElement>("[data-task-frame]");
     if (!selector) return;
     state.selectedTaskFrame = selector.value === "latest" ? null : selector.value;
     renderStageAndFocus("run", "[data-task-frame]");
+    loadSelectedRuntimeDetails("run", "tools");
   });
   els.messageInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {

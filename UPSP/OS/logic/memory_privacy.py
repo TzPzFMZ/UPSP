@@ -102,8 +102,6 @@ def _receipt(status, declaration, reason="", mem_id=None, private_path=None):
     raw_mem_id = _clean_text(declaration.get("mem_id")) if isinstance(declaration, dict) else ""
     return {
         "tool_id": "memory_privacy_mark",
-        "tool_family": "protocol_tool",
-        "tool_class": "sync_tool",
         "status": status,
         "source": "memory_privacy_declaration",
         "mem_id": mem_id or raw_mem_id,
@@ -120,8 +118,6 @@ def _declassify_receipt(status, declaration, reason="", mem_id=None, result=None
     mode = _clean_text(declaration.get("mode")) if isinstance(declaration, dict) else ""
     receipt = {
         "tool_id": "memory_privacy_declassify",
-        "tool_family": "protocol_tool",
-        "tool_class": "sync_tool",
         "status": status,
         "source": "memory_privacy_declassify_declaration",
         "mem_id": mem_id or raw_mem_id,
@@ -137,11 +133,9 @@ def _declassify_receipt(status, declaration, reason="", mem_id=None, result=None
     return receipt
 
 
-def private_memory_not_visible_receipt(tool_id, source, mem_id, tool_class="sync_tool"):
+def private_memory_not_visible_receipt(tool_id, source, mem_id):
     return {
         "tool_id": tool_id,
-        "tool_family": "protocol_tool",
-        "tool_class": tool_class,
         "status": "private_memory_not_visible",
         "source": source,
         "mem_id": mem_id,

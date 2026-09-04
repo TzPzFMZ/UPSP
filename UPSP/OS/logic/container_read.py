@@ -11,8 +11,6 @@ def _clean(value):
 def _base_receipt(request):
     return {
         "tool_id": "container_read",
-        "tool_family": "protocol_tool",
-        "tool_class": "read_tool",
         "status": "",
         "source": "protocol_tool_request",
         "container_id": _clean(request.get("container_id")) if isinstance(request, dict) else "",
@@ -23,6 +21,8 @@ def _base_receipt(request):
         "range_applied": None,
         "total_lines": 0,
         "total_chars": 0,
+        "resident_persisted": False,
+        "resident_revision": None,
         "protocol_tool_receipt": True,
     }
 
@@ -35,6 +35,8 @@ def _reject(receipt, reason):
 def apply_container_read_requests(requests, modules=None):
     modules = modules or {}
     container_store = modules.get("container_store") or ContainerStore()
+    assembler = modules.get("assembler")
+    resident_store = modules.get("resident_store")
     receipts = []
     mounts = []
     for request in requests or []:
@@ -58,6 +60,43 @@ def apply_container_read_requests(requests, modules=None):
         except Exception:
             receipts.append(_reject(receipt, "container_not_found"))
             continue
+        try:
+            full_result = container_store.read_container_content(
+                container_id,
+                target_file=result.get("target_file") or None,
+            )
+            if assembler is None or resident_store is None:
+                raise RuntimeError("resident_context_unavailable")
+            resident_item = {
+                "item_type": "container",
+                "item_id": result.get("container_id", container_id),
+                "target_file": result.get("target_file", ""),
+            }
+            preflight = assembler.preflight_resident_add(
+                resident_item,
+                content_overrides={
+                    (
+                        "container",
+                        result.get("container_id", container_id),
+                        result.get("target_file", ""),
+                    ): full_result.get("content", ""),
+                },
+            )
+            resident = resident_store.add(
+                resident_item,
+                candidate=preflight["document"],
+                expected_revision=preflight["expected_revision"],
+            )
+            resident["resident_chars"] = preflight["chars"]
+        except ValueError as exc:
+            receipts.append(_reject(receipt, str(exc)))
+            continue
+        except Exception as exc:
+            receipts.append(_reject(
+                receipt,
+                str(exc) or "resident_list_write_failed",
+            ))
+            continue
         receipt.update({
             "status": "accepted",
             "container_id": result.get("container_id", container_id),
@@ -72,6 +111,9 @@ def apply_container_read_requests(requests, modules=None):
             "range_applied": result.get("range_applied"),
             "total_lines": result.get("total_lines", 0),
             "total_chars": result.get("total_chars", 0),
+            "resident_persisted": True,
+            "resident_revision": resident.get("revision"),
+            "resident_chars": resident.get("resident_chars", 0),
         })
         reason = _clean(request.get("reason"))
         if reason:
@@ -83,12 +125,10 @@ def apply_container_read_requests(requests, modules=None):
             "source": "container_read",
             "target_file": receipt.get("target_file", ""),
             "path": receipt.get("path", ""),
-            "content": receipt.get("content", ""),
-            "read_mode": receipt.get("read_mode") or "full",
-            "range_requested": receipt.get("range_requested"),
-            "range_applied": receipt.get("range_applied"),
-            "total_lines": receipt.get("total_lines", 0),
-            "total_chars": receipt.get("total_chars", 0),
+            "content": full_result.get("content", ""),
+            "read_mode": "full",
+            "total_lines": full_result.get("total_lines", 0),
+            "total_chars": full_result.get("total_chars", 0),
         }
         mounts.append({
             key: value for key, value in mount.items() if value is not None

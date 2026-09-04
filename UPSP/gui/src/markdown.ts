@@ -9,6 +9,7 @@ import python from "highlight.js/lib/languages/python";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
+import { mutateScrollLayout } from "./conversation-scroll";
 import { t } from "./i18n";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
@@ -34,6 +35,7 @@ interface ImageSize {
 const htmlCache = new Map<string, { source: string; html: string }>();
 const documentPrefixes = new Map<string, string>();
 const approvedImageDocuments = new Set<string>();
+const markdownStickResolvers = new WeakMap<HTMLElement, () => boolean>();
 const imageLoads = new Map<string, Promise<ImageSize>>();
 const mermaidRenders = new Map<string, Promise<string>>();
 let documentSequence = 0;
@@ -253,24 +255,6 @@ function markdownDocument(target: Element): HTMLElement | null {
   return target.closest<HTMLElement>(".md-document[data-markdown-document-id]");
 }
 
-function scrollMutation(container: HTMLElement | null, element: HTMLElement, mutate: () => void): void {
-  if (!container) {
-    mutate();
-    return;
-  }
-  const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-  const atBottom = distanceFromBottom <= 24;
-  const containerTop = container.getBoundingClientRect().top;
-  const before = element.getBoundingClientRect();
-  const aboveViewport = before.bottom <= containerTop + 1;
-  const oldHeight = element.offsetHeight;
-  mutate();
-  window.requestAnimationFrame(() => {
-    if (atBottom) container.scrollTop = container.scrollHeight;
-    else if (aboveViewport) container.scrollTop += element.offsetHeight - oldHeight;
-  });
-}
-
 function preloadImage(url: string): Promise<ImageSize> {
   const existing = imageLoads.get(url);
   if (existing) return existing;
@@ -288,7 +272,11 @@ function preloadImage(url: string): Promise<ImageSize> {
   return request;
 }
 
-async function loadImage(button: HTMLButtonElement, scrollContainer: HTMLElement | null): Promise<void> {
+async function loadImage(
+  button: HTMLButtonElement,
+  scrollContainer: HTMLElement | null,
+  shouldStickToBottom?: () => boolean,
+): Promise<void> {
   if (button.dataset.markdownImageLoading === "true") return;
   const image = remoteImage(button.dataset.markdownImageUrl);
   if (!image) return;
@@ -306,16 +294,20 @@ async function loadImage(button: HTMLButtonElement, scrollContainer: HTMLElement
     rendered.width = size.width;
     rendered.height = size.height;
     rendered.src = image.url;
-    scrollMutation(scrollContainer, button, () => button.replaceWith(rendered));
+    mutateScrollLayout(scrollContainer, button, () => button.replaceWith(rendered), shouldStickToBottom);
   } catch {
     button.dataset.markdownImageLoading = "false";
     if (status) status.textContent = t("加载失败，点击重试 · {domain}", { domain: image.domain });
   }
 }
 
-function loadDocumentImages(documentRoot: HTMLElement, scrollContainer: HTMLElement | null): void {
+function loadDocumentImages(
+  documentRoot: HTMLElement,
+  scrollContainer: HTMLElement | null,
+  shouldStickToBottom?: () => boolean,
+): void {
   documentRoot.querySelectorAll<HTMLButtonElement>("button.md-image-placeholder[data-markdown-image-url]")
-    .forEach((button) => void loadImage(button, scrollContainer));
+    .forEach((button) => void loadImage(button, scrollContainer, shouldStickToBottom));
 }
 
 function loadMermaidModule(): Promise<MermaidModule> {
@@ -352,25 +344,30 @@ async function renderMermaid(
   position: number,
   source: string,
   scrollContainer: HTMLElement | null,
+  shouldStickToBottom?: () => boolean,
 ): Promise<void> {
   try {
     const svg = await mermaidHtml(documentId, position, source);
     if (!figure.isConnected) return;
-    scrollMutation(scrollContainer, figure, () => {
+    mutateScrollLayout(scrollContainer, figure, () => {
       figure.dataset.mermaidState = "ready";
       figure.innerHTML = svg;
-    });
+    }, shouldStickToBottom);
   } catch {
     if (!figure.isConnected) return;
-    scrollMutation(scrollContainer, figure, () => {
+    mutateScrollLayout(scrollContainer, figure, () => {
       figure.dataset.mermaidState = "error";
       figure.innerHTML = `<p class="md-mermaid-status">${t("图表渲染失败，已保留源码。")}</p><pre><code>${escapeHtml(source)}</code></pre>`;
-    });
+    }, shouldStickToBottom);
     enhanceCodeBlocks(figure);
   }
 }
 
-function enhanceMermaid(documentRoot: HTMLElement, scrollContainer: HTMLElement | null): void {
+function enhanceMermaid(
+  documentRoot: HTMLElement,
+  scrollContainer: HTMLElement | null,
+  shouldStickToBottom?: () => boolean,
+): void {
   const documentId = documentRoot.dataset.markdownDocumentId || "markdown";
   documentRoot.querySelectorAll<HTMLElement>("pre > code.language-mermaid").forEach((code, position) => {
     const pre = code.parentElement;
@@ -381,7 +378,7 @@ function enhanceMermaid(documentRoot: HTMLElement, scrollContainer: HTMLElement 
     figure.dataset.mermaidState = "loading";
     figure.innerHTML = `<p class="md-mermaid-status">${t("正在渲染图表…")}</p>`;
     pre.replaceWith(figure);
-    void renderMermaid(figure, documentId, position, source, scrollContainer);
+    void renderMermaid(figure, documentId, position, source, scrollContainer, shouldStickToBottom);
   });
 }
 
@@ -444,14 +441,19 @@ export function hydrateLedgerJsonTables(root: ParentNode): void {
   });
 }
 
-export function hydrateMarkdownDocuments(root: ParentNode, scrollContainer: HTMLElement | null = null): void {
+export function hydrateMarkdownDocuments(
+  root: ParentNode,
+  scrollContainer: HTMLElement | null = null,
+  shouldStickToBottom?: () => boolean,
+): void {
   root.querySelectorAll<HTMLElement>(".md-document[data-markdown-document-id]").forEach((documentRoot) => {
+    if (shouldStickToBottom) markdownStickResolvers.set(documentRoot, shouldStickToBottom);
     enhanceTables(documentRoot);
     enhanceLinks(documentRoot);
-    enhanceMermaid(documentRoot, scrollContainer);
+    enhanceMermaid(documentRoot, scrollContainer, shouldStickToBottom);
     enhanceCodeBlocks(documentRoot);
     if (approvedImageDocuments.has(documentRoot.dataset.markdownDocumentId || "")) {
-      loadDocumentImages(documentRoot, scrollContainer);
+      loadDocumentImages(documentRoot, scrollContainer, shouldStickToBottom);
     }
   });
 }
@@ -469,7 +471,7 @@ export function initMarkdownInteractions(): void {
       const documentId = documentRoot.dataset.markdownDocumentId || "";
       approvedImageDocuments.add(documentId);
       const scrollContainer = documentRoot.closest<HTMLElement>(".chat-thread, .manual-body, .chat-tool-code, .runtime-context-workspace article");
-      loadDocumentImages(documentRoot, scrollContainer);
+      loadDocumentImages(documentRoot, scrollContainer, markdownStickResolvers.get(documentRoot));
       return;
     }
     const copyButton = target.closest<HTMLButtonElement>("button[data-markdown-copy], button[data-markdown-document-copy]");

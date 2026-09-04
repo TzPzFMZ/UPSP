@@ -131,8 +131,6 @@ class ReactionObligationTracker:
                 continue
             if tool_id == "memory_write":
                 self._observe_memory_write(receipt)
-            elif tool_id == "container_focus":
-                self._observe_container_focus(receipt)
             elif tool_id in {"memory_container_create", "memory_container_write"}:
                 self._observe_memory_container_receipt(receipt)
             elif tool_id == "memory_link_update":
@@ -502,43 +500,6 @@ class ReactionObligationTracker:
         debt = loader()
         return bool(debt.get("schema_version") == "cache_compaction_debt.v3")
 
-    def _observe_container_focus(self, receipt):
-        action = _text(receipt.get("action")).lower()
-        if action in {"open", "close", "restore"}:
-            return
-        container_id = _text(receipt.get("container_id"))
-        ctype = _text(receipt.get("container_type")).upper() or _container_type(container_id)
-        if not container_id:
-            return
-        if ctype == FUT_CONTAINER_TYPE:
-            antecedents = []
-            for obligation in self.pending:
-                if obligation["obligation_type"] == "future_jump_pending":
-                    for ref in obligation.get("target_refs") or []:
-                        if ref not in antecedents:
-                            antecedents.append(ref)
-            self._close_type("future_jump_pending")
-            self._add_obligation(_make_obligation(
-                "future_anchor_pending",
-                [container_id],
-                required_refs=[container_id] + antecedents,
-                reason="FUT container written; anchor memory and antecedent link required",
-                skippable=False,
-            ))
-            return
-        if ctype in WRITABLE_CONTAINER_TYPES:
-            self._close_type("memory_route_pending")
-            self._add_obligation(_make_obligation(
-                "container_link_pending",
-                [container_id],
-                reason="container_focus applied; memory link audit required",
-            ))
-            self._add_obligation(_make_obligation(
-                "future_jump_pending",
-                [container_id],
-                reason="DC/EC/PRJ may affect future judgment",
-            ))
-
     def _observe_memory_container_receipt(self, receipt):
         mem_id = _text(receipt.get("mem_id"))
         container_id = _text(receipt.get("container_id"))
@@ -595,7 +556,7 @@ class ReactionObligationTracker:
             "若识别到多步任务/专项整理需求，应创建或挂入 PRJ 项目；"
             "若有预测性判断，写入 FUT 启动二段跳。"
             "需要挂接时用 memory_container_create 挂接创建；"
-            "已有合适容器时先 container_focus.open，下一迭代看到焦点投影后用 memory_container_write 挂接写入；"
+            "已有合适容器时先 container_read；下一帧正文已在 CONTENT 可见后用 memory_container_write 挂接写入；"
             "分别检查 DC、EC、PRJ、FUT 后，只有确实均不满足永固触发条件才可自然语言回复收束；"
             "Runtime 会把该项记为 deferred/open。"
         )

@@ -1,6 +1,7 @@
 import type {
   CallFrame,
   ConversationCard,
+  LedgerItem,
   ContextPane,
   DepositionDetailItem,
   DepositionItem,
@@ -45,6 +46,7 @@ import {
   state,
   taskProjection,
 } from "./state";
+import { applySystemWindowSplit, deferSystemWindowRender } from "./system-window-split";
 import {
   hydrateLedgerJsonTables,
   hydrateMarkdownDocuments,
@@ -54,19 +56,10 @@ import {
 } from "./markdown";
 import { applyStaticTranslations, runtimeTerm, setLocale, t } from "./i18n";
 import type { Locale, MessageKey } from "./i18n";
+import { renderConversationTimeline } from "./conversation-timeline";
 
 type LedgerRow = readonly [unknown, unknown, unknown, string];
 type OverviewRow = readonly [unknown, unknown, unknown, PageId, string?, string?];
-type ChatItem =
-  | { type: "tool-trace"; cards: ConversationCard[] }
-  | { type: "tool-approval"; card: ConversationCard }
-  | { type: "message"; card: ConversationCard };
-type RetainedChatItem = (ChatItem & { round: number });
-interface ChatTraceStep {
-  key: string;
-  cards: ConversationCard[];
-}
-
 let navCollapseTimer = 0;
 let manualReturnFocus: HTMLElement | null = null;
 let systemCloseTimer = 0;
@@ -160,8 +153,7 @@ const personaGroupLabels: Record<string, MessageKey> = {
   identity: "身份状态",
   sleep_state: "睡眠状态",
   runtime: "运行状态",
-  focus: "当前焦点",
-  old_focus: "上一个焦点",
+  focus: "专注度",
   heartbeat_flags: "心跳旗标",
   alert_deferrals: "警报搁置",
   feeling_buffer: "感受缓冲",
@@ -303,6 +295,7 @@ export function changeLocale(next: Locale): void {
 
 export function syncShellState(): void {
   els.app.classList.toggle("system-open", state.systemWindowOpen);
+  applySystemWindowSplit();
   const page = consolePages.find((item) => item.id === state.activePage) || consolePages[0];
   els.app.classList.toggle("nav-locked", state.navCollapseLocked);
   if (state.navCollapseLocked) collapseNavNow();
@@ -360,7 +353,7 @@ export function renderSourceState(): void {
   els.runtimeState.querySelector("span")!.textContent = connected ? t("本地宿主已连接") : runtimeProjection.host === "connecting" ? t("宿主连接中") : t("本地宿主不可用");
   els.commsSource.textContent = runtimeProjection.round == null ? t("无轮次") : `${t("当前轮")} ${runtimeProjection.round}`;
   els.ledgerRound.textContent = runtimeProjection.round == null ? t("无轮次") : `R${String(runtimeProjection.round).padStart(6, "0")} / ${runtimeTerm(lifecycle.state, "running")}`;
-  els.ledgerContext.textContent = `${runtimeProjection.round == null ? 0 : (live?.context_panes || []).length} / 10`;
+  els.ledgerContext.textContent = `${live?.frame_catalog?.length ? 10 : 0} / 10`;
   els.ledgerFrame.textContent = live?.latest_frame_id || t("尚无帧次");
   els.ledgerSettlement.textContent = runtimeTerm(lifecycle.settlement_status || lifecycle.state, "unsettled");
   renderComposerState();
@@ -546,7 +539,7 @@ function navButton({
 
 export function renderOverview(): void {
   const live = runtimeProjection.live;
-  const frames = live?.call_frames || [];
+  const frames = live?.frame_catalog || [];
   const lifecycle = live?.round_lifecycle || {};
   const sections: Array<{ id: string; title: string; rows: OverviewRow[] }> = runtimeProjection.round == null ? [{
     id: "round",
@@ -591,54 +584,6 @@ function objectRow([title, desc, status, page, tone, tab]: OverviewRow): string 
   `;
 }
 
-function isChatDisclosureCard(card: ConversationCard): boolean {
-  return ["tool-call", "tool-result"].includes(card.type);
-}
-
-function chatTraceSummary(cards: ConversationCard[]): string {
-  const toolCard = cards.find((card) => card.type === "tool-call")
-    || cards.find((card) => card.type === "tool-result");
-  const toolId = String(toolCard?.title || "").split("｜").at(-1) || "";
-  if (toolCard?.type === "tool-result") return t(toolId === "memory_write" ? "确认记忆写入结果" : "查看工具执行结果");
-  // ponytail: 未知工具保持通用中文；它真正进入 GUI 后再补一条产品文案。
-  const summary = ({
-    setup_finalize: "完成本轮起手",
-    memory_write: "写入记忆",
-    memory_container_create: "创建记忆容器",
-    cleanup_finalize: "完成本轮善后",
-  } as Record<string, MessageKey>)[toolId] || (cards.some((card) => card.type === "assistant-streaming")
-    ? "正在准备工具调用"
-    : "执行工具调用");
-  return t(summary);
-}
-
-function chatTraceCode(content: string): string {
-  const start = content.indexOf("```");
-  const end = content.lastIndexOf("```");
-  return start >= 0 && end > start ? content.slice(start, end + 3) : content;
-}
-
-function renderChatMeta(recordedAt: unknown, copyReply = false): string {
-  const source = String(recordedAt || "").trim();
-  const date = new Date(source);
-  const validTime = source && !Number.isNaN(date.getTime());
-  if (!copyReply && !validTime) return "";
-  const time = validTime
-    ? `<time class="chat-item-time" datetime="${escapeHtml(source)}" title="${escapeHtml(new Intl.DateTimeFormat(state.locale, {
-      dateStyle: "medium",
-      timeStyle: "medium",
-    }).format(date))}">${escapeHtml(new Intl.DateTimeFormat("en-GB", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).format(date))}</time>`
-    : "";
-  return `<div class="chat-item-meta">
-    ${copyReply ? `<button class="chat-item-copy" type="button" data-markdown-document-copy="true" aria-label="${t("复制最终回复")}">${t("复制")}</button>` : ""}
-    ${time}
-  </div>`;
-}
-
 function fullLocalTime(value: unknown): { source: string; label: string; title: string } | null {
   const source = String(value || "").trim();
   const date = new Date(source);
@@ -653,225 +598,8 @@ function renderFullTime(value: unknown, className = ""): string {
   return time ? `<time class="${escapeHtml(className)}" datetime="${escapeHtml(time.source)}" title="${escapeHtml(time.title)}">${escapeHtml(time.label)}</time>` : "";
 }
 
-function renderChatTraceStep(step: ChatTraceStep, groupKey: string, position: number): string {
-  const key = `${groupKey}:step:${step.key}:${position}`;
-  const open = state.conversationDisclosure.has(key)
-    ? state.conversationDisclosure.get(key)
-    : false;
-  const hasEvidence = step.cards.some(isChatDisclosureCard);
-  const cards = hasEvidence ? step.cards.filter((card) => card.type !== "assistant-streaming") : step.cards;
-  return `
-    <details class="chat-tool-step" data-conversation-card-key="${escapeHtml(key)}" ${open ? "open" : ""}>
-      <summary>${escapeHtml(chatTraceSummary(step.cards))}</summary>
-      <div class="chat-tool-code ledger-markdown">
-        ${cards.map((card, cardPosition) => {
-          const content = String(card.content_md || card.content_raw || "").trim();
-          const documentId = `${groupKey}:step:${step.key}:${position}:card:${card.card_id || card.event_index || cardPosition}`;
-          return content
-            ? renderMarkdownDocument(documentId, chatTraceCode(content))
-            : `<p class="runtime-empty-copy">${t("无可展示的结构化内容。")}</p>`;
-        }).join("")}
-      </div>
-    </details>
-  `;
-}
-
-function renderChatTraceGroup(cards: ConversationCard[], round: number | null): string {
-  const first = cards[0];
-  const groupKey = `${round ?? "none"}:trace:${first?.card_id || first?.event_index || "event"}`;
-  const open = state.conversationDisclosure.has(groupKey) ? state.conversationDisclosure.get(groupKey) : false;
-  const recordedAt = [...cards].reverse()
-    .map((card) => String(card.recorded_at || "").trim())
-    .find((value) => value && !Number.isNaN(new Date(value).getTime()));
-  const steps: ChatTraceStep[] = [];
-  cards.forEach((card, position) => {
-    const key = card.frame_id || `${card.event_index || "event"}:${position}`;
-    const current = steps.at(-1);
-    if (current?.key === key) current.cards.push(card);
-    else steps.push({ key, cards: [card] });
-  });
-  const callCount = cards.filter((card) => card.type === "tool-call").length;
-  return `
-    <details class="chat-tool-group" data-chat-anchor="${escapeHtml(groupKey)}" data-conversation-card-key="${escapeHtml(groupKey)}" ${open ? "open" : ""}>
-      <summary>${callCount === 1 ? t("工具轨迹 · 1 次调用") : t("工具轨迹 · {count} 次调用", { count: callCount })}</summary>
-      <div class="chat-tool-steps">
-        ${steps.map((step, position) => renderChatTraceStep(step, groupKey, position)).join("")}
-      </div>
-      ${renderChatMeta(recordedAt)}
-    </details>
-  `;
-}
-
-function buildChatItems(conversation: ConversationCard[]): ChatItem[] {
-  const latestApprovals = new Map<string, ConversationCard>();
-  conversation.forEach((card) => {
-    if (card.type === "tool-approval" && card.approval_id) {
-      latestApprovals.set(card.approval_id, card);
-    }
-  });
-  const items: ChatItem[] = [];
-  let trace: ConversationCard[] = [];
-  const flushTrace = (): void => {
-    if (trace.length) items.push({ type: "tool-trace", cards: trace });
-    trace = [];
-  };
-  const emittedApprovals = new Set<string>();
-  conversation.forEach((card) => {
-    if (card.type === "tool-approval" && card.approval_id) {
-      if (emittedApprovals.has(card.approval_id)) return;
-      emittedApprovals.add(card.approval_id);
-      flushTrace();
-      items.push({
-        type: "tool-approval",
-        card: latestApprovals.get(card.approval_id) || card,
-      });
-      return;
-    }
-    const visibleStream = card.type === "assistant-streaming"
-      && ["reaction", "final_reply"].includes(String(card.phase || ""))
-      && Boolean(String(card.content_raw || "").trim());
-    if ((card.type === "assistant-streaming" && !visibleStream) || isChatDisclosureCard(card)) {
-      trace.push(card);
-      return;
-    }
-    if (
-      card.type === "user"
-      || visibleStream
-      || ["assistant-progress", "assistant-final"].includes(card.type)
-    ) {
-      flushTrace();
-      items.push({ type: "message", card });
-    }
-  });
-  flushTrace();
-  return items;
-}
-
-function renderToolApprovalCard(card: ConversationCard, round: number): string {
-  const pending = runtimeProjection.status?.pending_tool_approval;
-  const active = pending?.approval_id === card.approval_id && !card.decision;
-  const details = active ? pending?.details : null;
-  const submitting = runtimeProjection.approvalSubmitting === card.approval_id;
-  const stateText = card.decision === "allow_once"
-    ? t("已允许")
-    : card.decision === "skip"
-      ? t("已跳过")
-      : card.decision === "cancelled"
-        ? t("已取消")
-        : submitting
-          ? t("正在处理")
-          : t("等待你的决定");
-  const summary = String(card.content_raw || card.summary || card.tool_id || "").trim();
-  return `
-    <section class="tool-approval-card ${active ? "pending" : "resolved"}" data-chat-anchor="${escapeHtml(`${round}:approval:${card.approval_id}`)}">
-      <div class="tool-approval-head"><b>${t("工具执行审批")}</b><span>${escapeHtml(stateText)}</span></div>
-      <p><code>${escapeHtml(card.tool_id || pending?.tool_id || "")}</code>${summary ? ` · ${escapeHtml(summary)}` : ""}</p>
-      ${details ? `<details class="tool-approval-details"><summary>${t("技术详情")}</summary><pre>${escapeHtml(JSON.stringify(details, null, 2))}</pre></details>` : ""}
-      ${active ? `<div class="tool-approval-actions" role="group" aria-label="${t("工具执行审批")}">
-        <button type="button" data-tool-approval-id="${escapeHtml(card.approval_id)}" data-tool-approval-decision="skip" ${submitting ? "disabled" : ""}>${submitting ? t("正在处理") : t("跳过")}</button>
-        <button type="button" data-tool-approval-id="${escapeHtml(card.approval_id)}" data-tool-approval-decision="allow_once" ${submitting ? "disabled" : ""}>${submitting ? t("正在处理") : t("本次允许")}</button>
-      </div>` : ""}
-      ${runtimeProjection.approvalFeedback && active ? `<small role="status">${escapeHtml(runtimeProjection.approvalFeedback)}</small>` : ""}
-      ${renderChatMeta(card.recorded_at || pending?.requested_at)}
-    </section>
-  `;
-}
-
-function chatMessageText(card: ConversationCard): string {
-  const text = String(card.content_raw || card.content_md || "");
-  const bodyAt = text.indexOf("\n\n");
-  return card.type === "user" && text.startsWith("【本轮交互】") && bodyAt >= 0
-    ? text.slice(bodyAt + 2).trim()
-    : text;
-}
-
-function chatMessageAnchor(round: number | null, card: ConversationCard, position: number): string {
-  if (
-    card.frame_id
-    && ["assistant-streaming", "assistant-progress", "assistant-final"].includes(card.type)
-  ) {
-    return `${round}:frame:${card.frame_id}:assistant`;
-  }
-  return `${round}:message:${card.card_id || card.event_index || position}`;
-}
-
-function retainedConversationItems(): RetainedChatItem[] {
-  return runtimeProjection.conversationRoundOrder.flatMap((round) => {
-    const projection = runtimeProjection.conversationRounds.get(round);
-    return buildChatItems(projection?.conversation || []).map((item) => ({
-      ...item,
-      round,
-    }));
-  });
-}
-
 export function renderChat(): void {
-  els.chatThread.querySelectorAll<HTMLDetailsElement>("details[data-conversation-card-key]").forEach((details) => {
-    const key = details.dataset.conversationCardKey;
-    if (key) state.conversationDisclosure.set(key, details.open);
-  });
-  const hadMessages = els.chatThread.childElementCount > 0;
-  const previousScrollTop = els.chatThread.scrollTop;
-  const wasAtLatest = !hadMessages || els.chatThread.scrollHeight - previousScrollTop - els.chatThread.clientHeight <= 24;
-  const previousAnchor = [...els.chatThread.children].find((item): item is HTMLElement => Boolean(
-    item instanceof HTMLElement
-    &&
-    item.dataset.chatAnchor
-    && item.offsetTop + item.offsetHeight > previousScrollTop
-  ));
-  const previousAnchorKey = previousAnchor?.dataset.chatAnchor || "";
-  const previousAnchorOffset = previousAnchor ? previousAnchor.offsetTop - previousScrollTop : 0;
-  const items = retainedConversationItems();
-  const historyNotice = runtimeProjection.conversationHistoryError ? `
-    <p class="chat-history-warning">
-      <span>${t("较早对话未完全载入")}</span>
-      <button type="button" data-retry-projection="history">${t("重试")}</button>
-    </p>
-  ` : "";
-  els.chatThread.innerHTML = items.length || historyNotice ? historyNotice + items.map((item, position) => {
-    if (item.type === "tool-trace") return renderChatTraceGroup(item.cards, item.round);
-    if (item.type === "tool-approval") return renderToolApprovalCard(item.card, item.round);
-    const card = item.card;
-    const kind = card.type === "user" ? "user" : "system";
-    const who = card.type === "user" ? t("你") : personaAbbreviation();
-    const text = chatMessageText(card);
-    const messageId = chatMessageAnchor(item.round, card, position);
-    const streamState = card.type === "assistant-streaming" ? card.stream_state || "active" : "";
-    const streamStatus = streamState === "interrupted"
-      ? t("输出中断")
-      : streamState === "stopped"
-        ? t("已停止")
-        : "";
-    return `
-      <div class="chat-bubble ${kind} ${escapeHtml(card.type)} ${streamState ? `stream-state-${escapeHtml(streamState)}` : ""}" data-chat-anchor="${escapeHtml(messageId)}" data-round="${escapeHtml(item.round)}">
-        <b>${escapeHtml(who)}</b>
-        ${card.type === "user"
-          ? `<p>${escapeHtml(text)}</p>`
-          : renderMarkdownDocument(
-            messageId,
-            card.type === "assistant-streaming" ? card.content_raw || "" : card.content_md || card.content_raw || "",
-          )}
-        ${streamStatus ? `<small class="stream-status">${escapeHtml(streamStatus)}</small>` : ""}
-        ${card.type === "assistant-final" ? renderChatMeta(card.recorded_at, true) : ""}
-      </div>
-    `;
-  }).join("") : `
-    <div class="chat-bubble system empty">
-      <b>${t("轮次账本")}</b>
-      <p>${runtimeProjection.host === "connected" ? t("尚无真实对话事件。") : t("本地宿主未连接。")}</p>
-    </div>
-  `;
-  hydrateMarkdownDocuments(els.chatThread, els.chatThread);
-  if (wasAtLatest) {
-    els.chatThread.scrollTop = els.chatThread.scrollHeight;
-  } else {
-    const nextAnchor = previousAnchorKey
-      ? els.chatThread.querySelector<HTMLElement>(`[data-chat-anchor="${CSS.escape(previousAnchorKey)}"]`)
-      : null;
-    els.chatThread.scrollTop = nextAnchor
-      ? nextAnchor.offsetTop - previousAnchorOffset
-      : previousScrollTop;
-  }
+  renderConversationTimeline();
 }
 
 interface StageScrollSnapshot {
@@ -905,6 +633,7 @@ function restoreStageScroll(snapshots: Map<string, StageScrollSnapshot>): void {
 }
 
 export function renderStage(pageId: PageId): void {
+  if (deferSystemWindowRender(() => renderStage(pageId))) return;
   const renderers: Record<PageId, () => string> = {
     run: renderRunPage,
     persona: renderPersonaPage,
@@ -1079,22 +808,7 @@ function depositionJump(kind: DepositionKind, itemId: string, label = ""): strin
 }
 
 function renderDepositionEmpty(label: string, title: string, desc: string): string {
-  return `<section class="deposition-empty"><span class="hud-label">${escapeHtml(label)}</span><h2>${escapeHtml(title)}</h2><p>${escapeHtml(desc)}</p></section>`;
-}
-
-function runtimeCardText(card: ConversationCard): string {
-  return String(card?.content_raw || card?.content_md || card?.content || "");
-}
-
-function renderRuntimeCards(cards: ConversationCard[], emptyText = "当前投影没有匹配事件。", scrollKey = ""): string {
-  if (!cards.length) return `<p class="runtime-empty-copy">${escapeHtml(emptyText)}</p>`;
-  return `<div class="runtime-card-list"${scrollKey ? ` data-stage-scroll-key="${escapeHtml(scrollKey)}"` : ""}>${cards.map((card) => `
-    <article class="runtime-card ${card.severity === "error" ? "warn" : ""}">
-      <header><strong>${escapeHtml(card.title || card.type)}</strong><span>${escapeHtml(card.summary || `#${card.event_index || 0}`)}</span></header>
-      <small>${escapeHtml(card.event_type || "event")} · ${escapeHtml(card.frame_id || "round")}</small>
-      <pre>${escapeHtml(runtimeCardText(card))}</pre>
-    </article>
-  `).join("")}</div>`;
+  return `<section class="deposition-empty"><span class="hud-label">${escapeHtml(label)}</span><h2>${escapeHtml(title)}</h2><p>${escapeHtml(desc)}</p><button class="empty-state-action" type="button" data-close-system-window>${t("继续交互")}</button></section>`;
 }
 
 function renderRuntimeFrames(frames: CallFrame[]): string {
@@ -1149,13 +863,17 @@ function taskEvidenceSelection(): {
     ? runtimeProjection.live
     : runtimeProjection.conversationRounds.get(round) || null;
   if (!live) return null;
-  const frames = live.call_frames || [];
+  const frames = live.frame_catalog || [];
   if (state.selectedTaskFrame !== null && !frames.some((frame) => frame.frame_id === state.selectedTaskFrame)) {
     state.selectedTaskFrame = null;
   }
-  const frame = state.selectedTaskFrame === null
+  const frameEntry = state.selectedTaskFrame === null
     ? frames.at(-1) || null
     : frames.find((item) => item.frame_id === state.selectedTaskFrame) || null;
+  const detail = runtimeProjection.frameDetail;
+  const frame = frameEntry && detail?.round === round && detail.frameId === frameEntry.frame_id
+    ? detail.frame
+    : frameEntry;
   return { round, live, frame };
 }
 
@@ -1180,11 +898,8 @@ function taskFrameSelector(frames: CallFrame[], selectedFrame: CallFrame): strin
 
 function taskFrameSnapshot(frame: CallFrame | null): string {
   const pane = frame?.context_panes?.find((item) => item.id === "40_high_freq");
-  const source = String(pane?.content_raw || pane?.content_md || "");
-  const start = source.indexOf("## 当前任务清单状态");
-  if (start < 0) return "";
-  const end = source.indexOf("\n<!-- [STEP_TOOLBELT:", start);
-  return source.slice(start, end < 0 ? undefined : end).trim();
+  const taskBoard = pane?.content_blocks?.find((block) => block.block_id === "high_freq:task_board");
+  return String(taskBoard?.content_md || taskBoard?.content_raw || "").trim();
 }
 
 function renderTaskEvidencePage(): string {
@@ -1205,11 +920,10 @@ function renderTaskEvidencePage(): string {
   const relayLabel = relay.inFlight ? "中继执行中" : relay.ready ? "可以继续" : "等待 continue_requested";
   const selectedEvidence = taskEvidenceSelection();
   const selectedFrame = selectedEvidence?.frame || null;
-  const evidenceCards = (selectedEvidence?.live.conversation || [])
-    .filter((card) => (card.type === "tool-call"
-      || card.type === "tool-result"
-      || String(card.event_type || "").includes("receipt"))
-      && (!selectedFrame || card.frame_id === selectedFrame.frame_id))
+  const evidenceItems = (selectedEvidence ? runtimeProjection.ledgerItems.get(selectedEvidence.round) || [] : [])
+    .filter((item) => (item.type === "tool"
+      || /tool|receipt|settle/i.test(String(item.event_type || "")))
+      && (!selectedFrame || item.frame_id === selectedFrame.frame_id))
     .slice(-8)
     .reverse();
   const reviewingHistory = state.selectedTaskRound !== null || state.selectedTaskFrame !== null;
@@ -1253,8 +967,8 @@ function renderTaskEvidencePage(): string {
         </div>
       </section>
       <section class="task-pane evidence"><header class="task-evidence-header"><div><span class="hud-label">${t("轮次证据")}</span><strong>${escapeHtml(selectedEvidence ? `${t("本地宿主已连接")} · R${selectedEvidence.round} · ${selectedFrame?.frame_id || t("尚无帧次")}` : t("无轮次"))}</strong></div>
-        ${selectedEvidence && selectedFrame ? `<div class="context-selectors">${taskRoundSelector(selectedEvidence.round)}${taskFrameSelector(selectedEvidence.live.call_frames || [], selectedFrame)}</div>` : ""}</header>
-        ${renderRuntimeCards(evidenceCards, t("该帧尚无结构化工具调用或回执证据。"), `run:tools:evidence:${selectedEvidence?.round ?? "none"}:${selectedFrame?.frame_id || "none"}`)}
+        ${selectedEvidence && selectedFrame ? `<div class="context-selectors">${taskRoundSelector(selectedEvidence.round)}${taskFrameSelector(selectedEvidence.live.frame_catalog || [], selectedFrame)}</div>` : ""}</header>
+        ${selectedEvidence ? renderLedgerDirectory(selectedEvidence.round, evidenceItems, t("该帧尚无结构化工具调用或回执证据。"), `run:tools:evidence:${selectedEvidence.round}:${selectedFrame?.frame_id || "none"}`) : `<p class="runtime-empty-copy">${t("该帧尚无结构化工具调用或回执证据。")}</p>`}
       </section>
     </div>
   </section>`;
@@ -1272,9 +986,10 @@ function renderRuntimeRunPage(): string {
   if (!live || runtimeProjection.round == null) {
     return renderRuntimeEmpty(t("轮次账本"), t("尚无轮次"), t("宿主已连接，等待真实事件"));
   }
-  const cards = live.conversation || [];
+  const ledgerItems = runtimeProjection.ledgerItems.get(runtimeProjection.round) || [];
   if (tab === "receipts") {
-    return renderRuntimeCards(cards.filter((card) => card.type === "settlement" || card.event_type.includes("receipt") || card.event_type.includes("settled")), t("尚无回执或结算事件。"), `run:receipts:${runtimeProjection.round}`);
+    const receipts = ledgerItems.filter((item) => item.type === "settlement" || item.event_type.includes("receipt") || item.event_type.includes("settled"));
+    return renderLedgerDirectory(runtimeProjection.round, receipts, t("尚无回执或结算事件。"), `run:receipts:${runtimeProjection.round}`);
   }
   if (tab === "risks") {
     const lifecycle = live.round_lifecycle || {};
@@ -1301,10 +1016,10 @@ function renderRuntimeRunPage(): string {
         <header><span class="hud-label">${t("状态概览")}</span></header>
         <div class="status-ledger-row"><b>${t("轮次")}</b><span>${escapeHtml(runtimeTerm(statusbar.round?.type || t("未投影")))}</span><em>${escapeHtml(statusbar.round?.id || "—")}</em></div>
         <div class="status-ledger-row"><b>${t("模式")}</b><span>${escapeHtml(statusbar.dynamic || t("结构化投影尚不可用"))}</span><em>${escapeHtml(runtimeTerm(statusbar.mode || t("未投影")))}</em></div>
-        <div class="status-ledger-row"><b>${t("帧次")}</b><span>${escapeHtml(live.latest_frame_id || t("尚无帧次"))}</span><em>${escapeHtml((live.call_frames || []).length)}</em></div>
+        <div class="status-ledger-row"><b>${t("帧次")}</b><span>${escapeHtml(live.latest_frame_id || t("尚无帧次"))}</span><em>${escapeHtml((live.frame_catalog || []).length)}</em></div>
         <div class="status-ledger-row ${lifecycle.state === "unsettled" ? "warn" : ""}"><b>${t("结算")}</b><span>${escapeHtml(runtimeTerm(lifecycle.settlement_status || "pending"))}</span><em>${escapeHtml(runtimeTerm(lifecycle.state || "running"))}</em></div>
       </section>
-      <section class="runtime-frames" data-stage-scroll-key="${escapeHtml(`run:round:${runtimeProjection.round}:frames`)}"><span class="hud-label">${t("帧次列表")}</span>${renderRuntimeFrames(live.call_frames || [])}</section>
+      <section class="runtime-frames" data-stage-scroll-key="${escapeHtml(`run:round:${runtimeProjection.round}:frames`)}"><span class="hud-label">${t("帧次列表")}</span>${renderRuntimeFrames(live.frame_catalog || [])}</section>
     </div>
   `;
 }
@@ -1643,7 +1358,7 @@ function contextRoundSelector(selectedRound: number): string {
 }
 
 function contextFrameSelection(live: NonNullable<typeof runtimeProjection.live>): CallFrame | null {
-  const frames = live.call_frames || [];
+  const frames = live.frame_catalog || [];
   if (state.selectedContextFrame !== null && !frames.some((frame) => frame.frame_id === state.selectedContextFrame)) {
     state.selectedContextFrame = null;
   }
@@ -1663,7 +1378,7 @@ function contextFrameSelector(frames: CallFrame[], selectedFrame: CallFrame): st
 
 function contextSelectors(round: number, live: NonNullable<typeof runtimeProjection.live>, frame: CallFrame): string {
   const frameTime = renderFullTime(frame.created_at, "context-frame-time");
-  return `<div class="context-selectors">${contextRoundSelector(round)}${contextFrameSelector(live.call_frames || [], frame)}${frameTime ? `<p class="context-frame-created">${t("调用编译时间")} · ${frameTime}</p>` : ""}</div>`;
+  return `<div class="context-selectors">${contextRoundSelector(round)}${contextFrameSelector(live.frame_catalog || [], frame)}${frameTime ? `<p class="context-frame-created">${t("调用编译时间")} · ${frameTime}</p>` : ""}</div>`;
 }
 
 function frameContextUsage(frame: CallFrame | null | undefined, ring = false): string {
@@ -1707,8 +1422,17 @@ function renderRuntimeContextPage(): string {
   const selectedRound = contextSelection();
   if (!selectedRound) return renderRuntimeEmpty(t("上下文十层"), t("尚无上下文投影"), t("十层只从真实轮次账本与实时分层投影读取。"));
   const { round, live } = selectedRound;
-  const frame = contextFrameSelection(live);
-  if (!frame) return renderRuntimeEmpty(t("帧次"), t("该轮尚无调用帧"), t("上下文十层只从真实帧次输入快照读取。"));
+  const frameEntry = contextFrameSelection(live);
+  if (!frameEntry) return renderRuntimeEmpty(t("帧次"), t("该轮尚无调用帧"), t("上下文十层只从真实帧次输入快照读取。"));
+  const detail = runtimeProjection.frameDetail;
+  const detailKey = `${round}:${frameEntry.frame_id}`;
+  const frame = detail?.round === round && detail.frameId === frameEntry.frame_id ? detail.frame : null;
+  if (!frame) {
+    const message = runtimeProjection.frameDetailError
+      ? `${t("上下文详情读取失败")}：${runtimeProjection.frameDetailError}`
+      : runtimeProjection.frameDetailLoading === detailKey ? t("正在读取所选 Frame") : t("请选择 Frame 读取上下文详情");
+    return `<section class="runtime-empty"><span class="hud-label">${t("上下文十层")}</span><h2>${escapeHtml(frameEntry.frame_id)}</h2><p>${escapeHtml(message)}</p><button type="button" data-load-frame-detail data-detail-round="${escapeHtml(round)}" data-detail-frame="${escapeHtml(frameEntry.frame_id)}">${t("重试")}</button></section>`;
+  }
   const panes = frame.context_panes || [];
   const tab = getActivePageTab("context");
   if (tab === "guide") {
@@ -1741,8 +1465,9 @@ const protocolCategoryLabels: Record<string, MessageKey> = {
   on_demand: "按需",
 };
 
-function ledgerCardId(card: ConversationCard, position: number): string {
-  return String(card.card_id || `event-${card.event_index ?? "unknown"}-${position}`);
+function ledgerCardId(card: ConversationCard | LedgerItem, position: number): string {
+  if ("detail_ref" in card && card.detail_ref) return card.detail_ref;
+  return String((card as ConversationCard).card_id || card.event_index || `event-${position}`);
 }
 
 const providerErrorCopy: Record<ProviderErrorKind, { title: MessageKey; what: MessageKey; action: MessageKey }> = {
@@ -1765,8 +1490,9 @@ const providerErrorCopy: Record<ProviderErrorKind, { title: MessageKey; what: Me
   unknown: { title: "未识别的模型服务错误", what: "现有信息不足以可靠判断错误类别。", action: "请保留技术详情，并从上游日志和连接配置继续排查。" },
 };
 
-function ledgerCardTitle(card: ConversationCard): string {
-  const copy = card.provider_error_hint && providerErrorCopy[card.provider_error_hint.kind];
+function ledgerCardTitle(card: ConversationCard | LedgerItem): string {
+  const hint = "provider_error_hint" in card ? card.provider_error_hint : undefined;
+  const copy = hint && providerErrorCopy[hint.kind];
   return copy ? t(copy.title) : String(card.title || card.type || card.event_type || "");
 }
 
@@ -1788,7 +1514,7 @@ function ledgerCardMarkdown(card: ConversationCard): string {
   return lines.join("\n\n");
 }
 
-function ledgerBlocking(card: ConversationCard): boolean {
+function ledgerBlocking(card: ConversationCard | LedgerItem): boolean {
   const eventType = String(card.event_type || "").toLowerCase();
   return card.severity === "error"
     || card.type === "warning-error"
@@ -1826,14 +1552,14 @@ function renderProtocolLedger(): string {
   const selected = ledgerSelection();
   if (!selected) return renderRuntimeEmpty(t("运行时"), t("尚无动态账本"), t("事件、工具与结算只在真实轮次账本出现后展示。"));
   const { round, live } = selected;
-  const cards = live.conversation || [];
+  const items = runtimeProjection.ledgerItems.get(round) || [];
   const lifecycle = live.round_lifecycle || {};
-  const blockingCount = cards.filter(ledgerBlocking).length
+  const blockingCount = items.filter(ledgerBlocking).length
     + (lifecycle.fatal_reasons || []).length
     + (lifecycle.degraded_reasons || []).length;
   return `<section class="protocol-center protocol-ledger" data-stage-scroll-key="${escapeHtml(`audit:ledger:${round}`)}">
     <header class="protocol-center-head">
-      <div><span class="hud-label">${t("运行时")} · ${t("轮次")} ${escapeHtml(round)}</span><h2>${t("动态账本")}</h2><p>${t("按运行时原投影顺序列出 {count} 个结构化事件；正文仅在详情弹窗中读取。", { count: cards.length })}</p></div>
+      <div><span class="hud-label">${t("运行时")} · ${t("轮次")} ${escapeHtml(round)}</span><h2>${t("动态账本")}</h2><p>${t("按运行时原投影顺序列出 {count} 个结构化事件；正文仅在详情弹窗中读取。", { count: items.length })}</p></div>
       <div class="protocol-head-actions">${ledgerRoundSelector(round)}<button class="evidence-export" type="button" data-export-evidence>${t("导出当前证据")}</button></div>
     </header>
     <dl class="protocol-summary">
@@ -1844,16 +1570,7 @@ function renderProtocolLedger(): string {
     </dl>
     <p class="export-feedback" role="status">${escapeHtml(runtimeProjection.exportFeedback)}</p>
     <div class="protocol-index" role="list" aria-label="${escapeHtml(t("轮次 {round} 事件目录", { round }))}">
-      ${cards.length ? cards.map((card, position) => {
-        const cardId = ledgerCardId(card, position);
-        const warn = ledgerBlocking(card);
-        const time = String(card.recorded_at || "").replace("T", " ").slice(0, 19) || t("未记录");
-        return `<button class="protocol-index-row ledger-event ${warn ? "warn" : ""}" type="button" role="listitem" data-ledger-event data-ledger-round="${escapeHtml(round)}" data-ledger-card-id="${escapeHtml(cardId)}">
-          <span class="protocol-index-seq">#${escapeHtml(card.event_index ?? position)}</span>
-          <span class="protocol-index-main"><b>${escapeHtml(ledgerCardTitle(card))}</b><small>${escapeHtml(time)} · ${escapeHtml(runtimeTerm(card.phase || "round"))} · ${escapeHtml(card.frame_id || "round")}</small></span>
-          <span class="protocol-index-tags"><em>${escapeHtml(card.type || "event")}</em>${card.severity ? `<em>${escapeHtml(card.severity)}</em>` : ""}</span>
-        </button>`;
-      }).join("") : `<p class="runtime-empty-copy">${t("该轮没有结构化事件。")}</p>`}
+      ${renderLedgerDirectory(round, items, t("该轮没有结构化事件。"), `audit:ledger:${round}:items`)}
     </div>
   </section>`;
 }
@@ -1952,6 +1669,20 @@ function personaVital(label: MessageKey, path: string, description: string): str
     <strong>${escapeHtml(display)}</strong>
     <div class="persona-vital-track" role="img" aria-label="${escapeHtml(`${t(label)} ${description} ${display}`)}"><i style="--value:${position}%"></i></div>
   </div>`;
+}
+
+function renderLedgerDirectory(round: number, items: LedgerItem[], emptyText: string, key: string): string {
+  if (!items.length) return `<p class="runtime-empty-copy">${escapeHtml(emptyText)}</p>`;
+  return `<div class="protocol-index" data-stage-scroll-key="${escapeHtml(key)}" role="list">${items.map((item, position) => {
+    const ref = ledgerCardId(item, position);
+    const warn = ledgerBlocking(item);
+    const time = String(item.recorded_at || "").replace("T", " ").slice(0, 19) || t("未记录");
+    return `<button class="protocol-index-row ledger-event ${warn ? "warn" : ""}" type="button" role="listitem" data-ledger-event data-ledger-round="${escapeHtml(round)}" data-ledger-card-id="${escapeHtml(ref)}">
+      <span class="protocol-index-seq">#${escapeHtml(item.event_index ?? position)}</span>
+      <span class="protocol-index-main"><b>${escapeHtml(ledgerCardTitle(item))}</b><small>${escapeHtml(time)} · ${escapeHtml(runtimeTerm(item.phase || "round"))} · ${escapeHtml(item.frame_id || "round")}</small></span>
+      <span class="protocol-index-tags"><em>${escapeHtml(item.type || "event")}</em>${item.severity ? `<em>${escapeHtml(item.severity)}</em>` : ""}</span>
+    </button>`;
+  }).join("")}</div>`;
 }
 
 function personaMeter(label: MessageKey, value: number | null, display: string): string {
@@ -2237,38 +1968,6 @@ function renderRelationsPage(): string {
   `;
 }
 
-function renderContainerFocusControls(selected: DepositionItem): string {
-  const focus = depositionProjection.index?.focus || { current: "", previous: "" };
-  const mutation = depositionProjection.focusMutation;
-  const selectedIsCurrent = focus.current === selected.id;
-  const selectedIsRestorable = !focus.current && focus.previous === selected.id;
-  const action = selectedIsCurrent ? "close" : selectedIsRestorable ? "restore" : "open";
-  const actionTarget = action === "restore" ? "" : selected.id;
-  const actionLabel = selectedIsCurrent ? t("关闭当前焦点") : selectedIsRestorable ? t("恢复为当前焦点") : t("打开为当前焦点");
-  const receipt = mutation.receipt;
-  return `
-    <section class="container-focus-control" aria-busy="${mutation.pending ? "true" : "false"}">
-      <header><div><span class="hud-label">${t("容器工作台")}</span><h3>${t("受控焦点")}</h3></div><code>${escapeHtml(focus.current || "NONE")}</code></header>
-      <dl>
-        <div><dt>${t("当前")}</dt><dd>${escapeHtml(focus.current || t("无"))}</dd></div>
-        <div><dt>${t("上一个")}</dt><dd>${escapeHtml(focus.previous || t("无"))}</dd></div>
-      </dl>
-      <div class="container-focus-actions">
-        <button type="button" data-container-focus-action="${action}" data-container-id="${escapeHtml(actionTarget)}" ${mutation.pending ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
-        ${focus.previous && focus.previous !== selected.id ? `<button type="button" data-container-focus-action="restore" data-container-id="" ${mutation.pending ? "disabled" : ""}>${t("恢复上一个焦点 · {id}", { id: focus.previous })}</button>` : ""}
-      </div>
-      <p class="container-focus-feedback" aria-live="polite">${escapeHtml(mutation.pending ? t("提交中") : mutation.feedback || t("动作经既有容器焦点处理器提交；界面等待真源重读后再更新。"))}</p>
-      ${receipt ? `<dl class="container-focus-receipt">
-        <div><dt>RECEIPT</dt><dd>${escapeHtml(receipt.tool_id || "container_focus")}</dd></div>
-        <div><dt>STATUS</dt><dd>${escapeHtml(receipt.status || "unknown")}</dd></div>
-        <div><dt>ACTION</dt><dd>${escapeHtml(receipt.action || "unknown")}</dd></div>
-        <div><dt>TARGET</dt><dd>${escapeHtml(receipt.container_id || "none")}</dd></div>
-        ${receipt.reason ? `<div><dt>REASON</dt><dd>${escapeHtml(receipt.reason)}</dd></div>` : ""}
-      </dl>` : ""}
-    </section>
-  `;
-}
-
 function renderContainersPage(): string {
   const unavailable = renderDepositionUnavailable("CONTAINER / CONTROLLED");
   if (unavailable) return unavailable;
@@ -2281,18 +1980,16 @@ function renderContainersPage(): string {
     <div class="deposition-workspace">
       <nav class="deposition-master" aria-label="${t("已登记容器列表")}">
         <header><span class="hud-label">${escapeHtml(prefix || "CAND")}</span><strong>${items.length} ${t("个")}</strong></header>
-        <div class="deposition-list" data-stage-scroll-key="${escapeHtml(`containers:${tab}:list`)}">${items.map((item) => depositionRow("container", item, item.id === selected?.id, item.id, item.focus ? "FOCUS" : item.status)).join("")}</div>
+        <div class="deposition-list" data-stage-scroll-key="${escapeHtml(`containers:${tab}:list`)}">${items.map((item) => depositionRow("container", item, item.id === selected?.id, item.id, item.status)).join("")}</div>
       </nav>
       <section class="deposition-detail" aria-live="polite" data-stage-scroll-key="${escapeHtml(`containers:${tab}:detail:${selected?.id || "none"}`)}">
         ${!selected ? renderDepositionEmpty(prefix || "CANDIDATES", tab === "candidates" ? t("候选容器未接入") : t("没有 {prefix} 容器", { prefix: prefix || "" }), tab === "candidates" ? t("只读取正式登记表实例；候选集合仍保持延期。") : t("当前登记表没有该类型实例，这是正常空态。")) : `
           <header class="ledger-title compact"><div><span class="hud-label">${escapeHtml(selected.prefix)} / REGISTERED</span><h2>${escapeHtml(selected.title || selected.id)}</h2></div><p>${escapeHtml(selected.id)}</p></header>
           <dl class="container-facts">
             <div><dt>${t("状态")}</dt><dd>${escapeHtml(runtimeTerm(selected.status || t("未知")))}</dd></div>
-            <div><dt>${t("焦点")}</dt><dd>${selected.focus ? t("当前焦点") : t("未聚焦")}</dd></div>
             <div><dt>${t("目标")}</dt><dd>${escapeHtml(detail?.default_target || t("读取中"))}</dd></div>
           </dl>
           ${detail ? `<pre class="deposition-content">${escapeHtml(detail.content || t("容器正文为空。"))}</pre>${detail.content_truncated ? `<p class="deposition-source-note">${t("正文超过 64 KiB，当前只读投影已明确截断。")}</p>` : ""}` : depositionDetailStatus("container", selected.id, t("正在读取容器正文…"))}
-          ${renderContainerFocusControls(selected)}
           <section class="deposition-refs"><span class="hud-label">${t("记忆引用")}</span>${selected.entries?.length ? selected.entries.map((entry) => `<div>${entry.mem_id ? depositionJump("memory", entry.mem_id) : `<em>${t("无 MEM 引用")}</em>`}<span>${escapeHtml(entry.title || entry.target_file || t("已登记条目"))}</span><code>${entry.round == null ? "" : `R${escapeHtml(entry.round)}`}</code></div>`).join("") : `<p class="runtime-empty-copy">${t("没有已登记的记忆引用。")}</p>`}</section>
         `}
       </section>
@@ -2381,7 +2078,7 @@ const contextSettingFields: Record<ContextSettingsFileId, SettingFieldSpec[]> = 
     { key: "index_display_limits.association_index", label: "联想索引显示量", kind: "int", min: 1, max: 1000 },
   ],
   relation: [
-    { key: "relation_focus.max_slots", label: "关系焦点槽位", kind: "int", min: 1, max: 32 },
+    { key: "relation_context.max_slots", label: "关系在场槽位", kind: "int", min: 1, max: 32 },
   ],
 };
 
@@ -2441,7 +2138,7 @@ function renderContextSettings(files: SettingsPayload["files"]): string {
     ["lately", "最近缓存", "近期语料的容量、裁剪与压缩边界。"],
     ["periodic", "定期层", "定期记忆投影的内容上限。"],
     ["high_freq", "高频层", "高频索引与引用窗口的显示边界。"],
-    ["relation", "关系焦点", "每轮可装配的关系焦点槽位。"],
+    ["relation", "关系在场投影", "每轮可装配的关系在场槽位。"],
   ];
   return `<form class="settings-context-form" data-context-settings-form>
     ${groups.map(([fileId, title, description]) => `<section class="ledger-panel settings-panel settings-context-panel" data-settings-file="${fileId}">
@@ -2811,23 +2508,11 @@ function receiptRow(title: unknown, desc: unknown, status: unknown, tone: string
   `;
 }
 
-function containerCard(title: string, desc: string, focus: string, tone: string): string {
-  return `
-    <section class="panel-card ${tone === "hot" ? "hot" : ""}">
-      <span class="hud-label">${escapeHtml(title.split(" ")[0])}</span>
-      <h2>${escapeHtml(title)}</h2>
-      <p>${escapeHtml(desc)}</p>
-      ${receiptRow("当前焦点", focus, tone === "hot" ? "hot" : "ready", tone === "hot" ? "warn" : "")}
-      ${receiptRow("上下文", "可通过左侧上下文审阅查看装配位置", "linked", "")}
-    </section>
-  `;
-}
-
 const manualTitles: Record<string, readonly [MessageKey, MessageKey]> = {
   "intro.md": ["什么是 UPSP", "UPSP 基本解释"],
   "step-wheel.md": ["三步轮", "起手 / 反应 / 善后"],
   "context-layers.md": ["上下文十层", "常驻层至弹窗层"],
-  "content-window.md": ["内容窗口三通道", "焦点 / 常驻 / 即时"],
+  "content-window.md": ["内容窗口两种挂载", "常驻 / 即时"],
   "memory-bus.md": ["记忆总线", "MEM 不是普通容器"],
   "work-containers.md": ["工作容器", "辩证链 / 事件链 / 项目 / 技能"],
   "audit-tools.md": ["协议中心", "动态账本 / 规则 / 文档"],
@@ -2895,7 +2580,11 @@ function showDetail({
 
 export function openContextToolAnnotation(toolName: string): void {
   const selectedRound = contextSelection();
-  const frame = selectedRound ? contextFrameSelection(selectedRound.live) : null;
+  const selected = selectedRound ? contextFrameSelection(selectedRound.live) : null;
+  const detail = runtimeProjection.frameDetail;
+  const frame = selectedRound && selected && detail?.round === selectedRound.round && detail.frameId === selected.frame_id
+    ? detail.frame
+    : null;
   const pane = frame?.context_panes?.find((entry) => entry.id === "01_tool_header");
   const tool = contextToolAnnotations(pane).find((entry) => entry.name === toolName);
   if (!selectedRound || !frame || !tool) return;
@@ -3035,19 +2724,12 @@ async function loadManual(file: string): Promise<{ meta: Record<string, string>;
   return parseFrontmatter(await response.text());
 }
 
-export function openLedgerEvent(round: number, cardId: string): void {
-  const live = round === runtimeProjection.round
-    ? runtimeProjection.live
-    : runtimeProjection.conversationRounds.get(round) || null;
-  const cards = live?.conversation || [];
-  const position = cards.findIndex((card, index) => ledgerCardId(card, index) === cardId);
-  const card = position >= 0 ? cards[position] : null;
-  if (!card) return;
+export function openLedgerEvent(round: number, cardId: string, card: ConversationCard): void {
   rememberDetailFocus();
   showDetail({
     sourceType: "RUNTIME",
     title: ledgerCardTitle(card) || `${t("运行时")} ${state.locale === "zh-CN" ? "事件" : "event"}`,
-    summary: `${card.type || "event"} · #${card.event_index ?? position}`,
+    summary: `${card.type || "event"} · #${card.event_index ?? cardId}`,
     sourceRef: `${t("当前轮")} R${round} · ${card.phase || "round"} · ${card.frame_id || "round"} · ${card.event_type || "event"}`,
     documentId: `ledger:${round}:${cardId}`,
     contentMd: ledgerCardMarkdown(card),
@@ -3189,12 +2871,15 @@ export function renderComposerState(): void {
   const stage = runtimeProjection.status?.stage || "";
   const stopRequested = runtimeProjection.status?.stop_requested === true;
   const canStop = runtimeProjection.status?.can_stop === true;
-  const stopAvailable = canStop || Boolean(inFlight && stage !== "cleanup_local");
+  const localSettlement = stage === "cleanup_local";
+  const stopAvailable = canStop || Boolean(
+    inFlight && runtimeProjection.awaitingProjection && !localSettlement,
+  );
   const roundActive = Boolean(
     inFlight
     || relayInFlight
     || canStop
-    || stage === "cleanup_local"
+    || localSettlement
     || (stopRequested && runtimeProjection.status?.current_round != null)
   );
   const projectedPermission = runtimeProjection.status?.execution_permission?.pending_level
@@ -3205,13 +2890,13 @@ export function renderComposerState(): void {
   const connected = runtimeProjection.host === "connected";
   const pending = inFlight || relayInFlight || runtimeProjection.awaitingProjection;
   const modelReady = settingsProjection.data?.persona.setup_model_ready === true;
-  const frames = runtimeProjection.live?.call_frames || [];
+  const frames = runtimeProjection.live?.frame_catalog || [];
   const latestFrame = frames.find((frame) => frame.frame_id === runtimeProjection.live?.latest_frame_id) || frames.at(-1) || null;
   const reportedFrame = latestFrame?.context_usage?.state === "reported"
     ? latestFrame
     : [...frames].reverse().find((frame) => frame.context_usage?.state === "reported")
       || [...runtimeProjection.conversationRoundOrder].reverse().flatMap((round) => [
-        ...(runtimeProjection.conversationRounds.get(round)?.call_frames || []),
+        ...(runtimeProjection.conversationRounds.get(round)?.frame_catalog || []),
       ].reverse()).find((frame) => frame.context_usage?.state === "reported")
       || latestFrame;
   const contextUsageHtml = frameContextUsage(reportedFrame, true);
@@ -3220,15 +2905,16 @@ export function renderComposerState(): void {
   }
   els.configureModelButton.hidden = modelReady;
   els.sendButton.hidden = !modelReady || roundActive;
-  els.stopButton.hidden = !roundActive;
-  els.stopButton.disabled = runtimeProjection.stopping || !stopAvailable;
+  els.stopButton.hidden = !roundActive || (!stopAvailable && !localSettlement);
+  els.stopButton.disabled = localSettlement || runtimeProjection.stopping || !stopAvailable;
+  els.stopButton.title = localSettlement ? t("本地结算不可中断") : "";
   els.sendButton.disabled = !connected || pending || !modelReady;
   els.permissionLevel.disabled = runtimeProjection.permissionChanging || stage.startsWith("cleanup");
   els.messageInput.readOnly = pending;
   els.runtimeComposer.setAttribute("aria-busy", String(pending));
   if (!modelReady) {
     els.sendFeedback.textContent = t("尚未配置可用模型，完成模型服务与起手路由后即可发送。");
-  } else if (stage === "cleanup_local") {
+  } else if (localSettlement) {
     els.sendFeedback.textContent = t("正在本地善后");
   } else if (stage === "tool_approval") {
     els.sendFeedback.textContent = t("等待工具执行审批");

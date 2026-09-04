@@ -20,8 +20,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
         monkeypatch.setattr(pipeline, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(pipeline, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(pipeline, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(pipeline, "_process_memory_lifecycle", lambda *a, **kw: None)
         monkeypatch.setattr(pipeline, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
 
@@ -58,33 +56,62 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         assert outcome["fatal_reasons"] == [
             "flag_finalization:finalize failed"]
 
-    def test_state_settle_failure_keeps_feeling_flag_and_round_unsettled(
+    def test_spec776_setup_cache_failure_keeps_input_pending_and_round_open(
             self, tmp_path, monkeypatch):
-        import engines.cleanup_pipeline as cleanup_module
-        from logic.state_settlement import StateSettlementError
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+        rt.sm.set_flag("user_message_waiting", True)
+        closed_before = rt.sm.get("base.meta.last_round_closed_at")
 
+        class FailingSetupContext:
+            @staticmethod
+            def clear_stale_call_transients(_round_num):
+                return {"status": "applied", "now_removed": 0}
+
+            @staticmethod
+            def append_to_cache(*_args, **_kwargs):
+                raise OSError("disk unavailable")
+
+        rt.setup_runner.ctx_store = FailingSetupContext()
+
+        result = rt._run_one_round(
+            "interactive", rt.sm.load(), {"user_message_waiting": True})
+
+        events = rt.audit.get_store().read_events(1)
+        event_types = [event["event_type"] for event in events]
+        assert result["_settlement"]["status"] == "unsettled"
+        assert "setup_cache_write_failed" in result["_settlement"]["fatal_reasons"]
+        assert "round_unsettled" in event_types
+        assert "round_closed" not in event_types
+        assert rt.sm.get_flags()["user_message_waiting"] is True
+        assert rt.sm.get("base.meta.last_round_closed_at") == closed_before
+
+    def test_cleanup_does_not_consume_feeling_settle_due(
+            self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
         self._patch_minimal_cleanup(rt, monkeypatch)
         rt.sm.set_flag("feeling_settle_due", True)
-        receipt = {
-            "schema_version": "state_settle_receipt.v1",
-            "status": "error",
-            "settlement_id": "SS-R000001",
-            "reason": "simulated failure",
-        }
-        monkeypatch.setattr(
-            cleanup_module,
-            "settle_state",
-            lambda *args, **kwargs: (_ for _ in ()).throw(
-                StateSettlementError(receipt)),
-        )
 
         outcome = rt.cleanup_pipeline.run(
             self._round_context(rt), {"response": "done"})
 
-        assert outcome["status"] == "unsettled"
-        assert outcome["fatal_reasons"] == ["state_settle:simulated failure"]
+        assert outcome["status"] == "settled"
         assert rt.sm.get_flags()["feeling_settle_due"] is True
+
+    def test_spec788_effect_journal_failure_keeps_round_unsettled(
+            self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+
+        outcome = rt.cleanup_pipeline.run(self._round_context(rt), {
+            "response": "",
+            "error": "reaction step exception: action recovery journal failed",
+            "_failed_phase": "reaction",
+            "_action_recovery_failed_after_effect": True,
+        })
+
+        assert outcome["status"] == "unsettled"
+        assert "action_recovery_failed_after_effect" in outcome["fatal_reasons"]
 
     def test_cleanup_pipeline_returns_unsettled_after_api_emergency_save(
             self, tmp_path, monkeypatch):
@@ -145,7 +172,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             "interaction_round_count"] == 0
 
     @pytest.mark.parametrize(("owner_name", "method", "scope"), [
-        ("heat", "tick_decay", "heat_decay"),
         ("context", "save_round_to_cache", "round_cache_save"),
     ])
     def test_cleanup_required_obligation_failure_is_unsettled(
@@ -173,30 +199,12 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             for reason in outcome["fatal_reasons"]
         )
 
-    @pytest.mark.parametrize(("method", "scope"), [
-        ("_process_forgetting_settlement", "forgetting_settle"),
-        ("_process_memory_lifecycle", "memory_lifecycle"),
-    ])
-    def test_memory_lifecycle_failure_is_degraded_and_closes_round(
-            self, tmp_path, monkeypatch, method, scope):
+    def test_cleanup_has_no_memory_lifecycle_processors(
+            self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
         self._patch_minimal_cleanup(rt, monkeypatch)
-        monkeypatch.setattr(
-            rt.cleanup_pipeline,
-            method,
-            lambda *args, **kwargs: (_ for _ in ()).throw(
-                RuntimeError("simulated failure")),
-        )
-
-        outcome = rt.cleanup_pipeline.run(
-            self._round_context(rt), {"response": "done"})
-
-        assert outcome["status"] == "degraded"
-        assert any(
-            reason.startswith(f"{scope}:RuntimeError:")
-            for reason in outcome["degraded_reasons"]
-        )
-        assert outcome["fatal_reasons"] == []
+        assert not hasattr(rt.cleanup_pipeline, "_process_forgetting_settlement")
+        assert not hasattr(rt.cleanup_pipeline, "_process_memory_lifecycle")
 
     def test_cleanup_phase_input_audit_failure_is_unsettled(
             self, tmp_path, monkeypatch):
@@ -843,8 +851,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         assert rt.sm.get_flags()["continue_requested"] is True
         assert result["_heartbeat_rearm_receipts"] == [{
             "tool_id": "cleanup_pipeline",
-            "tool_family": "substrate_tool",
-            "tool_class": "sync_tool",
             "status": "continue_requested_rearmed",
             "source": "closeout_form",
             "round_type": "interactive",
@@ -874,8 +880,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         assert rt.sm.get_flags()["continue_requested"] is True
         assert result["_heartbeat_rearm_receipts"] == [{
             "tool_id": "cleanup_pipeline",
-            "tool_family": "substrate_tool",
-            "tool_class": "sync_tool",
             "status": "continue_requested_rearmed",
             "source": "closeout_form",
             "round_type": "relay",
@@ -1044,8 +1048,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(rt, "_update_token_usage", lambda result, **kwargs: None)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -1091,8 +1093,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(rt, "_update_token_usage", lambda result, **kwargs: None)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -1169,8 +1169,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
         monkeypatch.setattr(rt, "_update_token_usage", lambda result, **kwargs: None)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -1242,8 +1240,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
 
         assert rt.sm.get_flags()["continue_requested"] is True
 
-    def test_cleanup_always_runs_heat_decay(self, tmp_path, monkeypatch):
-        """善后步必定执行热度衰减"""
+    def test_cleanup_does_not_run_heat_decay(self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
         # mock API 调用
         monkeypatch.setattr(rt.executor, "call", lambda step, sys, msgs: {"response": "ok"})
@@ -1251,11 +1248,9 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(rt.assembler, "assemble_cleanup", lambda s, rt_type, r: ("", []))
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
         rt._run_cleanup("interactive", rt.sm.load(), {"response": "test"}, 1)
-        assert rt.heat.decayed is True
-        assert rt.heat.last_decay_round_num == 1
+        assert rt.heat.decayed is False
+        assert rt.heat.last_decay_round_num is None
 
     def test_cleanup_keeps_stm_when_stored_marker_has_no_ltm_truth(
             self, tmp_path, monkeypatch):
@@ -1307,22 +1302,13 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(mi, "KEYWORDS_JSON", str(keywords_json))
         monkeypatch.setattr(mh, "HEAT_JSON", str(heat_json))
 
-        rt.heat = mh.MemoryHeat()
-        monkeypatch.setattr(rt.assembler, "assemble_cleanup", lambda *a, **kw: ("", []))
-        monkeypatch.setattr(rt.executor, "call", lambda *a, **kw: {"response": ""})
-        monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
-
-        outcome = rt._run_cleanup(
-            "interactive", rt.sm.load(), {"response": "test"}, 1)
-
-        assert outcome["status"] == "degraded"
-        assert any(
-            "ltm_canonical_truth_missing" in reason
-            for reason in outcome["degraded_reasons"]
-        )
+        rt.services.heat = mh.MemoryHeat()
+        with pytest.raises(RuntimeError, match="ltm_canonical_truth_missing"):
+            rt.reaction_metabolism.settle_terminal(
+                round_num=1,
+                memory_write_receipts=[],
+                terminal_kind="natural_final",
+            )
         assert mem_id in memory_md.read_text(encoding="utf-8")
         assert mem_id in json.loads(meta_json.read_text(encoding="utf-8"))
         assert mem_id in index_md.read_text(encoding="utf-8")
@@ -1372,8 +1358,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
         monkeypatch.setattr(rt.assembler, "assemble_cleanup", lambda s, rt_type, r, **kw: ("sys", []))
         monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
 
         rt._run_cleanup(
             "interactive",
@@ -1415,8 +1399,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(rt.assembler, "assemble_cleanup", lambda s, rt_type, r: ("", []))
         monkeypatch.setattr(rt.executor, "call", lambda step, sys, msgs: {"response": ""})
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
 
         rt._run_cleanup(
             "interactive",
@@ -1501,8 +1483,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             lambda cleanup_result, round_num, state, result, iteration=1:
             processed.append((iteration, cleanup_result)),
         )
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -1591,8 +1571,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             lambda cleanup_result, round_num, state, result, iteration=1:
             processed.append((iteration, cleanup_result)),
         )
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -1795,8 +1773,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             lambda cleanup_result, round_num, state, result, iteration=1:
             processed.append((iteration, cleanup_result)),
         )
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -1846,8 +1822,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             lambda cleanup_result, round_num, state, result, iteration=1:
             processed.append((iteration, cleanup_result)),
         )
-        monkeypatch.setattr(rt, "_process_forgetting_settlement", lambda *a, **kw: None)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -1910,7 +1884,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             processed.append((iteration, cleanup_result)),
         )
         monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None, raising=False)
-        monkeypatch.setattr(rt, "_process_memory_lifecycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)

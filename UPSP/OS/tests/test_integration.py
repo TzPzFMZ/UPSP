@@ -180,7 +180,10 @@ def _patch_io(monkeypatch, tmp_path):
     monkeypatch.setattr("engines.heartbeat.HeartbeatManager.start", lambda s: None)
     monkeypatch.setattr("engines.heartbeat.HeartbeatManager.stop", lambda s: None)
     monkeypatch.setattr("engines.heartbeat.HeartbeatManager.pause", lambda s: None)
-    monkeypatch.setattr("engines.heartbeat.HeartbeatManager.resume", lambda s: None)
+    monkeypatch.setattr(
+        "engines.heartbeat.HeartbeatManager.resume",
+        lambda s, run_tick=True: None,
+    )
 
 
 # ============================================================
@@ -435,6 +438,7 @@ class TestContextCache:
     def test_cache_hit_when_not_expired(self, tmp_path, monkeypatch):
         """未过期层（永固/定期）复用缓存，高频层（含STATUSBAR）必重建"""
         from assembly.context import ContextAssembler
+        from data.resident_list_store import ResidentListStore
         from data.state_store import StateStore
 
         sm = StateStore(str(tmp_path / "state.json"))
@@ -442,9 +446,12 @@ class TestContextCache:
         sm._set_internal("base.context_cache.permanent_expired", False)
         sm._set_internal("base.context_cache.periodic_expired", False)
 
+        resident_store = ResidentListStore(str(tmp_path / "resident_list.json"))
+        resident_store.reconcile()
         assembler = ContextAssembler(
             state_store=sm,
             context_dir=str(tmp_path / "context"),
+            resident_store=resident_store,
         )
         assembler._layer_cache[("setup", "permanent")] = "CACHED_PERMANENT"
         assembler._layer_cache[("setup", "periodic")] = "CACHED_PERIODIC"
@@ -569,16 +576,10 @@ class TestMemoryLifecycle:
         candidates = rt.heat.check_upgrade()
         assert candidates == []
 
-    def test_process_memory_lifecycle_noop_when_empty(self, tmp_path, monkeypatch):
+    def test_reaction_admission_noop_when_empty(self, tmp_path, monkeypatch):
         """无待处理条目时，生命周期处理不抛异常"""
         rt, _sm = _make_runtime(tmp_path)
-        rt._process_memory_lifecycle(1)
-
-    def test_has_pending_degrade_returns_bool(self, tmp_path, monkeypatch):
-        """has_pending_degrade 返回布尔值"""
-        rt, _sm = _make_runtime(tmp_path)
-        result = rt.heat.has_pending_degrade()
-        assert isinstance(result, bool)
+        rt.reaction_metabolism.process_admission(1)
 
     def test_remove_nonexistent_entry_no_error(self, tmp_path, monkeypatch):
         """删除不存在的条目不抛异常"""

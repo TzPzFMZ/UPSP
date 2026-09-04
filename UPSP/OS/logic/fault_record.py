@@ -30,8 +30,6 @@ def _receipt(status, declaration, *, reason="", fault_type="", severity="",
              step=""):
     return {
         "tool_id": "fault_record",
-        "tool_family": "protocol_tool",
-        "tool_class": "sync_tool",
         "status": status,
         "source": "fault_record_table",
         "fault_type": fault_type,

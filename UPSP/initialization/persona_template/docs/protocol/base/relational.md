@@ -2,7 +2,7 @@
 
 > 消费方式：LLM 以 `{subject, word}` 选择关系感受 → Runtime 查 `logic/feeling_lookup.py` 的 64 词结构化表 → 算对应主体的关系六轴 Δ 值
 > 本文件职责：人类可读公式镜像，不是 Runtime 解析输入
-> 触发：每轮善后步
+> 触发：成功记忆回执所在 Reaction Frame 即时结算；延迟脉冲在 Reaction 入口或 idle timer 到期结算
 
 ---
 

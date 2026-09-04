@@ -14,6 +14,7 @@ from data.atomic_write import atomic_write_text
 from data.memory_store import (
     MEMORY_MUTATION_LOCK,
     memory_target_tier,
+    project_memory_body,
     project_periodic_memory_body,
 )
 from data.periodic_mount_store import (
@@ -218,6 +219,12 @@ class PeriodicMemoryMountProcessor:
             self._fault("after_compression_cancel")
             self.memory_store.admit_ltm_entry(mem_id)
             self._fault("after_admission")
+            admitted = self.memory_store.read_body_by_id(mem_id)
+            self.assembler.preflight_resident_source_update(
+                {"item_type": "memory", "item_id": mem_id},
+                project_memory_body(
+                    admitted.get("body", ""), admitted.get("meta") or {}),
+            )
             if not state["ltm"] or state["ltm"]["tier"] != "Pinned":
                 source = self.memory_store.ltm_entry_state(
                     mem_id, include_backup=False)

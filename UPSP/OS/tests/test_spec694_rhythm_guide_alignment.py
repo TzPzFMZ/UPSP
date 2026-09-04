@@ -30,7 +30,7 @@ class TestSpec694RhythmGuideAlignment(RuntimeTestMixin):
                 interaction_meta=self._confirmed_meta(),
                 user_input_text="测试输入",
                 setup_messages=[],
-                internal_handoff=[],
+                setup_facts=[],
             )
 
         def fake_reaction(*_args, **_kwargs):
@@ -232,14 +232,14 @@ class TestSpec694RhythmGuideAlignment(RuntimeTestMixin):
         assert current_state["base"]["heartbeat_flags"]["api_degraded"] is False
         assert rt.workbench.load_guide(emergency_id)["status"] == "superseded"
         assert rt.workbench.load_guide(day_id)["items"][0]["item_id"] == "calendar_day_due"
-        focus = rt.reaction_loop_runner._sync_chronicle_focus_for_current_guide(
+        scope = rt.reaction_loop_runner._sync_chronicle_write_scope_for_current_guide(
             round_type="rhythm",
             current_state=current_state,
             round_num=577,
             completed_flags=set(),
         )
-        assert focus["layer"] == "daily"
-        assert focus["calendar_flag"] == "calendar_day_due"
+        assert scope["layer"] == "daily"
+        assert scope["calendar_flag"] == "calendar_day_due"
 
         week_id = rt.reaction_loop_runner._materialize_next_runtime_rhythm_guide_if_needed(
             current_state,
@@ -507,7 +507,7 @@ class TestSpec694RhythmGuideAlignment(RuntimeTestMixin):
             ("weekly", "applied"),
         ]
         assert not any(
-            receipt.get("reason") == "no_active_chronicle_focus"
+            receipt.get("reason") == "no_active_chronicle_write_scope"
             for receipt in backends
         )
         assert not any(
@@ -531,14 +531,14 @@ class TestSpec694RhythmGuideAlignment(RuntimeTestMixin):
         assert any(event["event_type"] == "round_settled" for event in events)
         assert events[-1]["event_type"] == "round_closed"
 
-    def test_no_active_chronicle_focus_never_completes_calendar_flag(self):
+    def test_no_active_chronicle_write_scope_never_completes_calendar_flag(self):
         from engines.reaction_loop import ReactionLoopRunner
 
         completed = ReactionLoopRunner._guide_completed_flags_from_receipts(
             [{
                 "tool_id": "chronicle_write",
                 "status": "rejected",
-                "reason": "no_active_chronicle_focus",
+                "reason": "no_active_chronicle_write_scope",
             }],
             state={
                 "base": {

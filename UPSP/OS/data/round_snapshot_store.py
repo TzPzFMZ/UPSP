@@ -203,7 +203,9 @@ class RoundSnapshotStore:
             for key, value in self._latest_request_refs.items()
             if key[0] != int(round_num)
         }
-        payload = {}
+        payload = {
+            "dialogue_projection_schema": "round_dialogue_timeline.v1",
+        }
         if round_type:
             payload["round_type"] = round_type
         if input_snapshot is not None:
@@ -226,6 +228,9 @@ class RoundSnapshotStore:
             include_source_map=True,
         ) if provider_request_envelope is not None else {}
         snapshot = self._sanitize_layers_snapshot(layers_snapshot)
+        frame_projection = self._frame_projection(envelope, snapshot, manifest)
+        if frame_projection:
+            payload["frame_projection"] = frame_projection
         round_num = int(round_num)
         with self._append_lock:
             event_index = self._last_event_index(round_num) + 1
@@ -534,6 +539,35 @@ class RoundSnapshotStore:
         cleaned, _redacted = RoundSnapshotStore._redact_value(
             copy.deepcopy(snapshot))
         return cleaned if isinstance(cleaned, dict) else {}
+
+    @staticmethod
+    def _frame_projection(envelope, snapshot, manifest):
+        """Persist only the small fields needed by the live first-paint view."""
+        envelope = envelope if isinstance(envelope, dict) else {}
+        manifest = manifest if isinstance(manifest, dict) else {}
+        provider = envelope.get("provider")
+        projection = {
+            "created_at": envelope.get("created_at"),
+            "context_window_tokens": envelope.get("context_window_tokens"),
+            "request_body_sha256": envelope.get("request_body_sha256"),
+            "context_chars": manifest.get("total_chars"),
+            "model_profile_id": (
+                provider.get("profile_id") if isinstance(provider, dict) else None
+            ),
+        }
+        if isinstance(snapshot, dict):
+            for layer in snapshot.get("layers") or []:
+                if not isinstance(layer, dict) or layer.get("layer_key") != "60_statusbar":
+                    continue
+                statusbar = layer.get("projection")
+                if isinstance(statusbar, dict) and statusbar.get("schema") == "statusbar_snapshot.v1":
+                    projection["statusbar_projection"] = copy.deepcopy(statusbar)
+                break
+        return {
+            key: copy.deepcopy(value)
+            for key, value in projection.items()
+            if value not in (None, "")
+        }
 
     @staticmethod
     def _sanitize_tool_call_envelopes(envelopes):

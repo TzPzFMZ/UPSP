@@ -79,6 +79,27 @@ def test_spec565_duplicate_guard_helpers_group_and_strip_feedback():
     ]) == ["keep this feedback"]
 
 
+def test_spec774_file_edit_guard_tracks_only_handler_failures():
+    from engines.reaction_runtime_guards import (
+        general_tool_guard_failure_trackable,
+    )
+
+    base = {
+        "tool_id": "file_edit",
+        "status": "rejected",
+        "reason": "patch_apply_failed",
+        "duplicate_guard_key": "same-path-and-reason",
+    }
+
+    assert general_tool_guard_failure_trackable(
+        dict(base, dispatch_stage="handler")) is True
+    assert general_tool_guard_failure_trackable(
+        dict(base, dispatch_stage="capability_gate")) is False
+    assert general_tool_guard_failure_trackable(
+        dict(base, dispatch_stage="frame_budget")) is False
+    assert general_tool_guard_failure_trackable(base) is True
+
+
 def test_spec565_provider_interruption_recovery_sets_continue_flag():
     from engines.reaction_runtime_guards import recover_provider_interruption_if_possible
 
