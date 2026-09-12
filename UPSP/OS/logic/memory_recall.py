@@ -238,12 +238,8 @@ class MemoryRecallProcessor:
                     stm_snapshot, ltm_snapshot, exc,
                     compression_manager=compression_manager,
                     compression_ledger_snapshot=compression_ledger_snapshot,
+                    mem_id=clean_id, external_error=external_rollback_error,
                 )
-                if external_rollback_error is not None:
-                    raise RuntimeError(
-                        "memory_recall_external_rollback_failed:"
-                        f"{type(external_rollback_error).__name__}"
-                    ) from exc
                 raise
 
             if heat_boost:
@@ -322,17 +318,25 @@ class MemoryRecallProcessor:
 
     def _rollback(
             self, stm_snapshot, ltm_snapshot, cause,
-            *, compression_manager=None, compression_ledger_snapshot=None):
-        try:
-            self.memory_store.restore_stm_files(stm_snapshot)
-            self.memory_store.restore_ltm_files(ltm_snapshot)
-            if compression_manager is not None:
-                compression_manager.ledger.restore(
-                    compression_ledger_snapshot)
-        except Exception as restore_exc:
-            raise RuntimeError(
-                "memory_recall_rollback_failed:"
-                f"{type(restore_exc).__name__}"
+            *, compression_manager=None, compression_ledger_snapshot=None,
+            mem_id="", external_error=None):
+        errors = [external_error] if external_error is not None else []
+        restores = [
+            (self.memory_store.restore_stm_files, stm_snapshot),
+            (self.memory_store.restore_ltm_files, ltm_snapshot),
+        ]
+        if compression_manager is not None:
+            restores.append((compression_manager.ledger.restore, compression_ledger_snapshot))
+        for restore, snapshot in restores:
+            try:
+                restore(snapshot)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            from errors import UncertainEffectError
+            raise UncertainEffectError(
+                "memory_recall_rollback_failed", affected_ids=[mem_id],
+                cause=cause, rollback_causes=errors,
             ) from cause
 
     def _fault(self, stage):

@@ -131,6 +131,11 @@ def apply_chronicle_write_declarations(declarations, stores=None):
                 round_type=round_type,
                 source_refs=source_refs,
             ))
+            from errors import UncertainEffectError
+            if not isinstance(exc, ValueError):
+                receipts[-1]["scope_id"] = write_scope.get("scope_id", "")
+                exc.partial_receipts = receipts
+                raise
             continue
         receipts.append(_receipt(
             "applied",

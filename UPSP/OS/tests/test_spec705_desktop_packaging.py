@@ -71,11 +71,16 @@ def test_spec705_shell_keeps_native_and_runtime_boundaries():
     assert "http://127.0.0.1:8770/" in backend
     assert "UPSP_DESKTOP_CONTROL_TOKEN" in backend
     assert "UPSP_DESKTOP_SESSION_ID" in backend
+    assert 'start.Environment["UPSP_LOCAL_STATE_ROOT"] = localRoot;' in backend
+    assert "DesktopPaths.LocalStateRoot" in backend
+    assert "DesktopPaths.LocalStateRoot" in form
+    assert "Environment.SpecialFolder.LocalApplicationData" not in backend
+    assert "Environment.SpecialFolder.LocalApplicationData" not in form
     assert "ArgumentList.Add" in backend
     assert "JobObjectLimitKillOnJobClose" in backend
     assert "TerminateStartedProcess" in backend
     assert (
-        "Graceful backend shutdown timed out; terminating the managed process tree."
+        "Backend shutdown timed out; retaining process ownership until exit is confirmed."
         in backend
     )
     assert "catch (TimeoutException)" in backend
@@ -149,7 +154,11 @@ def test_spec707_installer_supports_guarded_upgrade_and_manifest_only_uninstall(
     assert "VersionCompare" in installer
     assert "OpenMutexW" in installer
     assert "不允许降级覆盖" in installer
-    assert 'ExecWait \'"$INSTDIR\\Uninstall.exe" /S _?=$INSTDIR\'' in installer
+    assert 'ExecWait \'"$INSTDIR\\Uninstall.exe" /S _?=$INSTDIR\'' not in installer
+    assert 'Rename "$INSTDIR" "$BackupDir"' in installer
+    assert 'Rename "$BackupDir" "$INSTDIR"' in installer
+    assert 'PAYLOAD_MANIFEST_SHA256' in installer
+    assert '"phase" "recovery_required"' in installer
     assert "MicrosoftEdgeWebview2Setup.exe" in installer
     assert "/silent /install" in installer
     assert '!include "${UNINSTALL_INCLUDE}"' in uninstall
@@ -170,6 +179,12 @@ def test_spec705_build_payload_has_an_explicit_production_allowlist():
     assert "excludes = @('metadata/payload-manifest.json')" in build
     assert "manifested_file_count" in build
     assert "artifact-receipt.json" in build
+    assert "$workRoot = New-BuildOutputRoot $repoRoot $OutputRoot" in build
+    assert "$downloadRoot = Join-Path $cacheRoot 'downloads'" in build
+    assert "$toolRoot = Join-Path $cacheRoot 'toolchains'" in build
+    assert "$env:NUGET_PACKAGES = Join-Path $cacheRoot 'nuget'" in build
+    for root in ("releaseRoot", "publishRoot", "payloadRoot"):
+        assert f"Remove-Item -LiteralPath ${root}" not in build
     assert "desktop_single_file_publish_violation" in build
     assert "Where-Object Name -ne 'UPSP.exe'" in build
     assert "payload_root_file_violation" in build
@@ -203,8 +218,8 @@ def test_spec707_product_manifest_is_the_release_version_truth():
     assert product == {
         "schema_version": "upsp_product_manifest.v1",
         "name": "UPSP",
-        "version": "0.1.2",
-        "windows_file_version": "0.1.2.0",
+        "version": "0.1.3",
+        "windows_file_version": "0.1.3.0",
         "channel": "stable",
         "build_number": 1,
         "author": {
@@ -220,7 +235,7 @@ def test_spec707_product_manifest_is_the_release_version_truth():
         "copyright": "Copyright (c) 2026 TzPzFMZ",
     }
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "0.1.2"' in pyproject
+    assert 'version = "0.1.3"' in pyproject
     manifest = (
         DESKTOP_ROOT / "UPSP.Desktop" / "app.manifest"
     ).read_text(encoding="utf-8")
@@ -234,19 +249,19 @@ def test_current_public_release_identity_and_memory_entry_wording():
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     readme_en = (REPO_ROOT / "README.en.md").read_text(encoding="utf-8")
     release = (
-        REPO_ROOT / "docs" / "public" / "releases" / "0.1.2.md"
+        REPO_ROOT / "docs" / "public" / "releases" / "0.1.3.md"
     ).read_text(encoding="utf-8")
     installer = (
         DESKTOP_ROOT / "installer" / "UPSP.nsi"
     ).read_text(encoding="utf-8")
 
-    assert "Windows Stable `0.1.2`" in readme
-    assert "Windows Stable `0.1.2`" in readme_en
-    assert "UPSP-Setup-0.1.2-win-x64.exe" in readme
-    assert "UPSP-Setup-0.1.2-win-x64.exe" in readme_en
-    assert "docs/public/releases/0.1.2.md" in readme
-    assert "docs/public/releases/0.1.2.md" in readme_en
-    assert "# UPSP 0.1.2" in release
+    assert "Windows Stable `0.1.3`" in readme
+    assert "Windows Stable `0.1.3`" in readme_en
+    assert "UPSP-Setup-0.1.3-win-x64.exe" in readme
+    assert "UPSP-Setup-0.1.3-win-x64.exe" in readme_en
+    assert "docs/public/releases/0.1.3.md" in readme
+    assert "docs/public/releases/0.1.3.md" in readme_en
+    assert "# UPSP 0.1.3" in release
     assert "记忆条目" in release
     assert "发布草案" not in release
     assert "[待回填]" not in release

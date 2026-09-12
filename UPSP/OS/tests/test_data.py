@@ -472,6 +472,46 @@ class TestStateStore:
         loaded = store.load()
         assert loaded["base"]["meta"]["total_round"] == 5
 
+    @pytest.mark.parametrize("failures", [0, 2, 4, 5])
+    def test_spec803_save_retries_keep_disk_and_cache_consistent(
+            self, tmp_path, monkeypatch, failures):
+        from data import atomic_write
+        from data.state_store import StateStore
+        from errors import WriteError
+
+        path = tmp_path / "state.json"
+        store = StateStore(str(path))
+        store.init_if_missing()
+        before = store.load()
+        before_bytes = path.read_bytes()
+        updated = store.load()
+        updated["base"]["meta"]["total_round"] = 803
+        original_replace = atomic_write.os.replace
+        attempts = 0
+
+        def replace(source, target):
+            nonlocal attempts
+            attempts += 1
+            if attempts <= failures:
+                raise PermissionError("state temporarily locked")
+            original_replace(source, target)
+
+        monkeypatch.setattr(atomic_write.os, "replace", replace)
+        monkeypatch.setattr(atomic_write.time, "sleep", lambda _seconds: None)
+        if failures == 5:
+            with pytest.raises(WriteError):
+                store.save(updated)
+            assert path.read_bytes() == before_bytes
+            assert store.load() == before
+        else:
+            store.save(updated)
+            assert store.load() == updated
+            assert StateStore(str(path)).read_snapshot() == updated
+            updated["base"]["meta"]["total_round"] = -1
+            assert store.get("base.meta.total_round") == 803
+        assert attempts == min(failures + 1, 5)
+        assert not list(tmp_path.glob("*.tmp"))
+
     def test_load_backfills_missing_heartbeat_flags(self, tmp_path):
         from data.state_store import StateStore
         from errors import ReadError
@@ -2347,48 +2387,13 @@ class TestMemoryHeat:
         heat = store.load_heat()
         assert "entries" in heat
 
-    def test_get_entry_creates_default(self, tmp_path, monkeypatch):
-        from data import memory_heat as mh
-        monkeypatch.setattr(mh, "HEAT_JSON", str(tmp_path / "heat.json"))
-        store = mh.MemoryHeat()
-        entry = store.get_entry("MEM-NEW001")
-        assert entry["H"] == 50
-        assert entry["zone"] == "未定"
-
-    def test_recall_boost(self, tmp_path, monkeypatch):
-        from data import memory_heat as mh
-        from data import memory_store as ms
-        monkeypatch.setattr(mh, "HEAT_JSON", str(tmp_path / "heat.json"))
-        meta_path = tmp_path / "meta.json"
-        meta_path.write_text("{}", encoding="utf-8")
-        monkeypatch.setattr(ms, "META_JSON", str(meta_path))
-        store = mh.MemoryHeat()
-        store.recall_boost("MEM-BOOST01")
-        entry = store.get_entry("MEM-BOOST01")
-        assert entry["H"] > 50
-
-    def test_recall_boost_does_not_create_orphan_meta(self, tmp_path, monkeypatch):
-        from data import memory_heat as mh
-        from data import memory_store as ms
-        heat_path = tmp_path / "heat.json"
-        meta_path = tmp_path / "meta.json"
-        meta_path.write_text("{}", encoding="utf-8")
-        monkeypatch.setattr(mh, "HEAT_JSON", str(heat_path))
-        monkeypatch.setattr(ms, "META_JSON", str(meta_path))
-
-        store = mh.MemoryHeat()
-        store.recall_boost("MEM-BOOST01")
-
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        assert "MEM-BOOST01" not in meta
-
     def test_tick_decay(self, tmp_path, monkeypatch):
         from data import memory_heat as mh
         monkeypatch.setattr(mh, "HEAT_JSON", str(tmp_path / "heat.json"))
         store = mh.MemoryHeat()
-        store.get_entry("MEM-DECAY01")  # 创建
+        store.set_entry("MEM-DECAY01", store.new_entry())  # 创建
         store.tick_decay()
-        entry = store.get_entry("MEM-DECAY01")
+        entry = store.load_heat()["entries"]["MEM-DECAY01"]
         assert entry["H"] < 50  # 衰减了
 
     def test_tick_decay_is_idempotent_within_same_round(self, tmp_path, monkeypatch):
@@ -2406,10 +2411,10 @@ class TestMemoryHeat:
         }})
 
         assert store.tick_decay(round_num=12) is True
-        first = store.get_entry("MEM-ROUND001")
+        first = store.load_heat()["entries"]["MEM-ROUND001"]
         assert first["H"] == 40
         assert store.tick_decay(round_num=12) is False
-        second = store.get_entry("MEM-ROUND001")
+        second = store.load_heat()["entries"]["MEM-ROUND001"]
         assert second["H"] == 40
 
     def test_tick_decay_skips_memories_touched_this_round(self, tmp_path, monkeypatch):
@@ -2465,7 +2470,7 @@ class TestMemoryHeat:
 
         store.tick_decay()
 
-        entry = store.get_entry("MEM-STORED01")
+        entry = store.load_heat()["entries"]["MEM-STORED01"]
         assert entry["AH_low"] == 3
         assert entry["degrade"] is True
 
@@ -2481,7 +2486,7 @@ class TestMemoryHeat:
             }
         }})
         store.tick_decay()
-        entry = store.get_entry("MEM-LOCK000")
+        entry = store.load_heat()["entries"]["MEM-LOCK000"]
         assert entry["H"] == 80
         assert entry["zone"] == "显著"
         assert entry["AH_low"] == 0
@@ -2501,7 +2506,7 @@ class TestMemoryHeat:
         }}, ensure_ascii=False), encoding="utf-8")
 
         store = mh.MemoryHeat()
-        entry = store.get_entry("MEM-LEGACY1")
+        entry = store.load_heat()["entries"]["MEM-LEGACY1"]
 
         assert entry["heat_locked"] is True
         assert entry["H"] == 80
@@ -2518,7 +2523,7 @@ class TestMemoryHeat:
             lambda _self: {"MEM-UPGRADE01": {"stored_at": ""}},
         )
         store = mh.MemoryHeat()
-        store.get_entry("MEM-UPGRADE01")
+        store.set_entry("MEM-UPGRADE01", store.new_entry())
         # AH_high 由 tick_decay 结算，测试直接设
         heat = store.load_heat()
         heat["entries"]["MEM-UPGRADE01"]["AH_high"] = 5
@@ -2530,7 +2535,7 @@ class TestMemoryHeat:
         from data import memory_heat as mh
         monkeypatch.setattr(mh, "HEAT_JSON", str(tmp_path / "heat.json"))
         store = mh.MemoryHeat()
-        entry = store.get_entry("MEM-STORED01")
+        entry = store.new_entry()
         assert len(entry) == 9
         assert "stored" not in entry
 
@@ -2572,7 +2577,7 @@ class TestMemoryHeat:
         meta_path.write_text("{}", encoding="utf-8")
         monkeypatch.setattr(ms, "META_JSON", str(meta_path))
         store = mh.MemoryHeat()
-        store.recall_boost("MEM-NOTMP01")
+        store.set_entry("MEM-NOTMP01", store.new_entry())
         store.tick_decay()
         tmps = list(tmp_path.glob("*.tmp"))
         assert len(tmps) == 0
@@ -3366,9 +3371,11 @@ class TestConfigStore:
         path.write_text(json.dumps(legacy), encoding="utf-8")
         store = cfs.ConfigStore()
 
-        assert store.load("system")["response_anchor"] == {"prompt": ""}
+        with pytest.raises(cfs.ReadError):
+            store.load("system")
         migrated, changed = store.migrate_system_audit_policy()
         assert changed is True
+        assert store.load("system")["response_anchor"] == {"prompt": ""}
         migrated["response_anchor"]["prompt"] = "  使用英文回答  "
         store.save("system", migrated)
         assert store.get_response_anchor_prompt() == "使用英文回答"
@@ -3528,34 +3535,6 @@ class TestConfigStore:
         path.write_text(json.dumps(custom), encoding="utf-8")
         with pytest.raises(ValueError, match="retention out of range"):
             store.migrate_system_audit_policy()
-
-    @pytest.mark.parametrize(
-        ("legacy_ratio", "expected_ratio"),
-        [(0.7, 0.9), (0.73, 0.73)],
-    )
-    def test_spec742_migrates_only_the_old_default_watermark_once(
-            self, legacy_ratio, expected_ratio, tmp_path, monkeypatch):
-        from data import config_store as cfs
-
-        path = tmp_path / "system.json"
-        monkeypatch.setitem(
-            cfs._CONFIG_MAP,
-            "system",
-            (str(path), cfs._CONFIG_MAP["system"][1]),
-        )
-        legacy = cfs.default_system_config()
-        legacy["token_usage"].pop("watermark_policy_version")
-        legacy["token_usage"]["warning_ratio"] = legacy_ratio
-        path.write_text(json.dumps(legacy), encoding="utf-8")
-        store = cfs.ConfigStore()
-
-        migrated, changed = store.migrate_system_audit_policy()
-
-        assert changed is True
-        assert "warning_ratio" not in migrated["token_usage"]
-        assert migrated["token_usage"]["watermark_policy_version"] == 2
-        assert store._migrated_lately_pressure_ratio == expected_ratio
-        assert store.migrate_system_audit_policy()[1] is False
 
     @pytest.mark.parametrize("ratio", [-1.0, 2.0, float("nan"), True])
     def test_spec742_rejects_unsafe_token_watermark(

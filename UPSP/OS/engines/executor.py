@@ -1797,24 +1797,8 @@ class APIExecutor:
                     payload=payload,
                 )
                 try:
-                    send = self._send_request_cancellable
-                    if (
-                            getattr(send, "__func__", None)
-                            is APIExecutor._send_request_cancellable):
-                        response_data = send(
-                            request_url,
-                            api_key,
-                            payload,
-                            provider,
-                            wire_body=wire_body,
-                        )
-                    else:
-                        response_data = send(
-                            request_url,
-                            api_key,
-                            payload,
-                            provider,
-                        )
+                    response_data = self._send_request_cancellable(
+                        request_url, api_key, payload, provider, wire_body=wire_body)
                 finally:
                     self._mark_provider_call_finished()
                 latency_ms = int((time.time() - start_time) * 1000)
@@ -2012,6 +1996,8 @@ class APIExecutor:
     @staticmethod
     def _provider_error_kind(error, status_code=0):
         text = str(error or "").lower()
+        if text.startswith("provider_stream_content_overrun:"):
+            return "provider_stream_content_overrun"
         if "provider_output_limit_reached" in text:
             return "output_limit"
         if "provider_response_incomplete" in text:
@@ -3105,15 +3091,8 @@ class APIExecutor:
 
     def _send_request_cancellable(
             self, url, api_key, payload, provider=None, *, wire_body=None):
-        """Use a worker only for the unmodified production transport method.
-
-        Existing deterministic tests and adapters that replace ``_send_request``
-        remain in-process; the real urllib implementation is the killable path.
-        """
+        """在可取消 worker 中发送已核验的 Wire；测试注入遵循本方法签名。"""
         self._raise_if_cancelled()
-        bound = self._send_request
-        if getattr(bound, "__func__", None) is not APIExecutor._send_request:
-            return bound(url, api_key, payload)
         request = {
             "url": str(url or ""),
             "api_key": str(api_key or ""),
@@ -3434,8 +3413,11 @@ class APIExecutor:
                     raise APIBridgeError(
                         url,
                         "provider_stream_content_overrun: "
-                        f"plain assistant text exceeded {content_overrun_chars} chars "
-                        "without tool calls",
+                        f"content_chars={summary.get('content_chars', 0)}, "
+                        f"reasoning_chars={summary.get('reasoning_chars', 0)}, "
+                        f"total_chars={plain_text_chars}, limit_chars={content_overrun_chars}; "
+                        "local output guard triggered without tool calls",
+                        affects_connectivity=False,
                     )
                 total_chars = (
                     int(summary.get("content_chars") or 0)

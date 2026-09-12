@@ -251,11 +251,18 @@ class RuntimeControl:
     @staticmethod
     def step_exception_result(stage, exc):
         reaction = stage == "reaction"
-        provider_failure = reaction and isinstance(exc, APIBridgeError)
+        settlement_failure = getattr(exc, "settlement_failure", None)
+        provider_failure = reaction and isinstance(exc, APIBridgeError) and not settlement_failure
         required_context_failure = (
             exc.as_dict() if isinstance(exc, RequiredContextError) else {}
         )
-        if provider_failure:
+        if provider_failure and str(exc).startswith("provider_stream_content_overrun:"):
+            response = (
+                "模型在未返回工具调用的情况下持续输出正文或推理，触发本地输出上限保护，本轮已停止。"
+                "已完成的结果和未完成任务仍保留；字符数与上限见技术详情。"
+            )
+            blocked_reason = "blocked/provider_stream_content_overrun"
+        elif provider_failure:
             response = (
                 "本轮模型调用未能在既定重试预算内完成，Runtime 已停止继续调用。"
                 "活动任务和未完成项仍保留，可在服务恢复后继续。"
@@ -276,7 +283,7 @@ class RuntimeControl:
         else:
             response = ""
             blocked_reason = ""
-        return {
+        result = {
             "aborted": True,
             "response": response,
             "error": f"{stage} step exception: {exc}",
@@ -284,3 +291,22 @@ class RuntimeControl:
             "_local_blocked_reason": blocked_reason,
             "_required_context_failure": required_context_failure,
         }
+        if failure_flag := getattr(exc, "round_failure_flag", ""):
+            result[failure_flag] = True
+        elif not isinstance(exc, (APIBridgeError, RequiredContextError)):
+            result["_runtime_step_failed"] = True
+        if getattr(exc, "partial_receipts", None):
+            result["protocol_tool_receipts"] = exc.partial_receipts
+        from errors import UncertainEffectError
+        if isinstance(exc, UncertainEffectError):
+            result["_persistent_effect_failure"] = exc.as_dict()
+        if settlement_failure:
+            result["_persistent_effect_uncertain"] = True
+            failure = result.setdefault("_persistent_effect_failure", {
+                "reason": "frame_settlement_failed",
+                "affected_ids": [],
+                "error_type": type(exc).__name__,
+                "cause": str(exc),
+            })
+            failure["settlement_failure"] = settlement_failure
+        return result

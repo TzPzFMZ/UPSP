@@ -11,6 +11,7 @@ import uuid
 from constants import local_now
 from data.atomic_write import atomic_write_json
 from engines.heartbeat import round_decision_from_heartbeat_flags
+from errors import UncertainEffectError
 from logic.relay_intent_pool import settle_open_relay_intents
 from paths import (
     ACTIVE_INSTANCE_ID,
@@ -155,6 +156,9 @@ class ResidentRuntimeService:
                 {ACTION_RETENTION_PENDING_KEY: pending_retention}
                 if pending_retention else {}
             )
+            previous_failure = ((previous or {}).get("last_outcome") or {}).get("persistent_effect_failure")
+            if previous_failure:
+                self.last_outcome["persistent_effect_failure"] = dict(previous_failure)
             self.host = {"address": str(host_address), "port": int(port)}
             self._started = True
             if self.persona_ready():
@@ -218,6 +222,9 @@ class ResidentRuntimeService:
             self._retry_action_recovery_retention(runtime)
             self._recovering = True
             try:
+                action_store = getattr(runtime, "action_recovery_store", None)
+                if action_store is not None:
+                    action_store.classify_pending()
                 self._recover_interrupted_round(
                     runtime, self._previous_supervisor)
                 if self._previous_requires_explicit_release(
@@ -247,12 +254,13 @@ class ResidentRuntimeService:
         try:
             self.runtime.run_forever()
         except BaseException as exc:
-            self.last_outcome = {
-                "kind": "runtime_process_failed",
-                "error_type": type(exc).__name__,
-                "recorded_at": self._now(),
-            }
-            self._write_supervisor("crashed")
+            with self._lock:
+                self.last_outcome.update(kind="runtime_process_failed",
+                    error_type=type(exc).__name__, recorded_at=self._now())
+                if isinstance(exc, UncertainEffectError):
+                    self.last_outcome["persistent_effect_failure"] = self._merge_effect_failure(
+                        exc.as_dict(), self.last_outcome.get("persistent_effect_failure"))
+                self._write_supervisor("crashed")
             self._finish_operation({
                 "status": "runtime_failed",
                 "error": type(exc).__name__,
@@ -282,6 +290,7 @@ class ResidentRuntimeService:
                     execution_permission_level=permission_level,
                     **kwargs):
                 raise RuntimeServiceError("round_in_flight")
+            operation["accepted"] = True
             if not operation["event"].wait(timeout):
                 raise RuntimeServiceError("runtime_wait_timeout")
             result = dict(operation["result"] or {})
@@ -315,6 +324,7 @@ class ResidentRuntimeService:
             wake = getattr(runtime.hb, "wake", None)
             if callable(wake):
                 wake()
+            operation["accepted"] = True
             if not operation["event"].wait(timeout):
                 raise RuntimeServiceError("runtime_wait_timeout")
             result = dict(operation["result"] or {})
@@ -398,15 +408,40 @@ class ResidentRuntimeService:
                 "submission_source": "seed_gui",
                 "receipt": receipt,
             }
+        except UncertainEffectError as exc:
+            self.record_uncertain_effect(exc)
+            raise
         finally:
             if reserved:
                 runtime.control.release_idle_mutation()
-            if heartbeat_paused and not was_paused:
-                try:
-                    heartbeat.resume(run_tick=False)
-                except TypeError:  # compatibility with injected test doubles
-                    heartbeat.resume()
+            if heartbeat_paused and not was_paused and not self.last_outcome.get("persistent_effect_failure"):
+                heartbeat.resume(run_tick=False)
             self._end_operation(operation)
+
+    def record_uncertain_effect(self, exc):
+        with self._lock:
+            self.last_outcome.update(status="mutation_unsettled", settlement_status="unsettled",
+                persistent_effect_failure=self._merge_effect_failure(
+                    exc.as_dict(), self.last_outcome.get("persistent_effect_failure")))
+            failures = []
+            try:
+                if self.runtime is not None:
+                    self.runtime.hb.pause()
+                    if not self.runtime.control.latch_until_explicit(self.runtime):
+                        self.runtime.control.request_stop(self.runtime)
+            except Exception as stop_exc:
+                failures.append(stop_exc)
+            try:
+                self._write_supervisor(self.supervisor_state)
+            except Exception as persist_exc:
+                failures.append(persist_exc)
+            if failures:
+                incomplete = UncertainEffectError("recovery_record_incomplete",
+                    cause=exc, rollback_causes=failures,
+                    partial_receipts=exc.partial_receipts)
+                self.last_outcome["persistent_effect_failure"] = self._merge_effect_failure(
+                    incomplete.as_dict(), self.last_outcome["persistent_effect_failure"])
+                raise incomplete from exc
 
     def prepare_instance_switch(self):
         """Reserve an idle Runtime until the desktop restarts or mutation fails."""
@@ -439,10 +474,7 @@ class ResidentRuntimeService:
             if switch["reserved"]:
                 runtime.control.release_idle_mutation()
             if switch["heartbeat_paused"] and not switch["was_paused"]:
-                try:
-                    runtime.hb.resume(run_tick=False)
-                except TypeError:  # compatibility with injected test doubles
-                    runtime.hb.resume()
+                runtime.hb.resume(run_tick=False)
             self._end_operation(operation)
             raise
 
@@ -456,10 +488,7 @@ class ResidentRuntimeService:
         if switch["reserved"]:
             runtime.control.release_idle_mutation()
         if switch["heartbeat_paused"] and not switch["was_paused"]:
-            try:
-                runtime.hb.resume(run_tick=False)
-            except TypeError:  # compatibility with injected test doubles
-                runtime.hb.resume()
+            runtime.hb.resume(run_tick=False)
         self._end_operation(switch["operation"])
 
     def status(self):
@@ -487,6 +516,14 @@ class ResidentRuntimeService:
             action_store.summary() if action_store is not None
             else {"pending": False, "round": None}
         )
+        persistent_failure = self.last_outcome.get("persistent_effect_failure")
+        if persistent_failure:
+            interrupted_recovery = {
+                **interrupted_recovery, "pending": True,
+                "reason": "persistent_effect_recovery_required",
+                "affected_ids": list(persistent_failure.get("affected_ids") or []),
+                "outcome_unknown": int(interrupted_recovery.get("outcome_unknown") or 0) + 1,
+            }
         return {
             "session_id": self.session_id,
             "process_id": os.getpid(),
@@ -548,18 +585,8 @@ class ResidentRuntimeService:
                     runtime.workbench.get("base.active_task") or ""
                 ).strip(),
             }
-        except Exception:
-            return {
-                "total_round": 0,
-                "active_flags": [],
-                "round_type": runtime_status.get("round_type"),
-                "guide_queue": [],
-                "coalesced": False,
-                "deferred_items": [],
-                "phase": runtime_status.get("stage") or "idle",
-                "active_guides": {"rhythm": "", "work": ""},
-                "active_task": "",
-            }
+        except Exception as exc:
+            raise RuntimeServiceError("runtime_projection_read_failed") from exc
 
     def close(self, wait_seconds=10):
         if self._closed:
@@ -581,6 +608,8 @@ class ResidentRuntimeService:
 
     def _begin_operation(self, kind, permission_level):
         with self._lock:
+            if self.last_outcome.get("persistent_effect_failure"):
+                raise RuntimeServiceError("persistent_effect_recovery_required")
             if self._operation is not None:
                 raise RuntimeServiceError("round_in_flight")
             if self.runtime and self.runtime.runtime_status()["round_in_flight"]:
@@ -601,11 +630,16 @@ class ResidentRuntimeService:
                 return
             operation["result"] = dict(result or {})
             operation["event"].set()
+            if operation.get("detached"):
+                self._operation = None
 
     def _end_operation(self, operation):
         with self._lock:
             if self._operation is operation:
-                self._operation = None
+                if operation.get("accepted") and not operation["event"].is_set():
+                    operation["detached"] = True
+                else:
+                    self._operation = None
 
     def _on_round_started(self, round_num, round_type):
         self._write_supervisor(
@@ -652,29 +686,47 @@ class ResidentRuntimeService:
             "settlement_status": str(settlement.get("status") or ""),
             "degraded_reasons": list(settlement.get("degraded_reasons") or []),
             "fatal_reasons": list(settlement.get("fatal_reasons") or []),
+            **({"persistent_effect_failure": dict(result["_persistent_effect_failure"])}
+               if (result or {}).get("_persistent_effect_failure") else {}),
         }
 
     def _on_round_finished(self, round_num, round_type, result):
-        payload = self._round_result_payload(round_num, round_type, result)
-        pending_retention = self._action_retention_pending_rounds(
-            self.last_outcome)
-        self.last_outcome = {
-            key: value
-            for key, value in payload.items()
-            if key != "final_response"
-        }
-        if pending_retention:
-            self.last_outcome[ACTION_RETENTION_PENDING_KEY] = pending_retention
-        if payload["settlement_status"] in {"settled", "degraded"}:
-            action_store = getattr(
-                self.runtime, "action_recovery_store", None)
-            if action_store is not None or pending_retention:
-                self._retry_action_recovery_retention(
-                    self.runtime,
-                    additional_rounds=(
-                        [round_num] if action_store is not None else []),
-                )
-        self._write_supervisor("running", current_round=None, round_type=None)
+        with self._lock:
+            payload = self._round_result_payload(round_num, round_type, result)
+            if self.last_outcome.get("persistent_effect_failure"):
+                payload["persistent_effect_failure"] = self._merge_effect_failure(
+                    payload.get("persistent_effect_failure"), self.last_outcome["persistent_effect_failure"])
+            pending_retention = self._action_retention_pending_rounds(
+                self.last_outcome)
+            self.last_outcome = {
+                key: value
+                for key, value in payload.items()
+                if key != "final_response"
+            }
+            if pending_retention:
+                self.last_outcome[ACTION_RETENTION_PENDING_KEY] = pending_retention
+            if payload.get("persistent_effect_failure"):
+                self.runtime.control.latch_until_explicit(self.runtime)
+            if payload["settlement_status"] in {"settled", "degraded"}:
+                action_store = getattr(
+                    self.runtime, "action_recovery_store", None)
+                if action_store is not None or pending_retention:
+                    self._retry_action_recovery_retention(
+                        self.runtime,
+                        additional_rounds=(
+                            [round_num] if action_store is not None else []),
+                    )
+            self._write_supervisor("running", current_round=None, round_type=None)
+
+    @staticmethod
+    def _merge_effect_failure(current, previous):
+        if not current:
+            return dict(previous)
+        if not previous or current == previous:
+            return dict(current)
+        return {**current, "prior_failure": previous,
+                "affected_ids": list(dict.fromkeys(
+                    list(current.get("affected_ids") or []) + list(previous.get("affected_ids") or [])))}
 
     @staticmethod
     def _action_retention_pending_rounds(outcome):
@@ -736,6 +788,7 @@ class ResidentRuntimeService:
         if "round_closed" in types:
             if action_store is not None:
                 action_store.note_round_closed(round_num)
+                action_store.classify_pending(round_num)
             return
         classified_event = next((
             item for item in events
@@ -797,6 +850,7 @@ class ResidentRuntimeService:
                 "fatal_reasons": ["runtime_process_interrupted"],
             })
         self.last_outcome = {
+            **self.last_outcome,
             "status": "recovered_unsettled",
             "round_num": round_num,
             "reason": "runtime_process_interrupted",
@@ -820,7 +874,8 @@ class ResidentRuntimeService:
         if not isinstance(outcome, dict):
             return False
         return (
-            outcome.get("settlement_status") in {"degraded", "unsettled"}
+            bool(outcome.get("persistent_effect_failure"))
+            or outcome.get("settlement_status") in {"degraded", "unsettled"}
             or outcome.get("status") in {
                 "runtime_failed", "recovered_unsettled", "round_stopped",
             }

@@ -388,6 +388,21 @@ class ActionRecoveryStore:
                 if item["recovery_classification"]
                 and item["disclosed_round"] is None]
 
+    def has_unsettled(self, round_num):
+        with self._lock:
+            return any(item["round"] == int(round_num) and item["phase"] != "settled"
+                       for item in self.load()["items"])
+
+    def classify_pending(self, round_num=None):
+        """Classify ledger-owned incomplete actions, including already closed rounds."""
+        with self._lock:
+            rounds = sorted({item["round"] for item in self.load()["items"]
+                             if item["phase"] != "settled" and not item["recovery_classification"]
+                             and (round_num is None or item["round"] == int(round_num))})
+            for pending_round in rounds:
+                self.classify_interrupted(pending_round)
+            return self.summary()
+
     def summary(self, document=None):
         document = document or self.load()
         items = self.pending_items(document)

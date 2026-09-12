@@ -3,6 +3,7 @@
 import json
 import re
 from copy import deepcopy
+from errors import ReadError
 
 from assembly.context_helpers import normalize_active_corpus_id
 from assembly.context_mounts import project_relation_content
@@ -119,14 +120,17 @@ def apply_index_view_requests(
                     state, "reaction", mount_ids),
                 hidden_stm_memory_ids=hidden_stm_memory_ids,
             )
-        except Exception as exc:
+        except (ValueError, ReadError, OSError) as exc:
             receipt = {
                 "tool_id": "index_view",
-                "status": "rejected",
+                "status": "rejected" if isinstance(exc, ValueError) else "failed",
                 "source": "protocol_tool_request",
                 "reason": str(exc) or "index_view_failed",
                 "content": "",
             }
+        except Exception as exc:
+            exc.partial_receipts = list(receipts) + list(getattr(exc, "partial_receipts", []))
+            raise
         receipts.append(receipt)
     return receipts
 
@@ -145,11 +149,15 @@ def apply_memory_search_requests(assembler, requests):
                 "protocol_tool_receipt": True,
             })
             continue
-        receipts.append(assembler.build_memory_search(
-            query_terms=request.get("query_terms"),
-            offset=request.get("offset", 0),
-            limit=request.get("limit", 8),
-        ))
+        try:
+            receipts.append(assembler.build_memory_search(
+                query_terms=request.get("query_terms"),
+                offset=request.get("offset", 0),
+                limit=request.get("limit", 8),
+            ))
+        except Exception as exc:
+            exc.partial_receipts = list(receipts) + list(getattr(exc, "partial_receipts", []))
+            raise
     return receipts
 
 
@@ -291,6 +299,15 @@ def apply_relation_card_declarations(
             else:
                 receipt["reason"] = "identity_or_subject_mismatch"
         except Exception as exc:
+            from errors import UncertainEffectError
+            if isinstance(exc, UncertainEffectError):
+                receipt.update(status="error", reason=str(exc), affected_ids=exc.affected_ids)
+                receipts.append(receipt)
+                exc.partial_receipts = receipts
+                raise
+            if not isinstance(exc, ValueError):
+                exc.partial_receipts = receipts
+                raise
             receipt["status"] = "processor_error"
             receipt["detail"] = str(exc)
         receipts.append(receipt)

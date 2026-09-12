@@ -320,17 +320,6 @@ class AuditStore:
     def _sha256_text(text):
         return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
 
-    @staticmethod
-    def _generation_config_from_body(request_body):
-        if not isinstance(request_body, dict):
-            return {}
-        reserved = {"messages", "input", "instructions", "system", "tools"}
-        return {
-            key: value
-            for key, value in request_body.items()
-            if key not in reserved
-        }
-
     @classmethod
     def _layer_manifest_entry(cls, payload, *, dirty, reused):
         entry = {

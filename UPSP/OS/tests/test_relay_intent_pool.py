@@ -1,5 +1,6 @@
 import os
 import sys
+from copy import deepcopy
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TESTS_DIR)
@@ -10,7 +11,7 @@ class MemoryStateStore:
     def __init__(self):
         self.state = {
             "base": {
-                "runtime": {},
+                "runtime": {"relay_intents": [], "relay_intent_seq": 0},
                 "heartbeat_flags": {"continue_requested": False},
             }
         }
@@ -32,6 +33,12 @@ class MemoryStateStore:
 
     def load(self):
         return self.state
+
+    def mutate(self, updater):
+        state = deepcopy(self.state)
+        updater(state)
+        self.state = state
+        return deepcopy(state)
 
 
 def test_spec359_multiple_relay_intents_do_not_overwrite_each_other():

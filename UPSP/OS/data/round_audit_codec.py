@@ -337,6 +337,6 @@ def read_round_audit_file(path):
                 events.append(decoder.feed(event))
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 raise ValueError(
-                    f"round_audit_invalid_line:{line_number}:{exc}"
+                    f"round_audit_invalid_line:{line_number}:{type(exc).__name__}:{exc}"
                 ) from exc
     return events

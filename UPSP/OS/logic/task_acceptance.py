@@ -1,5 +1,6 @@
 """Task closeout acceptance checks for Spec434."""
 
+from logic.task_guide import PENDING_INPUT_SETTLED_STATUSES
 
 DONE_ITEM_STATUSES = {
     "accepted",
@@ -19,12 +20,6 @@ PASSED_ACCEPTANCE_STATUSES = {
     "finished",
     "passed",
     "verified",
-}
-SETTLED_PENDING_INPUT_STATUSES = {
-    "integrated",
-    "deferred",
-    "rejected",
-    "split",
 }
 BLOCKED_STATUSES = {"blocked"}
 
@@ -124,7 +119,7 @@ def _blocked_pending_inputs(guide):
         if not isinstance(item, dict):
             continue
         status = str(item.get("status") or "pending").strip().lower()
-        if status in SETTLED_PENDING_INPUT_STATUSES:
+        if status in PENDING_INPUT_SETTLED_STATUSES:
             continue
         pending_id = str(
             item.get("pending_input_id") or item.get("id") or "pending_input")

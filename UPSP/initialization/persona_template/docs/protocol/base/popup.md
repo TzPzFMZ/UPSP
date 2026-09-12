@@ -32,7 +32,7 @@ POPUP 只保留三层，从前到后稳定排序：
 
 反应循环指南：
 
-> 当前是反应步循环。UPSP 是通道驱动系统：继续执行调用合法工具；轮中可见进展可以直接输出自然语言，由 Runtime 记为 `assistant_text`；注意：完成时直接自然语言回复用户；这段话就是用户最终看到的回复。不要只写“收束本轮”，先把该回应的话自然说完。只有需要跨轮继续时才单独调用 `reaction_finalize(handoff_text)`。
+> 当前是反应步循环。UPSP 是通道驱动系统：继续执行调用合法工具；轮中可见进展可以直接输出自然语言，由 Runtime 记为 `assistant_text`；注意：完成时直接自然语言回复用户；这段话就是用户最终看到的回复。不要只写“收束本轮”，先把该回应的话自然说完。只有需要跨轮继续时才调用 `reaction_finalize(handoff_text)`。
 
 指南清单前台文案：
 
@@ -86,8 +86,8 @@ POPUP 只保留三层，从前到后稳定排序：
   - 过程性用户可见进展直接输出自然语言；Runtime 会记为 assistant_text，它不是终点。
   - 如果只是想继续执行，直接调用合法工具；不要把自然语言说明当作工具结果。
   - 注意：完成时直接自然语言回复用户；这段话就是用户最终看到的回复。不要只写“收束本轮”，先把该回应的话自然说完。
-  - 需要下一轮继续时，调用 reaction_finalize(handoff_text)，写清下一轮继续做什么；可与最后一批工具同次提交，Runtime 会最后结算并置位 continue_requested。
-  - blocked 不是模型出口；只有 Runtime 蓝屏类事故才派生 blocked。
+  - 需要下一轮继续时，调用 reaction_finalize(handoff_text)，写清下一轮继续做什么；可与最后一批工具同次提交，Runtime 会最后结算；Cleanup 成功时将中继意图与 continue_requested 一起落账。
+  - blocked 不是模型出口；Runtime 根据已登记的任务、验收阻塞证据或运行故障判定 blocked。
   - 不允许无声明悬挂；完成就自然回复，跨轮继续才 handoff。
 
 历史反应收束指南（已退役）：
@@ -180,7 +180,7 @@ POPUP 只保留三层，从前到后稳定排序：
 
 POPUP 不再承载交接文本模块。终端工具要求和步骤规则属于指南或警告；跨轮继续正文属于 `runtime.relay_intents` 隐藏 payload，不属于 POPUP，也不属于 model-visible 当前缓存正文。
 
-`reaction_finalize.handoff_text` 是跨轮中继自然语言出口。Runtime 将合法中继正文登记到 `state.base.runtime.relay_intents[]`，生成 `relay_intent_id` 并置位 `continue_requested`；模型可见层只展示当前中继目标卡和中继意图指针，当前轮善后步不读取这段自由文本。
+`reaction_finalize.handoff_text` 是跨轮中继自然语言出口。Cleanup 成功时，Runtime 将合法中继正文登记到 `state.base.runtime.relay_intents[]`，生成 `relay_intent_id` 并置位 `continue_requested`；模型可见层只展示当前中继目标卡和中继意图指针，当前轮善后步不读取这段自由文本。
 
 旧 `received_handoff`、`上环交接`、`待处理交接` 和 `HANDOFF｜交接` 可见层均已退役。善后步输入来自 cleanup 临时材料、结构化回执和 Runtime pending metadata，不接收反应步自由文本交接。
 
@@ -190,7 +190,7 @@ POPUP 不再承载交接文本模块。终端工具要求和步骤规则属于�
 
 时间警告：
 
-> 反应事务超过 20 分钟时，时间警告必须使用明确收束语气：务必立即进入收束优先，停止扩张新任务，只保留收束所必需的执行、验证和证据补齐；完成就直接自然语言回复用户，确需跨轮继续才单独调用 `reaction_finalize(handoff_text)`。不要在可见警告里解释“工具面不会收窄”这类 Runtime 实现细节。
+> 反应事务超过 20 分钟时，时间警告必须使用明确收束语气：务必立即进入收束优先，停止扩张新任务，只保留收束所必需的执行、验证和证据补齐；完成就直接自然语言回复用户，确需跨轮继续才调用 `reaction_finalize(handoff_text)`。不要在可见警告里解释“工具面不会收窄”这类 Runtime 实现细节。
 
 原生工具调用警告：
 
@@ -205,7 +205,7 @@ POPUP 不再承载交接文本模块。终端工具要求和步骤规则属于�
 
 结构警告：
 
-> 当前输出或工具参数结构非法。setup / cleanup 阶段裸文本是非法输出；reaction loop 阶段自然语言会被记为 `assistant_text`，无阻断时可作为最终回复候选。需要继续执行就调用合法工具；完成就直接自然语言回复用户；需要跨轮继续才单独调用 `reaction_finalize(handoff_text)`。
+> 当前输出或工具参数结构非法。setup / cleanup 阶段裸文本是非法输出；reaction loop 阶段自然语言会被记为 `assistant_text`，无阻断时可作为最终回复候选。需要继续执行就调用合法工具；完成就直接自然语言回复用户；需要跨轮继续才调用 `reaction_finalize(handoff_text)`。
 
 安全警告：
 

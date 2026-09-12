@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import initialization.instance_service as instance_service
 from initialization.instance_service import InstanceService, InstanceServiceError
 from initialization.persona_initializer import PersonaInitializer, load_preset
 from initialization.windows_data import (
@@ -83,6 +84,65 @@ def test_new_branch_resets_stm_but_copies_meta_local_state(tmp_path):
     assert not (branch.persona_dir / "docs").exists()
     assert not (branch.persona_dir / "LTM" / "Memory").exists()
     assert (branch.shared_persona_dir / "core.md").is_file()
+
+
+@pytest.mark.parametrize("mode", ["new", "fork"])
+def test_branch_id_collision_preserves_existing_branch(tmp_path, monkeypatch, mode):
+    layout, _environment_value = _ready_layout(tmp_path)
+    service = InstanceService(layout)
+    created = service.create_branch(mode="new", label="existing branch")
+    target = layout.pid_root / created["instance_id"]
+    (target / "files" / "user-data.txt").write_text("keep me", encoding="utf-8")
+    before = {
+        path.relative_to(target): path.read_bytes()
+        for path in target.rglob("*") if path.is_file()
+    }
+    active_before = layout.manifest_path.read_bytes()
+    monkeypatch.setattr(
+        instance_service, "generate_instance_id", lambda: created["instance_id"]
+    )
+
+    with pytest.raises(FileExistsError):
+        service.create_branch(mode=mode, label="colliding branch")
+
+    assert {
+        path.relative_to(target): path.read_bytes()
+        for path in target.rglob("*") if path.is_file()
+    } == before
+    assert layout.manifest_path.read_bytes() == active_before
+
+
+@pytest.mark.parametrize("mode", ["new", "fork"])
+def test_branch_copy_failure_removes_only_new_target(tmp_path, monkeypatch, mode):
+    layout, _environment_value = _ready_layout(tmp_path)
+    target = layout.pid_root / "I20260905-000000-ABCD"
+    sibling = layout.pid_root / "I20260905-000000-DCBA"
+    sibling.mkdir()
+    marker = sibling / "user-data.txt"
+    marker.write_bytes(b"existing sibling data")
+    active_before = layout.manifest_path.read_bytes()
+    source_before = (layout.persona_dir / "state.json").read_bytes()
+    original_copy = instance_service.shutil.copyfile
+    copied = []
+
+    def fail_after_copy(source, destination, *args, **kwargs):
+        result = original_copy(source, destination, *args, **kwargs)
+        if not copied and Path(destination).is_relative_to(target):
+            copied.append(Path(destination))
+            raise OSError("branch_copy_interrupted")
+        return result
+
+    monkeypatch.setattr(instance_service, "generate_instance_id", lambda: target.name)
+    monkeypatch.setattr(instance_service.shutil, "copyfile", fail_after_copy)
+
+    with pytest.raises(instance_service.shutil.Error, match="branch_copy_interrupted"):
+        InstanceService(layout).create_branch(mode=mode, label="interrupted branch")
+
+    assert copied
+    assert not target.exists()
+    assert marker.read_bytes() == b"existing sibling data"
+    assert layout.manifest_path.read_bytes() == active_before
+    assert (layout.persona_dir / "state.json").read_bytes() == source_before
 
 
 def test_fork_copies_settled_context_and_archive_freezes_branch(tmp_path):

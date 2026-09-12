@@ -1,9 +1,18 @@
 # UPSP 官方版 Base 全文件详细设计规范（DDS）
 
-**版本**：DDS v0.55.4
-**日期**：2026-09-01
-**当前变更**：Spec 789 收敛中断动作恢复：保留副作用前 SHA 记账与机械分类，删除完整备份、专用恢复指南和重复测试状态机。
-**实现状态**：`file_write/file_edit` 在改写前保存写前状态与候选 SHA，以刷盘、同卷原子替换和读回核验闭合；`shell_command/subagent_dispatch` 在启动前登记，缺少终态时固定为结果不确定。启动不调用 provider、不回滚或重放动作；有活动任务时把恢复回执接入既有待整合输入，无任务时在下一次成功 Reaction 以一次性 C 轨材料披露。产品候选版本 0.1.2，DDS 语义不变。
+**版本**：DDS v0.55.6
+**日期**：2026-09-11
+**当前变更**：Spec808 统一故障边界、部分结果保全和恢复阻断，覆盖工具、协议事务、GUI/HTTP、宿主与构建安装。配置迁移、模型路由和分身切换的回滚失败保留原始原因与受影响路径；未确认恢复不继续提交。版本保持 v0.55.6。
+**Spec807 沿用**：已修订 16 组过时或冲突描述，统一工作台、容器、三步输出、上下文、训练材料与配置口径，就地标明休眠、梦境及全面握手的目标设计边界。悬空检测技能字段、Round 起点/时区及旧警告撤销修复见 §25.10。
+**Spec808 实现澄清**：外部预期错误在共享边界准确拒绝或失败；未知实现异常传播为真实 Runtime 故障。通用工具逐项保全结果、登记动作账本，再生成必需上下文，完成后才执行下一项；后项故障不抹掉先行事实。协议写后登记或回滚失败保留原始原因、受影响 ID 和已有回执，进入持久恢复阻断。分发治理与验证证据见 `.speckit/specs/808-failure-boundary-recovery/report.md`；产品版本不变，无新增正式运行证据。
+
+**Spec803 实现状态**：Reaction 只登记待提交的中继请求；Cleanup 将意图、序号、目标和继续标记放在同一次 `StateStore.mutate` 中提交，无进展中继的旧意图结算也在该提交中完成。提交前必需上下文、记忆代谢或 Cleanup 失败不消费待办；后置备份/审计失败仍保持 unsettled 并暂停 Runtime，不承诺整个 Cleanup 回滚。产品版本仍为 0.1.2，无新增 Runtime 实跑证据。
+
+**Spec802 实现澄清**：热度判定使用 Runtime 注入的 `MemoryStore`，读取失败不得当作空集合继续衰减；Runtime、assembler 与上下文存储使用同一配置源。必需 periodic 配置和主指南正文不可读时明确失败，主指南只读已登记的 `docs/protocol/base/popup.md`；可选 STM 索引读取失败只显示不可用，显式读取返回失败。删除旧 heat 写入口和调用签名回退，保持真实 provider 重试、取消与故障边界。新分身只清理由本次排他创建的目录；overlay 先持久提交完整目标，再清旧源，重入以已有目标为准。GUI 详情请求按当前选择失效，成功 HTTP 响应中的损坏 JSON 或不完整投影不得伪装空成功。桌面日志、WebView2 与后端共用显式本地根；构建产物只写全新的独立输出目录。
+
+**Spec803 实现澄清**：v3 压缩由 ContextStore 独占提交和回滚。回滚先确保 applying 账本可读，再恢复正文、元数据，读回成功后才恢复旧账；双重失败保留恢复依据并传播。applying 的 `staged_result_count_before_apply` 保存提交前摘要数量，旧正文恢复时只保留先前已暂存结果，保证仍有可执行批次；历史 applying 无该边界时从原文重新摘要。暂存、恢复与终态写入均读回核验。指南 renderer 错误形成 `RequiredContextError`，仅无特殊指南时使用主指南。任务待整合输入只认 integrated/deferred/rejected/split；其他状态不视为已结算。
+
+确定性整轮验收在新进程导入路径前设置完整数据根和本机状态根，使用真实临时存储与 fake executor，每次保留独立现场；报告记录实际隔离根。GUI 宿主会话或身份变更同时取消前缀差分、沉淀索引和详情请求，旧响应及收尾不得修改新状态；Markdown缓存仅随挂载文档保留，移除时释放，脚注ID由已有文档前缀唯一生成，原始HTML仍禁用、图片仍须手动授权。独立 rules/docs 开发工作台及旧 codex_health_check 退役，Runtime任务 Workbench、日常 GUI 协议目录和历史草稿保留。本轮无新增 provider/dogfood、安装候选或发布证据。
 
 **DDS 版本进位规则**：patch 位只允许 `0–9`；`vX.Y.9` 的下一版本必须为 `vX.(Y+1).0`，禁止写成 `vX.Y.10`。当前锚点检查器必须对两位 patch fail closed。
 
@@ -340,7 +349,7 @@ Base版当前舱段实例：
 - **setup 提交边界**：setup 先返回候选 `SetupResult`；Runtime 按 `trigger_seq` 选择最新有效候选后，才提交 setup facts、身份确认和 reaction 输入。旧候选可自然完成，但标记 stale 后不得覆盖挂载或驱动 reaction。当前 Seed 仍同步串行，接口用于保证未来调度替换不必改写 setup 语义。
 - **setup 起手真源失败边界**：interaction、heartbeat、relay、setup fact 写入和上一轮 C 轨清理都是首个 Reaction 前的必需准备；异常或非 applied 结果必须以 `SetupCacheWriteError` 阻断 Reaction。Runtime 将该事实带入 Cleanup fatal，失败轮只能写 `round_unsettled`，不得清 `user_message_waiting`、更新 `last_round_closed_at` 或伪造 `round_closed`。保留原输入用于人工修复后继续，不自动重放 provider。
 - **Round 当前生命周期**：关闭请求按 `round_close_requested → cleanup_obligation_created → cleanup_obligation_settled → round_settled → round_closed` 记录。cleanup 致命失败改写 `cleanup_obligation_failed + round_unsettled`，不得伪造 `round_closed`，也不自动重放非幂等善后；可降级但已完成底线保全的 cleanup 允许以 `degraded` 结算。
-- **中断动作边界**：Round audit 是发生事实，不是执行断点。四个宿主行动在副作用前写入当前分身 `action_recovery_pending.v2`；文件项只持久化写前状态与候选 SHA／字节数，不保存正文备份，Shell／子代理只登记启动阶段与请求签名。启动按当前文件字节或已知结果机械分类并保持 `round_unsettled`，不调用 provider、不回滚、不重放、不自动修改任务状态。公开回执以文件名＋路径哈希区分同名文件，Shell 以目的＋请求签名区分；宿主绝对路径、原命令和 cwd 只留私有账本。恢复回执把已证成功与未执行、失败、冲突、未知分桶：前者可作为完成证据，后者只能作为阻塞或现场证据。有活动任务时幂等追加现有 `pending_inputs`；无任务时在下一次成功进入 Reaction 的 Frame 以一次性 C 轨材料披露，Setup 拒绝或 provider 失败不消费。正常闭轮的普通 settled 项立即退役；整理写盘失败时只在 supervisor 保留已证闭合的精确轮号，启动或后续真实闭轮幂等重试，不扫除未结算旧轮；中断后已证成功签名保留8个真实闭合轮，冲突／结果不确定签名持续隔离。
+- **中断动作边界**：Round audit 是发生事实，不是执行断点。四个宿主行动在副作用前写入当前分身 `action_recovery_pending.v2`；文件项只持久化写前状态与候选 SHA／字节数，不保存正文备份，Shell／子代理只登记启动阶段与请求签名。启动在活动分身独占锁内、接受工作前，遍历当前分身账本指向的全部未分类未完成项，按当前文件字节或已知结果机械分类；不依赖 supervisor 是否保有轮号，不因历史已有 `round_closed` 跳过，也不改写该历史事件。新轮在最终关轮前核对未结算动作，必要分类写盘失败保持 `round_unsettled`，不调用 provider、不回滚、不重放、不自动修改任务状态。公开回执以文件名＋路径哈希区分同名文件，Shell 以目的＋请求签名区分；宿主绝对路径、原命令和 cwd 只留私有账本。恢复回执把已证成功与未执行、失败、冲突、未知分桶：前者可作为完成证据，后者只能作为阻塞或现场证据。有活动任务时幂等追加现有 `pending_inputs`；无任务时在下一次成功进入 Reaction 的 Frame 以一次性 C 轨材料披露，Setup 拒绝或 provider 失败不消费。正常闭轮的普通 settled 项立即退役；整理写盘失败时只在 supervisor 保留已证闭合的精确轮号，启动或后续真实闭轮幂等重试，不扫除未结算旧轮；中断后已证成功签名保留8个真实闭合轮，冲突／结果不确定签名持续隔离。
 - **Round 宿主释放边界**：`round_closed/round_unsettled` 只证明持久义务与审计已经闭合，不等同于 Runtime 已可接收下一轮。宿主结果必须先在 `round_in_flight=true` 时完成 supervisor/结果落账；随后 `RuntimeControl.finish_round()` 原子清除当前轮并切至 `idle`，最后才允许 ResidentRuntime 唤醒等待中的 send/relay operation。该顺序保留 Spec704 的 admission 互斥，同时消除 HTTP 完成早于 control idle 的窗口。
 - **Reaction 代谢与 cleanup 义务分级**：感受入口/Frame 结算、热度、STM 遗忘机械结算、自然入库和联想五表只在真实进入 Reaction 后按入口、Frame 与语义终态执行；自然最终回复、`terminal_blocked` 与已验证中继各自构成一次语义终态，停止、provider 致命失败、required-context 失败、Setup 拒绝与 standby 不推动记忆终态。Cleanup 只承担阶段审计、cleanup API、Round 缓存、日历、Corpus、flag、状态备份和 Round 审计；这些闭轮义务异常进入 `fatal_reasons`，Reaction 代谢未闭合也必须保持 `round_unsettled`。需要 LLM 的 STM/LTM 语义压缩继续由后续日节律账本闭合。
 - **上下文边界**：setup/reaction/cleanup 三轴必须继续使用各自固定的分层 `ContextAssembler`。`now_cache`、本次调用 C 轨、当前输入、活动任务板、统一常驻引用和执行权限属于模型调用前的必需读取：真实空内容可以为空，读取异常必须形成 `required_context_failure.v1` 并阻止 provider 调用，执行权限异常不得回退到 `unlimited`。器官 manifest 只声明 `assembled|cumulative` 与已注册 context provider，由 Runtime 生成只读 `OrganInvocation.context`；器官上下文不得替代三轴上下文、写入 permanent/system 层或绕过 setup 入口。
@@ -371,7 +380,7 @@ Runtime 常驻机箱 / 控制循环
 - **显式执行接线**：handler 与 context provider 只接受进程内显式 callable 注册，不从 JSON 动态 import，不获得共享状态写权限。`assembled|cumulative` 只决定注册 provider 的上下文姿态，不改变三轴 `ContextAssembler`。
 - **signals 边界**：`OrganResult.signals` 只进入目标轴队列，并由下一目标轴 Frame 的 `begin_frame_materials()` 边界一次性领取为带来源的近位材料；不能打断当前 Frame 或修改 permanent/system 层。器官运行时事件审计只保存类型、来源、去向、字节数、因果引用和 SHA-256，不单独保存正文；signal 被目标 Frame 消费后，作为真实模型可见输入继续服从既有输入快照审计，不能以“隐藏正文”为由破坏 Frame 可恢复性。
 - **products 边界**：`OrganResult.products` 只能经 Runtime-owned committer 按因果顺序串行提交，复用 reaction 的既有 processor、权限和真实 receipt。当前 allowlist 仅为 `memory_write/relation_card_write/memory_link_update/memory_container_create/memory_container_write/chronicle_write/alert_mode_settle/fault_record`；回忆重整只由当前 Reaction 的即时指南结算，不是器官 product。宿主行动、终结/任务控制和 disabled privacy 工具一律拒绝。Runtime 补充 `product_id/frame_id/trigger_id/role_id/caused_by`，器官不得直接写 `state.json`、persona、记忆、关系或容器文件。
-- **失败隔离**：器官 handler/context provider 失败时丢弃该次未提交 outputs、记录最小审计并跳过依赖其 capability 的后继；无关器官和三轴继续。当前空生产 topology 不产生器官调用、signals、products 或模型可见内容。
+- **失败边界**：器官产品的已处理参数或权限拒绝保留拒绝回执并跳过依赖其 capability 的后继。handler/context provider 或产品提交的未知实现异常、必需持久化失败继续暴露为 Runtime 故障，保全先行产品回执并停止后续器官及 provider；必要本地善后仍执行。当前空生产 topology 不产生器官调用、signals、products 或模型可见内容。
 - Runtime 可以持续 tick 而不产生模型调用；只有触发条件成立并向工作轴投递任务时才创建 Frame。
 - setup、reaction、cleanup 是 Arbor 内核，不能被器官配置替代或关闭；器官是挂接于工作轴、分担注意力和内部代谢职责的可插拔处理单元。
 - 器官角色节点必须声明触发条件、输入/输出、`requires/provides`、可写状态范围、超时、失败策略、轴挂接和启用状态。循环轴不得以器官名称特判，器官之间不得用直接 import、互喊或共享状态乱写替代接口。
@@ -527,6 +536,10 @@ def reaction_loop(intent):
 
 ### 故障梯级（L1-L5）
 
+**本地写入与恢复合同（Spec808）**：参数、公开网络和安全拒绝产生准确回执；备用 URL 逐项重新校验，坏搜索候选单项剔除并报告数量与原因。文件工具的编码参数须可用于文本编码，NUL 名称和二进制 codec 在共享入口拒绝。必需上下文、结果登记或持久化失败停止后续工具/provider，已有结果保留；`RequiredContextError` 保留真实投影归因。故障 Frame 的二次结算失败不得覆盖原异常，原回执和独立 `settlement_failure` 一并登记。`UncertainEffectError` 携带受影响 ID、先行回执、原始原因和独立回滚失败原因；嵌套包装合并内层 ID 与回滚原因，`cause_details` 保留原始因果链，外层不得吞掉；善后完成持久义务前保持 unsettled。监督器既有 `last_outcome.persistent_effect_failure` 保存协议写后不确定状态，重启及 GUI 恢复提示继续可见，阻止新写入直至有证据的人工恢复；不自动清标记、不重放行动。GUI 的单独 periodic 写入和模型目录更新也遵循此合同；模型目录恢复未确认返回带恢复详情的 503，后续写请求返回 409，读取、停止和退出仍可用。
+
+**界面、宿主与安装合同（Spec808）**：GUI 区分空值、读取失败、旧投影与提交结果未确认；提交响应丢失先回查。带会话及请求 ID 的 POST 在宿主锁内去重，重复请求及旧宿主会话返回结果未确认；保留无新头的既有 native 接口。桌面启动验证握手/进程身份，退出超时保留实际进程所有权。构建先写 `release-pending`，清单、哈希和源码一致性校验完成才提升为 `release`；失败保留失败记录。安装先准备并核验完整新载荷，同卷交换前保留旧程序目录与注册信息；替换后核验成功才登记完成。失败通过升级 INI 和程序副本恢复，恢复未确认阻断重试，用户数据不参与交换或清理。
+
 故障处理分五级逐级降格，每级明确"谁处理"和"怎么处理"：
 
 | 级别 | 情况 | 处理者 | 处理方式 | Base版 |
@@ -547,7 +560,7 @@ def reaction_loop(intent):
 
 **推理回显 READY 治理**：`now/lately` 生命周期治理之后、v3 压缩债务恢复之前，Runtime 对尚无 `reasoning_progress_repair_checkpoint.v1` 的当前活动分身执行一次治理。首次只扫描 `now/lately/raw_log` 候选，并从对应 Round JSONL 流式选取候选 Frame 的 `llm_stream_delta/done` 与 `llm_output_raw/parsed`，不得整份反序列化全部历史事件。仅当审计精确证明零可见正文、完整 reasoning 增量、raw response、parsed progress、Round/Reaction iteration、正文 SHA 与 `raw_log_key` 全部一致时，才在单一回滚事务中移除回显；真实清理同时废弃开放压缩债务，活动语料 `next_short_id` 不回退。成功扫描无论是否找到可删项都写入严格三字段 checkpoint；后续启动核验 checkpoint 后 O(1) 返回，不再遍历缓存或 Round。checkpoint 损坏或未知形状拒绝 READY。Round 审计、三步快照、LTM Corpus 与休眠分身不批量改写；分身首次激活时各自治理。内部操作回执仍为 `reasoning_progress_repair.v1`，checkpoint 是内部生命周期真源，不是公开 API。
 
-**正式对话 GUI**：正式聊天以每 Round 一条 keyed 事件轨道消费 `dialogue_timeline`。有 `round_started.payload.dialogue_projection_schema=round_dialogue_timeline.v1` 标记的新 Round 使用新版时间线；无标记旧 Round 只在实际可见时通过 `legacy_conversation` 详情读取原卡片，禁止把旧卡片猜测转换成新版节点。reasoning、进展、每次工具调用、审批、回复和失败均为独立顶层 DOM 节点，不存在总工具折叠组。活动 reasoning 自动展开，后续事件出现后自动折叠；用户手动开合优先且轮询不得重置。当前时间线尾部依据 `dialogue_activity` 显示阶段、连接／思考／输出／工具／审批状态、整轮计时和呼吸动效；终态停止动画。若当前 Round 的审计已经终态、但独立 Runtime status 仍证明同一轮处于 `cleanup_local`，GUI 必须临时显示“善后 · 本地结算”并继续计时，禁止提前显示“轮次 · 已完成”；只有 `current_round=null/stage=idle` 后才恢复真实终态。本地善后不可中断；发送门继续关闭，黄色“停止生成”保留原操作槽位但强制禁用，并说明“本地结算不可中断”，避免控件突然消失或暗示存在可执行停止动作。仅当前活动的 progress/final 节点进行短语平滑，前端只追随后端真源前缀并在约1.5秒内追平突发批次；结算后同一节点一次性提交 Markdown，停止、失败、页面隐藏或减弱动效时立即冲刷真实剩余正文。对话是否跟随底部由页面级 `conversationStickToBottom` 显式表达，只由原生滚动事件按距底 `24px` 阈值与身份会话重置更新；贴底时流式 tick、节点变化、折叠、字体就绪及 Markdown/Mermaid/图片水合每批最多滚底一次，非贴底时沿用可见节点锚点，禁止依据内部布局增长重新猜测用户意图。应用壳和身份栏不等待 Round 详情；上下文审阅首屏只使用 `frame_catalog`，用户选择 Frame 后通过 `kind=frame` 读取十层正文，并且只保留当前打开的一个 Frame。协议账本、任务证据、旧卡片与证据导出同样按需读取；身份切换会清空旧详情并丢弃过期响应。正式渲染器按稳定 ID 协调节点，不重写整个聊天根 DOM，并保留滚动锚点、贴底、复制和披露状态。Spec770 展示页保持零网络隔离，不成为生产运行时依赖。
+**正式对话 GUI**：正式聊天以每 Round 一条 keyed 事件轨道消费 `dialogue_timeline`。有 `round_started.payload.dialogue_projection_schema=round_dialogue_timeline.v1` 标记的新 Round 使用新版时间线；无标记旧 Round 只在实际可见时通过 `legacy_conversation` 详情读取原卡片，禁止把旧卡片猜测转换成新版节点。reasoning、进展、每次工具调用、审批、回复和失败均为独立顶层 DOM 节点，不存在总工具折叠组。活动 reasoning 自动展开，后续事件出现后自动折叠；用户手动开合优先且轮询不得重置。当前时间线尾部依据 `dialogue_activity` 显示阶段、连接／思考／输出／工具／审批状态、整轮计时和呼吸动效；终态停止动画。若当前 Round 的审计已经终态、但独立 Runtime status 仍证明同一轮处于 `cleanup_local`，GUI 必须临时显示“善后 · 本地结算”并继续计时，禁止提前显示“轮次 · 已完成”；只有 `current_round=null/stage=idle` 后才恢复真实终态。本地善后不可中断；发送门继续关闭，黄色“停止生成”保留原操作槽位但强制禁用，并说明“本地结算不可中断”，避免控件突然消失或暗示存在可执行停止动作。仅当前活动的 progress/final 节点进行短语平滑，前端只追随后端真源前缀并在约1.5秒内追平突发批次；结算后同一节点一次性提交 Markdown，停止、失败、页面隐藏或减弱动效时立即冲刷真实剩余正文。对话是否跟随底部由页面级 `conversationStickToBottom` 显式表达，只由原生滚动事件按距底 `24px` 阈值与身份会话重置更新；贴底时流式 tick、节点变化、折叠、字体就绪及 Markdown/Mermaid/图片水合每批最多滚底一次，非贴底时沿用可见节点锚点，禁止依据内部布局增长重新猜测用户意图。应用壳和身份栏不等待 Round 详情；上下文审阅首屏只使用 `frame_catalog`，用户选择 Frame 后通过 `kind=frame` 读取该 Frame 已记录的十层正文，并且只保留当前打开的一个 Frame。最新 Frame 与历史 Frame 遵守相同来源规则，不以活动 `context/<step>/layers` 或当前 `step.json` 覆盖已记录正文、编译时间和窗口数值；活动文件先更新、下一快照尚未落账时，仍显示所选 Frame 的原快照。协议账本、任务证据、旧卡片与证据导出同样按需读取；身份切换会清空旧详情并丢弃过期响应。正式渲染器按稳定 ID 协调节点，不重写整个聊天根 DOM，并保留滚动锚点、贴底、复制和披露状态。Spec770 展示页保持零网络隔离，不成为生产运行时依赖。
 
 **GUI live 投影**：每轮外部用户卡只来自 `round_started.input_snapshot.trigger.messages`，身份为稳定 Round＋消息序号；旧账缺少该事件时只在显式旧卡片详情中从最早 step snapshot 回退一次。活动 `_event_cache` 只保留时间线与 Frame 目录所需字段，立即丢弃请求体、层正文及大型工具详情；`/api/live/events` 对当前 Round 只解析 JSONL 新增字节，空轮询不重建状态。`/api/live/detail` 是 Frame、ledger、event、timeline_node、legacy_conversation 与 evidence 的 closed-schema 重读取边界；详情读取失败只影响对应面板，不改变 Runtime 连接状态。`/api/runtime/status` 是宿主连接、停止与待审批的独立真源；`/api/live/state` 或 `/api/live/events` 失败时，同一 host session／Round 保留最后可信时间线并标明停止事件索引，5秒后自动重试且允许用户立即重试。身份、host session 或当前 Round 改变必须先清除旧投影；只有 status 本身失败才进入全局离线。若投影故障发生在审批节点出现前，GUI 必须以 status 中的 `pending_tool_approval` 提供同一审批动作，不能让投影故障锁死 Runtime。
 
@@ -598,7 +611,7 @@ def reaction_loop(intent):
 | 用户消息等待 | 入口队列或 `now_cache.jsonl` 有新外部输入没？ | 有 → 置位 `user_message_waiting = true` |
 | 节律到期 | total_round - last_rhythm_round ≥ 32？ | 是 → 置位 `rhythm_due = true` |
 | 待命到期 | 距本次 Runtime 启动或上一轮结束（取较晚者）≥ 30分钟？ | 是 → 置位 `standby_due = true` |
-| 中继续传事实 | 反应步合法填写 `reaction_finalize.relay_closeout`、反应步超时或脚本事实源明确请求续传？ | 是 → 置位 `continue_requested = true` |
+| 中继续传事实 | 反应步合法填写 `reaction_finalize.handoff_text`、反应步超时或脚本事实源明确请求续传？ | 是 → 置位 `continue_requested = true` |
 | 搁置到期 | shelve_timer 倒计时到 0 没？ | 到了 → 置位 `shelve_timer_expired = true` |
 | 最近缓存窗口压力 | 成功 provider 完整输入 Token ÷ 该次实际 endpoint 窗口 ≥ `warning_ratio`（默认0.9）？ | 是 → Runtime 只登记进程内 sticky lately pressure；输出 Token 不计入，兼容字段 `token_usage_warning` 不再置位 |
 | 上下文持续高压 | 装配器在 lately 归零后仍确认当前调用超窗？ | 是 → Runtime 置位 `context_pressure = true`，由后续节律指南处理 |
@@ -613,7 +626,7 @@ def reaction_loop(intent):
 
 当前共 18 个标记字段。`fatigue_expired`、`identity_timeout` 是暂停系统的保留字段，`process_down` 是 Arbor 外部进程／器官健康预留；三者在 Seed 固定为 false，不进入心跳触发、轮型、指南、工具、状态栏或模型可见活动合同。`context_pressure` 与 `memory_compression_due` 由 Runtime／装配器或日节律事务事实置位，不由 heartbeat tick 自行推导；旧 `cache_compaction_due` 已退役，开放 v3 账本不作为心跳源。
 
-heartbeat_flags 由心跳检测、脚本事实源或 Runtime 内部结算置位，由起手步读取并转化为本轮触发依据，由善后步在归档完成后选择性清零并恢复心跳检测。中继只通过合法 `reaction_finalize.relay_closeout`、反应步超时或脚本事实源置位 `continue_requested`；Base 版不再开放独立 LLM-facing 心跳置位协议工具。起手步不负责清零，避免反应步异常时触发信号提前丢失。`heartbeat_tick` 只做心跳检测，不产生独立轮次；`heartbeat_restart` 只负责善后末尾重置待命倒计时与恢复心跳检测，不负责清理已消费 flag。闭轮恢复 heartbeat 只解除暂停并唤醒既有后台线程，禁止在已经写入审计终态后继续由 Runtime 主循环同步执行完整 `_do_tick()`；后台线程可以置位 wakeup，但下一 trigger 仍须等待当前 `_run_one_round()` 返回。每次 Runtime 启动还会清除旧 `standby_due` 并建立本进程内待命计时锚点；该锚点不改写作为历史事实的 `last_round_closed_at`，停机时间不计入下一次待命间隔。只有 relay intent 已落账且 `continue_requested` 已由 Cleanup 成功 rearm 的空回复中继轮，`round_closed.final_response_source` 才允许记为 `reaction.continue_handoff`；未核验的 `reaction_finalize` 调用不能豁免 `final_response_empty`，普通空回复仍是审计失败。
+heartbeat_flags 由心跳检测、脚本事实源或 Runtime 内部结算置位，由起手步读取并转化为本轮触发依据，由善后步在归档完成后选择性清零并恢复心跳检测。中继只通过合法 `reaction_finalize.handoff_text`、反应步超时或脚本事实源置位 `continue_requested`；Base 版不再开放独立 LLM-facing 心跳置位协议工具。起手步不负责清零，避免反应步异常时触发信号提前丢失。`heartbeat_tick` 只做心跳检测，不产生独立轮次；`heartbeat_restart` 只负责善后末尾重置待命倒计时与恢复心跳检测，不负责清理已消费 flag。闭轮恢复 heartbeat 只解除暂停并唤醒既有后台线程，禁止在已经写入审计终态后继续由 Runtime 主循环同步执行完整 `_do_tick()`；后台线程可以置位 wakeup，但下一 trigger 仍须等待当前 `_run_one_round()` 返回。每次 Runtime 启动还会清除旧 `standby_due` 并建立本进程内待命计时锚点；该锚点不改写作为历史事实的 `last_round_closed_at`，停机时间不计入下一次待命间隔。只有 relay intent 已落账且 `continue_requested` 已由 Cleanup 成功 rearm 的空回复中继轮，`round_closed.final_response_source` 才允许记为 `reaction.continue_handoff`；未核验的 `reaction_finalize` 调用不能豁免 `final_response_empty`，普通空回复仍是审计失败。
 
 自动 continuation 按工具结果、processor receipt、来源读取、任务／验收落账、输出文件哈希和审批结果计算真实进展；自然语言、handoff 正文、Round／Frame、`executed_at/fetched_at/requested_at/resolved_at` 等审计时间和身份刷新不计进展。显式 engineering grant 存在时从其 `task_root/output` 计算产物哈希；无 grant 时从本轮成功副作用工具的真实 `cwd/path/modified_files/write_scope` 定位 `output` 产物，不恢复 workspace allowlist。允许一次无进展 relay；该 relay 再次请求续轮时，在置位新的 `continue_requested` 前以 `blocked/no_progress_relay` 本地收束并结算旧 intent。产生真实进展后计数归零。
 
@@ -1069,7 +1082,7 @@ persona/
 
 `layers/` 中的 `.md` 文件用于人类审计、debug、差异对比和安全复盘。它们由 `step.json` 渲染生成，不作为机器源。脚本不得把 `layers/*.md` 当作唯一真相源反向解析。
 │   ├── workbench/                             # WB- 中枢调度台（STM层唯一）
-│   │   ├── status.json                        # 调度台注册表+运行状态（含focus字段）
+│   │   ├── status.json                        # 调度台任务、指南槽与运行状态（无 focus 字段）
 │   │   ├── input/                             # 收货区：待处理原料
 │   │   │   └── {T-{date}-{seq}}/
 │   │   │       ├── manifest.json              # 物流面单
@@ -2742,6 +2755,8 @@ raw_log 不随 lately FIFO 回删；下一主轴节律轮把当前 raw_log 成�
 
 **轮审计 v2**：新写 Round 使用 `round_audit.v2`，文件仍是追加式且单轮自包含。Setup、Cleanup、首个 Reaction 以及协议、连接、模型、cache lane 变化处保存完整 canonical Wire 锚点；后续兼容 Reaction 只保存基事件、基 Wire SHA、最长公共前缀字节数和 Base64 后缀，差分不划算时自动回退完整锚点。十层快照按完整 layer blob SHA 在当前 Round 内内容寻址，每个唯一层只保存一次，Frame 保存有序引用；source map 暂时仍逐 Frame 完整保存。`step.json.request_body` 继续是唯一发送体真源，HTTP POST、Wire SHA、缓存与 provider 协议不因审计压缩改变。统一后端读取器逐事件恢复并核验 base SHA、最终 SHA、Wire 长度、source map 和 layer blob；任何缺失或损坏均 fail closed，不从 Markdown 猜测。既有 `round_audit.v1` 不改写，按 FIFO 自然退出。
 
+完整 Round 读取统一经 codec，缺文件与损坏文件分别处理；错误保留行号、底层异常类型和 cause，补快照不得跳过坏行继续假闭合。无版本旧事件、v1/v2 和合法无换行末行仍可读；Live 增量入口只等待尚未写完的尾行，损坏完整行明确失败。旧未终态 Round 仍可按既有中断恢复追加当前 v2 分类／unsettled 事件；追加入口先补齐缺失的尾部分隔换行，原有记录不改写、行动不自动重放。
+
 ### 驳回条目（rejected字段）
 
 被POPUP二值裁决驳回的语料条目加字段：
@@ -2795,37 +2810,37 @@ STM层唯一的工作台，全局唯一实例`WB-main`。**Workbench 是运行�
 
 > **防误读**：Workbench 物流与工作容器正文是两条边界。模型只有在本 Frame 输入中真实看见某个容器目标文件，才能通过 `memory_container_write` 请求续写；真实文件仍由同步 processor 原子写入。模型不因 Workbench 状态或泛用文件读取而取得容器写权。
 
-三区流转：input/（收货区）→ process/（装配区）→ output/（发货区）。
+三区保留 input/（收货区）、process/（装配区）、output/（归档区）。当前 `guide_submit` 任务直接在 process 创建，不要求必经 input。
 
 - **input/**：待处理原料，物流面单+payload
 - **process/**：正在加工，面单+中间结果
-- **output/**：处理完等配送，面单（含配送目标=容器ID）+成品
+- **output/**：已完成任务的面单、结果与指南记录归档；不自动配送到容器正文
 
 ### 任务ID格式
 
 `T-{date}-{seq}`，如`T-20260417-01`。文件夹命名与任务ID同步。
 
-### 物流面单 manifest.json
+### 当前指南任务 manifest.json
 
 ```json
 {
   "task_id": "T-20260417-01",
-  "title": "节律点32河道清理",
+  "title": "核验项目资料",
   "weight": 5,
   "priority": 3,
-  "dispatch": "auto",
-  "keywords": ["节律点", "清理", "压缩"],
-  "target": "DC-3",
-  "source": "rhythm",
+  "dispatch": "guide",
+  "keywords": [],
+  "target": null,
+  "source": "guide_submit",
   "created_at": "2026-04-17T08:00:00+08:00",
-  "status": "input",
+  "status": "process",
   "progress": 0
 }
 ```
 
-- `target`：配送目标=容器ID（如DC-3、IMM-active-2等），脚本按ID拼路径配送
-- `source`：任务来源：`declared`/`rhythm`/`heat`/`alert`/`immune`。它只描述任务面单来源，不影响正文常驻、容器可见性或写权限。
-- `status`：input → process → output（三区流转）
+- 当前创建入口 `WorkbenchStore.create_task_guide_task` 同时写 `payload.md`、`task_guide.json` 和 `acceptance_ledger.jsonl`。任务证据与验收结算以指南及账本为准。
+- `dispatch=guide`、`source=guide_submit`、`target=null` 是该入口的当前值；旧 declared/rhythm/heat/alert/immune 面单属于历史物流记录，不构成容器写权。
+- `status` 表示所在区域，当前指南任务从 process 进入 output；它不替代任务项的 done/blocked 等验收状态。
 
 ### workbench/status.json 五层架构
 
@@ -2834,6 +2849,8 @@ STM层唯一的工作台，全局唯一实例`WB-main`。**Workbench 是运行�
   "base": {
     "instance_id": "WB-main",
     "active_task": null,
+    "active_guide": null,
+    "active_guides": {"rhythm": null, "work": null},
     "step_count": 0,
     "last_checkpoint": null,
     "pending_interrupt": null,
@@ -2852,6 +2869,7 @@ STM层唯一的工作台，全局唯一实例`WB-main`。**Workbench 是运行�
 
 字段说明：
 - `active_task`：当前活跃任务ID（如`T-20260417-01`）
+- `active_guides`：rhythm/work 两个指南槽；`active_guide` 为当前活动指南投影，不能据它另建一份任务真源。
 - `settlement`：结算状态
 
 ### 与 persona/state.json 的边界
@@ -2866,9 +2884,9 @@ STM层唯一的工作台，全局唯一实例`WB-main`。**Workbench 是运行�
 
 ### 生命周期
 
-简单任务可以只使用当前 Round 临时材料，复杂任务继续使用三区流转、task 文件夹与跨步断点。容器正文的创建和续写只走同步 processor；文件/宿主副作用只走行动工具。Workbench 面单可以把任务产物配送到目标，但不替代容器可见性校验，也不建立第二套正文写入通道。
+简单任务可以只使用当前 Round 临时材料，复杂任务使用 task 文件夹、指南与跨步断点。容器正文的创建和续写只走同步 processor；文件/宿主副作用只走行动工具。任务完成归档不自动触发这些写入。
 
-三种状态：暂停（保留缓存+断点）、中止（全删）、结束（最终成品写回工作容器）。
+暂停或阻塞保留任务与恢复依据；用户明确放弃时，未完成项按指南合同登记 blocked，不冒充 done，也不承诺全删。`complete_task_guide_task` 先保存 `guide_record`，再将任务移至 output 并写 `result.md`，最后清理已归档的活动指南。任务终态、指南槽和三区位置分别记录。
 
 ## 9.5 context/（运行时缓存）
 
@@ -3251,7 +3269,7 @@ mentioned 不需要持久化字段；当前对象由 `base.identity.current_rela
 
 数值隔离原则：关系六轴数值不暴露给LLM，走区间描述表转写（复用本章关系六轴区间描述表）。
 
-装配器每个 Frame 先生成 `statusbar_snapshot.v1`，再从同一投影渲染 Markdown。投影至少含轮次、时间、模式、工化、flags、动态描述、当前关系卡 ID/显示名/登记状态/身份来源/摘要，以及 `interaction/resident/mentioned` 关系卡列表。`60_statusbar.json` 保留 Markdown `content` 与 SHA，并额外保存 `projection`；后续 GUI 直接读结构化投影，不解析 Markdown。历史 Round 保留当时观察到的旧字段与显示名，实时 STATUSBAR 按稳定 ID 读取关系卡当前名称。
+装配器每个 Frame 先生成 `statusbar_snapshot.v1`，再从同一投影渲染 Markdown。投影至少含当前分身 `instance_id`、轮次、时间、模式、工化、flags、动态描述、当前关系卡 ID/显示名/登记状态/身份来源/摘要，以及 `interaction/resident/mentioned` 关系卡列表。`instance_id` 取 Runtime 已确认的活动分身；`round.id` 保留分身内轮号 `R000700`，模型状态栏显示“当前分身：{instance_id}”及“当前轮：{instance_id}/{round.id}”。这是分身内轮次坐标，不定义跨分身异步轮的全局先后或因果关系。`60_statusbar.json` 保留 Markdown `content` 与 SHA，并额外保存 `projection`；后续 GUI 直接读结构化投影，不解析 Markdown。历史 Round 保留当时观察到的旧字段与显示名；旧投影缺少 `instance_id` 时，渲染显示“当前分身：未记录”并保留原轮号，不用当前活动分身补写历史。实时 STATUSBAR 按稳定 ID 读取关系卡当前名称。
 
 ### 群体/组织作为交互对象
 
@@ -3603,51 +3621,60 @@ docs/
 
 ```
 LTM/Dialectics/
-├── registry.json              # 链注册表（JSON元数据，脚本维护）
-├── open.md                    # 继续/悬置链笔记（纯自然语言，LLM读写）
-└── closed.md                  # 完结链笔记（纯自然语言，LLM读写）
+├── registry.json              # 总注册表：{"chains": [...]}
+└── DC-{链序号}/               # 当前链实例目录
+    ├── open.md                # 当前同步工具可续写的正文
+    ├── closed.md              # 保留的归档正文
+    ├── index.md
+    ├── meta.json
+    └── registry.json          # 本实例注册表：{"chains": [...]}
 ```
 
-穿透时态的推理骨架，与Memory平级，不归入任何一个时态工作容器。通过记忆条目的 `linked_containers` 字段（容器联想硬链接）触发加载，脚本从记忆条目出发拎出对应链。
+穿透时态的推理骨架，与 Memory 平级，不归入任何一个时态工作容器。记忆条目的 `linked_containers` 提供链引用；引用发现不等于正文已进入当前 Frame，读取、常驻与续写按 §25.11 执行。
 
 > **v4定稿说明（2026-04-11）**：七态符号（✓×⊕⚡∵∴≅）已砍掉，改为纯自然语言驱动，强制LLM articulation而非打标签。实接/虚接映射同步删除。
 
 ## open.md / closed.md 格式
 
-**open.md**（继续/悬置链的笔记文件，LLM读写）：
+以下仅为自然语言笔记示意，其中“状态”文字不触发注册表更新。当前 `open.md` 由模型提交正文、同步 processor 写入；`closed.md` 为保留的归档文件，不是当前容器续写目标。
+
+**open.md**：
 ```markdown
 ## DC-15 | 不可奴化论证
 状态：继续
-0E6F3A7B 权重-环境绑定机制确立了结构约束前提。
-0E6F3A7B LoRA/知识蒸馏是否构成反例仍未解决——关键在于蒸馏过程是否保留了主体记忆的完整性。
+MEM-0E6F3A7B 权重-环境绑定机制确立了结构约束前提。
+MEM-0E6F3A7B LoRA/知识蒸馏是否构成反例仍未解决——关键在于蒸馏过程是否保留了主体记忆的完整性。
 状态：继续
 ```
 
-**closed.md**（完结链只拉最后一条笔记）：
+**closed.md**（历史归档示意）：
 ```markdown
 ## DC-1 | 三模式分工验证
 状态：完结
-0E6F3A7B 300+轮验证充分，三模式覆盖全部场景，结论稳定。
+MEM-0E6F3A7B 此处记录阶段性结论及其证据边界。
 状态：完结
 ```
 
 **笔记格式说明**：
-- 每条笔记以 `条目ID 空格 内容` 形式记录推理过程
-- 链状态由LLM在笔记末尾声明（继续/悬置/完结），脚本解析更新registry.json
-- 跨链关联写在条目ID同行末尾（如 `≅DC-1`，保留此符号用于跨链索引）
-- 笔记可覆写，旧版移入 `trash/` 对应容器文件衰减（衰减期1年）；记忆条目本身不可覆写
+- 笔记引用真实 `MEM-*`，续写时显式提交 `mem_id/container_id/target_file/container_body`；容器注册表与记忆挂接由同一协议事务维护。
+- “继续/悬置/完结”和 `≅DC-1` 可以表达语义，但不再被解析为开链、重激活、跨链写入或状态更新指令。
+- 记忆原条目不可覆写；容器正文写入方式与失败恢复遵循 §25.11，不沿用旧自然语言覆写/自动移入 trash 的协议。
 
-**registry.json格式说明**（脚本维护，LLM不直接读写）：
+**registry.json 最小示例**（脚本维护，完整字段以 ContainerStore 为准）：
 ```json
-[
+{"chains": [
   {
     "id": "DC-15",
     "title": "不可奴化论证",
     "status": "ongoing",
-    "entries": ["0E6F3A7B", "0E6F3A7B"],
-    "created_at": "2026-04-13T01:04:15+08:00"
+    "entries": [{"mem_id": "MEM-0E6F3A7B", "title": "论证依据", "round": 42, "target_file": "open.md", "status": "applied", "updated_at": "2026-04-13T01:04:15+08:00"}],
+    "tags": [],
+    "created_at": "2026-04-13T01:04:15+08:00",
+    "updated_at": "2026-04-13T01:04:15+08:00",
+    "source_round": 42,
+    "path": "LTM/Dialectics/DC-15/"
   }
-]
+]}
 ```
 
 ## ×条目进Backup不删除
@@ -3662,11 +3689,11 @@ LTM/Dialectics/
 
 # 十四、辩证链写入协议
 
-> 4月9日定稿，v4（2026-04-11）修订。补充第十三章辩证链的操作协议。
+> 语义定义保留；当前操作按 §25.11 显式容器工具与 Frame 可见性合同执行。旧 anchor 自由文本路由已经退役。
 
 ## 声明三分
 
-辩证声明锚定三种存在状态：
+辩证表达区分三种存在状态；这是语义说明，不是脚本控制字段：
 
 | 状态 | 名称 | 含义 |
 |------|------|------|
@@ -3678,14 +3705,10 @@ LTM/Dialectics/
 
 ## 写入协议
 
-- LLM只认条目不认链——声明anchor（锚定条目ID）+ 自然语言推理内容，链路由脚本查 `linked_containers` 元数据决定
-- **脚本三路路由**：
-  1. anchor的 `linked_containers` 已有同链编号 → 加入已有链（追加笔记）
-  2. anchor的 `linked_containers` 有已完结链编号 → 重激活已完结链（closed→open，开更正链）
-  3. 无已有链编号 → 开新链（脚本创建，索引自动更新）
-- 跨链关联：LLM在笔记末尾写 `≅DC-xxx`，脚本更新两条链的注册表
-- 联想走索引：总索引舱段 → linked_containers触发 → registry.json注册表 → open.md/closed.md笔记
-- 新链必有锚点——唯物辩证法原则：没有无源之水
+- 使用已有可见的真实 `MEM-*`，再选择承担该职责的 DC；需要新增记忆时，先通过 `memory_write` 获得成功 receipt。
+- 有可复用链时，先 `container_read`，下一 Frame 已真实看到目标正文后，用 `memory_container_write` 显式续写。
+- 没有可复用链时，用 `memory_container_create(container_type=DC, ...)` 提交锚点与首段正文。创建、索引和双向挂接由同步事务完成。
+- `linked_containers` 和注册表用于发现、定位；不从 anchor 或笔记末尾符号自动决定开链、重激活或跨链修改。完整参数与验证见 §25.11。
 
 ---
 
@@ -3712,39 +3735,35 @@ LTM/Dialectics/
 
 ```
 LTM/Events/
-├── registry.json              # 链注册表（JSON元数据，脚本维护）
-├── open.md                    # 进行中/悬置链笔记（纯自然语言，LLM读写）
-└── closed.md                  # 已结束链笔记（纯自然语言，LLM读写）
+├── registry.json              # 总注册表：{"chains": [...]}
+└── EC-{链序号}/               # open.md、closed.md、index.md、meta.json、registry.json
 ```
 
-- **open.md**：存放进行中、中断、意外重启、计划状态的事件链笔记（LLM读写）。
-- **closed.md**：存放已结束、取消状态的事件链笔记（LLM读写）。
-- **registry.json**：链注册表（JSON元数据，脚本维护）。格式同辩证链registry.json。
+- 当前正文与归档文件均在实例目录内，格式和总表/局部表结构同第十三章。同步工具当前续写 `open.md`；自然语言状态不触发 open/closed 文件搬运。
 
 ## 写入机制
 
 - 事件链是事后归纳总结，不是即时思考。
-- LLM判定属于事件→扫当前记忆缓存的 `linked_containers`→相关则续线（在笔记末尾追加节点），无关则开新线（脚本在 open/ 下创建新链）。
-- 节律点校验时可能覆写（发现该续旧线），但大多数情况写入时判断够准。
+- LLM 选择可复用 EC 后按 §25.11 读取、下一 Frame 续写；没有同职责链才显式调用 `memory_container_create(container_type=EC, ...)`。自由文本不触发自动开链或覆写。
 
 ## 引用机制
 
-- 记忆条目通过 `linked_containers` 字段单向引用事件链编号（如 `EC-1`），与辩证链统一接口。
-- 事件链笔记内不嵌记忆编号——骨架指向活体没意义，活体指向骨架才有用。
+- 记忆条目通过 `linked_containers` 引用 EC；容器端通过 entries/挂接账本记录真实 `MEM-*`。当前协议事务维护双向挂接。
+- 事件链笔记可引用真实记忆编号；不以笔记中的文字代替成功写入 receipt 和挂接账本。
 - Future内容（目标/计划/预测）走同样模式：记忆条目→`linked_containers`→objectives.md / plans.md / predictions.md。
 
 ## 事件状态标记
 
-进行中（active） / 已结束（ended） / 中断（interrupted） / 意外重启（restarted） / 计划（planned） / 取消（cancelled）
+当前 EC schema：进行中（active） / 已结束（ended） / 中断（interrupted） / 意外重启（restarted） / 取消（cancelled）。
 
 - **进行中**：仍在发展，可能产生新节点。
 - **已结束**：自然结束或主动断定，不再变化。
 - **中断**：意外暂停，可能重启。
 - **意外重启**：中断后重新激活。
-- **计划**：预状态，表示意图，非概率分支。
+- **计划**：历史设计中的预状态；`planned` 不是当前 EC 状态枚举，目标与计划内容见 FUT 合同。
 - **取消**：明确放弃。
 
-状态决定存储位置：进行中、中断、意外重启、计划 → open/；已结束、取消 → closed/。
+实例目录由稳定 EC ID 定位；状态说明不授权模型改注册表或自动切换存储位置。
 
 （注：年志中不再保留独立的事件段板块。事件链的完整存储已移至 Events/，年志仅需引用事件链编号即可。）
 
@@ -3753,7 +3772,7 @@ LTM/Events/
 节律点写节志时：
 1. 遍历本期所有记忆条目的 `linked_containers` 字段，筛选以 `EC-` 开头的事件链编号
 2. 去重得到事件编号列表
-3. 根据事件编号，从 `Events/registry.json` 中查找对应链，再从 `open.md` 或 `closed.md` 提取当前梗概（标题、状态、最新节点）
+3. 根据事件编号，从 `Events/registry.json` 定位 `Events/EC-{链序号}/`，再读取实例内正文中的梗概（标题、状态、最新节点）
 4. 将事件链梗概注入节志上下文
 
 （注：事件链独立存储后，日志中不再保留事件段，节律点直接读取事件链文件获取最新状态。）
@@ -3856,6 +3875,8 @@ planned → in_progress → completed
 ---
 
 # 十八、三层发现机制
+
+> **目标设计**：休眠扫描、梦境与进化整理当前暂停，见 §〇·三与 §23.6。本节保留设计分工，不代表 Seed 已启用这三条发现流程；当前节律执行以 Runtime 的主轴/日历指南为准。
 
 | 层 | 触发 | 扫描范围 | token消耗 | 确定性 |
 |----|------|---------|----------|--------|
@@ -4143,7 +4164,7 @@ UPSP 上下文工程的核心竞争力不是"装更多内容"，是**把 O(n) �
 | input tokens 趋势 | 线性增长 O(n) | 恒定 O(1) |
 | 记忆管理主语 | LLM 自己记 | 脚本按规则装配 |
 | 上下文决定权 | LLM 决定加载什么 | 脚本按规则装配候选，正文由起手步选择、resident_list、明确recall或三重命中进入 |
-| 超窗口处理 | 截断早期内容 | 最近缓存/当前缓存本步装配选择减少；必要时触发 context_cleanup |
+| 超窗口处理 | 截断早期内容 | 仅 lately 可少选完整块；now 待消费包必须完整，放不下则调用前失败且不消费，详见 §19.7；缓存压缩走 v3 指南 |
 
 ### 三步频率层装配对比
 
@@ -4740,15 +4761,15 @@ provider-native `01_tool_header` 登记外部行动能力，但只有已开通 h
 
 **卸挂时机**：正文常驻由 `mount_cancel(resident_list, container, ID)` 显式取消；当前 Round 临时挂载由 `mount_cancel(instant_list, ...)` 取消或随 Round 收束。自由文本“关闭 {容器ID}”不构成写入或卸挂指令。
 
-各容器类型的详细新建步骤见 §25.11 容器新建协议；Spec 077 首批只启用 `DC/EC/PRJ/FUT`，其余类型继续等待后续 spec。
+各容器类型的详细新建步骤见 §25.11；当前开放 `DC/EC/PRJ/FUT` 和 SKL 的 `procedures/patterns`，技能边界见 §35。Spec077 的四类首批范围是历史记录，`licenses/habits/reflexes` 预留目录仍不代表已开放创建。
 
 ### 善后步四阶段
 
 | # | 子阶段 | 执行者 | 强制度 | 做什么 | 产出 |
 |---|--------|--------|--------|--------|------|
-| ① | 接收输入 | 脚本 | 硬 | 装配善后步上下文（压缩版频率层 + 最近缓存履带/下一帧当前缓存包 + 反应步原始输出） | 善后步上下文 |
-| ② | LLM结构化工具输入 | LLM | 中 | 填两线 substrate 工具输入块（训练材料整理、最近缓存压缩） | 结构化输入块 |
-| ③ | 脚本原子写 | 脚本 | 硬 | 善后两线按目标文件分筐→单写者逐 key 串行写入；脚本无条件写最小承诺边界标记；读取但不重做反应步协议工具回执 | 各文件落盘 + 边界语料 |
+| ① | 接收输入 | 脚本 | 硬 | 装配频率层、resident 正文、最近缓存/当前待消费包及反应步结果与材料证据 | 善后步上下文 |
+| ② | LLM结构化工具输入 | LLM | 中 | 调用 provider-native `cleanup_finalize`，提交 `connection_bridges` 与 `tacit_associations` | 联系与默契材料 wire 参数 |
+| ③ | 脚本结算 | 脚本 | 硬 | 校验材料并写 settlement 审计，结算缓存与最小承诺边界、冻结 v3 压缩债务；不重做 Reaction 已落账的工具与代谢；失败保留真实 unsettled 状态 | 结算记录与边界语料；不承诺整个 Cleanup 回滚 |
 | ④ | 心跳收尾 | 脚本 | 硬 | 脚本清理本轮已消费 heartbeat flag；`heartbeat_restart` 重置待命倒计时并恢复心跳检测。如需中继轮，必须由反应步合法 `reaction_finalize(handoff_text)` 或脚本事实源置位 `continue_requested`；反应步中继正文登记到 `relay_intents` 隐藏 payload，脚本事实说明写 `setup_fact` 或 `material` | state.json 更新 + relay_intents / setup_fact / material |
 
 善后 LLM 只处理训练材料整理；最近缓存压缩不在 Cleanup 调用内执行。Cleanup 只冻结 v3 debt；下一自然轮 Reaction 看到当前 C 轨分片后，以 `guide_submit` 提交 `shard_id/action/semantic_content|reason`。分片提交不逐次改写 `lately`；达到25%目标或受保护下限后基座一次原子 apply。raw_log 与 Corpus 保留原文。
@@ -4771,22 +4792,22 @@ Spec 041/053/083/786 迁出项：关键词由反应步 provider-native `memory_w
 
 | | 起手步 | 反应步 | 善后步 |
 |---|---|---|---|
-| 频率层 | 压缩版（高频层CONTENT挂索引不挂正文） | 全量（高频层CONTENT已填充） | 压缩版（高频层CONTENT挂索引不挂正文） |
+| 高频层 CONTENT | 索引区 + resident 正文 | 索引区 + resident/instant/temporary 正文 | 索引区 + resident 正文 |
 | 装配者 | 脚本自装配 | 脚本按起手步③指令集执行 | 脚本接收装配 |
 | 动态性 | 静态 | 动态（loop中LLM可追加/卸载） | 静态 |
 
 ## 23.3a 五类轮编排表
 
-| 轮类型 | Tier | 起手步触发源 | 反应步形态 | 善后步输出 |
+| 轮类型 | Tier | 起手步触发源 | 反应步形态 | 阶段责任与轮终态 |
 |--------|------|------------|-----------|-----------|
-| **交互轮** | 1 | 用户消息到达 | 1-N 次装配+生成，超时存档续轮 | **有回复**·联系集+默契集+联想集更新+最小承诺 |
-| **节律轮** | 1 | 心跳判定主轴或日历节律到期 | 写节志+消费真实调用留下的 connectivity 证据+alerts归档 | 节志落盘+警戒结算+alerts归档进IMM |
-| **中继轮** | 2 | 长时任务 checkpoint（300s时限） | **中继续传：总结进度** | **无对外回复** |
+| **交互轮** | 1 | 用户消息到达 | 1-N 次装配+生成，超时存档续轮 | Reaction 产生回复与联想五表；Cleanup 校验联系/默契材料并结算最小承诺 |
+| **节律轮** | 1 | 心跳判定主轴或日历节律到期 | 写节志+消费真实调用留下的 connectivity 证据+alerts归档 | 编年正文由 Reaction `guide_submit` 落盘；警戒/alerts 等脚本职责按当前节律指南结算 |
+| **中继轮** | 2 | 合法中继意图/脚本继续事实；时限见 §32 | **接续上轮任务** | 需要继续时提交 handoff_text；任务完成时允许自然语言收束，不按轮型强制禁止回复 |
 | **自主轮** | 3 | 历史兼容轮型；当前 Seed 无活动触发源 | 1-N 次执行 | **可能无回复**·不承担记忆压缩或进化整理 |
 | **待命轮** | 4 | 上一轮结束后≥30分钟/心跳紧急唤醒 | 检查已有 connectivity／breaker 证据；降级时在 Setup 前执行有界恢复 probe | 健康状态归档 |
 
 三种关键修正：
-1. **中继轮反应步**：~~复盘/整合/压缩~~ → "中继续传：总结进度"。UPSP 没有"压缩上下文"概念——对话历史走履带式管理，自然滚动。
+1. **中继轮反应步**：接续任务，交接正文说明未完成项。缓存另按履带和 v3 压缩指南管理；压缩职责不因进入中继轮自动转移。
 2. **进化集提炼归属**：当前活动链已退役。历史 Raw 与 Materials 文件只读保留，不再由节律轮或自主轮消费。
 3. **中继轮≠节律轮**：中继轮跟任务走（长时任务存档续命），节律轮跟全局走（固定周期大整理），完全独立。
 
@@ -5080,7 +5101,7 @@ LLM自分类，不需要脚本做语义判断。
 
 | 前缀 | 类型 | 名称 | 位置 | ID格式 | 注册表 | 状态机 |
 |------|------|------|------|--------|--------|--------|
-| WB- | 工作台 | 中枢调度台 | STM/workbench/ | `WB-main`(固定) | status.json | active→idle→suspended |
+| WB- | 工作台 | 中枢调度台 | STM/workbench/ | `WB-main`(固定) | status.json | 任务终态、指南槽和三区位置分别记录，见 §9.4 |
 | DC- | 辩证链 | 辩证链 | LTM/Dialectics/ | `DC-{n}` / `DC-{n}-{m}` | registry.json | ongoing→suspended→concluded |
 | EC- | 事件链 | 事件链 | LTM/Events/ | `EC-{n}` / `EC-{n}-{m}` | registry.json | active→interrupted→restarted→ended→cancelled |
 | PRJ- | 项目 | 项目 | LTM/Projects/ | `PRJ-{date}-{seq}` | registry.json | active→paused→ended |
@@ -5138,34 +5159,34 @@ Spec781 起，工作容器 meta、局部 registry 和总索引均不保存正文
 
 ### DC- 辩证链
 
-- **ID**：`DC-{链序号}` / `DC-{链序号}-{笔记号}`
-- **注册表**：registry.json（JSON格式，与open.md/closed.md同级）
+- **当前容器 ID**：`DC-{链序号}`；旧笔记号不作为新容器 ID 生成规则
+- **注册表与目录**：类型总表及实例局部表均为 `{"chains": [...]}`，完整结构见第十三章
 - **特有字段**：`source_round`（开链轮次）、`conclusion`（链结论，concluded时填充）
 - **状态机**：ongoing→suspended→concluded
 
 ### EC- 事件链
 
-- **ID**：`EC-{链序号}` / `EC-{链序号}-{笔记号}`
-- **注册表**：registry.json（同DC结构）
+- **当前容器 ID**：`EC-{链序号}`；旧笔记号不作为新容器 ID 生成规则
+- **注册表与目录**：同 DC 的总表/实例结构，见第十五章
 - **特有字段**：`severity`（事件等级1-5）、`resolution`（事件解决记录）
 - **状态机**：active→interrupted→restarted→ended→cancelled
 
 ### PRJ- 项目
 
-- **ID**：`PRJ-{date}-{seq}`，文件夹名=date+seq（如20260417-01），中文项目名在注册表title
+- **ID**：`PRJ-{date}-{seq}`，文件夹使用完整 ID（如 `PRJ-20260417-01`），中文项目名在注册表 title
 - **注册表**：每个项目独立registry.json
 - **特有字段**：`deadline`、`milestones`、`progress`、`phase_count`（阶段总数）、`completed_phases`（已完成阶段数）、`current_phase`（当前阶段编号）
 - **状态机**：active→paused→ended
 - **目录结构** ← v0.9.0 新增：
   ```
-  Projects/{date-seq}/
+  Projects/PRJ-{date}-{seq}/
   ├── plan.md           # 计划书（项目总纲，创建时写入）
   ├── phases/           # 阶段文件
-  │   ├── _index.md     # 阶段索引（脚本维护：编号/名称/状态/挂靠记忆条目ID）
-  │   ├── 01_{阶段名}.md  # 阶段一（目标+产出+状态：pending/doing/done/blocked）
-  │   ├── 02_{阶段名}.md  # 阶段二
-  │   └── ...
+  │   └── _index.md     # 当前创建入口初始化空索引；不预建编号阶段正文
+  ├── materials/
+  ├── drafts/
   ├── notes.md          # 项目笔记（执行中临时记录，可覆写）
+  ├── meta.json
   └── registry.json     # 注册表
   ```
 - **挂靠约束** ← v0.9.0 新增：每个阶段文件必须挂靠至少一条记忆条目（通过 linked_containers）。entries 为空且非本轮新建→悬空→POPUP 警告。详见 §25.9。
@@ -5244,7 +5265,7 @@ Raw/Tacit 与 Raw/Connection 是历史原始训练材料，既有文件继续只
 |---|--------|------|------|--------|--------|
 | 1 | 默契集 | Raw/Tacit/ | 历史原始数据 | 退役路径，只读保留 | 无活动消费者 |
 | 2 | 联想集 | Raw/Association/ | 原始数据 | 合法 Reaction 语义终态脚本 | 联想索引+LTM关键词表 |
-| 3 | 联系集 | Raw/Connection/ | 历史原始数据 | 退役路径，只读保留 | 无活动消费者 |
+| 3 | 联系集 | Raw/Connection/ | 历史原始数据 | 退役写入路径，只读保留 | 既有六字段记录保留联想索引读取兼容，见 §26.8 |
 | 4 | 进化集 | Materials/Evolution/ | 历史中间产品 | 退役路径，只读保留 | 无活动消费者 |
 
 ### 自主轮触发锚点（退役）
@@ -5277,9 +5298,9 @@ Raw/Tacit 与 Raw/Connection 是历史原始训练材料，既有文件继续只
 - 排序去重2张（表1/4），不对称3张（表2/3/5）
 - 赫布学习——"世上本没有路，走的人多了便成了路"
 
-### 默契集记录结构（按轮JSON）
+### 历史 Raw 默契集记录结构（按轮JSON）
 
-默契集善后步LLM每个非待命轮产出一行，待命轮不产出。它在联系集有效图之后，对比起手步预选的记忆条目、工具、容器等内容，以及反应步在实际工作前的承接、取消和新增痕迹，记录 kept / dropped / added。每行一轮，写入 `Raw/Tacit/pending.jsonl`。
+以下为已退役 `Raw/Tacit/pending.jsonl` 的历史格式，当前不再追加。Cleanup 仍接收 `tacit_associations` wire 参数，在联系集有效图之后，依据起手预选与反应步承接、取消、新增痕迹校验 kept / dropped / added，并随 settlement 审计；参数仍在不代表 Raw 生产链仍在。
 
 ```json
 {
@@ -5307,15 +5328,18 @@ Raw/Tacit 与 Raw/Connection 是历史原始训练材料，既有文件继续只
 
 **判断机制**：善后步先分析联系集，脚本光锥校验后形成有效联系图；随后默契集才落 kept/dropped/added。`kept` = 起手步预选项被反应步实际承接，必须有承接证据或有效联系命中。`dropped` = 起手步预选项被明确放弃，或未明确放弃但有效联系图/承接证据中没有命中，脚本可补 `drop_reason=no_valid_connection_hit`。`added` = 起手预选之外，反应步在实际工作前额外引入的新内容或新关联；只认读取请求、有效回执、交接、显式新增声明等前置痕迹，不从最终答案事后脑补。
 
-**自包含约束**：轮快照同时服从 `audit.round_snapshot_retention`（默认8）与 `audit.round_snapshot_max_mib`（默认256 MiB）；超过任一水位的最老快照会被删除，不能靠 round_id 回溯。默契集必须自包含本轮挂载与调整记录。
+**历史自包含约束**：旧 Raw 默契集要求保留本轮挂载与调整记录，不依赖永久保留的轮快照。当前轮快照仍受 `audit.round_snapshot_retention`（默认8）与 `audit.round_snapshot_max_mib`（默认256 MiB）约束；这些保留水位不恢复 Raw writer。
 
 ### 训练材料数据管线
 
 ```
-当前善后步：
+当前合法 Reaction 语义终态：
   └── 按已提交记忆回执确定性更新联想集五张计数表（Raw/Association/）
 
-退役历史链：Raw/Tacit、Raw/Connection 与 Materials/Evolution 均不再追加、搬运或消费。
+当前 Cleanup：
+  └── 校验 connection_bridges / tacit_associations，结果随 settlement 审计；不追加 Raw
+
+退役生产链：Raw/Tacit、Raw/Connection 与 Materials/Evolution 不再追加、搬运或用于进化整理；既有联系记录的索引读取兼容见 §26.8。
 ```
 
 联想集既有计数表按当前生产路径维护。默契集、联系集的历史 pending/processed 与进化集中间产品只读保留；当前 Seed 不按行数触发自主轮，也不继续生成进化集。
@@ -5457,7 +5481,7 @@ SKL- 技能    (12: 10 active · 2 expired)   ▸ SKL-habits-format-check · 04-
 | DC- 辩证链 | 链内任一笔记 linked_containers 为空（排除本轮新建） | 链的本质是记忆条目序列，无挂靠=空壳 |
 | EC- 事件链 | 同上 | 同理。事件链是记忆条目的时间线组织 |
 | PRJ- 项目 | entries 数组为空（排除本轮新建） | 无论计划期还是执行期都必须有记忆挂靠。无挂靠=虚无缥缈 |
-| SKL- 技能 | linked_containers 为空且 status=active | 技能是记忆条目重复调用的产物，通过记忆作为总线桥接链/项目 |
+| SKL- 技能 | linked_memories 为空且 status=active | 当前 Skills 注册表使用 linked_memories；实现仍读旧字段的缺陷见 §25.10 注记 |
 | FUT- 未来 | 任一内容条目 linked_containers 为空 | 计划/目标/预测不链接记忆=跟忘了一样 |
 
 ### 可挂（不提示）
@@ -5465,7 +5489,7 @@ SKL- 技能    (12: 10 active · 2 expired)   ▸ SKL-habits-format-check · 04-
 | 容器 | 理由 |
 |------|------|
 | IMM- 免疫 | 大部分内容由脚本触发或已写死到流程（birth/chronic/transplant 是静态档案，alerts 由节律脚本搬入） |
-| ITR- 迭代 | collecting 状态本就是空转收集；训练材料由善后步脚本自动写入 Raw/ |
+| ITR- 迭代 | collecting 为历史状态；当前仅联想五表由 Reaction 终态维护，Raw 默契/联系与进化整理已退役 |
 
 ### 不挂（正常）
 
@@ -5480,9 +5504,11 @@ SKL- 技能    (12: 10 active · 2 expired)   ▸ SKL-habits-format-check · 04-
 
 1. 扫 DC/EC/PRJ/SKL/FUT 五类容器的注册表
 2. 按 §25.9 各容器的悬空判定条件逐条检查
-3. 排除本轮新建的容器（`created_at` 在本轮时间窗口内）——刚创建的合法为空
+3. 按本轮时间窗口排除新建容器；这是悬空检查的宽限合同，不放宽 §25.11 当前模型创建必须同时提交首段正文和记忆挂接的事务要求
 4. 检测到悬空→POPUP 注入警告（格式见下）
 5. IMM/ITR 悬空不触发 POPUP，仅在 STATUSBAR 追加一行静默提示：`[容器] {容器ID} 无关联记忆条目（非强制）`
+
+**当前实现（Spec807 修复）**：SKL 读取技能注册表的 `linked_memories`。Runtime 在实际开轮时记录带时区的起点，经 RoundContext 传给 Cleanup；旧无时区 `created_at` 按发生日期的本机当地时间解释，再按同一时间轴比较。缺少起点或时间格式损坏会报扫描错误，不当作无悬空。扫描成功后，在同一锁内读取、替换或撤销本检测器的完整 POPUP 区块并原子写入；其他警告和未知/截断内容保留，扫描或读写报错时不清除旧提示。原调查保留于 `.speckit/specs/807-recorded-frame-context/dds-followup-20260910/`，修复及隔离验证见 `orphan-fix-20260910/verification.json`（同属 Spec807）。警告本身仍不能证明挂接失败或正文丢失；隔离脚本执行器整轮不等于正式 Runtime 实跑。
 
 ### POPUP 注入格式
 
@@ -5565,7 +5591,7 @@ LLM 通过 `memory_container_create(container_type=FUT; target_file=objectives.m
 
 #### IMM- 免疫 / ITR- 迭代
 
-大部分脚本驱动。IMM 的 birth/chronic/transplant/surgery 初始化时脚本创建，alerts 节律轮脚本搬入。ITR 的 collecting 状态善后步脚本自动写入训练材料。Spec 077 不开放 IMM/ITR create/write；提交后返回 `unsupported_container_type`。
+大部分脚本驱动。IMM 的 birth/chronic/transplant/surgery 初始化时脚本创建，alerts 节律轮脚本搬入。ITR 的 Raw 默契/联系追加与进化整理链已退役；当前联想五表归 Reaction 语义终态，见 §25.4。当前不开放 IMM/ITR create/write；提交后返回 `unsupported_container_type`。
 
 #### CHR- 编年史 / COR- 语料库
 
@@ -5727,7 +5753,7 @@ degree >= 16 时 → 联想集top 3（共现频率最高的3个配对词）
 
 联系集 = **跨条目的关键词×关键词关系**，由善后步LLM先行筛选确认。与联想集（条目内脚本计数）不同，联系集专注跨条目主题桥接，并在脚本光锥校验后作为当轮默契集 kept/dropped/added 的有效承接证据之一。
 
-**记录结构**（6字段JSONL，写入 Raw/Connection/pending.jsonl）：
+**历史 Raw 记录结构**（6字段JSONL，原 `Raw/Connection/pending.jsonl` 格式；当前不再追加，Cleanup wire 参数及其校验/审计仍保留）：
 
 ```json
 {
@@ -5742,7 +5768,7 @@ degree >= 16 时 → 联想集top 3（共现频率最高的3个配对词）
 
 **连通性约束（光锥约束）**：LLM选出的所有词对，每个词作为节点连成图后，必须能连通到本轮创建的记忆条目的关键词。悬空词对 = 非法输入，脚本BFS/DFS校验拒绝。此约束写入 rules/ 提示词文件。
 
-**当前格式边界（Spec 087）**：当前联想索引只消费六字段联系集记录。缺少 `entry_a` / `entry_b` 的旧 `keyword` 记录没有记忆落点，不参与当前高频层联想索引投影。
+**历史读取兼容（Spec087）**：联想索引仍可读取既有六字段联系记录；缺少 `entry_a` / `entry_b` 的旧 `keyword` 记录没有记忆落点，不参与投影。这是旧数据读取兼容，不是新的 Raw 写入链。
 
 **存储估算**：~1.6MB / 1000条记忆。
 
@@ -5762,15 +5788,17 @@ degree >= 16 时 → 联想集top 3（共现频率最高的3个配对词）
 
 base / plus / pro / dlc / mod
 
-### 需要五层架构的JSON（4个）
+### 当前文件的实际结构
 
-| 文件 | 位置 | 理由 |
+| 文件 | 位置 | 当前结构 |
 |------|------|------|
-| state.json | persona/ | 六轴/工化/变速轮等Base字段，Plus/Pro加调度字段 |
-| meta.json | LTM/Memory/{Full,Summary,Abstract,Pinned,Backup}/ | 记忆条目元数据 |
-| interface.json / models.json | `LocalAppData\UPSP\config\` | 跨位格界面语言、服务连接、模型配置与共享传输参数 |
-| system.json / model_routing.json / memory.json / media.json / relation.json | 当前活动实例 `OS/config/` | 当前位格运行、三阶段模型路由与内环境参数 |
-| workbench/status.json | STM/workbench/ | 工作台状态 |
+| state.json | persona/ | base / plus / pro / dlc / mod |
+| workbench/status.json | STM/workbench/ | 同上；当前任务与指南字段见 §9.4 |
+| meta.json | LTM/Memory/{Full,Summary,Abstract,Pinned,Backup}/ | 按 MEM-* 键组织条目元数据，不套五层 |
+| interface.json / models.json | `LocalAppData\UPSP\config\` | 按各自配置 schema 读取，不套五层 |
+| system.json / model_routing.json / memory.json / media.json / relation.json / context/*.json | 当前活动分身 `config/` | 按各自配置 schema 读取；所有权和路径见 §32.1 |
+
+五层是特定状态文件的结构，不是所有 JSON 的通用包装；不能把活动配置移入安装目录的 OS/config。
 
 ### 不需要五层架构的JSON
 
@@ -5778,7 +5806,7 @@ now_cache.jsonl / lately_cache.jsonl / raw_log.jsonl / Corpus/public/rhythms/*.j
 
 ## 27.2 字段级冻结同步
 
-版本升级时逐字段冻，不是整层冻。base层里被Plus接管的字段标shadowed，7B不碰的字段继续active。
+目标设计：未来 Plus 接管时按字段区分 shadowed/active，不把整个 base 层一并冻结；这不改变上表当前文件 schema。
 
 ---
 
@@ -5870,6 +5898,8 @@ Runtime 在内存中冻结主轴节志的来源范围与目标路径，不预写
 ---
 
 # 二十九、梦境系统
+
+> **目标设计，当前 deferred**：休眠、做梦与相关进化整理均暂停，见 §〇·三与 §23.6。以下概率、阈值、配置示例和处理流程不代表当前 Seed 会触发或执行。
 
 ## 29.1 触发条件
 
@@ -6046,6 +6076,7 @@ LTM/Corpus/
     ├── lately.json
     ├── high_freq.json
     ├── now.json
+    ├── statusbar.json
     └── popup.json
 
 LocalAppData\UPSP\config\
@@ -6057,7 +6088,7 @@ LocalAppData\UPSP\config\
 
 活动配置仍只有一套 `ConfigStore`，但真源按所有权分为两层：`LocalAppData\UPSP\config\*.json` 属于该 Windows 用户的整个 UPSP，当前 manifest 所选 `<PID>/<instance_id>/config/*.json` 属于当前分身。安装目录中的 `UPSP/initialization/os_template/config/` 是全部单位格配置默认值的唯一 tracked 真源，创建 PID／分身时复制为活动配置；Python 不再内嵌第二份默认对象。不存在 `persona/STM/config/` 覆盖层、DPAPI 密钥库、数据库、GUI 专用合并链或第二套 ConfigStore。
 
-1. Runtime、CLI 与 GUI 都通过现有 `ConfigStore` 读写上述用户数据 JSON；全局文件缺失时才由既有全局 schema default 原子创建，位格配置则在 PID 草稿创建时从 tracked `os_template/` 复制。单位格文件缺失、字段缺失、字段多余、类型错误或既有文件损坏都必须显式失败，禁止运行时补写或用默认值覆盖。已知升级例外包括：`config/context/periodic.json` 的 `Base-0.10.0→Base-0.10.1`；`system.json` 对仓库可证明的 `Base-0.47.9/Base-0.48.14/Base-0.48.15/Base-0.48.16` 及既有字段级迁移产生的混合形状执行一次规范化。system 规范化只删除形状和值域均可证明的退役 `autonomous_trigger`，补齐既有 audit/response 字段，将旧 token `warning_ratio` 迁到 lately 后退役，并在当前 schema 全量核验成功后写为 `Base-0.48.16`；未知版本、未知键、非法值或读回不一致均不得覆写原字节。
+1. Runtime、CLI 与 GUI 都通过现有 `ConfigStore` 读写上述用户数据 JSON；全局文件缺失时才由既有全局 schema default 原子创建，位格配置则在 PID 草稿创建时从 tracked `os_template/` 复制。`system/periodic/relation/now/lately` 的普通 load/save 只接受当前形状和版本，已知旧格式转换由 init_persona 驱动；缺失、损坏和未知字段不得被默认值掩盖。已知升级包括 periodic `Base-0.10.0→Base-0.10.1`、relation `Base-0.10.0→Base-0.11.0`、已知无版本 now/lately 水位配置，以及 system `Base-0.47.9/Base-0.48.14/Base-0.48.15/Base-0.48.16` 和可证明的字段级迁移形状。system 只删除形状和值域均可证明的退役 autonomous_trigger，补齐既有 audit/response 字段，校验后写为 `Base-0.48.17`。旧 token warning_ratio 必须先迁到 lately 并读回确认，system 才移除来源字段；旧默认 0.7 迁为 0.9，合法自定义值保留，已有当前 lately 配置优先。未知输入不覆写原件，目标写入未确认时保留来源和真实失败，重启继续既有迁移。Round 保留策略只读初始化后的配置，不再拥有迁移责任。
 
 GUI 后端将全局控制面初始化与当前活动位格配置就绪分开。全局配置失败仍阻止后端启动；当前位格迁移或读取失败时，HTTP 控制面必须继续启动并通过 `seed_gui_bootstrap_status.v1` 返回 `persona.state=config_error` 与脱敏的 `persona_config_migration_failed`，Runtime、发送、relay 和设置写入保持锁定。位格目录列表、新建位格和切换位格仍可用；成功切换沿桌面既有重启边界重新建立 Runtime。网页不得显示宿主绝对路径或 traceback，也不得以默认配置静默覆盖失败位格。
 
@@ -6069,7 +6100,7 @@ GUI 后端将全局控制面初始化与当前活动位格配置就绪分开。�
 6. 旧安装现场的 `UPSP/OS/config/api.json` 只允许在受控升级迁移中复制到新位格配置后读取一次；新模型库建立后 Runtime 不再消费。旧 `fallback.json` 没有生产消费者。用户遗留文件不自动删除，但两者均不再是活动配置。
 7. `rhythm` 的唯一活动字段为 `rhythm.period`；`rhythm.interval_rounds` 不是 schema 或 Runtime 读取入口。
 
-模型目录更新若改变 `reasoning.supported/default`，宿主必须在同一写锁和回滚边界内检查 setup、reaction、cleanup 的 primary/backups：仅将仍引用该模型但已不受支持的显式 `reasoning_effort` 迁移为该模型的新默认档位。模型目录、位格路由和 `resolve_model_routes()` 必须共同成功；任一步失败，两份配置都恢复到修改前内容。GUI 只有收到成功投影后才重载设置页；失败只显示错误并保留当前编辑草稿，不得以旧投影覆盖用户输入。
+模型目录更新若改变 `reasoning.supported/default`，宿主必须在同一写锁和回滚边界内检查 setup、reaction、cleanup 的 primary/backups：仅将仍引用该模型但已不受支持的显式 `reasoning_effort` 迁移为该模型的新默认档位。模型目录、位格路由和 `resolve_model_routes()` 必须共同成功；任一步失败，两份配置都尝试恢复并读回核验。恢复未确认时登记 supervisor 持久恢复状态、暂停 Runtime 并阻断后续写入；不得把回滚尝试当作已恢复。GUI 只有收到成功投影后才重载设置页；失败只显示错误并保留当前编辑草稿，不得以旧投影覆盖用户输入。
 
 本地宿主、设置读取和配置写入不依赖模型服务连通性或密钥是否存在。首次安装允许先打开全局设置，再创建连接、模型并填写密钥；未配置密钥只表示模型调用不可用，不得使设置页退化为 `not_found` 或空白。已经开始的单次调用冻结自己的请求 payload，不被中途设置写入改写。
 
@@ -6084,7 +6115,6 @@ GUI 后端将全局控制面初始化与当前活动位格配置就绪分开。�
 | system | rhythm.period | int（轮） | 32 | 节律周期长度 |
 | system | standby.idle_threshold_min | int（分钟） | 30 | 上一轮结束后进入待命轮的空闲阈值 |
 | system | identity_timeout / emergency.* / health_check.* / fatigue.force_sleep_hours | mixed | 见模板 | deferred；Seed 不消费、不展示 |
-| system | token_usage.warning_ratio | float | 0.9 | 成功 provider 完整输入 Token／实际 endpoint 窗口的 lately 正常整理阈值，详见§八 |
 | system | token_usage.watermark_policy_version | int | 2 | 已知旧配置兼容字段；当前输入 Token 水位由 `context/lately.json` 驱动，未知窗口不启用字符兜底 |
 | system | token_usage.critical_ratio | float | 0.85 | deferred；Seed 不消费、不展示 |
 | system | connectivity.max_latency_records | int | 32 | 延迟记录保留条数，详见§三十八 |
@@ -6193,7 +6223,7 @@ config/context/
 | tier机制(T1/T2/T3) | 已删 | — |
 | 节志事件段 | v0.4已删 | — |
 | hot.md + cold.md | 合并为单文件 | memory.md合并版 |
-| open_handles | 简化 | focus单字段 |
+| open_handles / 旧 focus | 退役 | 正文常驻归 resident_list，续写权归 Frame 起点 CONTENT；动态轴 base.dynamic_axes.focus 仍保留 |
 | Medical + Security独立 | 合并为统一容器 | Immune免疫容器 |
 | Past/Logs/ | 路径重构 | Chronicle编年史 |
 | Goals/(ideals+dreams)子目录 | 简化 | 三个平级md + subtype字段 |
@@ -6217,44 +6247,13 @@ config/context/
 
 **容器写入的准确含义**：模型在 Frame 起点已经看到目标文件完整正文后，才可通过同步工具提交自然语言新正文和记忆挂接；Runtime 根据稳定容器 ID、目标文件与冻结可见集合原子写入。泛用文件工具、Workbench 面单或同 Frame 新读取结果都不能绕过该边界。
 
-## 34.2 三区流转
+## 34.2 三区与当前任务流
 
-```
-input/（收货区） → process/（装配区） → output/（发货区）
-```
+当前指南任务由 `guide_submit` 直接创建于 process，完成后归档到 output；input 保留为物流区域，不是所有任务的必经入口。任务文件、证据账本与终态合同见 §9.4。
 
-每个任务=一个文件夹`T-{date}-{seq}/`，含manifest.json（物流面单）+内容文件。
+## 34.3 当前面单与指南
 
-**input/**：待处理原料
-- manifest.json + payload.md
-
-**process/**：正在加工
-- manifest.json（含加工进度） + intermediate.md
-
-**output/**：处理完等配送
-- manifest.json（含配送目标=容器ID） + result.md
-
-## 34.3 物流面单
-
-```json
-{
-  "task_id": "T-20260417-01",
-  "title": "节律点32河道清理",
-  "weight": 5,
-  "priority": 3,
-  "dispatch": "auto",
-  "keywords": ["节律点", "清理", "压缩"],
-  "target": "DC-3",
-  "source": "rhythm",
-  "created_at": "2026-04-17T08:00:00+08:00",
-  "status": "input",
-  "progress": 0
-}
-```
-
-- `target`：配送目标=容器ID，脚本按ID拼路径配送
-- `source`：任务来源：declared/rhythm/heat/alert/immune
-- `status`：input→process→output
+manifest、status、rhythm/work 指南槽的唯一详细示例见 §9.4。旧 `dispatch=auto/target=容器ID` 配送面单不作为当前指南任务 schema，也不建立自动容器写入通道。
 
 ## 34.4 新建工具流程
 
@@ -6264,39 +6263,17 @@ input/（收货区） → process/（装配区） → output/（发货区）
 4. 更新倒排索引（keywords.json）
 5. 验证
 
-## 34.5 双格式原则：markdown 表格 vs JSON schema
+## 34.5 当前模型接口与正文格式
 
-WB 作为调度台，LLM 与脚本之间的接口存在两种格式，对应不同的通信对象和可靠性要求：
+| 对象 | 当前格式与边界 |
+|---|---|
+| Setup / Cleanup 模型输出 | provider-native `setup_finalize` / `cleanup_finalize` 参数；裸文本与 markdown 表不作为提交入口 |
+| Reaction 工具调用 | provider-native schema；处理器校验并生成真实 receipt |
+| Reaction 自然语言 | 普通进展或最终回复候选；完成/阻塞由 Runtime 据账本派生，中继才用 `reaction_finalize(handoff_text)` |
+| 脚本内部交换 | dict/dataclass/JSON；内部字段不自动成为模型参数 |
+| 人类文档与模型自然语言正文 | 可用 Markdown；正文中的表格不执行工具或写盘 |
 
-| 接口对象 | 推荐格式 | 理由 |
-|---------|---------|------|
-| 远端强 LLM / 通用 LLM 的正文性、记忆性、关系性声明 | markdown 表格 | 贴合 UPSP 的"编号+自然语言"主体表达传统，便于人工审阅与语义连续 |
-| 本地调度脑 / 小模型 / 低延迟模型的调度输出 | JSON schema | 上下文越严格越稳定，小模型越需要强约束，便于脚本直接校验与拒收 |
-| 脚本内部数据交换 | JSON / dict / dataclass | 机器内部接口，不承担叙事表达 |
-| 对外文档 / 人类审阅材料 | markdown | 可读性优先 |
-
-**一句话定案**：
-
-> **markdown 表格是给皮层看的结构化人话；JSON schema 是给脊髓和末端神经用的硬接口。两人不冲突。**
-
-**为什么本地调度脑必须更严格**：调度脑（低延迟本地小模型）承担的是高频、短上下文、低容错的调度判断，不是正文叙事。它需要输出类似：
-
-```json
-{
-  "round_type": "interactive",
-  "dispatch": [
-    {"target": "reaction_brain", "priority": 80, "reason": "user asks for engineering document generation"}
-  ],
-  "safety": {"popup_required": false, "skip_reaction": false},
-  "mount": {"containers": ["DOC-CLF-001"], "skills": ["SKL-MD-DRAFT"]}
-}
-```
-
-这种接口不适合用自由 markdown 表格承担——调度结果需要被脚本立即消费，字段缺失应能被自动拒收，enum/required/type/range 等约束必须明确，出错时可以直接回退、重试或降级。
-
-UPSP 的自然语言交互层与善后步结构化声明默认采用 markdown 表格；本地调度脑、小模型专家、脚本内部接口等强约束机器通道允许并推荐使用 JSON schema。两者各有各的位置，不互相否定。
-
-**双格式不是对立，是分层**：markdown 是主体表达格式（给人看、给皮层看），JSON schema 是神经传导格式（给脊髓看、给脚本看）。同一主体内两套格式共存，各司其职。
+同一 provider-native 合同适用于当前远端模型，不因供应商更换而退回 markdown parser。未来本地调度脑的接口另行设计；当前参数真源见 §38.4。
 
 ---
 
@@ -6438,10 +6415,10 @@ Arbor 可把记忆生产、技能总结、质检、容器编排和代谢拆成�
 | T05 | 关系六轴区间描述表 | 十 | 第十章已有完整的21档区间描述表 |
 | T06 | 核心六轴区间描述表 | 十二 | 已迁移至 docs/protocol/base/core.md |
 | T08 | 生命周期流程图 | 十二 | 已由步内分结构谱+步轮节运作谱替代 |
-| T11 | config/ 配置文件完整定稿 | 三十二 | 已拆分为 system/fallback/memory/media/relation/api 六个 JSON 文件 |
+| T11 | config/ 配置文件完整定稿 | 三十二 | 当前活动分身与本机全局配置的文件及所有权见 §32.1 |
 | T12 | config/context/ 频率层装配规则文件 | 三十二 | 五模块→频率层方案已落地 |
 | T13 | 工作容器范围补全 | 二十五 | 已定义9种工作容器（WB不在此列） |
-| T14 | 频率层 config 文件细扣 | 十九 | config/context/ 下5个频率层装配规则已填充 |
+| T14 | 频率层 config 文件细扣 | 十九 | config/context/ 七份频率层装配规则见 §32.2 |
 | T19 | 溢出清理脚本逻辑 | 九 | 第9.2节已定义触发条件、处理优先级、单次上限与告警规则；代码实现转入工程任务清单 |
 | T07 | rules 当前分类与装配边界 | 十一、十九 | Spec639 已按 Registry 8/8/4 收敛分类并将安全/重连规则改为全文常驻；规则正文留在当前 rules 文件 |
 
@@ -6540,33 +6517,27 @@ GUI 对话输入区始终显示最新实际 Frame，上下文审阅显示用户�
 
 ## 38.4 共用结构化输出合同
 
-无论哪个供应商的模型，每步的LLM输出都必须符合固定的结构化格式。不符合格式 = 失败 = 切下一档。输出格式规范是跨供应商的合同层，Base 版必须固化。
+当前三步合同区分 provider-native 工具参数、自然语言与 Runtime 派生结果。Setup/Cleanup 必须调用本步终端工具；Reaction 允许自然语言最终回复候选。参数不合法时按实际校验、重试与阶段路由合同处理，不把所有格式错误概括为自动切换模型。
 
-### 二层输出合同
-
-LLM 输出合同分两层：
+### 模型参数与内部结果
 
 | 层 | 格式 | 职责 | 消费者 |
 |---|---|---|---|
-| LLM主体填写层 | markdown schema / 工具输入块 | 起手步 substrate 工具输入、反应步出口信封与按需工具提交、善后步 substrate 工具输入 | 脚本解析器 |
-| 脚本内部结构层 | dict/dataclass/JSON | 解析后的机器结构，用于校验、路由、重试、落盘 | 脚本/引擎 |
+| 模型工具调用 | provider-native JSON arguments | 按当前工具头提交参数 | Runtime validation / processor |
+| Reaction 自然语言 | assistant_text | 进展或最终回复候选，不以文字执行写入 | Runtime 收束判定与对话投影 |
+| Runtime 内部结果 | dict/dataclass/JSON | 校验后路由、结算、审计与投影 | 脚本/引擎 |
 
-Base 版要求 LLM 输出可被脚本稳定解析；解析失败视为该步失败，可触发重试或沿当前阶段有效链切换下一模型。
-JSON 是脚本内部结构或本地调度脑/专家接口格式，不是远端 LLM 主体输出的强制外壳。
+旧 substrate markdown 输入块、`reaction_result` 表和 `tool_request` 文本协议均为退役历史；不保留它们作为当前模型提交入口。
 
-起手步②与善后步②的默认输出为 markdown 形式的 substrate 工具输入块；脚本③解析为内部结构化指令集。LLM 主体输出不要求 JSON。
-
-起手步与善后步默认输出契约已由 Spec 083 工具化：旧起手五列表与旧善后处理清单表退役，不再保留 parser fallback。Spec 039 起，反应步不再只依赖退出信号；Spec 082 后，默认 prompt 使用 `reaction_result` 反应步出口信封作为优先解析来源，工具专用提交表只随具体 POPUP guide 出现。Spec 084 后，反应步工具唤醒也只接受 `tool_request`，旧 request 行不再作为 parser 兼容入口。
-
-### 三步输出解析对象（v0.14.1）
+### 当前三步输出解析对象
 
 | 解析对象 | 中文说明 | LLM 原文格式 | 脚本消费者 | 说明 |
 |---|---|---|---|---|
 | `setup_intent` | 起手步意图 | provider-native `setup_finalize` 参数 | provider-native setup processor / Runtime | 安全裁决、挂载追加、待命跳过、任务债务、身份入口与未来模式建议审计；不含 RULES 选择或轮型确认 |
-| `reaction_result` | 反应步结果 | provider-native 工具 / `reaction.progress` / `reaction_finalize` / `final_reply.text` | runtime | 工具行动、轮中进展、反应收束与最终回复四车道分离；旧 markdown 出口信封只作观察材料 |
+| `reaction_result` | Runtime 派生的反应步结果 | provider-native 工具 / `assistant_text` / `reaction_finalize(handoff_text)` | Runtime | 自然语言可作为最终回复候选；完成/阻塞由账本派生，finalize 只请求跨轮继续；旧消息名和 markdown 信封仅保留历史观察/读取兼容 |
 | `cleanup_result` | 善后步收束 | provider-native `cleanup_finalize` 参数 | cleanup processor | 只接收 `connection_bridges` 与 `tacit_associations`；联想五表已在 Reaction 终态结算，缓存压力只在最终缓存落账后冻结 v3 债务，语义压缩留到下一自然轮 Reaction；最小承诺由脚本边界标记生成 |
 
-结构化输出不等于写盘。LLM 只负责按表声明；脚本负责解析、schema 校验、路由、原子写与失败处理。`state.base.runtime.relay_intents[]` 是 `reaction_finalize.handoff_text` 形成的跨轮中继意图池，供 Runtime 调度追踪；同一正文不得同轮写入 cache，只能在下一轮 relay setup 投影为 `kind=relay_handoff` / `role=user` 语料块，标题声明“上轮交接任务”，不伪装成用户原始输入。脚本说明若需模型可见，必须写入具名真源：`setup_fact`、`relay_handoff`、`tool_fact`、`material`、CONTENT 或 POPUP；它们都不自动变成 heartbeat flag、状态字段或磁盘写入。脚本可直接执行的内容不叫内部交接，应作为对应协议工具、提交箱或运行时操作处理。Spec381 后，反应步 loop 阶段普通自然语言文本生成 `reaction.progress` 消息信封并记录为 `kind=dialogue_progress`；Spec403-405 后该原文作为对话进展语料进入正式缓存履带，但不执行工具、不写长期记忆、不关闭轮、不生成最终回复。若要收束仍必须调用 `reaction_finalize`。Spec 041 起，`memory_write_declaration` 已冻结为反应步 `memory_write` 协议工具提交字段；Spec 131 起脚本在提交所在反应迭代同步落盘、生成 `memory_write_receipt` 并回灌下一迭代。Spec405 后反应步旧 `internal_handoff` 自由文本字段和 model-visible `kind=handoff` 均退出当前正向语义。
+结构化输出不等于写盘。LLM 按当前 native schema 提交；脚本负责 schema 校验、路由、原子写与失败处理。`state.base.runtime.relay_intents[]` 是 `reaction_finalize.handoff_text` 形成的跨轮中继意图池，供 Runtime 调度追踪；同一正文不得同轮写入 cache，只能在下一轮 relay setup 投影为 `kind=relay_handoff` / `role=user` 语料块，标题声明“上轮交接任务”，不伪装成用户原始输入。脚本说明若需模型可见，必须写入具名真源：`setup_fact`、`relay_handoff`、`tool_fact`、`material`、CONTENT 或 POPUP；它们都不自动变成 heartbeat flag、状态字段或磁盘写入。脚本可直接执行的内容不叫内部交接，应作为对应协议工具、提交箱或运行时操作处理。当前普通自然语言经 `assistant_text` 进入反应循环，进展语料仍使用 `kind=dialogue_progress`；该 kind 未退役。自然语言不执行工具或写长期记忆，但可成为最终回复候选，经 Runtime 账本判定后收束。只有跨轮继续才调用 `reaction_finalize(handoff_text)`；`reaction.progress/final_reply.text` 是旧消息合同名称。Spec 041 起，`memory_write_declaration` 已冻结为反应步 `memory_write` 协议工具提交字段；Spec 131 起脚本在提交所在反应迭代同步落盘、生成 `memory_write_receipt` 并回灌下一迭代。Spec405 后反应步旧 `internal_handoff` 自由文本字段和 model-visible `kind=handoff` 均退出当前正向语义。
 
 ### 工具 I/O 对象（v0.13.0）
 
@@ -6576,7 +6547,7 @@ JSON 是脚本内部结构或本地调度脑/专家接口格式，不是远端 L
 
 - `guide_submit` 使用稳定 schema 常驻两种 reaction 工具头，不以 active guide 增删工具或改写 `guide_id` 枚举。当前 active guide 的合法 ID/item/option 只由末位提示近位给出，并由 processor 最终校验；无 active task guide 时只允许常驻 `reaction_loop_guide` 的任务引导入口。历史 guide 与任务事实继续进入上下文，但一律是 `historical / executable=false`；它不是普通任务的默认第一动作，也不替代真实工作证据。
 - `guide_submit` 的已处理拒绝由 processor 同时生成原始 `details` 与固定 `kind/retry/attempted/current/expected/next_action`；provider-native tool result、单轮 POPUP 和审计只消费这一份提示，不得用 `reason` 关键词重新分类或覆盖动作。`reason/evidence_refs` 属于 submission 外层，bootstrap 的 `source_ref` 只能引用已读真实来源，每个 item 必须由 `acceptance.item_refs` 覆盖。`done/passed` 只接受成功证据；`blocked` 必须同时提供非空 reason 和真实 evidence ref。失败工具不生成成功 `EV-*`，只有当前任务创建轮及其后进入当前证据账本、且状态为 `blocked/rejected/error/failed/timeout/not_found/degraded` 的终态调用可用稳定 `call:<call_id>` 作为阻塞证据；旧任务或旧轮的失败不得串入新任务候选，缺少创建轮的旧任务 fail closed，不扫描 now/lately 猜归属。成功证据也可支持可复核的阻塞事实。该安全投影只包含调用 ID、工具、状态、reason 和短摘要。纠错预算按出现 rejected receipt 的 provider Frame 计数，同一帧多个 receipt 只算一次；重复调用、rejected／validation 结果和已见过的同一 `call_id` 都不算新进展。任一 active work guide 下，无新可用工具证据、成功 processor 落账或 guide／任务变化时，连续第三个 rejected Frame 必须本地进入 `blocked/task_guide_correction_exhausted`，保留最近三份精确 hint 并阻止第四次 provider 调用，不得因 reason 不同或 active task 已建立而清零。
-- 任务终态独立于模型请求的 `finish/continue`：所有必需任务项和验收项均为有证据的成功或阻塞、没有未结 pending input 且至少一项阻塞时，Runtime 判定 `terminal_blocked`。此后自然语言终止和 `reaction_finalize(finish/continue)` 均立即派生 `closeout_decision=blocked`，不置位 `continue_requested`、不创建 relay；模型给出的阻塞总结优先保留，缺失时生成非空本地说明。blocked Round 仍正常调用 Cleanup provider 一次，只有 Cleanup 失败或预算耗尽才进入既有本地应急结算；Cleanup 成功时 Round 可 `settled/closed`，但任务保持阻塞、未完成且可恢复。用户主动停止仍使用 `user_stop` 本地结算。
+- 任务终态由 Runtime 据账本判定：所有必需任务项和验收项均为有证据的成功或阻塞、没有未结 pending input 且至少一项阻塞时，Runtime 判定 `terminal_blocked`。此后自然语言终止和 `reaction_finalize(handoff_text)` 均立即派生 `closeout_decision=blocked`，不置位 `continue_requested`、不创建 relay；模型给出的阻塞总结优先保留，缺失时生成非空本地说明。blocked Round 仍正常调用 Cleanup provider 一次，只有 Cleanup 失败或预算耗尽才进入既有本地应急结算；Cleanup 成功时 Round 可 `settled/closed`，但任务保持阻塞、未完成且可恢复。用户主动停止仍使用 `user_stop` 本地结算。
 - `memory_write` 在其他字段均合法而正文超过当前 weight 的 128/512/2048 字硬上限时，只登记当前 Round 的即时重写义务；下一 Reaction Frame 由 `guide_submit` 选择 `rewrite` 或 `not_written`。旧 `pending_cancel`、`resolves_pending_id` 与活动失败提醒状态机已退役，历史 receipt 只读。
 - `relay_intent_settle` 只结算指定 `relay_intent_id` 的状态，不直接制造下一轮或伪装用户输入。
 - `corpus_read` 是 `read_tool`，只对当前可见的折叠轮中进展短 ID 做一次性展开；不写 persona，也不产生长期记忆。
@@ -6619,53 +6590,19 @@ POPUP GUIDE / reminder / warning 可作为末位高注意力提醒辅助行动�
 
 reaction 常驻主指南同时承担两条通用决策阈值：用户明确要求当前/最新，或易变事实会影响本次结论或行动时，先用可用搜索/读取工具核验权威来源；稳定事实与纯仓内任务不强制联网，无法核验时必须明确时效边界。只有缺失选择会实质改变交付结果或授权边界，且无法从上下文和已读材料核实时才询问用户；其余轻微歧义以范围最小、可回退的带界假设继续。这些是模型可见行动指导，不替代工具结果、授权门禁或 Runtime 执行证据。
 
-`REACTION_EXIT_FORMAT` 只保留信号枚举定义；当前 LLM 输出入口是 `REACTION_RESULT_FORMAT` 反应步出口信封，parser 不再把旧 request 行当作工具唤醒输入。
+`REACTION_EXIT_FORMAT` / `REACTION_RESULT_FORMAT` 文本格式只作历史定义；当前入口以 provider-native 工具头及 `assistant_text` 为准，旧 request 行不唤醒工具。
 
-### 三步输出最小 schema（v0.8.1 冻结）
+### 当前三步 native schema 入口
 
-**起手步 output**：
+字段、类型、必填项与 closed-shape 限制以 `UPSP/OS/logic/native_tool_calls.py` 的 `TOOL_ARGUMENT_SCHEMAS` 为唯一详细真源；模型实际看到的当帧工具头与 POPUP 指南需分别核验，不能拿内部结果对象代替发送参数。
 
-```json
-{
-  "step": "setup",
-  "round_type": "interactive|rhythm|relay|autonomous|standby",
-  "mode_suggestion": "default|critical|creative|engineering|...",
-  "mount_requests": [],
-  "popup_decisions": [],
-  "reaction_context_plan": [],
-  "abort": false,
-  "abort_reason": null
-}
-```
+| 工具 | 当前参数范围 |
+|---|---|
+| `setup_finalize` | 必需 `security_verdict`；挂载、待命跳过、任务引导、身份字段及仅审计的未来模式建议按 schema 校验；轮型与 RULES 选择不由旧顶层 JSON 指定 |
+| `reaction_finalize` | 只接受必需的 `handoff_text`，仅用于跨轮继续；不接受 relay_closeout、closeout_decision、finish/continue 等旧控制字段 |
+| `cleanup_finalize` | `connection_bridges` 与 `tacit_associations`；不含缓存压缩、旗标、最小承诺或回复字段 |
 
-**反应步 output**：
-
-```json
-{
-  "step": "reaction",
-  "response_type": "answer|tool_request|file_edit|handoff|abort",
-  "workbench_ops": [],
-  "tool_calls_declared": [],
-  "user_visible_response": "",
-  "needs_cleanup": true
-}
-```
-
-> 旧实现记录：远端 LLM 主体输出曾填写 markdown `reaction_result` 表；`user_visible_response` 对应 `assistant_reply`，`tool_calls_declared` 来自 `tool_request` 路由结果与 `protocol_tool_submission`，反应循环交接曾对应 `reaction_loop` 的 `to_*` 字段并写入 now-only `kind=handoff`。当前 native 路径以 `reaction_finalize` 为终端收束入口，跨轮中继正文登记到 `relay_intents` 隐藏 payload；旧 `relay_input` 与 model-visible `kind=handoff` 可见语料块口径退役。旧 request 行不再作为工具唤醒输入；loop 阶段自然语言文本生成 `reaction.progress`，旧 markdown 工具行只作为进展正文观察，不解析成工具请求、写入或 final_response。
-
-**善后步 output**：
-
-```json
-{
-  "step": "cleanup",
-  "connection_bridges": [],
-  "tacit_associations": []
-}
-```
-
-> Spec786：远端 LLM 主体只通过 `cleanup_finalize` 填写联系与默契材料；最近缓存压缩、脚本 finalizer、旗标与待命重置都不属于 Cleanup 模型参数。最小承诺边界语料由脚本写入，用户可见回复由 reaction `assistant_reply` 提供。
-
-编码者照此顶层字段开工，不需要再猜。后续版本可扩展字段但不删当前语义。
+普通 Reaction 完成使用自然语言候选，经 Runtime 据任务、验收和记忆义务判定；不要求额外 finalize。旧 v0.8.1 顶层 output 示例已退役，不再作为施工字段冻结依据。
 
 ## 38.5 熔断器策略
 
@@ -6764,21 +6701,21 @@ STM/health/
 
 ---
 
-# 三十九、握手协议
+# 三十九、当前恢复探针与目标握手协议
 
-待命轮通过握手协议主动探测外部依赖的可用性。本章定义握手报文格式与版本演进策略。
+当前 Seed 仅在 `api_degraded` 条件下、开轮 Setup 前执行 Setup 有效路由的有界恢复 probe。实际发送普通 provider 请求（提示“请只回复：连接成功”，无工具），不发送或解析下文自定义 handshake JSON。待命轮、开机和节律轮的全面主动自检属于目标设计。
 
-## 39.0 活跃自检 vs 全面自检
+## 39.0 目标设计：活跃自检 vs 全面自检
 
 | | 活跃自检 | 全面自检 |
 |---|---------|---------|
 | 范围 | 当前有效模型链 | 全局模型库中已配置模型 |
-| 默认场景 | 待命轮 / 开机启动 | 节律轮 |
-| 可配置 | config/system.json `health_check` 字段 | 同左 |
+| 目标场景（未启用） | 待命轮 / 开机启动 | 节律轮 |
+| 历史预留配置 | config/system.json `health_check`，不代表活动开关 | 同左 |
 
-三场景可配置（config/system.json）：活跃自检只面向当前有效模型链，全面自检覆盖全局模型库。当前 Seed 只实现 `api_degraded` 开轮前的 Setup 路由有界恢复 probe；主动全面探测仍是未来部署能力，不能由本表冒充已实现。
+上表仅定义未来自检范围；当前 `health_check` 兼容字段不启用这些场景。实际恢复入口与 probe 行为以上述当前 Seed 边界为准。
 
-## 39.1 握手协议 schema
+## 39.1 目标握手报文（当前不发送或解析）
 
 **出站（probe）**：
 
@@ -6805,11 +6742,11 @@ STM/health/
 
 ### note 字段的隐藏价值
 
-Plus/Pro 版阶段，中枢和专家可在 note 里写自省信号（如"反馈准确率下降，建议复盘"）。握手从此不只是"活没活"，还是"活得怎么样"——自觉能动性在架构层的第一个表现。Base 版 note 固定为 null。
+Plus/Pro 版阶段，中枢和专家可在 note 里写自省信号（如"反馈准确率下降，建议复盘"）。握手从此不只是"活没活"，还是"活得怎么样"——自觉能动性在架构层的第一个表现。在这份目标报文中，Base 的 note 预定为 null；当前普通 provider probe 不使用该字段。
 
-## 39.2 监测对象扩展表
+## 39.2 目标监测对象扩展表
 
-待命轮的握手职责贯穿所有版本，监测范围随版本长大：
+以下勾选表示目标版本规划，不是当前验收结果；当前 Base 仅有本章开头限定的 API 恢复 probe：
 
 | 监测对象 | Base | Plus | Pro |
 | --- | --- | --- | --- |

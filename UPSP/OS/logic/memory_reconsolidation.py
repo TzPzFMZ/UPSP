@@ -339,14 +339,20 @@ class MemoryReconsolidationProcessor:
                     self.assembler.invalidate_layer("periodic", strict=True)
                 self._fault("after_cache_invalidation")
             except Exception as exc:
-                try:
-                    self.memory_store.restore_ltm_files(pre_ltm)
-                    self.memory_store.restore_stm_files(pre_stm)
-                    self._restore_periodic_cache(cache_snapshot)
-                except Exception as restore_exc:
-                    raise RuntimeError(
-                        "memory_reconsolidation_rollback_failed:"
-                        f"{type(restore_exc).__name__}"
+                errors = []
+                for restore, snapshot in (
+                        (self.memory_store.restore_ltm_files, pre_ltm),
+                        (self.memory_store.restore_stm_files, pre_stm),
+                        (self._restore_periodic_cache, cache_snapshot)):
+                    try:
+                        restore(snapshot)
+                    except Exception as restore_exc:
+                        errors.append(restore_exc)
+                if errors:
+                    from errors import UncertainEffectError
+                    raise UncertainEffectError(
+                        "memory_reconsolidation_rollback_failed",
+                        affected_ids=[mem_id], cause=exc, rollback_causes=errors,
                     ) from exc
                 raise
 
@@ -602,6 +608,10 @@ def apply_memory_reconsolidation_guide(arguments, evidence_context):
                 "mem_id": mem_id,
                 "reason": str(exc),
             })
+            from errors import UncertainEffectError
+            if not isinstance(exc, (ValueError, MemoryReconsolidationError)):
+                exc.partial_receipts = backend_receipts
+                raise
             continue
 
         tracker.complete(mem_id)
@@ -620,14 +630,19 @@ def apply_memory_reconsolidation_guide(arguments, evidence_context):
                     )
                     receipt["periodic_mount_receipt"] = mount_receipt
                 except Exception as mount_exc:
+                    from errors import UncertainEffectError
+                    if isinstance(mount_exc, UncertainEffectError):
+                        mount_exc.partial_receipts = backend_receipts + [receipt] + mount_exc.partial_receipts
+                        raise
                     reason = str(mount_exc)
                     try:
                         periodic.mark_pending_blocked(mem_id, reason)
                     except Exception as ledger_exc:
-                        reason = (
-                            f"{reason};pending_ledger_update_failed:"
-                            f"{type(ledger_exc).__name__}:{ledger_exc}"
-                        )
+                        raise UncertainEffectError(
+                            "pending_ledger_update_failed_after_reconsolidation",
+                            affected_ids=[mem_id], cause=ledger_exc,
+                            partial_receipts=backend_receipts + [receipt],
+                        ) from ledger_exc
                     receipt["periodic_mount_outcome"] = "mount_blocked"
                     receipt["periodic_mount_reason"] = reason
         backend_receipts.append(receipt)

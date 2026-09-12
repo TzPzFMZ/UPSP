@@ -195,6 +195,13 @@ class _StateStoreStub:
         self.cleared_flags = []
         self.saved = None
 
+    def mutate(self, callback):
+        data = self.load()
+        callback(data)
+        self.save(data)
+        self.cleared_flags.extend(key for key, value in data["base"].get("heartbeat_flags", {}).items() if value is False)
+        return data
+
     def clear_flags(self, flags):
         self.cleared_flags.extend(list(flags or []))
 

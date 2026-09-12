@@ -169,20 +169,20 @@ def test_spec781_mount_cancel_auto_fails_closed_when_resident_truth_is_unreadabl
         resident_store = UnreadableStore()
 
     original = []
-    receipts, remaining = apply_mount_cancel_requests(
-        [{
-            "tool_id": "mount_cancel",
-            "mount_area": "resident_list",
-            "item_type": "auto",
-            "item_id": "PRJ-781",
-        }],
-        modules={"resident_store": UnreadableStore()},
-        mount_ids=original,
-    )
-
-    assert receipts[0]["status"] == "error"
-    assert receipts[0]["reason"] == "resident_list_read_failed"
-    assert remaining == original
+    import pytest
+    with pytest.raises(ValueError, match="corrupt resident truth") as caught:
+        receipts, remaining = apply_mount_cancel_requests(
+            [{
+                "tool_id": "mount_cancel",
+                "mount_area": "resident_list",
+                "item_type": "auto",
+                "item_id": "PRJ-781",
+            }],
+            modules={"resident_store": UnreadableStore()},
+            mount_ids=original,
+        )
+    assert caught.value.partial_receipts == []
+    assert original == []
 
 
 def test_spec305_mount_cancel_reports_not_found_without_side_effects():

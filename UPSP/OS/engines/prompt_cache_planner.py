@@ -126,14 +126,3 @@ def apply_explicit_breakpoints(payload: dict[str, Any], *, profile: str,
             "promoted_increment_chars": promoted_chars,
             "promoted_min_chars": max(1, int(promoted_min_chars))}
     return result, plan
-
-
-def model_visible_contract(payload: dict[str, Any]) -> dict[str, Any]:
-    messages = []
-    for message in payload.get("messages") or payload.get("input") or []:
-        if isinstance(message, dict):
-            item = copy.deepcopy(message)
-            item["content"] = _content_text(item.get("content"))
-            messages.append(item)
-    return {"model": payload.get("model"), "messages": messages,
-            "tools": copy.deepcopy(payload.get("tools") or [])}

@@ -98,6 +98,11 @@ class PopupManager:
     def clear_popup(self):
         self.write_popup("")
 
+    def update_popup(self, transform):
+        content = self.store.update_popup(transform)
+        self._sync_popup_active(bool(content))
+        return content
+
     def _sync_popup_active(self, active):
         if self.state_store is None:
             return

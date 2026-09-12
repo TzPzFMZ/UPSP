@@ -110,20 +110,8 @@ def _cancel_list_item(request, modules, mount_ids):
     item_type = _clean(request.get("item_type")) or "auto"
     resident_store = modules.get("resident_store")
     if request.get("mount_area") == "resident_list" and resident_store is not None:
-        try:
-            if item_type == "auto":
-                item_type = _infer_item_type(
-                    item_id, mount_ids, resident_store)
-        except Exception:
-            return (
-                _receipt(
-                    "error",
-                    request,
-                    reason="resident_list_read_failed",
-                    item_type=item_type,
-                ),
-                list(mount_ids or []),
-            )
+        if item_type == "auto":
+            item_type = _infer_item_type(item_id, mount_ids, resident_store)
     elif item_type == "auto":
         item_type = _infer_item_type(item_id, mount_ids)
 
@@ -145,15 +133,9 @@ def _cancel_list_item(request, modules, mount_ids):
                 target_file=_clean(request.get("target_file")),
             )
         except Exception as exc:
-            return (
-                _receipt(
-                    "error",
-                    request,
-                    reason=str(exc) or "resident_list_write_failed",
-                    item_type=item_type,
-                ),
-                list(mount_ids or []),
-            )
+            exc.partial_receipts = list(getattr(exc, "partial_receipts", [])) + [
+                _receipt("error", request, reason=str(exc), item_type=item_type)]
+            raise
         remaining, local_removed = _remove_mount_item(
             mount_ids,
             item_id,
@@ -203,21 +185,28 @@ def apply_mount_cancel_requests(requests, modules=None, mount_ids=None):
     updated_mount_ids = list(mount_ids or [])
     receipts = []
     for request in requests or []:
-        if not isinstance(request, dict):
-            receipts.append(_receipt("rejected", {}, reason="invalid_request"))
-            continue
-        mount_area = _clean(request.get("mount_area"))
-        item_type = _clean(request.get("item_type")) or "auto"
-        if mount_area not in VALID_MOUNT_AREAS:
-            receipts.append(_receipt("rejected", request, reason="invalid_mount_area"))
-            continue
-        if item_type not in VALID_ITEM_TYPES:
-            receipts.append(_receipt("rejected", request, reason="invalid_item_type"))
-            continue
-        receipt, updated_mount_ids = _cancel_list_item(
-            request,
-            modules,
-            updated_mount_ids,
-        )
-        receipts.append(receipt)
+        try:
+            if not isinstance(request, dict):
+                receipts.append(_receipt("rejected", {}, reason="invalid_request"))
+                continue
+            mount_area = _clean(request.get("mount_area"))
+            item_type = _clean(request.get("item_type")) or "auto"
+            if mount_area not in VALID_MOUNT_AREAS:
+                receipts.append(_receipt("rejected", request, reason="invalid_mount_area"))
+                continue
+            if item_type not in VALID_ITEM_TYPES:
+                receipts.append(_receipt("rejected", request, reason="invalid_item_type"))
+                continue
+            from errors import UncertainEffectError
+            try:
+                receipt, updated_mount_ids = _cancel_list_item(request, modules, updated_mount_ids)
+            except UncertainEffectError as exc:
+                exc.partial_receipts = receipts + exc.partial_receipts
+                raise
+            receipts.append(receipt)
+        except Exception as exc:
+            partial = list(receipts)
+            partial.extend(row for row in getattr(exc, "partial_receipts", []) if row not in partial)
+            exc.partial_receipts = partial
+            raise
     return receipts, updated_mount_ids

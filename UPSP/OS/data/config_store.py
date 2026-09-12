@@ -42,7 +42,7 @@ from schemas.config import (
     default_now_config, default_lately_config,
     default_popup_config,
 )
-from errors import ReadError, WriteError
+from errors import ReadError, UncertainEffectError, WriteError
 from constants import (
     REACTION_AUTO_RELAY_SECONDS,
     REACTION_REMINDER_SECONDS,
@@ -134,18 +134,8 @@ class ConfigStore:
                 loaded = json.load(f)
             if not isinstance(loaded, dict):
                 raise ValueError("config must be a JSON object")
-            if name == "system":
-                loaded = self._normalise_system(loaded)
-            elif name == "models":
+            if name == "models":
                 loaded = self._normalise_models(loaded)
-            elif name == "periodic":
-                loaded = self._normalise_periodic(loaded)
-            elif name == "relation":
-                loaded = self._normalise_relation(loaded)
-            elif name == "now":
-                loaded = self._normalise_now(loaded)
-            elif name == "lately":
-                loaded = self._normalise_lately(loaded)
             self._validate(name, loaded)
             return loaded
         except (json.JSONDecodeError, OSError, ValueError) as e:
@@ -156,18 +146,8 @@ class ConfigStore:
         if name not in _CONFIG_MAP:
             raise ValueError(f"未知配置: {name}")
         path, _ = _CONFIG_MAP[name]
-        if name == "system":
-            data = self._normalise_system(data)
-        elif name == "models":
+        if name == "models":
             data = self._normalise_models(data)
-        elif name == "periodic":
-            data = self._normalise_periodic(data)
-        elif name == "relation":
-            data = self._normalise_relation(data)
-        elif name == "now":
-            data = self._normalise_now(data)
-        elif name == "lately":
-            data = self._normalise_lately(data)
         self._validate(name, data)
         atomic_write_json(path, data)
 
@@ -182,22 +162,8 @@ class ConfigStore:
                 raise ValueError("config must be a JSON object")
         except (json.JSONDecodeError, OSError, ValueError) as exc:
             raise ReadError(path, cause=exc)
-        token_usage = current.get("token_usage") if isinstance(
-            current.get("token_usage"), dict) else {}
-        legacy_pressure = token_usage.get("warning_ratio")
-        migrated_pressure = None
-        if (
-                not isinstance(legacy_pressure, bool)
-                and isinstance(legacy_pressure, (int, float))
-                and math.isfinite(legacy_pressure)
-                and 0 < float(legacy_pressure) <= 1):
-            migrated_pressure = (
-                0.9 if float(legacy_pressure) == 0.7 else float(legacy_pressure)
-            )
         normalized = self._normalise_system(current)
         self._validate("system", normalized)
-        if migrated_pressure is not None:
-            self._migrated_lately_pressure_ratio = migrated_pressure
         if normalized != current:
             atomic_write_json(path, normalized)
             try:
@@ -205,8 +171,14 @@ class ConfigStore:
                 self._validate("system", verified)
                 if verified != normalized:
                     raise ValueError("system migration readback mismatch")
-            except Exception:
-                atomic_write_text(path, original_text)
+            except Exception as exc:
+                try:
+                    atomic_write_text(path, original_text)
+                except Exception as rollback_exc:
+                    raise UncertainEffectError(
+                        "system_migration_rollback_failed", affected_ids=[path],
+                        cause=exc, rollback_causes=[rollback_exc],
+                    ) from exc
                 raise
         return normalized, normalized != current
 
@@ -218,7 +190,7 @@ class ConfigStore:
             normalized = self._normalise_periodic(current)
             self._validate("periodic", normalized)
             if normalized != current:
-                atomic_write_json(path, normalized)
+                self._write_policy_migration(path, current, normalized)
             return normalized, normalized != current
         except (OSError, ValueError) as exc:
             raise ReadError(path, cause=exc)
@@ -244,16 +216,13 @@ class ConfigStore:
                 try:
                     atomic_write_text(path, original_text)
                 except Exception as rollback_exc:
-                    raise WriteError(
-                        path,
-                        message=(
-                            "relation_migration_rollback_failed:"
-                            f"{type(rollback_exc).__name__}"
-                        ),
-                    ) from rollback_exc
-            if isinstance(exc, (ReadError, WriteError)):
-                raise
-            raise ReadError(path, cause=exc) from exc
+                    raise UncertainEffectError(
+                        "relation_migration_rollback_failed", affected_ids=[path],
+                        cause=exc, rollback_causes=[rollback_exc],
+                    ) from exc
+            if isinstance(exc, (OSError, ValueError)):
+                raise ReadError(path, cause=exc) from exc
+            raise
 
     def migrate_now_policy(self):
         """Replace the one known watermark-era shape before Runtime starts."""
@@ -263,7 +232,7 @@ class ConfigStore:
             normalized = self._normalise_now(current)
             self._validate("now", normalized)
             if normalized != current:
-                atomic_write_json(path, normalized)
+                self._write_policy_migration(path, current, normalized)
             return normalized, normalized != current
         except (OSError, ValueError) as exc:
             raise ReadError(path, cause=exc)
@@ -274,33 +243,45 @@ class ConfigStore:
         current = self._read_json_object(path)
         try:
             normalized = self._normalise_lately(current)
-            migrated_pressure = getattr(
-                self, "_migrated_lately_pressure_ratio", None)
-            if migrated_pressure is None:
+            if current.get("_version") != LATELY_CACHE_POLICY_VERSION:
                 system_path, _ = _CONFIG_MAP["system"]
                 system = self._read_json_object(system_path)
                 system_normalized = self._normalise_system(system)
                 self._validate("system", system_normalized)
-                token_usage = system.get("token_usage") if isinstance(
-                    system.get("token_usage"), dict) else {}
-                candidate = token_usage.get("warning_ratio")
-                if (not isinstance(candidate, bool)
-                        and isinstance(candidate, (int, float))
-                        and math.isfinite(candidate)
-                        and 0 < float(candidate) <= 1):
-                    migrated_pressure = (
+                candidate = system["token_usage"].get("warning_ratio")
+                if candidate is not None:
+                    normalized["pressure_ratio"] = (
                         0.9 if float(candidate) == 0.7 else float(candidate)
                     )
-            if (
-                    current.get("_version") != LATELY_CACHE_POLICY_VERSION
-                    and migrated_pressure is not None):
-                normalized["pressure_ratio"] = migrated_pressure
             self._validate("lately", normalized)
             if normalized != current:
-                atomic_write_json(path, normalized)
+                self._write_policy_migration(path, current, normalized)
             return normalized, normalized != current
         except (OSError, ValueError) as exc:
             raise ReadError(path, cause=exc)
+
+    def _write_policy_migration(self, path, previous, candidate):
+        try:
+            atomic_write_json(path, candidate)
+            if self._read_json_object(path) != candidate:
+                raise WriteError(path, message="policy migration readback mismatch")
+        except Exception as exc:
+            try:
+                atomic_write_json(path, previous)
+                if self._read_json_object(path) != previous:
+                    raise WriteError(path, message="policy migration rollback readback mismatch")
+            except Exception as rollback_exc:
+                try:
+                    restored = self._read_json_object(path) == previous
+                except Exception:
+                    restored = False
+                if restored:
+                    raise exc
+                raise UncertainEffectError(
+                    "policy_migration_rollback_failed", affected_ids=[path],
+                    cause=exc, rollback_causes=[rollback_exc],
+                ) from exc
+            raise
 
     @staticmethod
     def _normalise_system(data):
@@ -430,9 +411,9 @@ class ConfigStore:
         if not isinstance(limits, dict):
             return result
         normalized = default_periodic_config()
-        normalized["limits"]["periodic_memory_items_chars"] = limits.get(
-            "periodic_memory_items_chars"
-        )
+        ConfigStore._validate_template_shape(
+            result, {**normalized, "trim_order": []}, path="periodic")
+        normalized["limits"]["periodic_memory_items_chars"] = limits["periodic_memory_items_chars"]
         return normalized
 
     @staticmethod
@@ -570,19 +551,15 @@ class ConfigStore:
 
     def init_persona(self):
         """Validate and migrate the active persona without creating it."""
-        lately_spec = _CONFIG_MAP.get("lately")
-        system_spec = _CONFIG_MAP.get("system")
+        lately_path, _ = _CONFIG_MAP["lately"]
         try:
-            if (lately_spec and system_spec
-                    and os.path.isfile(lately_spec[0])
-                    and os.path.isfile(system_spec[0])):
-                # Destination first: a crash cannot discard a custom legacy ratio.
-                self.migrate_lately_policy()
+            # Destination first: a crash cannot discard a custom legacy ratio.
+            self.migrate_lately_policy()
         except (ReadError, WriteError, OSError, ValueError) as exc:
-            raise self._persona_init_error("lately", lately_spec[0], exc) from exc
+            raise self._persona_init_error("lately", lately_path, exc) from exc
 
         for name, spec in _CONFIG_MAP.items():
-            if name in _GLOBAL_CONFIGS:
+            if name in _GLOBAL_CONFIGS or name == "lately":
                 continue
             path, _default_fn = spec
             try:
@@ -596,8 +573,6 @@ class ConfigStore:
                     self.migrate_relation_context_policy()
                 elif name == "now":
                     self.migrate_now_policy()
-                elif name == "lately":
-                    self.migrate_lately_policy()
                 else:
                     self.load(name)  # 损坏文件必须显式失败，禁止静默覆盖
             except (ReadError, WriteError, OSError, ValueError) as exc:
@@ -636,14 +611,14 @@ class ConfigStore:
         if not isinstance(data, dict):
             raise ValueError("config must be a JSON object")
         if name in _PERSONA_TEMPLATE_CONFIGS:
+            template = _CONFIG_MAP[name][1]()
             ConfigStore._validate_template_shape(
-                data, _CONFIG_MAP[name][1](), path=name
+                data, template, path=name
             )
-        if name == "now" and data.get("_version") != NOW_CACHE_POLICY_VERSION:
-            raise ValueError("now._version invalid")
+            if (name in {"system", "periodic", "relation", "now", "lately"}
+                    and data["_version"] != template["_version"]):
+                raise ValueError(f"{name}._version invalid")
         if name == "lately":
-            if data.get("_version") != LATELY_CACHE_POLICY_VERSION:
-                raise ValueError("lately._version invalid")
             pressure = data["pressure_ratio"]
             summary = data["semantic_summary_ratio"]
             target = data["cycle_target_ratio"]

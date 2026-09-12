@@ -151,15 +151,10 @@ def test_dependency_order_and_failure_isolation(tmp_path):
         "unrelated": lambda call: calls.append("unrelated") or {},
     })
 
-    result = runtime.dispatch(
-        "setup_frame_settled", FrameRef.for_axis(1, "setup", 1))
-
-    assert calls == ["source", "unrelated"]
-    assert result["failed_roles"] == ["source"]
-    assert "boom" not in json.dumps(result, ensure_ascii=False)
-    assert any(row.get("role_id") == "dependent"
-               and row.get("reason") == "dependency_unavailable"
-               for row in result["records"])
+    with pytest.raises(RuntimeError, match="boom") as caught:
+        runtime.dispatch("setup_frame_settled", FrameRef.for_axis(1, "setup", 1))
+    assert calls == ["source"]
+    assert caught.value.partial_receipts == []
 
 
 def test_dag_dependency_is_activated_before_subscriber(tmp_path):
@@ -306,82 +301,26 @@ class _Relation:
         return value if value == "FMZ" else None
 
 
-class _FileMemoryStore:
-    def __init__(self, root):
-        self.root = root
-        self.entries = {}
-        self.meta = {}
-        self.index = []
-
-    def _save(self, name, value):
-        (self.root / name).write_text(
-            json.dumps(value, ensure_ascii=False, sort_keys=True, default=str),
-            encoding="utf-8")
-
-    def write_entry(self, mem_id, title, summary, **kwargs):
-        self.entries[mem_id] = {"title": title, "body": summary, **kwargs}
-        self._save("memory.json", self.entries)
-
-    def set_meta(self, mem_id, meta):
-        self.meta[mem_id] = dict(meta)
-        self._save("meta.json", self.meta)
-
-    def append_index(self, mem_id, entry_type, weight, title, **kwargs):
-        self.index.append([mem_id, entry_type, weight, title, kwargs])
-        self._save("index.json", self.index)
+from UPSP.OS.tests.test_spec744_ltm_first_recall import recall_layout
 
 
-class _FileMap:
-    def __init__(self, root, name):
-        self.path = root / name
-        self.rows = {}
-
-    def _set(self, key, value):
-        self.rows[key] = value
-        self.path.write_text(json.dumps(
-            self.rows, ensure_ascii=False, sort_keys=True, default=str),
-            encoding="utf-8")
-
-    def set_entry(self, key, value):
-        self._set(key, value)
-
-    def add_stm_keywords(self, key, value):
-        self._set(key, value)
-
-
-class _FileHeat(_FileMap):
-    @staticmethod
-    def new_entry(weight=2):
-        from schemas.memory import default_heat_entry
-        value = default_heat_entry(weight=weight)
-        value["last_heat_at"] = "2026-07-16T00:00:00+08:00"
-        return value
-
-
-def _memory_services(root):
-    return SimpleNamespace(
-        sm=_State(),
-        memory_store=_FileMemoryStore(root),
-        memory_index=_FileMap(root, "keywords.json"),
-        heat=_FileHeat(root, "heat.json"),
-        container_store=SimpleNamespace(),
-        relation_store=_Relation(),
-    )
-
-
-def _tree(root):
-    return {path.name: path.read_bytes() for path in root.iterdir() if path.is_file()}
-
-
-def test_fake_memory_organ_reuses_reaction_committer_receipt_and_file_result(
-        tmp_path, monkeypatch):
+def test_real_memory_organ_reuses_reaction_committer_receipt_and_file_result(
+        tmp_path, monkeypatch, recall_layout):
     from logic import memory_write
 
-    direct_root = tmp_path / "direct"
-    organ_root = tmp_path / "organ"
-    direct_root.mkdir()
-    organ_root.mkdir()
-    monkeypatch.setattr(memory_write, "generate_mem_id", lambda: "MEM-TEST659")
+    env = recall_layout
+    services = SimpleNamespace(sm=_State(), memory_store=env["store"],
+        memory_index=env["index"], heat=env["heat"], container_store=SimpleNamespace(),
+        relation_store=_Relation())
+    before_ltm = env["store"].snapshot_ltm_files()
+    before_stm = env["store"].snapshot_stm_files()
+    monkeypatch.setattr(memory_write, "generate_mem_id", lambda: "MEM-65900001")
+    new_heat = env["heat"].new_entry
+    def fixed_heat(*args, **kwargs):
+        value = new_heat(*args, **kwargs)
+        value["last_heat_at"] = "2026-07-16T00:00:00+08:00"
+        return value
+    monkeypatch.setattr(env["heat"], "new_entry", fixed_heat)
     make_meta = memory_write.make_meta_template
 
     def fixed_meta(*args, **kwargs):
@@ -402,13 +341,18 @@ def test_fake_memory_organ_reuses_reaction_committer_receipt_and_file_result(
         "identity_status": "known",
         "interaction_source": "test",
     }
-    reaction_committer = RuntimeProductCommitter(_memory_services(direct_root))
+    reaction_committer = RuntimeProductCommitter(services)
     direct = ReactionToolSettlementDispatcher(SimpleNamespace(
         product_committer=reaction_committer,
     ))._commit(
         "memory_write", [declaration], round_num=659,
         interaction_meta=meta)[0]
-    committer = RuntimeProductCommitter(_memory_services(organ_root))
+    assert direct["status"] == "applied"
+    direct_ltm = env["store"].snapshot_ltm_files()
+    direct_stm = env["store"].snapshot_stm_files()
+    env["store"].restore_ltm_files(before_ltm)
+    env["store"].restore_stm_files(before_stm)
+    committer = RuntimeProductCommitter(services)
     role = _role(
         "memory_organ",
         product_tools=["memory_write"],
@@ -435,4 +379,5 @@ def test_fake_memory_organ_reuses_reaction_committer_receipt_and_file_result(
     assert normalized == direct
     assert organ["tool_class"] == "sync_tool"
     assert organ["execution_route"] == "internal_processor"
-    assert _tree(organ_root) == _tree(direct_root)
+    assert env["store"].snapshot_ltm_files() == direct_ltm
+    assert env["store"].snapshot_stm_files() == direct_stm

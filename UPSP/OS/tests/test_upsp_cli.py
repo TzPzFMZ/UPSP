@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import pytest
 from UPSP.OS.tests.native_tool_test_helpers import _load_module_from_path
 
 
@@ -345,6 +346,23 @@ def test_spec694_superseded_guide_is_not_reported_open(tmp_path, monkeypatch):
     ]
     assert pending["pending_guides"] == pending["open_guides"]
     assert pending["guide_status_inconsistencies"] == []
+
+
+@pytest.mark.parametrize("status,settled", [
+    ("integrated", True), ("deferred", True), ("rejected", True), ("split", True),
+    ("pending", False), ("done", False), ("completed", False),
+])
+def test_cli_pending_inputs_use_writer_settlement_contract(tmp_path, monkeypatch, status, settled):
+    cli = _load_cli()
+    from data import workbench as workbench_module
+
+    monkeypatch.setattr(workbench_module, "WB_DIR", str(tmp_path / "workbench"))
+    store = workbench_module.WorkbenchStore()
+    store.create_task_guide_task("待整合输入", guide={
+        "pending_inputs": [{"pending_input_id": "input-803", "status": status}],
+    })
+    monkeypatch.setattr(cli, "STATE_JSON", tmp_path / "state.json")
+    assert cli._workbench_pending_status()["open_pending_inputs"] == ([] if settled else ["input-803"])
 
 
 def test_spec516_terminal_state_detects_runtime_blocked_closed():

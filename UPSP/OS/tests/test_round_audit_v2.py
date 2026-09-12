@@ -11,7 +11,7 @@ from data.provider_request_wire import (
     provider_request_body_sha256,
     serialize_provider_request_body,
 )
-from data.round_audit_codec import RoundAuditDecoder, RoundAuditEncoder
+from data.round_audit_codec import RoundAuditDecoder, RoundAuditEncoder, read_round_audit_file
 from data.round_snapshot_store import RoundSnapshotStore
 
 
@@ -218,6 +218,14 @@ def test_v2_corrupt_delta_fails_closed(tmp_path):
     decoder.feed([event for event in events if event["event_type"] == "step_input_snapshot"][0])
     with pytest.raises(ValueError, match="base_sha_mismatch"):
         decoder.feed(snapshot)
+    path = Path(store._round_path(1))
+    path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="round_audit_invalid_line:3:ValueError:.*base_sha_mismatch"):
+        store.read_events(1)
+    with pytest.raises(ValueError, match="base_sha_mismatch"):
+        store._has_step_snapshot(1, "reaction")
+    assert path.read_bytes() == before
 
 
 def test_v2_append_failure_does_not_commit_encoder_state(tmp_path, monkeypatch):
@@ -295,3 +303,49 @@ def test_call_events_reference_snapshot_without_copying_envelope(tmp_path):
         assert "provider_request_envelope" not in event["payload"]
         assert event["payload"]["request_snapshot_event_id"] == snapshot["event_id"]
         assert event["payload"]["wire_body_sha256"] == envelope["wire_body_sha256"]
+
+
+@pytest.mark.parametrize("schema", [None, "round_audit.v1", "round_audit.v2"])
+@pytest.mark.parametrize("newline", ["", "\n"])
+def test_complete_read_preserves_known_history_bytes(tmp_path, schema, newline):
+    store = RoundSnapshotStore(tmp_path)
+    path = tmp_path / "round" / "round_1.jsonl"
+    path.parent.mkdir()
+    event = {"event_type": "round_closed", "round": 1, "payload": {"status": "unsettled"}}
+    if schema:
+        event["schema_version"] = schema
+    path.write_text(json.dumps(event) + newline, encoding="utf-8")
+    before = path.read_bytes()
+    assert store.read_events(1) == read_round_audit_file(path) == [event]
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("newline", ["", "\n"])
+def test_snapshot_probe_distinguishes_missing_from_corrupt_audit(tmp_path, newline):
+    store = RoundSnapshotStore(tmp_path)
+    assert store._has_step_snapshot(1, "reaction") is False
+    with pytest.raises(FileNotFoundError):
+        store.read_events(1)
+    store.start_round(1)
+    path = Path(store._round_path(1))
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("{broken" + newline)
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="round_audit_invalid_line:2:JSONDecodeError") as error:
+        store._has_step_snapshot(1, "reaction")
+    assert isinstance(error.value.__cause__, json.JSONDecodeError)
+    assert path.read_bytes() == before
+
+
+def test_snapshot_probe_propagates_permission_failure(tmp_path, monkeypatch):
+    store = RoundSnapshotStore(tmp_path)
+    store.start_round(1)
+    path = Path(store._round_path(1))
+    original = path.read_bytes()
+    with monkeypatch.context() as patch:
+        def denied(*args, **kwargs):
+            raise PermissionError("injected read denial")
+        patch.setattr(Path, "open", denied)
+        with pytest.raises(PermissionError, match="read denial"):
+            store._has_step_snapshot(1, "reaction")
+    assert path.read_bytes() == original

@@ -14,15 +14,14 @@ DDS §3 state.json
 """
 import json
 import os
-import time
 import threading
-import tempfile
 from copy import deepcopy
 
 from paths import STATE_JSON
 from schemas.state import FIELDS, default_state
 from errors import WriteError, ReadError
 from constants import local_now
+from data.atomic_write import atomic_write_json
 
 INTERACTION_ANCHOR_SOURCES = frozenset({
     "unbound", "local_default", "instance_selection",
@@ -138,32 +137,9 @@ class StateStore:
     def save(self, data):
         """全量写入 state.json（原子 + 线程安全 + 重试）。同步更新内存缓存"""
         self._validate(data)
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-
         with _LOCK:
-            fd, tmp = tempfile.mkstemp(suffix=".tmp", dir=os.path.dirname(self.path))
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                # Windows 上 os.replace 可能被杀软短暂锁定，加重试
-                for attempt in range(5):
-                    try:
-                        os.replace(tmp, self.path)
-                        self._cache = deepcopy(data)
-                        return
-                    except PermissionError:
-                        if attempt < 4:
-                            time.sleep(0.05 * (attempt + 1))
-                        else:
-                            raise WriteError(self.path,
-                                message=f"os.replace 失败（重试{attempt+1}次）")
-            except Exception:
-                if os.path.isfile(tmp):
-                    try:
-                        os.remove(tmp)
-                    except OSError:
-                        pass
-                raise
+            atomic_write_json(self.path, data)
+            self._cache = deepcopy(data)
 
     def migrate_memory_compression_flags(self):
         """Replace the two retired pending flags with the shared-ledger flag."""

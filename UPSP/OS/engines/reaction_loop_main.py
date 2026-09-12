@@ -219,17 +219,7 @@ class ReactionSession:
         except RequiredContextError as exc:
             settlement = None
             if self.pending_frame_ref is not None:
-                frame_ref = self.pending_frame_ref
-                counts = self.pending_frame_counts
-                self.pending_frame_ref = None
-                self.pending_frame_counts = None
-                settlement = _settle_reaction_frame(
-                    self.loop_state.runner,
-                    self.result_state,
-                    frame_ref,
-                    counts,
-                    "required_context_failure",
-                )
+                settlement = self._settle_failed_frame(exc, "required_context_failure")
             self.result_state.required_context_failure = exc.as_dict()
             self.result_state.exit_signal = "required_context_failure"
             self.result = build_reaction_loop_result(self.result_state)
@@ -237,21 +227,41 @@ class ReactionSession:
             self._frames.close()
             return settlement
         except BaseException as exc:
+            if getattr(exc, "partial_receipts", None):
+                for receipt in exc.partial_receipts:
+                    tool_id = receipt.get("tool_id", "")
+                    collection_name = "all_relation_card_receipts" if tool_id == "relation_card_write" else f"all_{tool_id}_receipts"
+                    specific = getattr(self.result_state, collection_name, None)
+                    for collection in (self.result_state.all_protocol_tool_receipts, specific):
+                        if isinstance(collection, list) and not any(item is receipt for item in collection):
+                            collection.append(receipt)
+            exc.partial_receipts = list(self.result_state.all_protocol_tool_receipts)
             if self.pending_frame_ref is not None:
-                frame_ref = self.pending_frame_ref
-                counts = self.pending_frame_counts
-                self.pending_frame_ref = None
-                self.pending_frame_counts = None
                 self.deferred_error = exc
-                return _settle_reaction_frame(
-                    self.loop_state.runner,
-                    self.result_state,
-                    frame_ref,
-                    counts,
-                    "frame_exception",
-                )
+                return self._settle_failed_frame(exc, "frame_exception")
             self.completed = True
             raise
+
+    def _settle_failed_frame(self, original, reason):
+        frame_ref, counts = self.pending_frame_ref, self.pending_frame_counts
+        self.pending_frame_ref = self.pending_frame_counts = None
+        try:
+            return _settle_reaction_frame(
+                self.loop_state.runner, self.result_state, frame_ref, counts, reason)
+        except Exception as settlement_error:
+            original.settlement_failure = {
+                "error_type": type(settlement_error).__name__,
+                "cause": str(settlement_error),
+            }
+            if settlement_error.__cause__ is not None:
+                original.settlement_failure["cause_details"] = {
+                    "error_type": type(settlement_error.__cause__).__name__,
+                    "cause": str(settlement_error.__cause__),
+                }
+            original.partial_receipts = list(self.result_state.all_protocol_tool_receipts)
+            self.completed = True
+            self.deferred_error = None
+            raise original
 
 
 def _assistant_text_tool_payload_warning(text):

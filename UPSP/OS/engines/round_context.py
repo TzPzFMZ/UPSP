@@ -1,5 +1,6 @@
 """Round-scoped DTOs shared by Runtime and step runners."""
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from logic.memory_reconsolidation import MemoryReconsolidationTracker
@@ -98,6 +99,7 @@ class RoundContext:
     round_type: str
     state: dict[str, Any]
     flags: dict[str, Any]
+    started_at: datetime | None = field(default=None, kw_only=True)
     interaction_meta: dict[str, Any] = field(default_factory=dict)
     user_input_text: str = ""
     setup_messages: list[dict[str, Any]] = field(default_factory=list)

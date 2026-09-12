@@ -112,7 +112,7 @@ def periodic_layout(tmp_path, monkeypatch):
     resident_store = ResidentListStore(str(
         tmp_path / "local" / "STM" / "context" / "resident_list.json"
     ))
-    resident_store.reconcile()
+    resident_store.replace(resident_store.load())
     assembler = ContextAssembler(
         state_store=state_store,
         config_store=_Config(),

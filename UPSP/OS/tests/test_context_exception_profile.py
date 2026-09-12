@@ -172,6 +172,43 @@ def test_required_context_natural_absence_remains_empty(tmp_path):
     assert assembler._task_board_recent_context_entries() == []
 
 
+def test_spec803_no_special_runtime_guide_uses_registered_reaction_guide():
+    from assembly.context_helpers import (
+        build_current_runtime_guide_popup,
+        build_reaction_step_guide_popup,
+    )
+    from schemas.state import default_state
+
+    guide = build_current_runtime_guide_popup("reaction", default_state())
+    assert guide == build_reaction_step_guide_popup("reaction")
+    assert "kind: reaction_step_guide" in guide
+
+
+def test_spec803_runtime_guide_render_failure_blocks_before_provider(tmp_path, monkeypatch):
+    from assembly.context_helpers import build_current_runtime_guide_popup
+    from errors import RequiredContextError
+    from logic import rhythm_guidance
+    from UPSP.OS.tests.runtime_test_helpers import RuntimeTestMixin, ScriptedExecutor
+
+    rt = RuntimeTestMixin()._make_runtime(tmp_path)
+    executor = ScriptedExecutor()
+    rt.executor = executor
+    failure = ValueError("runtime guide unavailable")
+
+    def fail(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(rhythm_guidance, "render_current_guide_popup", fail)
+    with pytest.raises(RequiredContextError, match="runtime_guide") as caught:
+        build_current_runtime_guide_popup("reaction", rt.sm.load())
+    assert caught.value.__cause__ is failure
+
+    result = rt._run_reaction_loop(rt.sm.load(), "interactive", [])
+    assert result["aborted"] is True
+    assert result["_required_context_failure"] == caught.value.as_dict()
+    assert executor.calls == []
+
+
 def test_task_board_and_resident_source_read_fail_closed(tmp_path, monkeypatch):
     from assembly.context import ContextAssembler
     from data import workbench as workbench_module

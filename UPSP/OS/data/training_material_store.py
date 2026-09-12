@@ -6,7 +6,13 @@ data 层独占文件 I/O，logic 层不碰磁盘。
 """
 import json
 import os
+import threading
+from data.atomic_write import atomic_write_json
+from errors import ReadError
 from constants import local_now
+
+
+ASSOCIATION_MUTATION_LOCK = threading.RLock()
 
 
 def ensure_dir(path):
@@ -110,20 +116,12 @@ def write_association_counts(association_dir, assoc_data):
 
 
 def update_count_file(filepath, pairs):
-    data = {}
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            data = {}
-    for a, b in pairs:
-        key = f"{a}|||{b}"
-        data[key] = data.get(key, 0) + 1
-    tmp = filepath + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-    os.replace(tmp, filepath)
+    with ASSOCIATION_MUTATION_LOCK:
+        data = _read_count_file(filepath)
+        for a, b in pairs:
+            key = f"{a}|||{b}"
+            data[key] = data.get(key, 0) + 1
+        atomic_write_json(filepath, data)
 
 
 KEYWORD_DEGREE_TABLES = {
@@ -160,6 +158,8 @@ def _read_count_file(filepath):
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError, UnicodeError) as exc:
+        raise ReadError(filepath, cause=exc) from exc
+    if not isinstance(data, dict):
+        raise ReadError(filepath, "association_count_shape_invalid")
+    return data

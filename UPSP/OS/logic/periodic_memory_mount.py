@@ -155,7 +155,7 @@ class PeriodicMemoryMountProcessor:
                 self.mount_store.save_document(mounts)
                 self._fault("after_pending")
             except Exception as exc:
-                self._rollback(snapshots, cache_snapshot, exc)
+                self._rollback(snapshots, cache_snapshot, exc, mem_id=mem_id)
                 raise
             chars = self._mounted_chars(current_items, enforce_limit=False)
             return self._receipt(
@@ -251,7 +251,7 @@ class PeriodicMemoryMountProcessor:
             verified_chars_after = self._mounted_chars(new_items)
             self._fault("after_verify")
         except Exception as exc:
-            self._rollback(snapshots, cache_snapshot, exc)
+            self._rollback(snapshots, cache_snapshot, exc, mem_id=mem_id)
             raise
 
         return self._receipt(
@@ -284,7 +284,7 @@ class PeriodicMemoryMountProcessor:
                 self.mount_store.save_document(mounts)
                 self._fault("after_pending_cancel")
             except Exception as exc:
-                self._rollback(snapshots, cache_snapshot, exc)
+                self._rollback(snapshots, cache_snapshot, exc, mem_id=mem_id)
                 raise
             chars = self._mounted_chars(current_items, enforce_limit=False)
             return self._receipt(
@@ -377,7 +377,7 @@ class PeriodicMemoryMountProcessor:
                 raise ValueError("periodic_unmount_owner_unverified")
             self._fault("after_verify")
         except Exception as exc:
-            self._rollback(snapshots, cache_snapshot, exc)
+            self._rollback(snapshots, cache_snapshot, exc, mem_id=mem_id)
             raise
 
         return self._receipt(
@@ -570,15 +570,22 @@ class PeriodicMemoryMountProcessor:
             self.assembler.state_store._set_internal(
                 "base.context_cache.periodic_expired", snapshot["expired"])
 
-    def _rollback(self, snapshots, cache_snapshot, cause):
-        try:
-            self.memory_store.restore_stm_files(snapshots["stm"])
-            self.memory_store.restore_ltm_files(snapshots["ltm"])
-            self._restore_files(snapshots["files"])
-            self._restore_periodic_cache(cache_snapshot)
-        except Exception as restore_exc:
-            raise RuntimeError(
-                f"periodic_memory_rollback_failed:{type(restore_exc).__name__}"
+    def _rollback(self, snapshots, cache_snapshot, cause, *, mem_id):
+        errors = []
+        for restore, snapshot in (
+                (self.memory_store.restore_stm_files, snapshots["stm"]),
+                (self.memory_store.restore_ltm_files, snapshots["ltm"]),
+                (self._restore_files, snapshots["files"]),
+                (self._restore_periodic_cache, cache_snapshot)):
+            try:
+                restore(snapshot)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            from errors import UncertainEffectError
+            raise UncertainEffectError(
+                "periodic_memory_rollback_failed", affected_ids=[mem_id],
+                cause=cause, rollback_causes=errors,
             ) from cause
 
     def _projection_state(self, state, mounted, owner, pending=None):

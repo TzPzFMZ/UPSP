@@ -8,7 +8,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from native_tool_test_helpers import (
     _load_native_round_evidence_summary,
-    _load_native_tool_calling_acceptance,
     _load_native_tool_calling_gate,
     _load_native_tool_evidence_model,
 )
@@ -48,8 +47,6 @@ def test_spec309_evidence_model_redacts_sensitive_summary_values():
 def test_spec309_native_gate_and_summary_use_shared_evidence_model_source():
     gate = _load_native_tool_calling_gate()
     summary = _load_native_round_evidence_summary()
-    acceptance = _load_native_tool_calling_acceptance()
 
     assert "native_tool_evidence_model" in gate.__dict__
     assert "native_tool_evidence_model" in summary.__dict__
-    assert "native_tool_evidence_model" in acceptance.__dict__

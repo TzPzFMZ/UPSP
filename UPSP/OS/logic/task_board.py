@@ -2,6 +2,7 @@
 
 import json
 import os
+from logic.task_guide import PENDING_INPUT_SETTLED_STATUSES
 
 from logic.evidence_refs import (
     canonical_command_ref,
@@ -18,9 +19,6 @@ from logic.task_progress_copy import (
 ITEM_DONE_STATUSES = {"accepted", "applied", "complete", "completed", "done", "finish", "finished"}
 ACCEPTANCE_DONE_STATUSES = ITEM_DONE_STATUSES | {"passed", "verified"}
 BLOCKED_STATUSES = {"blocked"}
-PENDING_INPUT_SETTLED_STATUSES = {
-    "integrated", "deferred", "rejected", "split", "completed", "done"
-}
 
 
 def render_active_task_board(workbench_store, recent_context_entries=None):
@@ -223,11 +221,10 @@ def _active_task_id(workbench_store):
 def _task_board_gaps(items, acceptance, pending_inputs, evidence=None):
     evidence = evidence or _empty_evidence_index()
     gaps = []
-    for pending in pending_inputs:
-        if _status(pending, "pending") in {"pending", "open"}:
-            pending_id = _text(pending.get("pending_input_id") or "pending_input")
-            summary = _text(pending.get("summary"))
-            gaps.append(f"待整合输入 {pending_id}：{summary or '无摘要'}")
+    for pending in _open_pending_inputs(pending_inputs):
+        pending_id = _text(pending.get("pending_input_id") or "pending_input")
+        summary = _text(pending.get("summary"))
+        gaps.append(f"待整合输入 {pending_id}：{summary or '无摘要'}")
     for item in items:
         if item.get("required") is False:
             continue

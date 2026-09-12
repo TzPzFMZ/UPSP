@@ -39,3 +39,8 @@ Runtime 用隐藏的 `execution_route` 选择内部 processor、宿主派发或�
 - `memory_container_write` 只能写本 Frame 起点已经装配到 CONTENT 的具体容器目标文件。
 - 同 Frame 刚执行的 `container_read` 或 `memory_container_create` 尚未进入本次输入，不能立即取得写权；下一 Frame 才可写。
 - `container_read` 成功即把目标文件加入常驻清单；容器写权只按 Frame 起点的 CONTENT 可见性判断。
+
+
+## 故障与部分结果
+
+参数错误、公开网络失败或安全拒绝以真实回执为准，可按回执调整。批量中的前项已完成，不会因后项失败而撤销；只按已返回的结果判断，未执行的后项没有执行事实。必需上下文、账本或写后恢复未完成时，Runtime 停止后续工具和 provider，保全已有回执及受影响 ID，保持未结算。恢复提示包括历史已闭轮遗留行动及协议写后不确定状态；不得把重启、超时、空白显示或历史 `round_closed` 当作恢复完成，也不得盲目重发副作用。

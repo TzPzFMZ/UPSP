@@ -70,6 +70,8 @@ def _make_runtime(tmp_path):
 
     class TestMemoryHeat:
         def __init__(self):
+            from data.stm_heat_calculator import STMHeatCalculator
+            self.calculator = STMHeatCalculator()
             self.entries = {}
             self.decayed = False
             self.last_decay_round_num = None
@@ -80,9 +82,6 @@ def _make_runtime(tmp_path):
 
         def save_heat(self, data):
             self.entries = dict(data.get("entries", {}))
-
-        def get_entry(self, mem_id):
-            return self.entries.setdefault(mem_id, {})
 
         def set_entry(self, mem_id, entry):
             self.entries[mem_id] = dict(entry)
@@ -323,7 +322,7 @@ class TestThreeStepRound:
         assert "cleanup" in call_log, "安全驳回后善后步必须执行"
 
     def test_cleanup_runs_on_setup_error(self, tmp_path, monkeypatch):
-        """起手步异常→善后步必走（try/finally 硬化）"""
+        """未知起手异常停止 provider，本地善后保持未结算。"""
         _patch_io(monkeypatch, tmp_path)
         rt, sm = _make_runtime(tmp_path)
 
@@ -347,15 +346,16 @@ class TestThreeStepRound:
         state = sm.load()
         flags = {"user_message_waiting": True}
         # 不应抛异常到外层
-        rt._run_one_round("interactive", state, flags)
+        result = rt._run_one_round("interactive", state, flags)
 
-        assert "cleanup" in call_log, "起手步异常后善后步必须执行"
+        assert call_log == ["setup"]
+        assert result["_settlement"]["status"] == "unsettled"
         # 终态仍为 idle
         final_state = sm.load()
         assert final_state["base"]["runtime"]["phase"] == "idle"
 
     def test_cleanup_runs_on_reaction_error(self, tmp_path, monkeypatch):
-        """反应步异常→善后步必走（try/finally 硬化）"""
+        """未知反应异常停止 provider，本地善后保持未结算。"""
         _patch_io(monkeypatch, tmp_path)
         rt, sm = _make_runtime(tmp_path)
 
@@ -384,11 +384,11 @@ class TestThreeStepRound:
 
         state = sm.load()
         flags = {"user_message_waiting": True}
-        rt._run_one_round("interactive", state, flags)
+        result = rt._run_one_round("interactive", state, flags)
 
-        assert "setup" in call_log
-        assert "reaction" in call_log
-        assert "cleanup" in call_log, "反应步异常后善后步必须执行"
+        assert call_log == ["setup", "reaction"]
+        assert result["_settlement"]["status"] == "unsettled"
+        assert sm.load()["base"]["runtime"]["phase"] == "idle"
 
 
 # ============================================================
@@ -447,7 +447,6 @@ class TestContextCache:
         sm._set_internal("base.context_cache.periodic_expired", False)
 
         resident_store = ResidentListStore(str(tmp_path / "resident_list.json"))
-        resident_store.reconcile()
         assembler = ContextAssembler(
             state_store=sm,
             context_dir=str(tmp_path / "context"),

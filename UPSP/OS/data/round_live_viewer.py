@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from copy import deepcopy
 
@@ -114,7 +113,7 @@ DSML_STREAM_MARKER_RE = re.compile(
 )
 
 
-def build_live_state(events, live_context_root=None, use_live_layers=False):
+def build_live_state(events):
     """Build the lightweight first-paint state; heavy audit bodies are details."""
     ordered_all = _ordered_events(events)
     ordered = _visible_events(ordered_all)
@@ -153,21 +152,13 @@ def build_live_state(events, live_context_root=None, use_live_layers=False):
     }
 
 
-def build_live_detail(events, *, kind, ref="", live_context_root=None,
-                      use_live_layers=False):
+def build_live_detail(events, *, kind, ref=""):
     """Build one explicitly requested heavy audit surface."""
     ordered_all = _ordered_events(events)
     ordered = _visible_events(ordered_all)
     round_num = _latest_round(ordered_all)
     if kind == "frame":
-        catalog = _build_frame_catalog(ordered)
-        latest_frame_id = str(catalog[-1].get("frame_id") or "") if catalog else ""
-        payload = _build_frame_detail(
-            ordered,
-            ref,
-            live_context_root=live_context_root,
-            use_live_layers=(use_live_layers and str(ref or "") == latest_frame_id),
-        )
+        payload = _build_frame_detail(ordered, ref)
     elif kind == "ledger":
         payload = {"items": _build_ledger_items(ordered)}
     elif kind == "event":
@@ -177,11 +168,7 @@ def build_live_detail(events, *, kind, ref="", live_context_root=None,
     elif kind == "legacy_conversation":
         payload = {"conversation": _build_legacy_conversation(ordered)}
     elif kind == "evidence":
-        payload = _build_evidence_detail(
-            ordered_all,
-            live_context_root=live_context_root,
-            use_live_layers=use_live_layers,
-        )
+        payload = _build_evidence_detail(ordered_all)
     else:
         raise ValueError("live_detail_kind_invalid")
     return {
@@ -286,8 +273,7 @@ def _build_frame_catalog(events):
     return frames
 
 
-def _build_frame_detail(events, frame_id, *, live_context_root=None,
-                        use_live_layers=False):
+def _build_frame_detail(events, frame_id):
     frame_id = str(frame_id or "").strip()
     if not frame_id:
         raise ValueError("live_detail_ref_required")
@@ -299,11 +285,7 @@ def _build_frame_detail(events, frame_id, *, live_context_root=None,
         if not _call_key(event)
         and event.get("event_type") in {"round_settled", "round_closed", "round_unsettled"}
     )
-    frames = _build_call_frames(
-        frame_events,
-        live_context_root=live_context_root,
-        use_live_layers=use_live_layers,
-    )
+    frames = _build_call_frames(frame_events)
     matches = [frame for frame in frames if frame.get("frame_id") == frame_id]
     if len(matches) != 1:
         raise ValueError("live_detail_frame_ambiguous")
@@ -394,13 +376,9 @@ def _build_timeline_node_detail(events, ref):
     return matches[0]
 
 
-def _build_evidence_detail(events, *, live_context_root=None, use_live_layers=False):
+def _build_evidence_detail(events):
     ordered = _visible_events(events)
-    frames = _build_call_frames(
-        ordered,
-        live_context_root=live_context_root,
-        use_live_layers=use_live_layers,
-    )
+    frames = _build_call_frames(ordered)
     latest_frame = frames[-1] if frames else None
     return {
         "schema_version": "seed_gui_evidence_export.v1",
@@ -1452,8 +1430,7 @@ def _normalized_display_text(value):
     return re.sub(r"\s+", " ", str(value or "").strip())
 
 
-def events_after(events, after=0, include_state=True, live_context_root=None,
-                 use_live_layers=False):
+def events_after(events, after=0, include_state=True):
     """Return incremental events and the state after applying all events."""
     after_index = int(after or 0)
     ordered_all = _ordered_events(events)
@@ -1466,15 +1443,11 @@ def events_after(events, after=0, include_state=True, live_context_root=None,
             event for event in ordered
             if int(event.get("event_index") or 0) > after_index
         ],
-        "state": build_live_state(
-            ordered_all,
-            live_context_root=live_context_root,
-            use_live_layers=use_live_layers,
-        ) if include_state else None,
+        "state": build_live_state(ordered_all) if include_state else None,
     }
 
 
-def _build_call_frames(events, live_context_root=None, use_live_layers=False):
+def _build_call_frames(events):
     frames = []
     by_key = {}
     for event in events:
@@ -1487,8 +1460,6 @@ def _build_call_frames(events, live_context_root=None, use_live_layers=False):
             by_key[key] = frame
             frames.append(frame)
         _apply_event_to_frame(frame, event)
-    if frames and use_live_layers and live_context_root:
-        _apply_live_layers_to_frame(frames[-1], live_context_root)
     finalized = [_finalize_frame(frame) for frame in frames]
     if _round_lifecycle(events).get("state") in {"settled", "closed", "unsettled"}:
         for frame in finalized:
@@ -1523,7 +1494,6 @@ def _new_frame(event):
         "_input_tokens": None,
         "_usage_state": "unavailable",
         "_window_tokens": None,
-        "_request_body_sha256": "",
     }
 
 
@@ -1628,9 +1598,6 @@ def _apply_event_to_frame(frame, event):
     window_tokens = _int_or_none(envelope.get("context_window_tokens"), 1)
     if window_tokens is not None:
         frame["_window_tokens"] = window_tokens
-    request_body_sha256 = str(envelope.get("request_body_sha256") or "").strip()
-    if request_body_sha256:
-        frame["_request_body_sha256"] = request_body_sha256
     call_channel = _call_channel_for_event(event)
     if call_channel:
         frame["call_channel"] = call_channel
@@ -1680,7 +1647,6 @@ def _finalize_frame(frame):
     input_tokens = frame.pop("_input_tokens", None)
     usage_state = frame.pop("_usage_state", "unavailable")
     window_tokens = frame.pop("_window_tokens", None)
-    frame.pop("_request_body_sha256", None)
     if not frame.get("created_at"):
         frame.pop("created_at", None)
     if (
@@ -1878,48 +1844,6 @@ def _legacy_layers_from_messages(messages, manifest=None):
     for legacy_id, layer_key in LEGACY_LAYER_TO_KEY.items():
         result[layer_key] = legacy.get(legacy_id, "")
     return result
-
-
-def _apply_live_layers_to_frame(frame, live_context_root):
-    context_step = _context_step_for_phase(frame.get("phase"))
-    try:
-        from data.audit_store import AuditStore
-        store = AuditStore(
-            setup_dir=os.path.join(live_context_root, "setup"),
-            reaction_dir=os.path.join(live_context_root, "reaction"),
-            cleanup_dir=os.path.join(live_context_root, "cleanup"),
-        )
-        layers = store.read_context_layers(context_step)
-    except Exception:
-        return
-    try:
-        live_envelope = store.read_provider_request(context_step)
-    except Exception:
-        live_envelope = {}
-    if (
-            frame.get("_request_body_sha256")
-            and frame.get("_request_body_sha256")
-            == str(live_envelope.get("request_body_sha256") or "").strip()):
-        live_window = _int_or_none(live_envelope.get("context_window_tokens"), 1)
-        if live_window is not None:
-            frame["_window_tokens"] = live_window
-    live_layers = _layers_from_snapshot({
-        "schema": "context_layers_snapshot.v1",
-        "source": f"context/{context_step}/layers",
-        "layers": layers,
-    })
-    if live_layers is None:
-        return
-    frame["_layers"] = live_layers
-    frame["layer_source"] = "live_layers"
-    frame["historical"] = False
-
-
-def _context_step_for_phase(phase):
-    normalized = str(phase or "").strip()
-    if normalized == "final_reply":
-        return "reaction"
-    return normalized
 
 
 def _format_layer_content(content):

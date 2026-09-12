@@ -112,7 +112,7 @@ while ($true) {
         "3" { Invoke-UpspCli -CliArgs @("rounds", "list", "--limit", "5") -PauseAfter }
         "4" { Invoke-UpspCli -CliArgs @("rounds", "inspect", "--round", "latest") -PauseAfter }
         "5" { Invoke-LiveSend }
-        "0" { break }
+        "0" { return }
         default {
             Write-Host "Invalid choice." -ForegroundColor Yellow
             Start-Sleep -Seconds 1

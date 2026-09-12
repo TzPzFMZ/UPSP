@@ -239,6 +239,7 @@ export interface RoundLifecycle {
 
 export interface StatusbarProjection {
   schema?: string;
+  instance_id?: string;
   mode?: string;
   dynamic?: string;
   workhood?: string;
@@ -286,6 +287,8 @@ export interface RuntimeStatus {
   restart_requested?: boolean;
   interrupted_recovery?: {
     pending?: boolean;
+    reason?: string;
+    affected_ids?: string[];
     round?: number | null;
     applied_unregistered?: number;
     applied_registered?: number;
@@ -325,8 +328,8 @@ export interface RoundListPayload {
 }
 
 export interface LivePayload {
-  round?: number | null;
-  state?: LiveState | null;
+  round: number | null;
+  state: LiveState | null;
 }
 
 export interface LiveEventsPayload extends LivePayload {

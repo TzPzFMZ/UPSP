@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 
@@ -20,10 +21,32 @@ def test_spec753_permanent_rules_are_strong_but_bounded() -> None:
 
     assert [len(registry[name]) for name in ("permanent", "passive_read", "on_demand")] == [8, 8, 4]
     permanent = {item["path"]: item for item in registry["permanent"]}
+    passive = {item["path"] for item in registry["passive_read"]}
+    on_demand = {item["path"] for item in registry["on_demand"]}
     assert permanent["protocol/base/memory.md"]["load"] == "full"
     assert permanent["protocol/base/containers.md"]["load"] == "full"
+    assert {
+        "protocol/base/relation.md", "protocol/base/guidance.md",
+        "protocol/base/security.md", "protocol/base/reconnect.md",
+    } <= permanent.keys()
+    passive_contracts = {
+        "protocol/base/round.md", "protocol/base/step.md", "protocol/base/tools.md",
+    }
+    assert passive_contracts <= passive
+    assert passive_contracts.isdisjoint(permanent)
+    assert "protocol/base/guidance.md" not in on_demand
+    assert "conditional" not in registry
     assert registry["step_level"] == []
     assert registry["periodic"] == []
+    assert all((RULES_ROOT / path).is_file() for path in permanent)
+
+    tools = _read(RULES_ROOT / "protocol/base/tools.md")
+    assert "reaction_progress_emit" not in tools
+    assert "provider-native" in tools
+    guidance = _read(RULES_ROOT / "protocol/base/guidance.md")
+    advertised_paths = re.findall(r"`(protocol/base/[^`]+\.md)`", guidance)
+    assert len(advertised_paths) == 16
+    assert all((RULES_ROOT / path).is_file() for path in advertised_paths)
 
     for phrase in (
         "主体 × 独立耐久事实",
@@ -138,6 +161,10 @@ def test_spec753_keeps_memory_route_pending_soft_and_nonpersistent() -> None:
 
 
 def test_spec753_dds_and_passive_docs_match_the_permanent_contract() -> None:
+    registry = json.loads(_read(DOCS_ROOT / "docs_registry.json"))
+    assert registry["_version"] == "DDS v0.19.1"
+    assert [len(registry[name]) for name in ("inject", "lookup", "persona")] == [4, 15, 4]
+    assert set(registry["popup"]) == {"guide", "reminder", "warning"}
     dds = _read(ROOT / "UPSP_Base_DDS.md")
     containers_doc = _read(DOCS_ROOT / "protocol" / "base" / "containers.md")
     popup_doc = _read(DOCS_ROOT / "protocol" / "base" / "popup.md")

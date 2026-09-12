@@ -244,20 +244,15 @@ class TestRuntimeReactionMemoryRelationTools(RuntimeTestMixin):
             def add_relation_keywords(self, *_args, **_kwargs):
                 raise AssertionError("optional index must wait for relation truth")
 
-        receipts = apply_relation_card_declarations(
-            [{"name": "Codex", "category": "them", "action": "create"}],
-            {"interaction_object": "Codex", "identity_status": "declared"},
-            guard=rt.cfg.get_relation_card_write_guard(),
-            relation_store_factory=FailingRelationStore,
-            relation_index_factory=UnexpectedRelationIndex,
-        )
+        with pytest.raises(OSError, match="relation registry unavailable"):
+            receipts = apply_relation_card_declarations(
+                [{"name": "Codex", "category": "them", "action": "create"}],
+                {"interaction_object": "Codex", "identity_status": "declared"},
+                guard=rt.cfg.get_relation_card_write_guard(),
+                relation_store_factory=FailingRelationStore,
+                relation_index_factory=UnexpectedRelationIndex,
+            )
 
-        assert receipts == [{
-            "tool_id": "relation_card_write",
-            "status": "processor_error",
-            "source": "relation_card_declaration",
-            "detail": "relation registry unavailable",
-        }]
 
     def test_relation_card_write_rejects_multiple_declarations(self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)

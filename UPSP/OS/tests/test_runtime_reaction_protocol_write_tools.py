@@ -966,7 +966,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert executor.calls == 0
         assert result["_reaction_finalize_validated"] is True
         assert result["_exit_signal"] == "continue_requested"
-        assert rt.sm.get_flags().get("continue_requested") is True
+        assert rt.sm.get_flags().get("continue_requested") is False
         assert result["_settlement_ledgers"][-1]["closeout_decision"] == "continue"
         assert result["_settlement_ledgers"][-1]["source"] == "runtime_auto_continue"
         assert result["_closeout_relay_receipts"][-1]["source"] == "runtime_auto_continue"
@@ -1816,7 +1816,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert result["_reaction_finalize_validated"] is True
         assert result["_exit_signal"] == "continue_requested"
         assert result["response"] == ""
-        assert rt.sm.get_flags().get("continue_requested") is True
+        assert rt.sm.get_flags().get("continue_requested") is False
         assert result["_guide_submit_receipts"][0]["next_action"] == "natural_final_reply"
         assert len(executor.calls) == 2
         assert result["_settlement_ledgers"][-1]["closeout_decision"] == "continue"
@@ -2360,7 +2360,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         result = rt._run_reaction_loop(rt.sm.load(), "relay", [])
 
         assert result["response"] == ""
-        assert result["_closeout_relay_receipts"][0]["status"] == "continue_requested_set"
+        assert result["_closeout_relay_receipts"][0]["status"] == "continue_requested_pending"
         assert not any(
             receipt.get("status") == "relay_execution_missing"
             for receipt in result["_reaction_loop_guard_receipts"]
@@ -2468,17 +2468,17 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         }
         result = {
             "_closeout_relay_receipts": [{
-                "status": "continue_requested_set",
+                "status": "continue_requested_pending",
                 "source": "closeout_form",
-                "set_flags": ["continue_requested"],
+                "requested_flags": ["continue_requested"],
             }],
             "_pending_relay_target": dict(target),
         }
 
-        rt.cleanup_pipeline._rearm_continue_requested_from_closeout_form(
-            result,
+        rt.cleanup_pipeline._finalize_flags(
+            rt.sm.load(),
+            result=result,
             round_type="relay",
-            consumed_flags=["continue_requested"],
             round_num=1,
         )
 
@@ -2551,9 +2551,9 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         assert result["_protocol_tool_submissions"] == []
         assert result["_closeout_relay_receipts"] == [{
             "tool_id": "reaction_finalize",
-            "status": "continue_requested_set",
+            "status": "continue_requested_pending",
             "source": "closeout_form",
-            "set_flags": ["continue_requested"],
+            "requested_flags": ["continue_requested"],
             "reason": handoff_text,
             "handoff_text": handoff_text,
             "call_id": "call_relay_final",
@@ -2562,7 +2562,7 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             "provider_item_id": "fc_call_relay_final",
             "index": 0,
         }]
-        assert flags["continue_requested"] is True
+        assert flags["continue_requested"] is False
 
     def test_spec375_reaction_finalize_handoff_text_creates_intent_not_visible_relay_input(
             self, tmp_path, monkeypatch):
@@ -2598,8 +2598,8 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
         flags = rt.sm.get_flags()
 
         assert result["response"] == ""
-        assert flags["continue_requested"] is True
-        assert result["_closeout_relay_receipts"][0]["status"] == "continue_requested_set"
+        assert flags["continue_requested"] is False
+        assert result["_closeout_relay_receipts"][0]["status"] == "continue_requested_pending"
         assert result["_closeout_relay_receipts"][0]["reason"] == handoff_text
         assert not any(
             entry.get("kind") == "relay_input"
@@ -2609,10 +2609,10 @@ class TestRuntimeReactionProtocolWriteTools(RuntimeTestMixin):
             entry.get("kind") == "relay_input"
             for entry in rt.ctx_store.get_lately_entries("reaction")
         )
-        rt.cleanup_pipeline._rearm_continue_requested_from_closeout_form(
-            result,
+        rt.cleanup_pipeline._finalize_flags(
+            rt.sm.load(),
+            result=result,
             round_type="interactive",
-            consumed_flags=[],
             round_num=rt.sm.get_total_round(),
         )
         relay_intents = rt.sm.get("base.runtime.relay_intents", [])

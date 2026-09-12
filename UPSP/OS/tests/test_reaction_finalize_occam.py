@@ -114,6 +114,33 @@ def test_spec560_reaction_finalize_rejects_empty_or_retired_decision():
 
 
 class TestSpec560ReactionFinalizeOccam(RuntimeTestMixin):
+    def test_spec808_uncertain_effect_keeps_receipts_in_frame_and_error(self, tmp_path, monkeypatch):
+        from errors import UncertainEffectError
+        rt = self._make_runtime(tmp_path)
+        _minimal_reaction_context(rt, monkeypatch)
+        monkeypatch.setattr(rt.reaction_loop_runner, "_recover_provider_interruption_if_possible", lambda *a, **k: None)
+        partial = [{"tool_id": "fault_record", "status": "applied", "call_id": "first"},
+                   {"tool_id": "fault_record", "status": "error", "call_id": "second"}]
+        failure = UncertainEffectError("fault_after_write", affected_ids=["R808"],
+                                       cause=OSError("original"), partial_receipts=partial)
+        class Executor:
+            @staticmethod
+            def call(*a, **k):
+                raise failure
+        rt.executor = Executor()
+        session = rt.reaction_loop_runner.start_session(rt.sm.load(), "interactive", [],
+            trigger_id="T00000001", caused_by="R000000:setup:1")
+        previous = {"tool_id": "memory_search", "status": "ok", "call_id": "previous"}
+        session.result_state.all_protocol_tool_receipts.append(previous)
+        settlement = rt.reaction_loop_runner.run_frame(session)
+        assert settlement.protocol_receipt_count == 2
+        assert list(settlement.protocol_tool_receipts) == partial
+        assert session.result_state.all_fault_record_receipts == partial
+        with pytest.raises(UncertainEffectError) as caught:
+            rt.reaction_loop_runner.run_frame(session)
+        assert caught.value is failure
+        assert failure.partial_receipts == [previous] + partial
+
     def test_reaction_session_advances_and_settles_one_frame(
             self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
@@ -145,7 +172,7 @@ class TestSpec560ReactionFinalizeOccam(RuntimeTestMixin):
         assert session.completed is True
         assert session.result["response"] == "单帧完成。"
         assert session.result["_frame_settlements"] == [settlement.as_dict()]
-        events = rt.audit.get_store()._read_events_quiet(0)
+        events = rt.audit.get_store().read_events(0)
         reaction_events = [
             event for event in events if event.get("phase") == "reaction"
         ]
@@ -182,8 +209,9 @@ class TestSpec560ReactionFinalizeOccam(RuntimeTestMixin):
 
         assert result["_frame_settlements"][0]["frame_id"] == \
             "R000007:reaction:1"
-        assert rt.audit.get_store()._read_events_quiet(7)
-        assert not rt.audit.get_store()._read_events_quiet(3)
+        assert rt.audit.get_store().read_events(7)
+        with pytest.raises(FileNotFoundError):
+            rt.audit.get_store().read_events(3)
 
     def test_reaction_frame_consumes_sourced_organ_signal_as_user_material(
             self, tmp_path, monkeypatch):
@@ -448,7 +476,8 @@ class TestSpec560ReactionFinalizeOccam(RuntimeTestMixin):
         assert result["_exit_signal"] == "continue_requested"
         assert result["_reaction_finalize_validated"] is True
         assert result["response"] == ""
-        assert rt.sm.get_flags().get("continue_requested") is True
+        assert rt.sm.get_flags().get("continue_requested") is False
+        assert result["_closeout_relay_receipts"][0]["requested_flags"] == ["continue_requested"]
         assert result["_settlement_ledgers"][-1]["closeout_decision"] == "continue"
         assert result["_closeout_relay_receipts"][-1]["handoff_text"] == "下一轮继续。"
 

@@ -246,7 +246,7 @@ def test_spec700_legacy_api_migrates_once_and_malformed_new_file_fails_closed(mo
         "interface": (str(interface_path), module.default_interface_config),
     })
     store = module.ConfigStore(use_api_environment=False)
-    assert set(store.init_all()) == {"models", "interface"}
+    assert set(store.init_global()) == {"models", "interface"}
     assert len(store.load("models")["connections"]) == 1
     assert len(store.load("models")["models"]) == 1
     assert store.load("model_routing")["routes"]["setup"]["primary"] is None
@@ -254,5 +254,161 @@ def test_spec700_legacy_api_migrates_once_and_malformed_new_file_fails_closed(mo
 
     models_path.write_text("{broken", encoding="utf-8")
     with pytest.raises(Exception):
-        store.init_all()
+        store.init_global()
     assert models_path.read_text(encoding="utf-8") == "{broken"
+
+
+@pytest.fixture
+def persona_configs(monkeypatch, tmp_path):
+    module = _load_config_store()
+    paths = {}
+    for name, (_, default) in list(module._CONFIG_MAP.items()):
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(default(), ensure_ascii=False), encoding="utf-8")
+        monkeypatch.setitem(module._CONFIG_MAP, name, (str(path), default))
+        paths[name] = path
+    return module, module.ConfigStore(use_api_environment=False), paths
+
+
+def _legacy_lately():
+    return {
+        "layer": "lately", "description": "旧缓存水位", "store": "lately_cache.jsonl",
+        "allowed_kinds": ["interaction"], "budget_chars": 65536,
+        "trim_chars": 8192, "compact_ratio": 0.25,
+        "compact_shard_chars": 8192, "compact_shard_ratio": 0.25,
+        "fifo_policy": "complete_block", "retired_round_window": {},
+    }
+
+
+@pytest.mark.parametrize("name", ["system", "periodic", "relation", "now", "lately"])
+@pytest.mark.parametrize("silent_write", [False, True])
+def test_persona_initialization_owns_known_config_conversion(persona_configs, name, monkeypatch, silent_write):
+    module, store, paths = persona_configs
+    expected = json.loads(paths[name].read_text(encoding="utf-8"))
+    legacy = dict(expected)
+    if name == "system":
+        legacy["_version"] = "Base-0.48.14"
+    elif name == "periodic":
+        legacy = json.loads((Path(__file__).parent / "fixtures" / "periodic-base-0.10.0.json").read_text(encoding="utf-8"))
+        legacy["limits"]["periodic_memory_items_chars"] = 131072
+        expected["limits"]["periodic_memory_items_chars"] = 131072
+    elif name == "relation":
+        legacy["_version"] = "Base-0.10.0"
+        legacy["relation_focus"] = legacy.pop("relation_context")
+    elif name == "now":
+        legacy.pop("_version")
+        legacy.update(budget_chars=65536, trim_chars=8192, fifo_policy="complete_block",
+                      policy_by_kind={kind: {"now": True, "lately": True} for kind in
+                                      expected["persistent_lanes"]["now_lately_raw"] +
+                                      expected["persistent_lanes"]["now_lately_no_raw"]})
+    else:
+        legacy = _legacy_lately()
+    paths[name].write_text(json.dumps(legacy), encoding="utf-8")
+    original = paths[name].read_bytes()
+    with pytest.raises(module.ReadError):
+        store.load(name)
+    with pytest.raises(ValueError):
+        store.save(name, legacy)
+    assert paths[name].read_bytes() == original
+    if silent_write:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "atomic_write_json", lambda *a, **kw: None)
+            with pytest.raises(module.ReadError):
+                store.init_persona()
+        assert paths[name].read_bytes() == original
+
+    store.init_persona()
+    assert store.load(name) == expected
+    assert json.loads(paths[name].read_text(encoding="utf-8")) == expected
+    before = {key: path.read_bytes() for key, path in paths.items()}
+    monkeypatch.setattr(module, "atomic_write_json", lambda *a, **kw: pytest.fail("canonical initialization rewrote a config"))
+    module.ConfigStore().init_persona()
+    assert {key: path.read_bytes() for key, path in paths.items()} == before
+
+
+@pytest.mark.parametrize("legacy_ratio,expected", [(0.7, 0.9), (0.73, 0.73)])
+@pytest.mark.parametrize("failure", [None, "before_lately", "silent_lately", "after_lately", "before_system", "silent_system", "after_system"])
+def test_watermark_migration_preserves_disk_value_across_restart(persona_configs, monkeypatch, legacy_ratio, expected, failure):
+    module, store, paths = persona_configs
+    legacy = module.default_system_config()
+    legacy["token_usage"].pop("watermark_policy_version")
+    legacy["token_usage"]["warning_ratio"] = legacy_ratio
+    paths["system"].write_text(json.dumps(legacy), encoding="utf-8")
+    paths["lately"].write_text(json.dumps(_legacy_lately()), encoding="utf-8")
+    original_system = paths["system"].read_bytes()
+    write = module.atomic_write_json
+
+    def interrupted_write(path, data):
+        stage = Path(path).stem
+        if failure == f"before_{stage}":
+            raise module.WriteError(path, cause=OSError("injected write failure"))
+        if failure == f"silent_{stage}":
+            return
+        write(path, data)
+        if failure == f"after_{stage}":
+            raise SystemExit("injected process interruption")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "atomic_write_json", interrupted_write)
+        if failure:
+            with pytest.raises((module.ReadError, SystemExit)):
+                store.init_persona()
+        else:
+            store.init_persona()
+    if failure and failure != "after_system":
+        assert paths["system"].read_bytes() == original_system
+    restarted = module.ConfigStore()
+    restarted.init_persona()
+    assert restarted.load("lately")["pressure_ratio"] == expected
+    assert "warning_ratio" not in restarted.load("system")["token_usage"]
+    assert restarted.load("system")["token_usage"]["watermark_policy_version"] == 2
+    before = {name: path.read_bytes() for name, path in paths.items()}
+    monkeypatch.setattr(module, "atomic_write_json", lambda *a, **kw: pytest.fail("second migration wrote"))
+    module.ConfigStore().init_persona()
+    assert {name: path.read_bytes() for name, path in paths.items()} == before
+
+
+def test_current_lately_choice_wins_over_old_system_watermark(persona_configs):
+    module, store, paths = persona_configs
+    legacy = module.default_system_config()
+    legacy["token_usage"]["warning_ratio"] = 0.73
+    paths["system"].write_text(json.dumps(legacy), encoding="utf-8")
+    current = store.load("lately")
+    current["pressure_ratio"] = 0.83
+    store.save("lately", current)
+    original = paths["lately"].read_bytes()
+    store.init_persona()
+    assert paths["lately"].read_bytes() == original
+    assert store.load("lately")["pressure_ratio"] == 0.83
+
+
+@pytest.mark.parametrize("name", ["system", "periodic", "relation", "now", "lately"])
+@pytest.mark.parametrize("invalid", ["version", "extra", "json"])
+def test_unknown_config_keeps_original_bytes(persona_configs, name, invalid):
+    module, store, paths = persona_configs
+    data = store.load(name)
+    data["_version" if invalid == "version" else "unexpected"] = "unknown"
+    paths[name].write_text("{broken" if invalid == "json" else json.dumps(data), encoding="utf-8")
+    original = paths[name].read_bytes()
+    with pytest.raises(module.ReadError):
+        store.init_persona()
+    assert paths[name].read_bytes() == original
+
+
+@pytest.mark.parametrize("invalid", ["unknown_root", "unknown_limit", "wrong_layer", "missing_trim_order"])
+def test_legacy_periodic_shape_is_validated_before_retirement(persona_configs, invalid):
+    module, store, paths = persona_configs
+    legacy = json.loads((Path(__file__).parent / "fixtures" / "periodic-base-0.10.0.json").read_text(encoding="utf-8"))
+    if invalid == "unknown_root":
+        legacy["unknown"] = True
+    elif invalid == "unknown_limit":
+        legacy["limits"]["unknown"] = 42
+    elif invalid == "wrong_layer":
+        legacy["layer"] = []
+    else:
+        legacy.pop("trim_order")
+    paths["periodic"].write_text(json.dumps(legacy), encoding="utf-8")
+    original = paths["periodic"].read_bytes()
+    with pytest.raises(module.ReadError):
+        store.init_persona()
+    assert paths["periodic"].read_bytes() == original

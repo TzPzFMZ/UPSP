@@ -6,7 +6,7 @@ from engines.round_context import RoundContext
 from engines.reaction_loop_main import ReactionLoopState, ReactionSession
 from engines.reaction_guide_feedback import render_active_guide_feedback
 from engines.reaction_terminal_state import (
-    apply_reaction_handoff_relay_receipt,
+    build_reaction_handoff_relay_receipt,
     build_runtime_auto_continue_closeout,
     project_reaction_terminal_response,
     rhythm_guide_acceptance_feedback,
@@ -21,7 +21,6 @@ from engines.reaction_runtime_guards import (
     clear_provider_interruption_recovery_state,
     provider_interruption_kind,
     receipt_counts_as_provider_recovery_progress,
-    provider_recovery_next_count,
     recover_provider_interruption_if_possible,
 )
 from engines.reaction_protocol_tool_execution import (
@@ -245,9 +244,6 @@ class ReactionLoopRunner(EngineComponent):
     @staticmethod
     def _receipt_counts_as_provider_recovery_progress(receipt):
         return receipt_counts_as_provider_recovery_progress(receipt)
-
-    def _provider_recovery_next_count(self, kind):
-        return provider_recovery_next_count(self.sm, self.workbench, kind)
 
     def _clear_provider_interruption_recovery_state(self):
         clear_provider_interruption_recovery_state(self.sm)
@@ -808,7 +804,6 @@ class ReactionLoopRunner(EngineComponent):
     def _build_runtime_auto_continue_closeout(
             self, *, elapsed_seconds=0, time_limit_seconds=600):
         return build_runtime_auto_continue_closeout(
-            self.sm,
             elapsed_seconds=elapsed_seconds,
             time_limit_seconds=time_limit_seconds,
         )
@@ -877,8 +872,7 @@ class ReactionLoopRunner(EngineComponent):
         return updated
 
     def _apply_closeout_relay_receipt(self, relay_receipt, trace=None):
-        return apply_reaction_handoff_relay_receipt(
-            self.sm,
+        return build_reaction_handoff_relay_receipt(
             relay_receipt,
             trace=trace,
         )

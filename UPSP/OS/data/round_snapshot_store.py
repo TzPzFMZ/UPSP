@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from paths import AUDIT_DIR, STM_CONTEXT_DIR
 from data.prompt_cache_telemetry import extract_prompt_cache_telemetry
-from data.round_audit_codec import RoundAuditDecoder, RoundAuditEncoder
+from data.round_audit_codec import RoundAuditEncoder, read_round_audit_file
 from data.round_retention import enforce_round_retention
 
 SCHEMA_VERSION = "round_audit.v2"
@@ -125,26 +125,6 @@ class RoundSnapshotStore:
         self._event_indexes[round_num] = last
         return last
 
-    def _read_events_quiet(self, round_num):
-        path = self._round_path(round_num)
-        if not os.path.isfile(path):
-            return []
-        events = []
-        decoder = RoundAuditDecoder()
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        events.append(decoder.feed(json.loads(line)))
-                    except json.JSONDecodeError:
-                        continue
-        except OSError:
-            return []
-        return events
-
     def append_event(self, round_num, event_type, payload=None, phase=None, iteration=None):
         round_num = int(round_num)
         round_dir = self._round_dir()
@@ -168,14 +148,18 @@ class RoundSnapshotStore:
             if phase is not None and iteration is not None:
                 event["frame_id"] = (
                     f"R{round_num:06d}:{str(phase)}:{int(iteration)}")
-            with open(path, "a", encoding="utf-8", newline="\n") as f:
-                f.write(json.dumps(
+            with open(path, "a+b") as f:
+                if f.tell():
+                    f.seek(-1, os.SEEK_END)
+                    if f.read(1) != b"\n":
+                        f.write(b"\n")
+                f.write((json.dumps(
                     event,
                     ensure_ascii=False,
                     sort_keys=True,
                     separators=(",", ":"),
                     default=str,
-                ) + "\n")
+                ) + "\n").encode("utf-8"))
             self._event_indexes[round_num] = event_index
         return event
 
@@ -749,7 +733,11 @@ class RoundSnapshotStore:
         )
 
     def _has_step_snapshot(self, round_num, phase):
-        for event in self._read_events_quiet(round_num):
+        try:
+            events = self.read_events(round_num)
+        except FileNotFoundError:
+            return False
+        for event in events:
             if (
                 event.get("event_type") == "step_input_snapshot"
                 and event.get("phase") == phase
@@ -815,18 +803,8 @@ class RoundSnapshotStore:
         return write_static_projection(self._round_dir(), self.static_audit_dir)
 
     def read_events(self, round_num):
-        path = self._round_path(round_num)
-        if not os.path.isfile(path):
-            raise FileNotFoundError(path)
-        events = []
-        decoder = RoundAuditDecoder()
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                events.append(decoder.feed(json.loads(line)))
-        return events
+        with self._append_lock:
+            return read_round_audit_file(self._round_path(round_num))
 
     def list_rounds(self):
         round_dir = self._round_dir()

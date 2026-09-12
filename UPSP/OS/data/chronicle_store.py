@@ -443,16 +443,19 @@ class ChronicleStore:
             atomic_write_text(target, updated)
             if self._read_text(target) != updated:
                 raise ValueError("chronicle_write_readback_mismatch")
-        except Exception:
+        except Exception as exc:
             try:
                 if existed_before:
                     atomic_write_text(target, existing)
                 elif os.path.isfile(target):
                     os.remove(target)
             except Exception as rollback_exc:
-                raise RuntimeError(
-                    "chronicle_write_rollback_failed"
-                ) from rollback_exc
+                from errors import UncertainEffectError
+                raise UncertainEffectError(
+                    "chronicle_write_rollback_failed",
+                    affected_ids=[scope_id], cause=exc,
+                    rollback_causes=[rollback_exc],
+                ) from exc
             raise
         return target
 

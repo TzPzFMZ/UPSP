@@ -48,13 +48,12 @@ def test_spec594_runtime_auto_continue_handoff_text_uses_thirty_minutes():
 
     relay_receipt, settlement_ledger, guard_receipt = (
         build_runtime_auto_continue_closeout(
-            sm,
             elapsed_seconds=1801,
             time_limit_seconds=600,
         )
     )
 
-    assert sm.flags["continue_requested"] is True
+    assert "continue_requested" not in sm.flags
     assert "30分钟" in relay_receipt["handoff_text"]
     assert "30分钟" in settlement_ledger["handoff_text"]
     assert "15分钟" not in relay_receipt["handoff_text"]

@@ -4,6 +4,7 @@ import hashlib
 import json
 
 import pytest
+from pathlib import Path
 
 from assembly.context_helpers import render_corpus_entry_for_context
 from data.context_store import ContextStore
@@ -18,6 +19,129 @@ from logic.progressive_cache_compaction import (
 from logic.guide_submit import apply_guide_submit
 from logic.reaction_obligations import ReactionObligationTracker
 from UPSP.OS.tests.runtime_test_helpers import ConfigStoreStub
+
+
+@pytest.mark.parametrize("stage", ("applying", "meta", "lately", "closed"))
+@pytest.mark.parametrize("after", (False, True))
+@pytest.mark.parametrize("failure", ("crash", "error", "marker", "lately", "meta", "debt", "silent_lately", "silent_meta", "silent_debt"))
+def test_compaction_failure_recovery_can_finish(tmp_path, monkeypatch, stage, after, failure):
+    from data import context_store as module
+    from data.progressive_cache_compaction import source_fingerprint
+
+    class HardStop(BaseException):
+        pass
+
+    store = _store(tmp_path)
+    store._write_jsonl_atomic(store._lately_cache_jsonl(), [
+        _block("u1", "user", "interaction", "必须保留的原文", 1),
+        _block("a1", "assistant", "assistant_reply", "甲" * 900, 1),
+    ])
+    debt = store.prepare_lately_pressure_compaction(803, {"kind": "token_ratio", "context_window": 1000})["debt"]
+    paths = {"debt": store.cache_compaction_debt_path(), "meta": store.active_corpus_meta_path(), "lately": store._lately_cache_jsonl()}
+    original = {name: Path(path).read_bytes() if Path(path).exists() else None for name, path in paths.items()}
+    json_write, jsonl_write, text_write = store._write_json_atomic, store._write_jsonl_atomic, module.atomic_write_text
+    hit = {"apply": False, "rollback": False}
+
+    def commit(writer, path, value):
+        current = ("lately" if path == paths["lately"] else "meta" if path == paths["meta"]
+                   else "closed" if value.get("status") == "closed" else value.get("phase"))
+        if current != stage or hit["apply"]:
+            return writer(path, value)
+        hit["apply"] = True
+        if after:
+            writer(path, value)
+        raise HardStop() if failure == "crash" else OSError("apply failure")
+
+    def rollback(path, text):
+        name = next(name for name, candidate in paths.items() if candidate == path)
+        if name == "debt" and json.loads(text).get("phase") == "applying":
+            name = "marker"
+        if name == failure.removeprefix("silent_") and not hit["rollback"]:
+            hit["rollback"] = True
+            if failure.startswith("silent_"):
+                return
+            raise OSError("rollback failure")
+        return text_write(path, text)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(store, "_write_json_atomic", lambda path, value: commit(json_write, path, value))
+        fault.setattr(store, "_write_jsonl_atomic", lambda path, value: commit(jsonl_write, path, value))
+        fault.setattr(module, "atomic_write_text", rollback)
+        with pytest.raises((HardStop, OSError, WriteError)):
+            store.stage_progressive_cache_compaction([
+                {"shard_id": shard["shard_id"], "action": "replace", "semantic_content": "摘要"}
+                for shard in current_batch(debt)
+            ], current_round=803, current_reaction_iteration=1)
+    assert hit["apply"]
+    if failure == "error":
+        assert {name: Path(path).read_bytes() if Path(path).exists() else None for name, path in paths.items()} == original
+
+    restarted = _store(tmp_path)
+    recovered = restarted.recover_cache_compaction_debt()
+    if recovered:
+        assert current_batch(recovered), "open recovery must have an executable next batch"
+        restarted.stage_progressive_cache_compaction([
+            {"shard_id": shard["shard_id"], "action": "replace", "semantic_content": "恢复后的摘要"}
+            for shard in current_batch(recovered)
+        ], current_round=804, current_reaction_iteration=1)
+    terminal = restarted.load_cache_compaction_record()
+    assert terminal["status"] == "closed"
+    blocks = restarted._current_lately_blocks()
+    assert terminal["source_fingerprint"] == source_fingerprint(blocks, terminal["policy"], terminal["logical_window_tokens"])
+    assert any(block["text"] == "必须保留的原文" for block in blocks)
+    assigned = [int(block["ref"]["active_corpus_id"][2:]) for block in blocks]
+    assert restarted._load_active_corpus_meta()["next_short_id"] > max(assigned)
+
+
+def test_partial_compaction_stage_rejects_silent_write(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    store._write_jsonl_atomic(store._lately_cache_jsonl(), [
+        _block("u1", "user", "interaction", "保留", 1),
+        _block("a1", "assistant", "assistant_reply", "甲" * 4000, 1),
+    ])
+    debt = store.prepare_lately_pressure_compaction(803, {"kind": "token_ratio", "context_window": 1000})["debt"]
+    shard = current_batch(debt)[0]
+    monkeypatch.setattr(store, "_write_json_atomic", lambda *_: None)
+    with pytest.raises(WriteError, match="staging_verification_failed"):
+        store.stage_progressive_cache_compaction([
+            {"shard_id": shard["shard_id"], "action": "replace", "semantic_content": "摘要"},
+        ])
+
+
+@pytest.mark.parametrize("legacy", (False, True))
+def test_recovery_keeps_prior_batches_and_reopens_interrupted_batch(tmp_path, monkeypatch, legacy):
+    class HardStop(BaseException):
+        pass
+
+    store = _store(tmp_path)
+    store._write_jsonl_atomic(store._lately_cache_jsonl(), [
+        _block("u1", "user", "interaction", "保留", 1),
+        _block("a1", "assistant", "assistant_reply", "甲" * 4000, 1),
+    ])
+    store.prepare_lately_pressure_compaction(803, {"kind": "token_ratio", "context_window": 1000})
+    writer = store._write_json_atomic
+    def crash_after_applying(path, value):
+        writer(path, value)
+        if path == store.cache_compaction_debt_path() and value.get("phase") == "applying":
+            raise HardStop()
+
+    with monkeypatch.context() as fault:
+        fault.setattr(store, "_write_json_atomic", crash_after_applying)
+        with pytest.raises(HardStop):
+            for _ in range(10):
+                before = store.load_cache_compaction_debt()
+                store.stage_progressive_cache_compaction([
+                    {"shard_id": shard["shard_id"], "action": "replace", "semantic_content": "摘要"}
+                    for shard in current_batch(before)
+                ], current_round=803, current_reaction_iteration=1)
+    assert before["results"]
+    if legacy:
+        record = store.load_cache_compaction_record()
+        record.pop("staged_result_count_before_apply")
+        writer(store.cache_compaction_debt_path(), record)
+    recovered = _store(tmp_path).recover_cache_compaction_debt()
+    assert recovered["results"] == ([] if legacy else before["results"])
+    assert current_batch(recovered)
 
 
 class Spec760Config(ConfigStoreStub):

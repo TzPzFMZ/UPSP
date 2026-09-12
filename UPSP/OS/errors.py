@@ -36,6 +36,35 @@ class ReadError(DataError):
         self.path = path
         self.cause = cause
 
+
+class UncertainEffectError(DataError):
+    """写入后的恢复未能核验；必须保全已有回执并停止继续执行。"""
+    round_failure_flag = "_persistent_effect_uncertain"
+
+    def __init__(self, reason, *, affected_ids=(), cause, rollback_causes=(),
+                 partial_receipts=()):
+        super().__init__(reason)
+        self.affected_ids = list(affected_ids)
+        self.cause = cause
+        self.rollback_causes = list(rollback_causes)
+        self.partial_receipts = list(partial_receipts)
+        if isinstance(cause, UncertainEffectError):
+            self.affected_ids = list(dict.fromkeys(self.affected_ids + cause.affected_ids))
+            self.rollback_causes = cause.rollback_causes + self.rollback_causes
+
+    def as_dict(self):
+        result = {
+            "reason": str(self),
+            "affected_ids": self.affected_ids,
+            "error_type": type(self.cause).__name__,
+            "cause": str(self.cause),
+            "rollback_error_types": [type(exc).__name__ for exc in self.rollback_causes],
+            "rollback_causes": [str(exc) for exc in self.rollback_causes],
+        }
+        if isinstance(self.cause, UncertainEffectError):
+            result["cause_details"] = self.cause.as_dict()
+        return result
+
 # ============================================================
 # 记忆错误
 # ============================================================

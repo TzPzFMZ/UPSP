@@ -196,11 +196,11 @@ class TestSpec719ApiRecoveryProbe(RuntimeTestMixin):
         executor._provider_call_interval_seconds = 0
         calls = []
 
-        def timeout(*_args):
+        def timeout(*_args, wire_body=None):
             calls.append(True)
             raise APITimeoutError("model_a", "probe timeout")
 
-        monkeypatch.setattr(executor, "_send_request", timeout)
+        monkeypatch.setattr(executor, "_send_request_cancellable", timeout)
 
         try:
             executor.probe_model_profile(
@@ -249,7 +249,7 @@ class TestSpec719ApiRecoveryProbe(RuntimeTestMixin):
         connectivity.log_latency("model_a", "error", "down")
         executor = APIExecutor(Config(), connectivity_store=connectivity)
         executor._provider_call_interval_seconds = 0
-        monkeypatch.setattr(executor, "_send_request", lambda *_args: {
+        monkeypatch.setattr(executor, "_send_request_cancellable", lambda *_args, wire_body=None: {
             "choices": [{"message": {"content": ""}}],
             "usage": {},
         })

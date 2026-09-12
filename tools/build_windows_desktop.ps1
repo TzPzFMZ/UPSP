@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$SkipDownload,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [string]$OutputRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,18 +29,43 @@ if ($product.schema_version -ne 'upsp_product_manifest.v1' -or
     -not ([string]$product.releases_url).StartsWith('https://')) {
     throw 'product_manifest_invalid'
 }
-$workRoot = Join-Path $repoRoot '.tmp\spec705-build'
-$downloadRoot = Join-Path $workRoot 'downloads'
-$toolRoot = Join-Path $workRoot 'toolchains'
+function New-BuildOutputRoot([string]$RepositoryRoot, [string]$RequestedRoot) {
+    $temporaryRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot '.tmp')).TrimEnd('\')
+    $cache = Join-Path $temporaryRoot 'spec705-build'
+    if ([string]::IsNullOrWhiteSpace($RequestedRoot)) {
+        $RequestedRoot = Join-Path $temporaryRoot ('desktop-builds\' + [Guid]::NewGuid().ToString('N'))
+    } elseif (-not [IO.Path]::IsPathRooted($RequestedRoot)) {
+        $RequestedRoot = Join-Path $RepositoryRoot $RequestedRoot
+    }
+    $target = [IO.Path]::GetFullPath($RequestedRoot).TrimEnd('\')
+    if (-not $target.StartsWith($temporaryRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        $target.Equals($cache, [StringComparison]::OrdinalIgnoreCase) -or
+        $target.StartsWith($cache + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "unsafe_build_root:$target"
+    }
+    if (Test-Path -LiteralPath $target) {
+        throw "build_output_exists:$target"
+    }
+    for ($parent = Split-Path $target; $parent; $parent = Split-Path $parent) {
+        $item = Get-Item -LiteralPath $parent -Force -ErrorAction SilentlyContinue
+        if ($null -ne $item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "build_output_reparse_point:$parent"
+        }
+    }
+    New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
+    New-Item -ItemType Directory -Path $target -ErrorAction Stop | Out-Null
+    return $target
+}
+
+$cacheRoot = Join-Path $repoRoot '.tmp\spec705-build'
+$workRoot = New-BuildOutputRoot $repoRoot $OutputRoot
+$downloadRoot = Join-Path $cacheRoot 'downloads'
+$toolRoot = Join-Path $cacheRoot 'toolchains'
 $publishRoot = Join-Path $workRoot 'publish'
 $payloadRoot = Join-Path $workRoot 'payload'
-$releaseRoot = Join-Path $workRoot 'release'
+$releaseRoot = Join-Path $workRoot 'release-pending'
+$completedReleaseRoot = Join-Path $workRoot 'release'
 $uninstallInclude = Join-Path $workRoot 'uninstall-files.nsh'
-if (-not $workRoot.StartsWith(
-    (Join-Path $repoRoot '.tmp') + '\',
-    [StringComparison]::OrdinalIgnoreCase)) {
-    throw "unsafe_build_root:$workRoot"
-}
 
 function Assert-Sha256([string]$Path, [string]$Expected) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -94,10 +120,24 @@ function Write-JsonFile([string]$Path, $Value) {
     [IO.File]::WriteAllText($Path, $json + "`n", [Text.UTF8Encoding]::new($false))
 }
 
-New-Item -ItemType Directory -Force -Path $downloadRoot, $toolRoot | Out-Null
-if (Test-Path -LiteralPath $releaseRoot) {
-    Remove-Item -LiteralPath $releaseRoot -Recurse -Force
+function Get-SourceSnapshot {
+    $files = & git -C $repoRoot ls-files --cached --others --exclude-standard -- `
+        UPSP/OS UPSP/gui UPSP/product.json LICENSE THIRD_PARTY_NOTICES.md docs/public/releases `
+        UPSP/initialization desktop tools/build_windows_desktop.ps1 `
+        tools/serve_seed_gui.py tools/serve_round_live.py tools/upsp_cli.py
+    if ($LASTEXITCODE -ne 0) { throw 'source_inventory_failed' }
+    $snapshot = @($files | Sort-Object -Unique | ForEach-Object {
+        if (Test-Path -LiteralPath (Join-Path $repoRoot $_) -PathType Leaf) {
+            [ordered]@{path = $_; sha256 = (Get-FileHash -LiteralPath (Join-Path $repoRoot $_) -Algorithm SHA256).Hash.ToLowerInvariant()}
+        }
+    })
+    return ConvertTo-Json -InputObject $snapshot -Compress -Depth 4
 }
+
+try {
+$sourceSnapshot = Get-SourceSnapshot
+[IO.File]::WriteAllText((Join-Path $workRoot 'source-files.json'), $sourceSnapshot, [Text.UTF8Encoding]::new($false))
+New-Item -ItemType Directory -Force -Path $downloadRoot, $toolRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
 $dotnetArchive = Get-BuildInput $inputs.inputs.dotnet_sdk
 $pythonArchive = Get-BuildInput $inputs.inputs.python_embed
@@ -124,9 +164,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $nsisRoot 'makensis.exe'))) {
 
 $dotnet = Join-Path $dotnetRoot 'dotnet.exe'
 $makensis = Join-Path $nsisRoot 'makensis.exe'
-$env:DOTNET_CLI_HOME = $workRoot
+$env:DOTNET_CLI_HOME = $cacheRoot
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
-$env:NUGET_PACKAGES = Join-Path $workRoot 'nuget'
+$env:NUGET_PACKAGES = Join-Path $cacheRoot 'nuget'
 
 if (-not $SkipTests) {
     Push-Location (Join-Path $repoRoot 'UPSP\gui')
@@ -145,9 +185,6 @@ if (-not $SkipTests) {
 
 & $dotnet restore (Join-Path $repoRoot 'desktop\UPSP.Desktop\UPSP.Desktop.csproj') --locked-mode
 if ($LASTEXITCODE -ne 0) { throw 'dotnet_restore_failed' }
-if (Test-Path -LiteralPath $publishRoot) {
-    Remove-Item -LiteralPath $publishRoot -Recurse -Force
-}
 & $dotnet publish (Join-Path $repoRoot 'desktop\UPSP.Desktop\UPSP.Desktop.csproj') `
     -c Release --no-restore --self-contained true -r win-x64 -o $publishRoot `
     "-p:Version=$($product.version.Split('-')[0])" `
@@ -169,9 +206,6 @@ if ($publishRuntimeFiles.Count -ne 1 -or $unexpectedPublishFiles.Count -ne 0) {
     throw "desktop_single_file_publish_violation:$names"
 }
 
-if (Test-Path -LiteralPath $payloadRoot) {
-    Remove-Item -LiteralPath $payloadRoot -Recurse -Force
-}
 New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 Copy-Item -LiteralPath $publishRuntimeFiles[0].FullName -Destination $payloadRoot
 
@@ -280,9 +314,6 @@ foreach ($name in @('serve_seed_gui.py', 'serve_round_live.py', 'upsp_cli.py')) 
 $payloadPython = Join-Path $pythonRoot 'python.exe'
 $shellSmokeRoot = Join-Path $workRoot 'shell-smoke'
 $shellSmokeScript = Join-Path $workRoot 'shell-smoke.py'
-if (Test-Path -LiteralPath $shellSmokeRoot) {
-    Remove-Item -LiteralPath $shellSmokeRoot -Recurse -Force
-}
 $shellSmoke = @'
 import sys
 from pathlib import Path
@@ -340,18 +371,14 @@ require(nonzero.get("status") == "failed", "nonzero_status_mismatch")
 require(nonzero.get("reason") == "nonzero_exit", "nonzero_reason_mismatch")
 require(nonzero.get("exit_code") == 7, "nonzero_exit_code_mismatch")
 '@
-try {
-    [System.IO.File]::WriteAllText($shellSmokeScript, $shellSmoke, [System.Text.UTF8Encoding]::new($false))
-    & $payloadPython -I -X utf8 $shellSmokeScript $programOs $shellSmokeRoot
-    if ($LASTEXITCODE -ne 0) { throw 'payload_shell_backend_smoke_failed' }
+[System.IO.File]::WriteAllText($shellSmokeScript, $shellSmoke, [System.Text.UTF8Encoding]::new($false))
+& $payloadPython -I -X utf8 $shellSmokeScript $programOs $shellSmokeRoot
+if ($LASTEXITCODE -ne 0) { throw 'payload_shell_backend_smoke_failed' }
+if (Test-Path -LiteralPath $shellSmokeRoot) {
+    Remove-Item -LiteralPath $shellSmokeRoot -Recurse -Force
 }
-finally {
-    if (Test-Path -LiteralPath $shellSmokeRoot) {
-        Remove-Item -LiteralPath $shellSmokeRoot -Recurse -Force
-    }
-    if (Test-Path -LiteralPath $shellSmokeScript) {
-        Remove-Item -LiteralPath $shellSmokeScript -Force
-    }
+if (Test-Path -LiteralPath $shellSmokeScript) {
+    Remove-Item -LiteralPath $shellSmokeScript -Force
 }
 
 $head = (& git -C $repoRoot rev-parse HEAD).Trim()
@@ -362,6 +389,9 @@ $buildInfo = [ordered]@{
     product_version = $product.version
     git_head = $head
     source_dirty = $sourceDirty
+    source_files_sha256 = (Get-FileHash -LiteralPath (Join-Path $workRoot 'source-files.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+    build_inputs_sha256 = (Get-FileHash -LiteralPath $inputsPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    gui_lock_sha256 = (Get-FileHash -LiteralPath (Join-Path $repoRoot 'UPSP\gui\package-lock.json') -Algorithm SHA256).Hash.ToLowerInvariant()
     architecture = $inputs.architecture
     dotnet_sdk = $inputs.inputs.dotnet_sdk.version
     python = $inputs.inputs.python_embed.version
@@ -422,6 +452,7 @@ $directoryLines = Get-ChildItem -LiteralPath $payloadRoot -Recurse -Directory |
 & $makensis `
     '/INPUTCHARSET' 'UTF8' `
     "/DPAYLOAD_ROOT=$payloadRoot" `
+    "/DPAYLOAD_MANIFEST_SHA256=$((Get-FileHash -LiteralPath (Join-Path $metadataRoot 'payload-manifest.json') -Algorithm SHA256).Hash)" `
     "/DOUTPUT_DIR=$releaseRoot" `
     "/DWEBVIEW_BOOTSTRAPPER=$webViewBootstrapper" `
     "/DUNINSTALL_INCLUDE=$uninstallInclude" `
@@ -439,7 +470,7 @@ $receipt = [ordered]@{
     git_head = $head
     source_dirty = $sourceDirty
     installer = [ordered]@{
-        path = $installer
+        path = Join-Path $completedReleaseRoot ([IO.Path]::GetFileName($installer))
         bytes = (Get-Item -LiteralPath $installer).Length
         sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
     }
@@ -466,4 +497,17 @@ $releaseHashes = Get-ChildItem -LiteralPath $releaseRoot -File |
     (Join-Path $releaseRoot 'SHA256SUMS.txt'),
     (($releaseHashes -join "`n") + "`n"),
     [Text.UTF8Encoding]::new($false))
+if ((Get-SourceSnapshot) -ne $sourceSnapshot) { throw 'source_changed_during_build' }
+if ((& git -C $repoRoot rev-parse HEAD).Trim() -ne $head) { throw 'head_changed_during_build' }
+Move-Item -LiteralPath $releaseRoot -Destination $completedReleaseRoot
 $receipt | ConvertTo-Json -Depth 8
+} catch {
+    Write-JsonFile (Join-Path $workRoot 'build-failure.json') ([ordered]@{
+        schema_version = 'upsp_desktop_build_failure.v1'
+        status = 'failed'
+        error = $_.Exception.Message
+        unfinished_release = $releaseRoot
+        candidate_available = $false
+    })
+    throw
+}

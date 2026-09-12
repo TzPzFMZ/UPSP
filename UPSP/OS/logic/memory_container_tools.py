@@ -7,6 +7,7 @@ from data.container_store import (
     SUPPORTED_RESIDENT_CONTAINER_TYPES,
 )
 from data.memory_store import project_memory_body
+from errors import UncertainEffectError
 from logic.memory_privacy import memory_visible_to_state
 
 
@@ -179,9 +180,9 @@ def _restore_transaction(
         try:
             restore()
         except Exception as exc:
-            errors.append(f"{label}:{type(exc).__name__}")
+            errors.append(exc)
     if errors:
-        raise RuntimeError("container_transaction_restore_failed:" + ",".join(errors))
+        raise ExceptionGroup("container_transaction_restore_failed", errors)
 
 
 def _run_container_transaction(
@@ -209,9 +210,10 @@ def _run_container_transaction(
                     resident_snapshot=snapshots["resident"],
                 )
             except Exception as rollback_exc:
-                raise RuntimeError(
+                raise UncertainEffectError(
                     f"{rollback_label}_rollback_failed:"
-                    f"{type(rollback_exc).__name__}"
+                    f"{type(rollback_exc).__name__}",
+                    cause=exc, rollback_causes=[rollback_exc],
                 ) from exc
             raise
 
@@ -309,6 +311,7 @@ def apply_memory_container_create_declarations(
                         **create_kwargs,
                     )
                     container_id = created["container_id"]
+                    receipt["container_id"] = container_id
                     _fault(modules, "after_container_create")
                     overview = _overview_for_container(
                         declaration.get("current_overview"),
@@ -398,11 +401,20 @@ def apply_memory_container_create_declarations(
                 "resident_revision": resident.get("revision"),
             })
             receipts.append(receipt)
-        except Exception as exc:
+        except UncertainEffectError as exc:
+            receipt.update(status="error", reason=str(exc), mem_id=mem_id)
+            receipts.append(receipt)
+            exc.affected_ids = [mem_id, receipt["container_id"]]
+            exc.partial_receipts = receipts
+            raise
+        except ValueError as exc:
             if str(exc) == "invalid_target_file":
                 receipts.append(_reject_invalid_target_file(receipt, container_type))
             else:
                 receipts.append(_reject(receipt, str(exc)))
+        except Exception as exc:
+            exc.partial_receipts = receipts
+            raise
     return receipts
 
 
@@ -509,6 +521,7 @@ def apply_memory_container_write_declarations(
                         ),
                     )
                     _fault(modules, "after_resident_preflight")
+                    projection["resident_revision"] = resident_store.load().get("revision")
                     if container_id not in list(
                             (linked or {}).get("linked_containers") or []):
                         raise RuntimeError("memory_link_unverified")
@@ -538,11 +551,17 @@ def apply_memory_container_write_declarations(
                 "current_overview": str((linked or {}).get("current_overview") or overview),
                 "visibility_verified": True,
                 "resident_persisted": container_resident,
-                "resident_revision": resident_store.load().get("revision"),
+                "resident_revision": projection.get("resident_revision"),
                 "resident_chars": projection.get("chars", 0),
             })
             receipts.append(receipt)
-        except Exception as exc:
+        except UncertainEffectError as exc:
+            receipt.update(status="error", reason=str(exc), mem_id=mem_id)
+            receipts.append(receipt)
+            exc.affected_ids = [mem_id, container_id]
+            exc.partial_receipts = receipts
+            raise
+        except ValueError as exc:
             if str(exc) == "invalid_target_file":
                 receipts.append(
                     _reject_invalid_target_file(
@@ -552,4 +571,7 @@ def apply_memory_container_write_declarations(
                 )
             else:
                 receipts.append(_reject(receipt, str(exc)))
+        except Exception as exc:
+            exc.partial_receipts = receipts
+            raise
     return receipts

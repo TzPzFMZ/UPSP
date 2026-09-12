@@ -98,14 +98,21 @@ def _write_fault_record(item, round_num, stores, interaction_meta):
         detail=f"{item['source']}: {item['detail']}",
         action=item["action"],
     )
-    context_store.append_to_cache(
-        round_num,
-        "system",
-        _fault_note_text(item),
-        kind="fault_note",
-        step=item["step"],
-        **meta,
-    )
+    try:
+        context_store.append_to_cache(
+            round_num,
+            "system",
+            _fault_note_text(item),
+            kind="fault_note",
+            step=item["step"],
+            **meta,
+        )
+    except Exception as exc:
+        from errors import UncertainEffectError
+        raise UncertainEffectError(
+            "fault_alert_recorded_context_unregistered",
+            affected_ids=[f"R{round_num}"], cause=exc,
+        ) from exc
 
 
 def apply_fault_record_declarations(declarations, round_num, stores,
@@ -135,6 +142,10 @@ def apply_fault_record_declarations(declarations, round_num, stores,
                 severity=item["severity"],
                 step=item["step"],
             ))
+            from errors import UncertainEffectError
+            if not isinstance(exc, ValueError):
+                exc.partial_receipts = receipts
+                raise
             continue
         receipts.append(_receipt(
             "applied",

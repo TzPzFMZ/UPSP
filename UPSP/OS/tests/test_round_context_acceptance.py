@@ -3,6 +3,7 @@ import io
 import json
 from pathlib import Path
 import pytest
+from unittest.mock import patch
 from UPSP.OS.tests.native_tool_test_helpers import _load_module_from_path
 
 
@@ -23,12 +24,24 @@ def _load_cli():
 def _run_cli(cli, args):
     stdout = io.StringIO()
     stderr = io.StringIO()
-    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), patch.object(
+            cli, "_configure_active_paths", side_effect=AssertionError("acceptance must not initialize active data")):
         code = cli.main(args)
     return code, stdout.getvalue(), stderr.getvalue()
 
 
+def _default_roots_snapshot():
+    import hashlib
+    import paths
+    roots = [Path(paths.UPSP_DATA_ROOT), Path(paths.UPSP_LOCAL_STATE_ROOT)]
+    return {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+            for root in roots for path in root.rglob("*") if path.is_file()}
+
+
 def test_fake_round_acceptance_runner_reports_real_context(tmp_path):
+    import os
+    before = _default_roots_snapshot()
+    environment = dict(os.environ)
     acceptance = _load_module("round_context_acceptance", ACCEPTANCE_PATH)
     book = tmp_path / "book" / "共格主体论_V5_6.1.md"
     book.parent.mkdir(parents=True)
@@ -46,6 +59,13 @@ def test_fake_round_acceptance_runner_reports_real_context(tmp_path):
     assert report["mode"] == "fake"
     assert report["provider_calls"] == []
     assert report["live_persona_touched"] is False
+    assert _default_roots_snapshot() == before
+    assert dict(os.environ) == environment
+    runtime_root = Path(report["runtime_root"])
+    assert runtime_root.is_relative_to(tmp_path / "out")
+    for key in ("data_root", "local_state_root", "isolated_persona"):
+        assert Path(report[key]).is_relative_to(runtime_root)
+        assert Path(report[key]).is_dir()
     assert report["checks"]["user_input_visible"]["passed"] is True
     assert report["checks"]["chronicle_material_visible"]["passed"] is True
     assert report["checks"]["natural_final_reply_projected"]["passed"] is True
@@ -90,6 +110,10 @@ def test_upsp_cli_acceptance_run_and_export_are_json(tmp_path):
     assert payload["data"]["report_path"]
     assert Path(payload["data"]["report_path"]).is_file()
     assert payload["data"]["summary"]["failed_checks"] == []
+    first = json.loads(Path(payload["data"]["report_path"]).read_text(encoding="utf-8"))
+    first_runtime = Path(first["runtime_root"])
+    first_receipt = first_runtime / "round_context_acceptance_report.json"
+    first_bytes = first_receipt.read_bytes()
 
     code, stdout, stderr = _run_cli(cli, [
         "--json",
@@ -111,6 +135,9 @@ def test_upsp_cli_acceptance_run_and_export_are_json(tmp_path):
     assert Path(bundle["context_bundle"]).is_file()
     assert Path(bundle["subagent_prompt"]).is_file()
     assert Path(bundle["spark_observation_prompt"]).is_file()
+    latest = json.loads((out_dir / "round_context_acceptance_report.json").read_text(encoding="utf-8"))
+    assert Path(latest["runtime_root"]) != first_runtime
+    assert first_receipt.read_bytes() == first_bytes
 
 
 def test_spec470_lists_guide_scenario_dogfood_matrix():
@@ -264,6 +291,7 @@ def test_spark_required_gate_accepts_imported_observation(tmp_path):
 
 
 def test_spark_envelope_script_can_drive_fake_acceptance(tmp_path):
+    before = _default_roots_snapshot()
     acceptance = _load_module("round_context_acceptance", ACCEPTANCE_PATH)
     book = tmp_path / "book.md"
     book.write_text("测试读书材料。\n", encoding="utf-8")
@@ -322,6 +350,8 @@ def test_spark_envelope_script_can_drive_fake_acceptance(tmp_path):
     )
 
     assert report["mode"] == "spark-envelope"
+    assert report["provider_calls"] == []
+    assert _default_roots_snapshot() == before
     assert report["summary"]["failed_checks"] == []
     assert report["diagnostics"]["round_closed"]["final_response"] == (
         "Spark 信封模拟最终回复。"

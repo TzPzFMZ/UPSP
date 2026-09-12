@@ -467,23 +467,17 @@ def apply_task_bootstrap_missing_access_terminal_settlement(
     }
 
 
-def apply_reaction_handoff_relay_receipt(state_manager, relay_receipt, trace=None):
-    """Set the continue flag for a valid reaction_finalize handoff."""
+def build_reaction_handoff_relay_receipt(relay_receipt, trace=None):
+    """记录已验证继续请求；只有 Cleanup 原子落账后才能置位继续。"""
     if not isinstance(relay_receipt, dict) or not relay_receipt:
         return None
     handoff_text = str(relay_receipt.get("handoff_text") or "").strip()
     reason = str(relay_receipt.get("reason") or handoff_text).strip()
-    try:
-        state_manager.set_flag("continue_requested", True)
-        status = "continue_requested_set"
-    except Exception as exc:
-        status = "continue_requested_error"
-        reason = str(exc) or reason
     receipt = {
         "tool_id": "reaction_finalize",
-        "status": status,
+        "status": "continue_requested_pending",
         "source": "closeout_form",
-        "set_flags": ["continue_requested"] if status == "continue_requested_set" else [],
+        "requested_flags": ["continue_requested"],
         "reason": reason,
     }
     if handoff_text:
@@ -495,7 +489,7 @@ def apply_reaction_handoff_relay_receipt(state_manager, relay_receipt, trace=Non
 
 
 def build_runtime_auto_continue_closeout(
-        state_manager, *, elapsed_seconds=0, time_limit_seconds=600):
+        *, elapsed_seconds=0, time_limit_seconds=600):
     elapsed = int(max(0, elapsed_seconds or 0))
     reminder_at, warning_at, auto_relay_at = reaction_time_milestone_seconds(
         time_limit_seconds
@@ -509,8 +503,7 @@ def build_runtime_auto_continue_closeout(
         "下一轮请从已有工具事实、产物、任务看板、未完成项和阻断事实继续。"
     )
     reason = "round_time_budget_exhausted"
-    relay_receipt = apply_reaction_handoff_relay_receipt(
-        state_manager,
+    relay_receipt = build_reaction_handoff_relay_receipt(
         {
             "handoff_text": handoff_text,
             "reason": reason,
@@ -542,7 +535,7 @@ def build_runtime_auto_continue_closeout(
         "reminder_seconds": reminder_at,
         "warning_seconds": warning_at,
         "auto_relay_seconds": auto_relay_at,
-        "set_flags": ["continue_requested"],
+        "requested_flags": ["continue_requested"],
     }
     return relay_receipt, settlement_ledger, guard_receipt
 

@@ -73,6 +73,10 @@ def guard_live_persona_files(monkeypatch):
         if after == before:
             continue
         changed.append(path)
+        if after is not None:
+            failure_copy = TEST_RUNTIME_PARENT / "failed-baseline" / path.relative_to(TEST_PERSONA_DIR)
+            failure_copy.parent.mkdir(parents=True, exist_ok=True)
+            failure_copy.write_bytes(after)
         if before is None:
             try:
                 path.unlink()
@@ -90,6 +94,11 @@ def guard_live_persona_files(monkeypatch):
 
 
 def pytest_sessionfinish(session, exitstatus):
+    if exitstatus != 0:
+        reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+        if reporter is not None:
+            reporter.write_line(f"失败隔离根保留: {TEST_RUNTIME_PARENT}")
+        return
     temp_root = Path(tempfile.gettempdir()).resolve()
     try:
         TEST_RUNTIME_PARENT.relative_to(temp_root)

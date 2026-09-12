@@ -595,7 +595,6 @@ class TestSpec745RuntimeAudit(RuntimeTestMixin):
 
         runtime.executor = CleanupRetryExecutor()
         monkeypatch.setattr(runtime.heat, "tick_decay", lambda **kwargs: None)
-        monkeypatch.setattr(runtime, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(runtime, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(runtime, "_process_rest_cycle", lambda *a, **kw: None)
 

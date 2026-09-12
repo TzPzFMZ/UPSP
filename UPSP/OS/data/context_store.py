@@ -1284,11 +1284,24 @@ class ContextStore:
                         )
                     return {}
                 if self._lately_prefix_matches(blocks, count, source_sha):
+                    # Older applying records lack a batch boundary. The original
+                    # source is intact, so those summaries can be requested again.
+                    result_count = debt.get("staged_result_count_before_apply", 0)
+                    results = debt.get("results") or []
+                    if type(result_count) is not int or not 0 <= result_count <= len(results):
+                        raise ReadError(self.cache_compaction_debt_path(), message="cache_compaction_result_boundary_invalid")
                     meta_before = debt.get("active_corpus_meta_before")
                     if isinstance(meta_before, dict):
                         self._write_json_atomic(
                             self.active_corpus_meta_path(), meta_before)
+                        if self._load_active_corpus_meta() != meta_before:
+                            raise WriteError(
+                                self.active_corpus_meta_path(),
+                                message="cache_compaction_recovery_meta_verification_failed",
+                            )
                     debt["phase"] = "staging"
+                    debt["results"] = results[:result_count]
+                    debt.pop("staged_result_count_before_apply", None)
                     debt.pop("applied_prefix", None)
                     debt.pop("terminal_phase", None)
                     debt.pop("active_corpus_meta_before", None)
@@ -1296,6 +1309,11 @@ class ContextStore:
                     debt["updated_at"] = local_now().isoformat()
                     self._write_json_atomic(
                         self.cache_compaction_debt_path(), debt)
+                    if self.load_cache_compaction_record() != debt:
+                        raise WriteError(
+                            self.cache_compaction_debt_path(),
+                            message="cache_compaction_recovery_staging_verification_failed",
+                        )
                     return debt
                 raise ReadError(
                     self.cache_compaction_debt_path(),
@@ -1355,8 +1373,6 @@ class ContextStore:
 
         if not isinstance(results, list) or not results:
             return reject("cache_compaction_results_required")
-        with open(self.cache_compaction_debt_path(), "r", encoding="utf-8") as handle:
-            debt_text_before_batch = handle.read()
         submitted_ids = [
             str(item.get("shard_id") or "").strip()
             for item in results if isinstance(item, dict)
@@ -1401,23 +1417,21 @@ class ContextStore:
             debt["results"] = list(debt.get("results") or []) + accepted
             debt["revision"] = int(debt.get("revision") or 0) + 1
             debt["updated_at"] = local_now().isoformat()
-            self._write_json_atomic(self.cache_compaction_debt_path(), debt)
         remaining = pending_shards(debt)
         applied = False
         terminal_phase = ""
         if self._progressive_compaction_target_met(debt) or not remaining:
-            try:
-                terminal_phase = self._apply_progressive_cache_compaction_debt(
-                    debt,
-                    current_round=current_round,
-                    current_reaction_iteration=current_reaction_iteration,
-                )
-            except Exception:
-                atomic_write_text(
-                    self.cache_compaction_debt_path(), debt_text_before_batch)
-                raise
+            terminal_phase = self._apply_progressive_cache_compaction_debt(
+                debt,
+                current_round=current_round,
+                current_reaction_iteration=current_reaction_iteration,
+            )
             applied = True
             remaining = []
+        elif accepted:
+            self._write_json_atomic(self.cache_compaction_debt_path(), debt)
+            if self.load_cache_compaction_record() != debt:
+                raise WriteError(self.cache_compaction_debt_path(), message="cache_compaction_staging_verification_failed")
         return {
             "status": "applied" if accepted else "rejected",
             "reason": (
@@ -1560,6 +1574,7 @@ class ContextStore:
         if original_meta_exists:
             with open(meta_path, "r", encoding="utf-8") as handle:
                 original_meta_text = handle.read()
+        applying_text = ""
         try:
             rewritten = self._assign_active_corpus_metadata_to_blocks(
                 rewritten, persist_meta=False)
@@ -1590,7 +1605,9 @@ class ContextStore:
             }
             debt["active_corpus_meta_before"] = original_meta
             debt["active_corpus_meta_after"] = updated_meta
+            debt["staged_result_count_before_apply"] = len(json.loads(original_debt_text).get("results") or [])
             debt["updated_at"] = now
+            applying_text = json.dumps(debt, ensure_ascii=False, indent=2)
             self._write_json_atomic(self.cache_compaction_debt_path(), debt)
             applying_record = self.load_cache_compaction_record()
             if (
@@ -1642,19 +1659,36 @@ class ContextStore:
                     self.cache_compaction_debt_path(),
                     message="cache_compaction_terminal_verification_failed",
                 )
-        except Exception:
-            # Best-effort rollback uses the same atomic writers. If the crash
-            # happens after lately commit, the applying record above lets READY
-            # finish deterministically instead of guessing.
+        except Exception as apply_error:
+            if not applying_text:
+                raise
+            # Restore the recovery marker before touching committed sources,
+            # including a failure after the closed record reached disk.
             try:
-                atomic_write_text(lately_path, original_lately_text)
-                if original_meta_exists:
-                    atomic_write_text(meta_path, original_meta_text)
-                elif os.path.isfile(meta_path):
-                    os.remove(meta_path)
-                atomic_write_text(debt_path, original_debt_text)
-            except Exception:
-                pass
+                atomic_write_text(debt_path, applying_text)
+                if self.load_cache_compaction_record() != json.loads(applying_text):
+                    raise WriteError(debt_path, message="cache_compaction_rollback_marker_verification_failed")
+                # The old ledger is safe only after both sources are restored.
+                for path, original in (
+                        (lately_path, original_lately_text),
+                        (meta_path, original_meta_text if original_meta_exists else None),
+                        (debt_path, original_debt_text)):
+                    if original is None:
+                        if os.path.isfile(path):
+                            os.remove(path)
+                        if os.path.exists(path):
+                            raise WriteError(path, message="cache_compaction_rollback_verification_failed")
+                    else:
+                        atomic_write_text(path, original)
+                        with open(path, "r", encoding="utf-8") as handle:
+                            if handle.read() != original:
+                                raise WriteError(path, message="cache_compaction_rollback_verification_failed")
+            except Exception as rollback_error:
+                raise WriteError(
+                    debt_path,
+                    message=f"cache_compaction_rollback_failed: {rollback_error}",
+                    cause=rollback_error,
+                ) from apply_error
             raise
         return terminal_phase
 

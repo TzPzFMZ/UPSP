@@ -818,11 +818,13 @@ def test_spec531_task_board_reads_protocol_receipts(
     assert "06_doc_brief.md" in text
 
 
+@pytest.mark.parametrize("status", ["integrated", "deferred", "rejected", "split"])
 def test_spec522_task_execution_action_guide_ignores_settled_pending_inputs(
-        monkeypatch, tmp_path):
+        monkeypatch, tmp_path, status):
     from data import workbench as workbench_module
     from data.workbench import WorkbenchStore
-    from logic.task_board import render_task_execution_action_guide
+    from logic.task_acceptance import validate_task_closeout
+    from logic.task_board import render_active_task_board, render_task_execution_action_guide
 
     wb_root = tmp_path / "workbench"
     monkeypatch.setattr(workbench_module, "WB_DIR", str(wb_root))
@@ -834,13 +836,14 @@ def test_spec522_task_execution_action_guide_ignores_settled_pending_inputs(
             "items": [{
                 "item_id": "item_01",
                 "title": "继续执行",
-                "status": "open",
+                "status": "done",
                 "required": True,
+                "evidence_refs": ["call:written"],
             }],
             "acceptance": [],
             "pending_inputs": [{
                 "pending_input_id": "input_01",
-                "status": "integrated",
+                "status": status,
                 "summary": "已经整合。",
             }],
         },
@@ -853,13 +856,17 @@ def test_spec522_task_execution_action_guide_ignores_settled_pending_inputs(
 
     assert "当前有待整合输入" not in text
     assert "option_id=integrate_pending_input" not in text
+    assert "待整合输入 input_01：" not in render_active_task_board(store)
+    assert validate_task_closeout(store, {"closeout_decision": "finish"})["allowed"] is True
 
 
+@pytest.mark.parametrize("status", ["pending", "done", "completed"])
 def test_spec522_task_execution_action_guide_keeps_open_pending_inputs(
-        monkeypatch, tmp_path):
+        monkeypatch, tmp_path, status):
     from data import workbench as workbench_module
     from data.workbench import WorkbenchStore
-    from logic.task_board import render_task_execution_action_guide
+    from logic.task_acceptance import validate_task_closeout
+    from logic.task_board import render_active_task_board, render_task_execution_action_guide
 
     wb_root = tmp_path / "workbench"
     monkeypatch.setattr(workbench_module, "WB_DIR", str(wb_root))
@@ -872,7 +879,7 @@ def test_spec522_task_execution_action_guide_keeps_open_pending_inputs(
             "acceptance": [],
             "pending_inputs": [{
                 "pending_input_id": "input-01",
-                "status": "pending",
+                "status": status,
                 "summary": "需要追加材料。",
             }],
         },
@@ -889,6 +896,10 @@ def test_spec522_task_execution_action_guide_keeps_open_pending_inputs(
     assert '"status":"integrated"' in text
     assert "不得改变连字符或下划线" in text
     assert "option_id=integrate_pending_input" in text
+    assert "待整合输入 input-01：" in render_active_task_board(store)
+    result = validate_task_closeout(store, {"closeout_decision": "finish"})
+    assert result["allowed"] is False
+    assert result["blockers"] == ["input-01:pending_input"]
 
 
 def test_spec526_task_execution_action_guide_hides_status_update_coordinates(
@@ -2859,7 +2870,6 @@ class TestContextAssembler:
         }]
         monkeypatch.setattr(RelationStore, "load_registry", lambda self: {"cards": cards})
         resident_store = ResidentListStore(str(tmp_path / "resident_list.json"))
-        resident_store.reconcile()
         resident_store.add({"item_type": "relation", "item_id": "REL-Codex"})
 
         assembler = ContextAssembler(
@@ -3538,7 +3548,6 @@ class TestContextAssembler:
         from data.resident_list_store import ResidentListStore
 
         resident_store = ResidentListStore(str(tmp_path / "resident_list.json"))
-        resident_store.reconcile()
         resident_store.add({
             "item_type": "container",
             "item_id": "PRJ-20260525-01",
@@ -5153,18 +5162,19 @@ class TestContextAssembler:
         assert "裸文本是非法输出" in rendered
         assert "反应步：推理、工具调用、生成回复" not in rendered
 
-    def test_reaction_step_guide_fallback_keeps_verification_thresholds(
-            self, monkeypatch):
-        from assembly.context_helpers import PopupManager, build_reaction_step_guide_popup
+    @pytest.mark.parametrize("content", [None, "### other\n- message: unrelated", "### reaction_step_guide\n- message: |\n"])
+    def test_reaction_step_guide_requires_registered_body(self, tmp_path, monkeypatch, content):
+        from assembly import popup
+        from assembly.context_helpers import build_reaction_step_guide_popup
+        from errors import RequiredContextError
 
-        monkeypatch.setattr(PopupManager, "load_template", lambda *_: {})
-
-        rendered = build_reaction_step_guide_popup("reaction")
-
-        assert "核验与询问" in rendered
-        assert "稳定事实和纯仓内任务不强制联网" in rendered
-        assert "实质改变交付结果或授权边界" in rendered
-        assert "范围最小、可回退的带界假设" in rendered
+        path = tmp_path / "popup.md"
+        if content is not None:
+            path.write_text(content, encoding="utf-8")
+        monkeypatch.setattr(popup, "POPUP_TEMPLATE_MD", str(path))
+        assert build_reaction_step_guide_popup("setup") == ""
+        with pytest.raises(RequiredContextError, match="reaction_step_guide"):
+            build_reaction_step_guide_popup("reaction")
 
     def test_spec738_setup_guide_can_omit_task_guidance_without_new_tool_head(
             self, tmp_path, monkeypatch):

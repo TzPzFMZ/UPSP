@@ -526,7 +526,7 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
 
         assert result["response"] == ""
         assert result["_general_tool_results"][0]["status"] == "ok"
-        assert result["_closeout_relay_receipts"][0]["status"] == "continue_requested_set"
+        assert result["_closeout_relay_receipts"][0]["status"] == "continue_requested_pending"
         assert result["_pending_relay_target"] == {
             "kind": "tool",
             "tool_id": "file_read",
@@ -724,7 +724,7 @@ class TestRuntimeReactionGeneralToolsRead(RuntimeTestMixin):
 
         assert result["_settlement_ledgers"][0]["read_status"] == "partial_continue"
         assert result["_settlement_ledgers"][0]["model_read_status"] == ""
-        assert result["_closeout_relay_receipts"][0]["status"] == "continue_requested_set"
+        assert result["_closeout_relay_receipts"][0]["status"] == "continue_requested_pending"
 
     def test_spec397_file_read_has_more_injects_action_state_without_progress_replay(
             self, tmp_path, monkeypatch):

@@ -4,7 +4,9 @@ import os
 
 import paths
 from data.memory_compression_store import MemoryCompressionManager
-from data.training_material_store import write_association_counts
+from data.training_material_store import ASSOCIATION_MUTATION_LOCK, write_association_counts
+from data.atomic_write import durable_write_bytes
+from errors import UncertainEffectError
 from engines.runtime_services import EngineComponent
 from logic.state_settlement import (
     StateSettlementError,
@@ -167,6 +169,9 @@ class ReactionMetabolism(EngineComponent):
                 terminal_kind=terminal_kind,
             )
         except Exception as exc:
+            if isinstance(exc, UncertainEffectError):
+                result.update(_persistent_effect_uncertain=True, _persistent_effect_failure=exc.as_dict())
+                result.setdefault("_memory_lifecycle_receipts", []).extend(exc.partial_receipts)
             result.update(
                 _reaction_terminal_metabolism_failed=True,
                 _failed_phase="reaction",
@@ -257,31 +262,37 @@ class ReactionMetabolism(EngineComponent):
             association_counts = build_association_counts_from_receipts(
                 memory_write_receipts
             )
-            association_snapshot = self._association_snapshot()
-            try:
-                write_association_counts(paths.ASSOCIATION_SET_DIR, association_counts)
-                steps.append({
-                    "step": "association_counts",
-                    "status": "applied",
-                    "table_count": len(association_counts),
-                })
-                receipt = {
-                    "schema_version": TERMINAL_RECEIPT_SCHEMA,
-                    "status": "applied",
-                    "round": int(round_num),
-                    "terminal_kind": str(terminal_kind),
-                    "steps": steps,
-                    "memory_lifecycle_receipts": lifecycle_receipts,
-                }
-                self._get_round_audit_store().append_event(
-                    round_num,
-                    "reaction_terminal_metabolism_receipt",
-                    receipt,
-                    phase="reaction",
-                )
-            except Exception:
-                self._restore_association_snapshot(association_snapshot)
-                raise
+            with ASSOCIATION_MUTATION_LOCK:
+                association_snapshot = self._association_snapshot()
+                try:
+                    write_association_counts(paths.ASSOCIATION_SET_DIR, association_counts)
+                    steps.append({
+                        "step": "association_counts",
+                        "status": "applied",
+                        "table_count": len(association_counts),
+                    })
+                    receipt = {
+                        "schema_version": TERMINAL_RECEIPT_SCHEMA,
+                        "status": "applied",
+                        "round": int(round_num),
+                        "terminal_kind": str(terminal_kind),
+                        "steps": steps,
+                        "memory_lifecycle_receipts": lifecycle_receipts,
+                    }
+                    self._get_round_audit_store().append_event(
+                        round_num,
+                        "reaction_terminal_metabolism_receipt",
+                        receipt,
+                        phase="reaction",
+                    )
+                except Exception as exc:
+                    try:
+                        self._restore_association_snapshot(association_snapshot)
+                    except Exception as rollback_exc:
+                        raise UncertainEffectError("association_counts_rollback_failed", cause=exc,
+                            affected_ids=["association:" + os.path.basename(path) for path in association_snapshot],
+                            rollback_causes=[rollback_exc], partial_receipts=lifecycle_receipts) from exc
+                    raise
             return receipt
         except Exception as exc:
             error_receipt = {
@@ -302,7 +313,10 @@ class ReactionMetabolism(EngineComponent):
                 )
             except Exception:
                 pass
-            raise RuntimeError(error_receipt["reason"]) from exc
+            if isinstance(exc, UncertainEffectError):
+                raise
+            exc.partial_receipts = lifecycle_receipts + list(getattr(exc, "partial_receipts", []))
+            raise
 
     @staticmethod
     def _association_paths():
@@ -329,16 +343,21 @@ class ReactionMetabolism(EngineComponent):
 
     @staticmethod
     def _restore_association_snapshot(snapshot):
+        failures = []
         for path, content in snapshot.items():
-            if content is None:
-                if os.path.isfile(path):
-                    os.remove(path)
-                continue
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp = path + ".rollback"
-            with open(tmp, "wb") as handle:
-                handle.write(content)
-            os.replace(tmp, path)
+            try:
+                if content is None:
+                    if os.path.isfile(path):
+                        os.remove(path)
+                else:
+                    durable_write_bytes(path, content)
+                    with open(path, "rb") as handle:
+                        if handle.read() != content:
+                            raise OSError("association_restore_readback_mismatch")
+            except Exception as exc:
+                failures.append(exc)
+        if failures:
+            raise ExceptionGroup("association_restore_failed", failures)
 
     def process_admission(self, round_num, settlement_result=None):
         candidates = self.heat.check_upgrade()
@@ -366,6 +385,9 @@ class ReactionMetabolism(EngineComponent):
                     "stm_retained": True,
                 })
             except Exception as exc:
+                if not isinstance(exc, ValueError):
+                    exc.partial_receipts = receipts + list(getattr(exc, "partial_receipts", []))
+                    raise
                 failures.append(mem_id)
                 receipts.append({
                     "event": "memory_lifecycle_failed",
@@ -404,6 +426,9 @@ class ReactionMetabolism(EngineComponent):
                     **settled,
                 })
             except Exception as exc:
+                if not isinstance(exc, ValueError):
+                    exc.partial_receipts = receipts + list(getattr(exc, "partial_receipts", []))
+                    raise
                 failures.append(mem_id)
                 receipts.append({
                     "event": "memory_lifecycle_failed",
@@ -420,13 +445,9 @@ class ReactionMetabolism(EngineComponent):
         return receipts
 
     def _forgetting_candidates(self):
-        from data.stm_heat_calculator import STMHeatCalculator
         from logic.memory_privacy import MEMORY_PRIVACY_ENABLED
 
-        loader = getattr(self.heat, "load_heat", None)
-        heat = loader() if callable(loader) else {
-            "entries": dict(getattr(self.heat, "entries", {}) or {})
-        }
+        heat = self.heat.load_heat()
         entries = heat.get("entries", {})
         canonical_meta = self.memory_store.active_ltm_meta_by_id()
         public_entries = {}
@@ -441,5 +462,4 @@ class ReactionMetabolism(EngineComponent):
             if MEMORY_PRIVACY_ENABLED or access != "private":
                 public_entries[mem_id] = heat_entry
                 public_meta[mem_id] = meta_entry
-        calculator = getattr(self.heat, "calculator", None) or STMHeatCalculator()
-        return calculator.process_forgetting(public_entries, public_meta)
+        return self.heat.calculator.process_forgetting(public_entries, public_meta)

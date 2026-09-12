@@ -149,19 +149,6 @@ class ResidentListStore:
             normalized, _legacy = normalize_resident_list(self._read_raw())
             return deepcopy(normalized)
 
-    def reconcile(self):
-        """升级已知空旧形状；未知非空形状保持原文件并拒绝 READY。"""
-        preview = self.preview_reconcile()
-        with _LOCK:
-            if preview["status"] == "applied":
-                self._write_verified(preview["document"])
-            return {
-                "schema_version": "resident_list_reconcile_receipt.v1",
-                "status": preview["status"],
-                "revision": preview["document"]["revision"],
-                "items": len(preview["document"]["items"]),
-            }
-
     def preview_reconcile(self):
         """Return the normalized known shape without mutating the source file."""
         with _LOCK:
@@ -329,11 +316,12 @@ class ResidentListStore:
             try:
                 self.restore_bytes(before)
             except Exception as rollback_exc:
-                raise WriteError(
-                    self.path,
-                    message=(
+                from errors import UncertainEffectError
+                raise UncertainEffectError(
                         "resident_list_rollback_failed:"
-                        f"{type(rollback_exc).__name__}"
-                    ),
+                        f"{type(rollback_exc).__name__}",
+                    affected_ids=sorted({str(item.get("item_id") or "") for item in (
+                        document.get("items", []) + (json.loads(before.decode("utf-8-sig")).get("items", []) if before else []))}),
+                    cause=exc, rollback_causes=[rollback_exc],
                 ) from exc
             raise

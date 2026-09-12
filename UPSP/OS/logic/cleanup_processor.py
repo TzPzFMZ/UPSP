@@ -5,7 +5,6 @@ DDS §23.2 善后步 + cleanup.md §五
 职责：pure logic —— 校验 + 分派，不直接写文件
 """
 import re
-from datetime import datetime
 
 from data.relation_store import relation_public_name
 from logic.container_ops import scan_orphans
@@ -297,7 +296,15 @@ def _apply_declared_relation_card(declaration, direct_object, identity_status,
 
     note = str(declaration.get("note") or "").strip()
     if note and hasattr(relation_store, "add_note"):
-        relation_store.add_note(card_id, note[:512])
+        try:
+            relation_store.add_note(card_id, note[:512])
+        except Exception as exc:
+            if not card_entry:
+                from errors import UncertainEffectError
+                raise UncertainEffectError(
+                    "relation_created_note_unregistered", affected_ids=[card_id], cause=exc,
+                ) from exc
+            raise
 
     return card_id
 
@@ -308,7 +315,7 @@ def _is_archive_scaffold_only(value):
     return normalized in {"记忆条目", "新建记忆条目", "归档条目", "记忆归档"}
 
 
-def process_cleanup(parsed, state, round_num, result, data_modules):
+def process_cleanup(parsed, state, round_num, result, data_modules, *, current_round_start=None):
     """
     执行善后步落盘——分派到各 data/ logic 管线。
     data_modules: {"state_store", "memory_store", "memory_index",
@@ -335,8 +342,6 @@ def process_cleanup(parsed, state, round_num, result, data_modules):
     for receipt in result.get("_memory_content_read_receipts", []) if isinstance(result, dict) else []:
         if receipt.get("status") in {"accepted", "applied"} and receipt.get("mem_id"):
             connection_anchor_ids.append(receipt["mem_id"])
-
-    now = datetime.now()
 
     # --- 1. 联系集连通性校验（基于 reaction memory_write 回执中的本轮记忆） ---
     if parsed.get("connection_bridges"):
@@ -377,8 +382,8 @@ def process_cleanup(parsed, state, round_num, result, data_modules):
 
     # --- 悬空容器检测（DDS §25.9） ---
     try:
-        round_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        orphans, popup_text = scan_orphans(cs, round_start)
+        orphans, popup_text = scan_orphans(cs, current_round_start)
+        report["orphan_scan_complete"] = True
         if orphans:
             report["orphans"] = orphans
             report["popup"] = popup_text

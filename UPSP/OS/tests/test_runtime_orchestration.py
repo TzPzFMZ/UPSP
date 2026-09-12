@@ -151,7 +151,11 @@ def test_runtime_accepts_explicit_organ_topology_and_callable_registries(
     assert tuple(rt.organ_runtime.roles) == ("observer",)
 
 
-def test_runtime_orchestrates_setup_reaction_cleanup_in_order(tmp_path):
+def test_runtime_orchestrates_setup_reaction_cleanup_in_order(tmp_path, monkeypatch):
+    from datetime import datetime
+    from engines import runtime as runtime_module
+    started_at = datetime(2026, 9, 10, 12).astimezone()
+    monkeypatch.setattr(runtime_module, "local_now", lambda: started_at, raising=False)
     rt = _runtime(tmp_path)
     organ_calls = []
 
@@ -187,6 +191,9 @@ def test_runtime_orchestrates_setup_reaction_cleanup_in_order(tmp_path):
     assert reaction.calls[0][0].round_num == setup.calls[0].round_num
     assert reaction.calls[0][1].intent["mount_requests"][0]["ids"] == "MEM-TEST0001"
     assert cleanup.calls[0][1]["response"] == "done"
+    assert setup.calls[0].started_at == started_at
+    assert cleanup.calls[0][0].started_at == started_at
+    assert setup.calls[0].trigger.observed_at != started_at.isoformat()
     assert cleanup.calls[0][1]["_interaction_meta"]["interaction_object"] == "Codex"
     assert organ_calls[0][0] == "setup_frame_settled"
     assert organ_calls[0][1]["interaction_meta"]["interaction_object"] == "Codex"
@@ -537,17 +544,17 @@ def test_spec735_final_response_budget_is_process_local_across_relay(tmp_path):
     assert source.final_response_max_chars == 128
     assert rt._pending_final_response_max_chars is None
 
-    rt.cleanup_pipeline._rearm_continue_requested_from_closeout_form(
-        {
+    rt.cleanup_pipeline._finalize_flags(
+        rt.sm.load(),
+        result={
             "_closeout_relay_receipts": [{
-                "status": "continue_requested_set",
+                "status": "continue_requested_pending",
                 "source": "closeout_form",
-                "set_flags": ["continue_requested"],
+                "requested_flags": ["continue_requested"],
                 "handoff_text": "continue",
             }],
         },
         round_type="interactive",
-        consumed_flags=[],
         round_num=735,
     )
     assert "final_response_max_chars" not in open_relay_intents(rt.sm.load())[-1]
@@ -759,8 +766,8 @@ def test_spec756_closeout_source_requires_verified_continue_rearm():
         "response": "",
         "_exit_signal": "continue_requested",
         "_closeout_relay_receipts": [{
-            "status": "continue_requested_set",
-            "set_flags": ["continue_requested"],
+            "status": "continue_requested_pending",
+            "requested_flags": ["continue_requested"],
         }],
     }
     verified = {

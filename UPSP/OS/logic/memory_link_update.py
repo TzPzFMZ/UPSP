@@ -110,4 +110,8 @@ def apply_memory_link_update_declarations(
             ))
         except Exception as exc:
             receipts.append(_receipt("error", declaration, reason=str(exc), mem_id=mem_id))
+            from errors import UncertainEffectError
+            if not isinstance(exc, ValueError):
+                exc.partial_receipts = receipts
+                raise
     return receipts

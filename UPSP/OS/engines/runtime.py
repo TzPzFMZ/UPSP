@@ -1,6 +1,7 @@
 """Three-step round orchestrator; step-specific work lives in its runners."""
 from datetime import datetime
 from collections import deque
+from constants import local_now
 import traceback
 from engines.cleanup_pipeline import CleanupPipeline
 from engines.heartbeat import round_decision_from_heartbeat_flags, round_type_from_heartbeat_flags
@@ -273,8 +274,12 @@ class Runtime:
                     probe_policy or probe_guard
                 )
 
+            round_started_at = None
+
             def establish():
+                nonlocal round_started_at
                 number = self.sm.increment_round()
+                round_started_at = local_now()
                 self.audit.start(number, round_type, audit_input)
                 return number
 
@@ -302,6 +307,7 @@ class Runtime:
             round_type=round_type,
             state=state,
             flags=dict(flags or {}),
+            started_at=round_started_at,
             interaction_meta=interaction_meta,
             trigger=trigger,
             topology_version=self.organ_runtime.topology_version,
@@ -419,8 +425,6 @@ class Runtime:
             else:
                 traceback.print_exc()
                 result = self.control.step_exception_result(last_phase, exc)
-                if failure_flag := getattr(exc, "round_failure_flag", ""):
-                    result[failure_flag] = True
                 self.reaction_metabolism.mark_exception(
                     context, result, last_phase, exc)
         finally:
@@ -530,18 +534,10 @@ class Runtime:
     def _run_cleanup(self, *args, **kwargs):
         if args and isinstance(args[0], RoundContext):
             return self.cleanup_pipeline.run(*args, **kwargs)
-        round_type, state, result, round_num = args[:4]
         context = kwargs.pop("context", None)
         if context is not None:
-            return self.cleanup_pipeline.run(context, result)
-        user_input_text = args[4] if len(args) > 4 else kwargs.get("user_input_text", "")
-        return self.cleanup_pipeline.run(
-            round_type,
-            state,
-            result,
-            round_num,
-            user_input_text=user_input_text,
-        )
+            return self.cleanup_pipeline.run(context, args[2])
+        return self.cleanup_pipeline.run(*args, **kwargs)
 
     def _record_cache_compaction_rhythm_if_needed(self, round_num):
         if bool((self.sm.get_flags() or {}).get("cache_compaction_due")):

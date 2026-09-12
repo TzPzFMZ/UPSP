@@ -558,7 +558,7 @@ def test_tool_settlement_passes_state_budget_to_dispatcher():
     class Dispatcher:
         context = None
 
-        def handle_requests(
+        def iter_results(
             self,
             _requests,
             _guides,

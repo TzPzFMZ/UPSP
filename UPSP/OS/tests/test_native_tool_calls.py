@@ -2641,7 +2641,7 @@ class TestNativeToolCallExecutorAndAudit:
         sent = {}
         ex = APIExecutor(FakeConfig(), connectivity_store=FakeConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {
                 "id": "resp_002",
@@ -2655,7 +2655,7 @@ class TestNativeToolCallExecutorAndAudit:
                 "usage": {"input_tokens": 5, "output_tokens": 2},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("reaction", "system", [{"role": "user", "content": "read"}])
 
@@ -2691,11 +2691,11 @@ class TestNativeToolCallExecutorAndAudit:
         sent_payloads = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent_payloads.append(payload)
             return {"output_text": "ok"}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("setup", "system", [{"role": "user", "content": "setup"}])
         ex.call("cleanup", "system", [{"role": "user", "content": "cleanup"}])
@@ -2731,11 +2731,11 @@ class TestNativeToolCallExecutorAndAudit:
         sent_payloads = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent_payloads.append(payload)
             return {"output_text": "ok"}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("reaction", "system", [{"role": "user", "content": "loop"}])
         ex.call(
@@ -2779,7 +2779,7 @@ class TestNativeToolCallExecutorAndAudit:
         sent = {}
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {
                 "choices": [{
@@ -2797,7 +2797,7 @@ class TestNativeToolCallExecutorAndAudit:
                 }],
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("setup", "system", [{"role": "user", "content": "setup"}])
 
@@ -2828,7 +2828,7 @@ class TestNativeToolCallExecutorAndAudit:
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
         ex._sleep = lambda _seconds: None
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent_payloads.append(payload)
             if len(sent_payloads) == 1:
                 return {
@@ -2854,7 +2854,7 @@ class TestNativeToolCallExecutorAndAudit:
                 }],
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("setup", "system", [{"role": "user", "content": "setup"}])
         second = ex.call(
@@ -2895,7 +2895,7 @@ class TestNativeToolCallExecutorAndAudit:
         sent = {}
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {
                 "choices": [{
@@ -2905,7 +2905,7 @@ class TestNativeToolCallExecutorAndAudit:
                 }],
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("setup", "system", [{"role": "user", "content": "setup"}])
 
@@ -2934,7 +2934,7 @@ class TestNativeToolCallExecutorAndAudit:
         sent = {}
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {
                 "choices": [{
@@ -2953,7 +2953,7 @@ class TestNativeToolCallExecutorAndAudit:
                 }],
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("setup", "system", [
             {"role": "system", "content": "permanent"},
@@ -2991,7 +2991,7 @@ class TestNativeToolCallExecutorAndAudit:
         sent = {}
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["url"] = url
             sent["payload"] = payload
             return {
@@ -3006,7 +3006,7 @@ class TestNativeToolCallExecutorAndAudit:
                 "usage": {"input_tokens": 5, "output_tokens": 2},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("reaction", "system", [{"role": "user", "content": "read"}])
 
@@ -3048,7 +3048,7 @@ class TestNativeToolCallExecutorAndAudit:
         sent = {}
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {
                 "id": "msg_setup",
@@ -3062,7 +3062,7 @@ class TestNativeToolCallExecutorAndAudit:
                 "usage": {"input_tokens": 5, "output_tokens": 2},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("setup", "system", [{"role": "system", "content": "popup"}])
 
@@ -3090,7 +3090,7 @@ class TestNativeToolCallExecutorAndAudit:
         sent = {}
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {
                 "id": "msg_setup",
@@ -3104,7 +3104,7 @@ class TestNativeToolCallExecutorAndAudit:
                 "usage": {"input_tokens": 5, "output_tokens": 2},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("setup", "outer-system", [
             {"role": "system", "content": "permanent"},
@@ -3139,11 +3139,11 @@ class TestNativeToolCallExecutorAndAudit:
         sent = {}
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"id": "resp_explicit", "output_text": "ok"}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("reaction", "system", [{"role": "user", "content": "ping"}])
 
@@ -4733,11 +4733,11 @@ class TestNativeToolCallExecutorAndAudit:
         flags = rt.sm.get_flags()
 
         assert result["_protocol_tool_submissions"] == []
-        assert result["_closeout_relay_receipts"][0]["status"] == "continue_requested_set"
+        assert result["_closeout_relay_receipts"][0]["status"] == "continue_requested_pending"
         assert result["_closeout_relay_receipts"][0]["call_id"] == "call_relay"
         assert result["_closeout_relay_receipts"][0]["provider"] == "openai_responses"
         assert result["_tool_transaction_audit"]["status"] == "ok"
-        assert flags["continue_requested"] is True
+        assert flags["continue_requested"] is False
         assert result["response"] == ""
         assert "_heartbeat_settlement_receipts" not in result
 

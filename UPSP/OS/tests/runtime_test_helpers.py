@@ -100,7 +100,7 @@ class RuntimeTestMixin:
                     }
                 if callable(transaction_commit):
                     transaction_commit()
-                runtime.heat.recall_boost(mem_id, round_num=round_num)
+                runtime.heat.boosted.append((mem_id, round_num))
                 if isinstance(boosted_ids, set):
                     boosted_ids.add(mem_id)
                 return {
@@ -131,7 +131,6 @@ class RuntimeTestMixin:
             raw_log_md=str(tmp_path / "buffer" / "raw_log.md"),
         )
         resident_store = ResidentListStore(str(tmp_path / "resident_list.json"))
-        resident_store.reconcile()
         assembler = ContextAssembler(
             state_store=sm,
             context_dir=str(tmp_path / "context"),
@@ -162,17 +161,11 @@ class RuntimeTestMixin:
             def set_entry(self, mem_id, entry):
                 self.entries[mem_id] = dict(entry)
 
-            def get_entry(self, mem_id):
-                return deepcopy(self.entries.get(mem_id))
-
             def load_heat(self):
                 return {"entries": deepcopy(self.entries)}
 
             def check_upgrade(self):
                 return []
-
-            def recall_boost(self, mem_id, round_num=None):
-                self.boosted.append((mem_id, round_num))
 
             def tick_decay(self, round_num=None):
                 self.decayed = True
@@ -354,7 +347,7 @@ class RuntimeTestMixin:
                 return {
                     "body": self.stm_bodies.get(mem_id),
                     "meta": meta,
-                    "heat": runtime.heat.get_entry(mem_id) if meta else None,
+                    "heat": runtime.heat.load_heat()["entries"].get(mem_id) if meta else None,
                 }
 
             def read_meta_by_id(self, mem_id):

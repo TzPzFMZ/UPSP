@@ -455,19 +455,13 @@ def recover_provider_interruption_if_possible(
         "provider_interruption_count": count,
         "provider_interruption_limit": PROVIDER_INTERRUPTION_RECOVERY_LIMIT,
         "task_id": task_id,
-        "set_flags": ["continue_requested"],
+        "requested_flags": ["continue_requested"],
     }
-    try:
-        state_manager.set_flag("continue_requested", True)
-    except Exception as flag_error:
-        receipt["status"] = "provider_interruption_recovery_flag_error"
-        receipt["flag_error"] = str(flag_error)
-        receipt["set_flags"] = []
     fact = "\n".join([
         "【工具事实｜provider 中断可恢复】",
         f"provider/model 流式或工具格式中断：{kind}。",
         "本轮此前已有成功工具事实、文件写入或任务账本进展；这些已落账事实保留。",
-        "Runtime 已置位 continue_requested，下一轮从现有产物、工具事实和任务看板继续。",
+        "Runtime 已请求继续，Cleanup 成功落账后下一轮从现有产物、工具事实和任务看板继续。",
         f"连续恢复次数：{count}/{PROVIDER_INTERRUPTION_RECOVERY_LIMIT}。",
     ])
     try:

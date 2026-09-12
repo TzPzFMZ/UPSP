@@ -593,23 +593,6 @@ class MemoryStore:
         """Return exact STM residence state without falling through to LTM."""
         return self._stm_source_state(mem_id)
 
-    @staticmethod
-    def _transition_meta_matches(source, destination, *, strict=True):
-        if not isinstance(source, dict) or not isinstance(destination, dict):
-            return True
-        keys = [
-            "id", "weight", "access", "created_at", "created_round",
-            "created_instance_id", "stored_at",
-        ]
-        if strict:
-            keys.extend(("title", "subject"))
-        for key in keys:
-            left = source.get(key)
-            right = destination.get(key)
-            if left not in (None, "") and right not in (None, "") and left != right:
-                return False
-        return True
-
     def _repair_interrupted_ltm_writes(self):
         """Repair valid dual residence from verified canonical LTM truth."""
         truth = self._ltm_truth()
@@ -941,13 +924,18 @@ class MemoryStore:
             atomic_write_json(runtime_paths.HEAT_JSON, heat_doc)
             self._validate_stm_residences(self._ltm_truth())
         except Exception as exc:
-            try:
-                self.restore_stm_files(stm_snapshot)
-                self.restore_ltm_files(ltm_snapshot)
-            except Exception as restore_exc:
-                raise RuntimeError(
-                    "memory_admission_migration_rollback_failed:"
-                    f"{type(restore_exc).__name__}"
+            failures = []
+            for restore, snapshot in ((self.restore_stm_files, stm_snapshot),
+                                      (self.restore_ltm_files, ltm_snapshot)):
+                try:
+                    restore(snapshot)
+                except Exception as restore_exc:
+                    failures.append(restore_exc)
+            if failures:
+                from errors import UncertainEffectError
+                raise UncertainEffectError(
+                    "memory_admission_migration_rollback_failed",
+                    affected_ids=list(stm_meta), cause=exc, rollback_causes=failures,
                 ) from exc
             raise
         return list(dict.fromkeys(updated))
@@ -1209,8 +1197,10 @@ class MemoryStore:
                         if current != text:
                             atomic_write_text(path, text)
             except Exception as restore_exc:
-                raise RuntimeError(
-                    f"ltm_target_restore_failed:{tier}:{mem_id}:{restore_exc}"
+                from errors import UncertainEffectError
+                raise UncertainEffectError(
+                    f"ltm_target_restore_failed:{tier}:{mem_id}:{restore_exc}", affected_ids=[mem_id],
+                    cause=exc, rollback_causes=[restore_exc],
                 ) from exc
             raise
 
@@ -1246,8 +1236,10 @@ class MemoryStore:
                 if meta_changed:
                     atomic_write_text(paths["meta"], original_meta_text)
             except Exception as restore_exc:
-                raise RuntimeError(
-                    f"ltm_source_restore_failed:{tier}:{mem_id}:{restore_exc}"
+                from errors import UncertainEffectError
+                raise UncertainEffectError(
+                    f"ltm_source_restore_failed:{tier}:{mem_id}:{restore_exc}", affected_ids=[mem_id],
+                    cause=exc, rollback_causes=[restore_exc],
                 ) from exc
             raise
         return updated
@@ -1371,12 +1363,21 @@ class MemoryStore:
 
     @staticmethod
     def restore_ltm_files(snapshot):
+        failures = []
         for path, text in (snapshot or {}).items():
-            if text is None:
-                if os.path.isfile(path):
-                    os.remove(path)
-            else:
-                atomic_write_text(path, text)
+            try:
+                if text is None:
+                    if os.path.isfile(path):
+                        os.remove(path)
+                else:
+                    atomic_write_text(path, text)
+                    with open(path, encoding="utf-8") as handle:
+                        if handle.read() != text:
+                            raise WriteError(path, "memory_restore_readback_mismatch")
+            except Exception as exc:
+                failures.append(exc)
+        if failures:
+            raise ExceptionGroup("memory_files_restore_failed", failures)
 
     def remove_stm_body(self, mem_id):
         """Remove only the STM body copy; never resolve through shared LTM."""
@@ -1404,16 +1405,9 @@ class MemoryStore:
 
     @staticmethod
     def restore_stm_files(snapshot):
-        for name, path in (
-                ("body", MEMORY_MD), ("meta", META_JSON), ("index", INDEX_MD),
-                ("keywords", runtime_paths.KEYWORDS_JSON),
-                ("heat", runtime_paths.HEAT_JSON)):
-            text = snapshot.get(name)
-            if text is None:
-                if os.path.isfile(path):
-                    os.remove(path)
-                continue
-            atomic_write_text(path, text)
+        MemoryStore.restore_ltm_files({path: snapshot.get(name) for name, path in (
+            ("body", MEMORY_MD), ("meta", META_JSON), ("index", INDEX_MD),
+            ("keywords", runtime_paths.KEYWORDS_JSON), ("heat", runtime_paths.HEAT_JSON))})
 
     @staticmethod
     def _replace_or_append_public_block(path, mem_id, body):
@@ -1564,8 +1558,10 @@ class MemoryStore:
             try:
                 self.restore_ltm_files(snapshot)
             except Exception as restore_exc:
-                raise RuntimeError(
-                    f"ltm_replace_restore_failed:{tier}:{mem_id}:{restore_exc}"
+                from errors import UncertainEffectError
+                raise UncertainEffectError(
+                    f"ltm_replace_restore_failed:{tier}:{mem_id}:{restore_exc}", affected_ids=[mem_id],
+                    cause=exc, rollback_causes=[restore_exc],
                 ) from exc
             raise
         return {
@@ -1592,8 +1588,10 @@ class MemoryStore:
             try:
                 self.restore_stm_files(snapshot)
             except Exception as restore_exc:
-                raise RuntimeError(
-                    f"stm_source_restore_failed:{mem_id}:{restore_exc}"
+                from errors import UncertainEffectError
+                raise UncertainEffectError(
+                    f"stm_source_restore_failed:{mem_id}:{restore_exc}", affected_ids=[mem_id],
+                    cause=exc, rollback_causes=[restore_exc],
                 ) from exc
             raise
         return [
@@ -2240,68 +2238,88 @@ class MemoryStore:
     def update_linked_containers(self, mem_id, operation, container_refs,
                                  current_overview=None):
         """Update local link overlay while shared LTM provenance stays global."""
-        refs = []
-        for ref in container_refs or []:
-            text = str(ref or "").strip()
-            if text and text not in refs:
-                refs.append(text)
-        op = str(operation or "add").strip().lower()
-        if op not in {"add", "remove", "set"}:
-            raise ValueError("invalid_operation")
+        with MEMORY_MUTATION_LOCK:
+            refs = []
+            for ref in container_refs or []:
+                text = str(ref or "").strip()
+                if text and text not in refs:
+                    refs.append(text)
+            op = str(operation or "add").strip().lower()
+            if op not in {"add", "remove", "set"}:
+                raise ValueError("invalid_operation")
 
-        target = None
-        ltm = self.ltm_entry_state(mem_id, include_backup=True)
-        if ltm is not None and ltm.get("tier") != "Backup":
-            layer, entry, _body_path = self._resolve_read_target(mem_id)
-            target = (layer, self._ltm_tier_paths(ltm["tier"])["meta"], {
-                mem_id: entry,
-            })
-        else:
-            candidate = self._read_json_file(META_JSON, merge_overlay=False)
-            if isinstance(candidate.get(mem_id), dict):
-                target = ("STM", META_JSON, candidate)
-        if target is None:
-            raise EntryNotFoundError(mem_id)
-        layer, meta_path, meta = target
-        entry = dict(meta[mem_id])
-        current = []
-        for ref in entry.get("linked_containers") or []:
-            text = str(ref or "").strip()
-            if text and text not in current:
-                current.append(text)
+            target = None
+            ltm = self.ltm_entry_state(mem_id, include_backup=True)
+            if ltm is not None and ltm.get("tier") != "Backup":
+                layer, entry, _body_path = self._resolve_read_target(mem_id)
+                target = (layer, self._ltm_tier_paths(ltm["tier"])["meta"], {
+                    mem_id: entry,
+                })
+            else:
+                candidate = self._read_json_file(META_JSON, merge_overlay=False)
+                if isinstance(candidate.get(mem_id), dict):
+                    target = ("STM", META_JSON, candidate)
+            if target is None:
+                raise EntryNotFoundError(mem_id)
+            layer, meta_path, meta = target
+            entry = dict(meta[mem_id])
+            current = []
+            for ref in entry.get("linked_containers") or []:
+                text = str(ref or "").strip()
+                if text and text not in current:
+                    current.append(text)
 
-        if op == "set":
-            updated_refs = refs
-        elif op == "add":
-            updated_refs = current + [ref for ref in refs if ref not in current]
-        else:
-            updated_refs = [ref for ref in current if ref not in refs]
+            if op == "set":
+                updated_refs = refs
+            elif op == "add":
+                updated_refs = current + [ref for ref in refs if ref not in current]
+            else:
+                updated_refs = [ref for ref in current if ref not in refs]
 
-        entry["linked_containers"] = updated_refs
-        if current_overview is not None:
-            overview = _overview_text(current_overview)
-            if overview != str(entry.get("current_overview") or "").strip():
-                entry["current_overview_updated_at"] = local_now().isoformat()
-            entry["current_overview"] = overview
-        entry = _normalise_meta_entry(entry)
-        if layer == "STM":
-            meta[mem_id] = entry
-            self.save_meta(meta)
-            self._update_memory_linked_containers(mem_id, updated_refs)
+            entry["linked_containers"] = updated_refs
             if current_overview is not None:
-                self._update_memory_current_overview(mem_id, entry["current_overview"])
-                self._update_index_current_overview(mem_id, entry["current_overview"])
-        else:
-            write_memory_overlay_entry(mem_id, entry)
-            stm = self._stm_source_state(mem_id)
-            if stm.get("body") is not None and stm.get("meta") is not None:
-                local = dict(stm["meta"])
-                for key in MEMORY_OVERLAY_FIELDS:
-                    local[key] = entry.get(
-                        key, [] if key == "linked_containers" else "")
-                self.replace_stm_meta(mem_id, local)
-                self.rebuild_stm_index()
-        return entry
+                overview = _overview_text(current_overview)
+                if overview != str(entry.get("current_overview") or "").strip():
+                    entry["current_overview_updated_at"] = local_now().isoformat()
+                entry["current_overview"] = overview
+            entry = _normalise_meta_entry(entry)
+            stm_before = self.snapshot_stm_files()
+            ltm_before = self.snapshot_ltm_files()
+            try:
+                if layer == "STM":
+                    meta[mem_id] = entry
+                    self.save_meta(meta)
+                    self._update_memory_linked_containers(mem_id, updated_refs)
+                    if current_overview is not None:
+                        self._update_memory_current_overview(mem_id, entry["current_overview"])
+                        self._update_index_current_overview(mem_id, entry["current_overview"])
+                else:
+                    write_memory_overlay_entry(mem_id, entry)
+                    stm = self._stm_source_state(mem_id)
+                    if stm.get("body") is not None and stm.get("meta") is not None:
+                        local = dict(stm["meta"])
+                        for key in MEMORY_OVERLAY_FIELDS:
+                            local[key] = entry.get(
+                                key, [] if key == "linked_containers" else "")
+                        self.replace_stm_meta(mem_id, local)
+                        self.rebuild_stm_index()
+                return entry
+            except Exception as exc:
+                errors = []
+                for restore, snapshot in (
+                        (self.restore_stm_files, stm_before),
+                        (self.restore_ltm_files, ltm_before)):
+                    try:
+                        restore(snapshot)
+                    except Exception as restore_exc:
+                        errors.append(restore_exc)
+                if errors:
+                    from errors import UncertainEffectError
+                    raise UncertainEffectError(
+                        "memory_link_rollback_failed", affected_ids=[mem_id],
+                        cause=exc, rollback_causes=errors,
+                    ) from exc
+                raise
 
     def mark_private(self, mem_id, privacy_subject, body_action="move_private"):
         """Move one public memory into its relation-owned private file."""

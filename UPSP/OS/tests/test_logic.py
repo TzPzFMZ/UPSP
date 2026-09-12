@@ -1010,7 +1010,6 @@ class TestReactionParser:
         from logic.relation_read import apply_relation_read_requests
 
         resident = ResidentListStore(str(tmp_path / "resident_list.json"))
-        resident.reconcile()
         resident.add({"item_type": "relation", "item_id": "REL-Codex"})
 
         class DummyRelationStore:
@@ -1092,7 +1091,6 @@ class TestReactionParser:
         from logic.relation_read import apply_relation_read_requests
 
         resident = ResidentListStore(str(tmp_path / "resident_list.json"))
-        resident.reconcile()
         if initial_body_resident:
             resident.add({"item_type": "relation", "item_id": "REL-Codex"})
 
@@ -1105,10 +1103,10 @@ class TestReactionParser:
 
             @staticmethod
             def preflight_resident_add(item, *, content_overrides=None):
-                preview = resident.preview_add(item)
+                document, changed = resident.preview_add(item)
                 return {
-                    "document": preview["document"],
-                    "changed": preview["changed"],
+                    "document": document,
+                    "changed": changed,
                     "chars": len(next(iter(
                         (content_overrides or {}).values()), "")),
                     "expected_revision": resident.load()["revision"],
@@ -1151,20 +1149,16 @@ class TestReactionParser:
             **request_payload,
         }
 
-        receipts, mounts, unmounts = apply_relation_read_requests(
-            [payload],
-            {
-                "relation_store": relation,
-                "assembler": DummyAssembler(),
-                "resident_store": resident,
-            },
-        )
+        with pytest.raises(RuntimeError, match="injected_summary_write_failure"):
+            receipts, mounts, unmounts = apply_relation_read_requests(
+                [payload],
+                {
+                    "relation_store": relation,
+                    "assembler": DummyAssembler(),
+                    "resident_store": resident,
+                },
+            )
 
-        assert receipts[0]["status"] == "rejected"
-        assert receipts[0]["reason"].startswith(
-            "relation_resident_transaction_failed:")
-        assert mounts == []
-        assert unmounts == []
         assert resident.snapshot_bytes() == before_resident
         assert relation.load_registry() == before_registry
 

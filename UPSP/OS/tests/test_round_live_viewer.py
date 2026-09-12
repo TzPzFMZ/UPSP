@@ -42,7 +42,7 @@ LAYER_KEYS = [
 ]
 
 
-def build_live_state(events, *, live_context_root=None, use_live_layers=False):
+def build_live_state(events):
     """Legacy full projection used only by pre-Spec773 focused assertions."""
     source_events = deepcopy(events)
     events = deepcopy(source_events)
@@ -62,8 +62,6 @@ def build_live_state(events, *, live_context_root=None, use_live_layers=False):
             source_events,
             kind="frame",
             ref=entry["frame_id"],
-            live_context_root=live_context_root,
-            use_live_layers=use_live_layers,
         )["payload"])
     latest = frames[-1] if frames else {}
     timeline = deepcopy(light.get("dialogue_timeline"))
@@ -974,46 +972,6 @@ def test_spec704_crash_recovery_projects_unsettled_without_false_close():
         card["event_type"] == "runtime_process_interrupted"
         for card in state["conversation"]
     )
-
-
-def test_spec427_latest_frame_can_read_active_layers(tmp_path):
-    from data.audit_store import AuditStore
-
-    context = tmp_path / "context"
-    audit = AuditStore(reaction_dir=str(context / "reaction"))
-    audit.write_audit("reaction", {
-        "permanent": "live permanent",
-        "periodic": "live periodic",
-        "lately": "live lately",
-        "high_freq": "live high freq",
-        "now": "live now truth",
-        "statusbar": "live statusbar",
-        "popup": "live popup",
-        "full_system": "live full",
-    })
-    audit.write_call_layers(
-        "reaction",
-        call={"step": "reaction", "channel": "reaction.loop"},
-        provider={"provider": "openai_chat", "model": "unit"},
-        endpoint={"tier": "primary", "url": "https://example.invalid"},
-        tool_header={"tool_mode": "free", "tools": []},
-        generation_config={"temperature": 0.7},
-    )
-    events = [
-        _event(1, "step_input_snapshot", {
-            "layers_snapshot": _layers_snapshot(**{"50_now": "snapshot now"}),
-        }, phase="reaction"),
-    ]
-
-    state = build_live_state(
-        events,
-        live_context_root=str(context),
-        use_live_layers=True,
-    )
-
-    by_id = {pane["id"]: pane for pane in state["context_panes"]}
-    assert by_id["50_now"]["content_md"] == "live now truth"
-    assert state["call_frames"][0]["layer_source"] == "live_layers"
 
 
 def test_spec427_legacy_without_layers_snapshot_is_marked_historical():
@@ -2370,13 +2328,15 @@ def test_spec723_frame_context_usage_uses_manifest_and_full_anthropic_input():
     assert "model" not in frame and "connection_id" not in frame
 
 
-def test_spec723_frame_context_usage_pending_and_historical_compatibility():
+@pytest.mark.parametrize("window", [None, "[redacted]"])
+def test_spec723_frame_context_usage_pending_and_historical_compatibility(window):
     snapshot = _layers_snapshot()
     manifest = _layers_manifest(snapshot)
     pending = build_live_state([_event(1, "step_input_snapshot", {
         "layers_snapshot": snapshot,
         "provider_request_envelope": {
             "created_at": "not-a-time",
+            "context_window_tokens": window,
             "layers_manifest": manifest,
         },
     }, phase="setup", iteration=1)])["call_frames"][0]
@@ -2409,44 +2369,6 @@ def test_spec723_terminal_round_cannot_leave_context_usage_pending():
 
     assert usage["state"] == "unavailable"
     assert usage["input_tokens"] is None
-
-
-def test_spec723_latest_frame_recovers_redacted_window_from_matching_step(tmp_path):
-    from data.audit_store import AuditStore
-
-    context = tmp_path / "context"
-    audit = AuditStore(reaction_dir=str(context / "reaction"))
-    audit.write_audit("reaction", {
-        "permanent": "p", "periodic": "", "lately": "l",
-        "high_freq": "h", "now": "n", "statusbar": "s",
-        "popup": "", "full_system": "full",
-    })
-    statuses = audit.write_call_layers(
-        "reaction",
-        call={}, provider={}, endpoint={}, tool_header={}, generation_config={},
-    )
-    audit.write_compiled_provider_request("reaction", {
-        "schema": "provider_request.v1",
-        "request_body": {},
-        "request_body_sha256": "same-request",
-        "context_window_tokens": 1_000_000,
-    }, call_layer_statuses=statuses)
-    snapshot = _layers_snapshot()
-    manifest = _layers_manifest(snapshot)
-    events = [_event(1, "step_input_snapshot", {
-        "layers_snapshot": snapshot,
-        "provider_request_envelope": {
-            "request_body_sha256": "same-request",
-            "context_window_tokens": "[redacted]",
-            "layers_manifest": manifest,
-        },
-    }, phase="reaction", iteration=1)]
-
-    frame = build_live_state(
-        events, live_context_root=str(context), use_live_layers=True,
-    )["call_frames"][0]
-
-    assert frame["context_usage"]["window_tokens"] == 1_000_000
 
 
 def test_latest_event_index_reads_round_jsonl_last_event(tmp_path):

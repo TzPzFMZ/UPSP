@@ -440,8 +440,9 @@ export function initEvents(): void {
     const retryMemory = target.closest<HTMLElement>("[data-retry-memory-detail]");
     if (retryMemory) {
       const itemId = retryMemory.dataset.memoryId || "";
+      const generation = openMemoryDetail(itemId, { retry: true });
       void loadDepositionDetail("memory", itemId, { force: true, render: false })
-        .then(() => openMemoryDetail(itemId, { retry: true }));
+        .then(() => openMemoryDetail(itemId, { retry: true, generation }));
       return;
     }
 
@@ -589,9 +590,9 @@ export function initEvents(): void {
       const itemId = depositionButton.dataset.depositionId || "";
       if (kind === "memory") {
         state.selectedMemoryId = itemId;
-        openMemoryDetail(itemId);
+        const generation = openMemoryDetail(itemId);
         void loadDepositionDetail(kind, itemId, { render: false })
-          .then(() => openMemoryDetail(itemId, { retry: true }));
+          .then(() => openMemoryDetail(itemId, { retry: true, generation }));
         return;
       } else if (kind === "container") state.selectedContainerId = itemId;
       else state.selectedRelationId = itemId;
@@ -608,9 +609,9 @@ export function initEvents(): void {
         state.selectedMemoryId = itemId;
         setPage("mem", "map");
         els.stagePage.querySelector<HTMLElement>(`[data-deposition-kind="memory"][data-deposition-id="${CSS.escape(itemId)}"]`)?.focus();
-        openMemoryDetail(itemId);
+        const generation = openMemoryDetail(itemId);
         void loadDepositionDetail(kind, itemId, { render: false })
-          .then(() => openMemoryDetail(itemId, { retry: true }));
+          .then(() => openMemoryDetail(itemId, { retry: true, generation }));
         return;
       } else if (kind === "container") {
         state.selectedContainerId = itemId;

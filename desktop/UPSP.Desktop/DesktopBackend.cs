@@ -48,6 +48,7 @@ internal sealed class DesktopBackend : IDisposable
 
     internal async Task StartAsync()
     {
+        if (!HasExited) throw new InvalidOperationException("本地后端仍在运行，不能重复启动。");
         var python = Path.Combine(_programRoot, "runtime", "python", "python.exe");
         var server = Path.Combine(_programRoot, "tools", "serve_seed_gui.py");
         if (!File.Exists(python) || !File.Exists(server))
@@ -55,9 +56,7 @@ internal sealed class DesktopBackend : IDisposable
             throw new InvalidOperationException("安装文件不完整，请重新安装 UPSP。");
         }
 
-        var localRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "UPSP");
+        var localRoot = DesktopPaths.LocalStateRoot;
         var cacheRoot = Path.Combine(localRoot, "cache", "python");
         Directory.CreateDirectory(cacheRoot);
         Directory.CreateDirectory(Path.Combine(localRoot, "logs"));
@@ -83,6 +82,7 @@ internal sealed class DesktopBackend : IDisposable
         start.Environment["UPSP_DESKTOP_CONTROL_TOKEN"] = _token;
         start.Environment["UPSP_DESKTOP_SESSION_ID"] = _sessionId;
         start.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
+        start.Environment["UPSP_LOCAL_STATE_ROOT"] = localRoot;
 
         _process = Process.Start(start)
             ?? throw new InvalidOperationException("无法启动 UPSP 本地后端。");
@@ -90,6 +90,43 @@ internal sealed class DesktopBackend : IDisposable
         {
             _job = new JobObject();
             _job.Add(_process);
+            _ = DrainErrorsAsync(_process);
+
+            string? readyLine;
+            try
+            {
+                readyLine = await _process.StandardOutput.ReadLineAsync()
+                    .WaitAsync(TimeSpan.FromSeconds(30));
+            }
+            catch (TimeoutException)
+            {
+                throw StartupFailure("本地后端启动超时。");
+            }
+            if (string.IsNullOrWhiteSpace(readyLine))
+            {
+                throw StartupFailure("本地后端未返回启动记录。");
+            }
+
+            using var ready = JsonDocument.Parse(readyLine);
+            var root = ready.RootElement;
+            var schema = Text(root, "schema_version");
+            var session = Text(root, "session_id");
+            var origin = Text(root, "origin");
+            var productVersion = Text(root, "product_version");
+            var processId = Number(root, "process_id");
+            var expectedVersion = typeof(DesktopBackend).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+                .InformationalVersion ?? "";
+            if (schema != "upsp_desktop_ready.v1"
+                || session != _sessionId
+                || processId != _process.Id
+                || origin != "http://127.0.0.1:8770"
+                || productVersion != expectedVersion)
+            {
+                throw StartupFailure("本地后端启动记录校验失败。");
+            }
+            Origin = new Uri(origin + "/", UriKind.Absolute);
+            _ = DrainOutputAsync(_process);
         }
         catch
         {
@@ -98,43 +135,6 @@ internal sealed class DesktopBackend : IDisposable
             _job = null;
             throw;
         }
-        _ = DrainErrorsAsync(_process);
-
-        string? readyLine;
-        try
-        {
-            readyLine = await _process.StandardOutput.ReadLineAsync()
-                .WaitAsync(TimeSpan.FromSeconds(30));
-        }
-        catch (TimeoutException)
-        {
-            throw StartupFailure("本地后端启动超时。");
-        }
-        if (string.IsNullOrWhiteSpace(readyLine))
-        {
-            throw StartupFailure("本地后端未返回启动记录。");
-        }
-
-        using var ready = JsonDocument.Parse(readyLine);
-        var root = ready.RootElement;
-        var schema = Text(root, "schema_version");
-        var session = Text(root, "session_id");
-        var origin = Text(root, "origin");
-        var productVersion = Text(root, "product_version");
-        var processId = Number(root, "process_id");
-        var expectedVersion = typeof(DesktopBackend).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
-            .InformationalVersion ?? "";
-        if (schema != "upsp_desktop_ready.v1"
-            || session != _sessionId
-            || processId != _process.Id
-            || origin != "http://127.0.0.1:8770"
-            || productVersion != expectedVersion)
-        {
-            throw StartupFailure("本地后端启动记录校验失败。");
-        }
-        Origin = new Uri(origin + "/", UriKind.Absolute);
-        _ = DrainOutputAsync(_process);
     }
 
     internal async Task<RuntimeSnapshot> GetStatusAsync()
@@ -147,7 +147,9 @@ internal sealed class DesktopBackend : IDisposable
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync());
         var root = document.RootElement;
-        if (Text(root, "schema_version") != "seed_gui_runtime_status.v3")
+        if (Text(root, "schema_version") != "seed_gui_runtime_status.v3"
+            || Number(root, "process_id") != _process!.Id
+            || !root.TryGetProperty("current_round", out _))
         {
             throw new InvalidOperationException("本地后端状态版本不受支持。");
         }
@@ -164,7 +166,8 @@ internal sealed class DesktopBackend : IDisposable
         {
             outcome = Text(last, "status");
             settlement = Text(last, "settlement_status");
-            var stoppedWithoutRound = outcome == "round_stopped"
+            var stoppedWithoutRound = outcome == "round_stopped" && settlement != "unsettled"
+                && last.TryGetProperty("round_num", out _)
                 && OptionalNumber(last, "round_num") is null;
             stopSafe = outcome == "round_stopped"
                 && (stoppedWithoutRound || settlement is "degraded" or "settled" or "closed");
@@ -196,6 +199,11 @@ internal sealed class DesktopBackend : IDisposable
         response.EnsureSuccessStatusCode();
         using var receipt = JsonDocument.Parse(
             await response.Content.ReadAsStreamAsync());
+        if (Text(receipt.RootElement, "schema_version") != "seed_gui_runtime_stop_receipt.v1"
+            || !Boolean(receipt.RootElement, "accepted"))
+        {
+            throw new InvalidOperationException("停止回执无效，请回查当前轮次。");
+        }
         return Text(receipt.RootElement, "reason") != "local_cleanup_in_progress";
     }
 
@@ -227,6 +235,12 @@ internal sealed class DesktopBackend : IDisposable
         {
             return false;
         }
+        using var receipt = JsonDocument.Parse(await response.Content.ReadAsStreamAsync());
+        if (Text(receipt.RootElement, "schema_version") != "upsp_desktop_shutdown_receipt.v1"
+            || !Boolean(receipt.RootElement, "accepted"))
+        {
+            throw new InvalidOperationException("本地后端关闭回执无效，退出结果尚未确认。");
+        }
         try
         {
             await _process!.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
@@ -235,8 +249,7 @@ internal sealed class DesktopBackend : IDisposable
         catch (TimeoutException)
         {
             DesktopLog.Write(
-                "Graceful backend shutdown timed out; terminating the managed process tree.");
-            TerminateStartedProcess();
+                "Backend shutdown timed out; retaining process ownership until exit is confirmed.");
             return HasExited;
         }
     }
@@ -300,12 +313,13 @@ internal sealed class DesktopBackend : IDisposable
             if (_process?.HasExited == false)
             {
                 _process.Kill(entireProcessTree: true);
-                _process.WaitForExit(5000);
+                if (!_process.WaitForExit(5000))
+                    DesktopLog.Write(new TimeoutException("Startup child exit remains unconfirmed."));
             }
         }
-        catch
+        catch (Exception error)
         {
-            // Best effort after the process failed to enter the Job Object.
+            DesktopLog.Write(error);
         }
     }
 
@@ -324,7 +338,8 @@ internal sealed class DesktopBackend : IDisposable
     private static bool Boolean(JsonElement root, string name) =>
         root.TryGetProperty(name, out var value)
         && value.ValueKind is JsonValueKind.True or JsonValueKind.False
-        && value.GetBoolean();
+            ? value.GetBoolean()
+            : throw new InvalidOperationException($"本地后端状态字段无效：{name}");
 
     private static int Number(JsonElement root, string name) =>
         root.TryGetProperty(name, out var value)
@@ -333,12 +348,18 @@ internal sealed class DesktopBackend : IDisposable
             ? number
             : -1;
 
-    private static int? OptionalNumber(JsonElement root, string name) =>
-        root.TryGetProperty(name, out var value)
-        && value.ValueKind == JsonValueKind.Number
-        && value.TryGetInt32(out var number)
-            ? number
-            : null;
+    private static int? OptionalNumber(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) && number > 0)
+        {
+            return number;
+        }
+        throw new InvalidOperationException($"本地后端状态字段无效：{name}");
+    }
 
     private static string Hex(int bytes) =>
         Convert.ToHexString(RandomNumberGenerator.GetBytes(bytes)).ToLowerInvariant();
@@ -361,10 +382,7 @@ internal static class DesktopLog
     {
         try
         {
-            var root = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "UPSP",
-                "logs");
+            var root = Path.Combine(DesktopPaths.LocalStateRoot, "logs");
             Directory.CreateDirectory(root);
             lock (Sync)
             {
@@ -412,7 +430,9 @@ internal sealed class JobObject : IDisposable
                 pointer,
                 (uint)length))
             {
-                throw new System.ComponentModel.Win32Exception();
+                var error = Marshal.GetLastWin32Error();
+                Dispose();
+                throw new System.ComponentModel.Win32Exception(error);
             }
         }
         finally
@@ -438,20 +458,20 @@ internal sealed class JobObject : IDisposable
         }
     }
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr CreateJobObject(IntPtr securityAttributes, string? name);
 
-    [DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetInformationJobObject(
         IntPtr job,
         uint informationClass,
         IntPtr information,
         uint informationLength);
 
-    [DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
 
-    [DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
     [StructLayout(LayoutKind.Sequential)]

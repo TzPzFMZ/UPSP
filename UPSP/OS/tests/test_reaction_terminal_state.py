@@ -39,17 +39,16 @@ def test_spec564_runtime_auto_continue_sets_relay_flag():
 
     sm = StateManager()
     relay, ledger, guard = build_runtime_auto_continue_closeout(
-        sm,
         elapsed_seconds=1900,
         time_limit_seconds=600,
     )
 
-    assert sm.flags["continue_requested"] is True
-    assert relay["status"] == "continue_requested_set"
+    assert "continue_requested" not in sm.flags
+    assert relay["status"] == "continue_requested_pending"
     assert relay["source"] == "runtime_auto_continue"
     assert ledger["closeout_decision"] == "continue"
     assert ledger["source"] == "runtime_auto_continue"
-    assert guard["set_flags"] == ["continue_requested"]
+    assert guard["requested_flags"] == ["continue_requested"]
 
 
 def test_spec758_natural_reply_preserves_runtime_mount_blocked_closeout():

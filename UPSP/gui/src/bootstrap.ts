@@ -1,3 +1,4 @@
+import { fetchLocalJson as requestJson, submissionUnconfirmed } from "./local-request";
 import type {
   BootstrapDraft,
   BootstrapPersonaPreset,
@@ -56,21 +57,6 @@ function jsonObject(value: unknown): JsonObject {
     : {};
 }
 
-async function requestJson<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { cache: "no-store", ...options });
-  let payload: unknown = {};
-  try {
-    payload = await response.json();
-  } catch {
-    payload = {};
-  }
-  if (!response.ok) {
-    const body = jsonObject(payload);
-    throw new Error(typeof body.error === "string" ? body.error : `HTTP ${response.status}`);
-  }
-  return payload as T;
-}
-
 async function loadRecoveryCatalog(): Promise<void> {
   if (recoveryCatalogLoading || recoveryCatalog) return;
   recoveryCatalogLoading = true;
@@ -104,7 +90,11 @@ async function activateRecoveryPersona(pid: string, instanceId: string): Promise
     }
     bootstrapProjection.feedback = t("正在切换位格或分身");
   } catch (error: unknown) {
-    bootstrapProjection.error = error instanceof Error ? error.message : String(error);
+    recoveryCatalog = null;
+    await loadRecoveryCatalog();
+    bootstrapProjection.error = submissionUnconfirmed(error)
+      ? t("提交结果未确认；正在回查实际状态，请先核对记录再操作。")
+      : error instanceof Error ? error.message : String(error);
     bootstrapProjection.pending = false;
     renderBootstrap();
   }
@@ -526,7 +516,11 @@ async function testProvider(): Promise<void> {
     await pollBootstrapStatus();
   } catch (error: unknown) {
     bootstrapProjection.testToken = "";
-    bootstrapProjection.error = `${t("模型测试失败")}：${error instanceof Error ? error.message : String(error)}`;
+    await pollBootstrapStatus(false);
+    bootstrapProjection.feedback = "";
+    bootstrapProjection.error = submissionUnconfirmed(error)
+      ? t("提交结果未确认；正在回查实际状态，请先核对记录再操作。")
+      : `${t("模型测试失败")}：${error instanceof Error ? error.message : String(error)}`;
   } finally {
     bootstrapProjection.pending = false;
     renderBootstrap();
@@ -583,7 +577,14 @@ async function createPersona(): Promise<void> {
         return;
       }
     }
-    bootstrapProjection.error = `${t("位格创建失败")}：${
+    bootstrapProjection.feedback = "";
+    if (bootstrapProjection.manageNewPersona) {
+      recoveryCatalog = null;
+      await loadRecoveryCatalog();
+    }
+    bootstrapProjection.error = submissionUnconfirmed(error)
+      ? t("提交结果未确认；正在回查实际状态，请先核对记录再操作。")
+      : `${t("位格创建失败")}：${
       message === "instance_restart_host_required"
         ? t("此操作需要桌面客户端安全重启后端。")
         : message

@@ -178,11 +178,8 @@ class RoundAuditRecorder:
                 )
                 prepared["logical_call_id"] = logical_call_id
                 prepared["route_slot"] = attempt
-                fingerprint = getattr(executor, "_endpoint_fingerprint", None)
-                if callable(fingerprint):
-                    tried_endpoint_fingerprints.add(
-                        fingerprint(prepared.get("endpoint_config"))
-                    )
+                tried_endpoint_fingerprints.add(
+                    executor._endpoint_fingerprint(prepared.get("endpoint_config")))
             except Exception as exc:
                 try:
                     store.record_llm_error(round_num, phase, iteration, exc)
@@ -205,26 +202,13 @@ class RoundAuditRecorder:
             except Exception:
                 pass
             try:
-                call_once = getattr(executor, "call_prepared_once", None)
-                binder = getattr(executor, "bind_stream_event_sink", None)
-                previous_sink = None
-                if callable(binder):
-                    previous_sink = binder(
-                        lambda event_type, payload: store.record_llm_stream_event(
-                            round_num,
-                            phase,
-                            iteration,
-                            event_type,
-                            payload,
-                        )
-                    )
+                previous_sink = executor.bind_stream_event_sink(
+                    lambda event_type, payload: store.record_llm_stream_event(
+                        round_num, phase, iteration, event_type, payload))
                 try:
-                    if callable(call_once):
-                        return call_once(prepared)
-                    return executor.call_prepared(prepared)
+                    return executor.call_prepared_once(prepared)
                 finally:
-                    if callable(binder):
-                        binder(previous_sink)
+                    executor.bind_stream_event_sink(previous_sink)
             except Exception as exc:
                 fallback_tier = self._fallback_tier_for_prepared_error(
                     executor,
@@ -292,19 +276,10 @@ class RoundAuditRecorder:
             prepared,
             error,
             tried_endpoint_fingerprints=None):
-        allows_failover = getattr(executor, "_allows_provider_failover", None)
-        if callable(allows_failover):
-            if not allows_failover(error):
-                return None
-        else:
-            is_transient = getattr(executor, "_is_transient_provider_error", None)
-            if not callable(is_transient) or not is_transient(error):
-                return None
-        fallback = getattr(executor, "_fallback_tier", None)
-        if not callable(fallback):
+        if not executor._allows_provider_failover(error):
             return None
         tier = prepared.get("tier") or prepared.get("endpoint")
-        return fallback(
+        return executor._fallback_tier(
             tier,
             current_endpoint=prepared.get("endpoint_config"),
             excluded_fingerprints=tried_endpoint_fingerprints,
@@ -324,12 +299,5 @@ class RoundAuditRecorder:
         return False
 
     def _executor_uses_prepared_requests(self):
-        try:
-            from engines.executor import APIExecutor
-        except Exception:
-            return False
-        executor = self.services.executor
-        if not isinstance(executor, APIExecutor):
-            return False
-        call = getattr(executor, "call", None)
-        return getattr(call, "__func__", None) is APIExecutor.call
+        from engines.executor import APIExecutor
+        return isinstance(self.services.executor, APIExecutor)

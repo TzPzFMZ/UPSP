@@ -109,7 +109,8 @@ def _cases():
                 "patch": patch_text,
             },
             "expected_allowed": False,
-            "expected_reason": "outside_allowlist",
+            "expected_reason": "capability_denied",
+            "expected_denial": "persona_write_denied",
             "expected_handler_called": False,
         },
         {
@@ -160,6 +161,7 @@ def _cases():
             },
             "expected_allowed": False,
             "expected_reason": "outside_allowlist",
+            "expected_denial": "outside_allowlist",
             "expected_handler_called": False,
         },
         {
@@ -336,6 +338,9 @@ def _run_case(case):
         issues.append("allowed_mismatch")
     if reason != case["expected_reason"]:
         issues.append("reason_mismatch")
+    if ("expected_denial" in case
+            and entry["sanitized_details"].get("denial") != case["expected_denial"]):
+        issues.append("denial_mismatch")
     if handler_called != case["expected_handler_called"]:
         issues.append("handler_call_mismatch")
     if issues:
@@ -347,7 +352,8 @@ def run_matrix():
     grant = json.dumps({
         "task_root": str(REPO_ROOT),
         "read_paths": [str(REPO_ROOT)],
-        "write_paths": [str(REPO_ROOT)],
+        # 让位格用例到达真源写保护，不被目录范围检查提前挡住。
+        "write_paths": [str(REPO_ROOT), str(PERSONAS_ROOT)],
         "shell_cwd": str(REPO_ROOT),
         "allowed_tools": [
             "file_read", "file_glob", "file_grep", "file_write", "file_edit",

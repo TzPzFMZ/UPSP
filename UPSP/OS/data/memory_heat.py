@@ -11,23 +11,23 @@ STM 三区：
 """
 import json
 import os
-from datetime import datetime
 
 from data.atomic_write import atomic_write_json
 from paths import HEAT_JSON
 from schemas.memory import default_heat_entry, default_heat_json
 from errors import ReadError
-from constants import local_now
 from data.config_store import ConfigStore
+from data.memory_store import MemoryStore
 from data.stm_heat_calculator import STMHeatCalculator
 
 
 class MemoryHeat:
     """热度值读写管理"""
 
-    def __init__(self, heat_config=None):
+    def __init__(self, heat_config=None, *, memory_store=None):
         self.config = heat_config or ConfigStore().load("memory")["heat"]
         self.calculator = STMHeatCalculator(self.config)
+        self.memory_store = memory_store if memory_store is not None else MemoryStore()
 
     # ==============================================================
     # 读写
@@ -50,16 +50,6 @@ class MemoryHeat:
     def save_heat(self, data):
         """写入 heat.json（原子）"""
         atomic_write_json(HEAT_JSON, data)
-
-    def get_entry(self, mem_id):
-        """获取单条热度"""
-        heat = self.load_heat()
-        entries = heat.get("entries", {})
-        if mem_id not in entries:
-            # 不存在就创建一个默认条目
-            entries[mem_id] = self.new_entry()
-            self.save_heat(heat)
-        return entries[mem_id]
 
     def set_entry(self, mem_id, entry):
         """写入单条热度"""
@@ -161,11 +151,7 @@ class MemoryHeat:
 
     def _memory_ids_touched_in_round(self, round_num):
         touched = set()
-        try:
-            from data.memory_store import MemoryStore
-            meta = MemoryStore().load_meta()
-        except Exception:
-            return touched
+        meta = self.memory_store.load_meta()
 
         for mem_id, entry in meta.items():
             if not isinstance(mem_id, str) or not mem_id.startswith("MEM-"):
@@ -179,56 +165,6 @@ class MemoryHeat:
         return touched
 
     # ==============================================================
-    # 热度增加（被回忆时调用）
-    # ==============================================================
-
-    def recall_boost(self, mem_id, boost=None, round_num=None):
-        """记忆被回忆时加热。不存在则自动创建。
-        round_num 可选，传入则同步更新 meta.json 的 last_recalled_round。"""
-        heat = self.load_heat()
-        entries = heat.get("entries", {})
-        now = local_now().isoformat()
-
-        if mem_id not in entries:
-            entries[mem_id] = self.new_entry()
-            # 修正 compression 字段：auto-created条目可能权重被default_heat_entry误判
-            try:
-                from data.memory_store import MemoryStore
-                weight = MemoryStore().load_meta().get(mem_id, {}).get("weight", 1)
-                entries[mem_id]["compression"] = (weight >= 3)
-            except Exception:
-                pass
-
-        info = entries[mem_id]
-        new_h, ah_high, new_zone = self.calculator.recall_boost(
-            info.get("H", 0),
-            info.get("AH_high", 0),
-            boost=boost,
-        )
-        info["H"] = new_h
-        info["AH_high"] = ah_high
-        info["zone"] = new_zone
-        info["last_heat_at"] = now
-        if new_zone == "显著":
-            info["last_high_at"] = now
-
-        # 被调用 = 打断冷落连续计数（AH_low 归零重新累积）
-        info["AH_low"] = 0
-
-        self.save_heat(heat)
-
-        # 同步更新 meta.json 的召回时间（P0-2 修复）
-        try:
-            from data.memory_store import MemoryStore
-            MemoryStore().mark_recalled(
-                mem_id,
-                round_num=round_num,
-                recalled_at=now,
-            )
-        except Exception:
-            pass
-
-    # ==============================================================
     # 正式入库检查
     # ==============================================================
 
@@ -236,11 +172,7 @@ class MemoryHeat:
         """返回 AH_high 达标且 LTM 尚未正式入库的条目列表。"""
         heat = self.load_heat()
         entries = heat.get("entries", {})
-        try:
-            from data.memory_store import MemoryStore
-            meta = MemoryStore().active_ltm_meta_by_id()
-        except Exception:
-            meta = {}
+        meta = self.memory_store.active_ltm_meta_by_id()
         return self.calculator.check_upgrade(entries, meta)
 
     def new_entry(self, weight=2):

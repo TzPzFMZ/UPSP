@@ -1664,6 +1664,56 @@
     }
   });
 
+  // src/local-request.ts
+  var session = "";
+  var LocalRequestError = class extends Error {
+    constructor(message, status = 0, code4 = "request_failed", payload = {}) {
+      super(message);
+      this.status = status;
+      this.code = code4;
+      this.payload = payload;
+    }
+    status;
+    code;
+    payload;
+  };
+  function submissionUnconfirmed(error) {
+    return !(error instanceof LocalRequestError) || error.status < 400 || error.status >= 500 || error.code === "submission_outcome_unconfirmed";
+  }
+  async function fetchLocalJson(path3, options = {}) {
+    const response = await fetchLocal(path3, options);
+    let payload;
+    try {
+      payload = await response.json();
+    } catch {
+      if (response.ok) throw new LocalRequestError("invalid_json_response", response.status, "invalid_json_response");
+    }
+    const object = payload !== null && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
+    if (!response.ok) {
+      const code4 = typeof object?.error === "string" ? object.error : "request_failed";
+      throw new LocalRequestError(code4, response.status, code4, object || {});
+    }
+    if (!object) throw new LocalRequestError("invalid_json_object", response.status, "invalid_json_object");
+    return object;
+  }
+  async function fetchLocal(path3, options = {}) {
+    const headers = new Headers(options.headers);
+    if (options.method?.toUpperCase() === "POST") {
+      if (!session) {
+        const status = await fetch("./api/runtime/status", { cache: "no-store" });
+        session = status.headers.get("X-UPSP-Request-Session") || "";
+        await status.arrayBuffer();
+      }
+      if (!session) throw new Error("request_session_unavailable");
+      headers.set("X-UPSP-Request-Session", session);
+      headers.set("X-UPSP-Request-Id", crypto.randomUUID());
+    }
+    const response = await fetch(path3, { cache: "no-store", ...options, headers });
+    const observed = response.headers.get("X-UPSP-Request-Session");
+    if (observed) session = observed;
+    return response;
+  }
+
   // src/i18n.ts
   var english = {
     "\u6B63\u5728\u68C0\u67E5\u521D\u59CB\u5316\u72B6\u6001": "Checking initialization status",
@@ -2444,10 +2494,12 @@
     "\u8FD0\u884C\u65F6\u6267\u884C\u5931\u8D25": "Runtime execution failed",
     "\u672C\u5730\u8FD0\u884C\u65F6\u5BBF\u4E3B\u4E0D\u53EF\u7528": "Local runtime host unavailable",
     "\u63D0\u4EA4\u5931\u8D25": "Submission failed",
+    "\u63D0\u4EA4\u7ED3\u679C\u672A\u786E\u8BA4\uFF1B\u6B63\u5728\u56DE\u67E5\u5B9E\u9645\u72B6\u6001\uFF0C\u8BF7\u5148\u6838\u5BF9\u8BB0\u5F55\u518D\u64CD\u4F5C\u3002": "Submission outcome is unconfirmed. Checking current state; review the records before acting again.",
     "\u5F53\u524D\u7ED3\u6784\u5316\u72B6\u6001\u4E0D\u662F\u53EF\u6267\u884C\u4E2D\u7EE7\u3002": "The structured state is not ready for relay.",
     "\u5DF2\u6709\u8FD0\u884C\u65F6\u5199\u64CD\u4F5C\u6B63\u5728\u6267\u884C\u3002": "A runtime write is already in progress.",
     "\u5DF2\u4FDD\u6301\u53D7\u9650\u6743\u9650\uFF1B\u672A\u6267\u884C\u4E2D\u7EE7\u3002": "Limited permission retained; relay was not run.",
     "\u4E2D\u7EE7\u5DF2\u5B8C\u6210\uFF1B\u754C\u9762\u53EA\u663E\u793A\u968F\u540E\u91CD\u8BFB\u5230\u7684\u771F\u5B9E\u8F6E\u6B21\u8D26\u672C\u3002": "Relay completed; the interface only shows real round-ledger data read afterward.",
+    "\u4E2D\u7EE7\u5DF2\u8FD4\u56DE\uFF1B\u8BF7\u6838\u5BF9\u8F6E\u6B21\u7ED3\u7B97\u72B6\u6001\u3002": "Relay returned. Review the round settlement status.",
     "\u4E2D\u7EE7\u53C2\u6570\u65E0\u6548": "Invalid relay parameters",
     "\u4E2D\u7EE7\u72B6\u6001\u5DF2\u53D8\u5316\u6216\u5DF2\u6709\u5199\u64CD\u4F5C\u5728\u9014": "Relay state changed or another write is in progress",
     "\u8FD0\u884C\u65F6\u4E2D\u7EE7\u6267\u884C\u5931\u8D25": "Runtime relay failed",
@@ -2715,6 +2767,7 @@
     "\u8BF7\u68C0\u67E5\u7F51\u7EDC\u548C\u4E0A\u6E38\u8D1F\u8F7D\u540E\u91CD\u8BD5\uFF1B\u6301\u7EED\u53D1\u751F\u65F6\u518D\u8C03\u6574\u5BF9\u5E94\u8D85\u65F6\u914D\u7F6E\u3002": "Check the network and upstream load, then retry. Adjust the matching timeout only if this persists.",
     "\u6A21\u578B\u670D\u52A1\u8FDE\u63A5\u4E2D\u65AD": "Model service connection was interrupted",
     "\u4E0A\u6B21\u4EFB\u52A1\u610F\u5916\u4E2D\u65AD\uFF0C\u4E0B\u4E00\u6761\u6D88\u606F\u5C06\u5148\u6838\u5BF9\u73B0\u573A": "The previous task was interrupted. Your next message will reconcile the recorded state first.",
+    "\u672C\u5730\u5199\u5165\u6062\u590D\u5C1A\u672A\u786E\u8BA4\uFF0C\u8BF7\u5148\u6838\u5BF9\u53D7\u5F71\u54CD\u8BB0\u5F55": "Local write recovery is unconfirmed. Review the affected records before continuing.",
     "\u5DF2\u786E\u5B9A\u52A8\u4F5C": "Determined actions",
     "\u53D7\u963B\u6216\u7ED3\u679C\u4E0D\u786E\u5B9A\u52A8\u4F5C": "Blocked or uncertain actions",
     "\u8FDE\u63A5\u5DF2\u7ECF\u5EFA\u7ACB\uFF0C\u4F46\u5728\u54CD\u5E94\u5B8C\u6210\u524D\u88AB\u8FDC\u7AEF\u6216\u7F51\u7EDC\u4E2D\u65AD\u3002": "The connection was established but the remote service or network closed it before the response completed.",
@@ -46214,10 +46267,29 @@
   var markdownStickResolvers = /* @__PURE__ */ new WeakMap();
   var imageLoads = /* @__PURE__ */ new Map();
   var mermaidRenders = /* @__PURE__ */ new Map();
+  var pruneScheduled = false;
   var documentSequence = 0;
   var mermaidSequence = 0;
   var mermaidModule = null;
   var interactionsReady = false;
+  function clearMarkdownDocuments() {
+    htmlCache.clear();
+    documentPrefixes.clear();
+    approvedImageDocuments.clear();
+    mermaidRenders.clear();
+    imageLoads.clear();
+  }
+  function scheduleMarkdownPrune() {
+    if (pruneScheduled) return;
+    pruneScheduled = true;
+    queueMicrotask(() => {
+      pruneScheduled = false;
+      const mounted = new Set([...document.querySelectorAll(".md-document[data-markdown-document-id]")].map((element6) => element6.dataset.markdownDocumentId));
+      for (const cache of [htmlCache, documentPrefixes, approvedImageDocuments, mermaidRenders]) {
+        for (const id of cache.keys()) if (!mounted.has(id)) cache.delete(id);
+      }
+    });
+  }
   function escapeHtml(value) {
     return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
   }
@@ -46266,6 +46338,9 @@
   };
   var sanitizeSchema = {
     ...defaultSchema,
+    // Raw HTML is disabled; remark assigns document-scoped IDs. A second
+    // sanitizer prefix would change those IDs without changing their hrefs.
+    clobberPrefix: "",
     tagNames: [...(defaultSchema.tagNames || []).filter((tag) => !["img", "picture", "source"].includes(tag)), "button"],
     attributes: {
       ...defaultSchema.attributes,
@@ -46324,6 +46399,7 @@
       html7 = '<pre class="md-render-fallback"><code>'.concat(escapeHtml(source2 || t("\u65E0\u53EF\u5C55\u793A\u5185\u5BB9\u3002")), "</code></pre>");
     }
     htmlCache.set(documentId, { source: source2, html: html7 });
+    mermaidRenders.delete(documentId);
     return '<div class="md-document" data-markdown-document-id="'.concat(escapeHtml(documentId), '">').concat(html7, "</div>");
   }
   function memoryBodyMarkdown(value) {
@@ -46411,9 +46487,8 @@
       image3.addEventListener("load", () => resolve({ width: image3.naturalWidth, height: image3.naturalHeight }), { once: true });
       image3.addEventListener("error", () => reject(new Error("remote_image_load_failed")), { once: true });
       image3.src = url;
-    }).catch((error) => {
-      imageLoads.delete(url);
-      throw error;
+    }).finally(() => {
+      if (imageLoads.get(url) === request) imageLoads.delete(url);
     });
     imageLoads.set(url, request);
     return request;
@@ -46459,14 +46534,19 @@
     return mermaidModule;
   }
   function mermaidHtml(documentId, position3, source2) {
-    const key2 = "".concat(documentId, ":").concat(position3, ":").concat(source2);
-    const existing = mermaidRenders.get(key2);
+    let renders = mermaidRenders.get(documentId);
+    if (!renders) {
+      renders = /* @__PURE__ */ new Map();
+      mermaidRenders.set(documentId, renders);
+    }
+    const key2 = "".concat(position3, ":").concat(source2);
+    const existing = renders.get(key2);
     if (existing) return existing;
     const request = loadMermaidModule().then((loaded) => loaded.renderMermaid("md-diagram-".concat(++mermaidSequence), source2)).catch((error) => {
-      mermaidRenders.delete(key2);
+      renders.delete(key2);
       throw error;
     });
-    mermaidRenders.set(key2, request);
+    renders.set(key2, request);
     return request;
   }
   async function renderMermaid(figure, documentId, position3, source2, scrollContainer, shouldStickToBottom) {
@@ -46556,6 +46636,7 @@
     });
   }
   function hydrateMarkdownDocuments(root6, scrollContainer = null, shouldStickToBottom) {
+    scheduleMarkdownPrune();
     root6.querySelectorAll(".md-document[data-markdown-document-id]").forEach((documentRoot) => {
       if (shouldStickToBottom) markdownStickResolvers.set(documentRoot, shouldStickToBottom);
       enhanceTables(documentRoot);
@@ -47118,8 +47199,9 @@
       }
       const known = Number(interrupted.applied_unregistered || 0) + Number(interrupted.applied_registered || 0) + Number(interrupted.not_applied || 0) + Number(interrupted.known_result || 0);
       const uncertain = Number(interrupted.conflict || 0) + Number(interrupted.outcome_unknown || 0);
-      notice.querySelector("strong").textContent = t("\u4E0A\u6B21\u4EFB\u52A1\u610F\u5916\u4E2D\u65AD\uFF0C\u4E0B\u4E00\u6761\u6D88\u606F\u5C06\u5148\u6838\u5BF9\u73B0\u573A");
+      notice.querySelector("strong").textContent = interrupted.reason === "persistent_effect_recovery_required" ? t("\u672C\u5730\u5199\u5165\u6062\u590D\u5C1A\u672A\u786E\u8BA4\uFF0C\u8BF7\u5148\u6838\u5BF9\u53D7\u5F71\u54CD\u8BB0\u5F55") : t("\u4E0A\u6B21\u4EFB\u52A1\u610F\u5916\u4E2D\u65AD\uFF0C\u4E0B\u4E00\u6761\u6D88\u606F\u5C06\u5148\u6838\u5BF9\u73B0\u573A");
       notice.querySelector("small").textContent = "".concat(t("\u5DF2\u786E\u5B9A\u52A8\u4F5C"), " ").concat(known, " \xB7 ").concat(t("\u53D7\u963B\u6216\u7ED3\u679C\u4E0D\u786E\u5B9A\u52A8\u4F5C"), " ").concat(uncertain);
+      if (interrupted.affected_ids?.length) notice.querySelector("small").textContent += " \xB7 ".concat(interrupted.affected_ids.join(", "));
       order2.push(key2);
     }
     if (runtimeProjection.liveError) {
@@ -47237,6 +47319,7 @@
   // src/view.ts
   var navCollapseTimer = 0;
   var manualReturnFocus = null;
+  var detailGeneration = 0;
   var systemCloseTimer = 0;
   var systemReturnFocus = null;
   var globalSettingsReturnFocus = null;
@@ -47628,6 +47711,7 @@
     return time ? '<time class="'.concat(escapeHtml2(className), '" datetime="').concat(escapeHtml2(time.source), '" title="').concat(escapeHtml2(time.title), '">').concat(escapeHtml2(time.label), "</time>") : "";
   }
   function renderChat() {
+    scheduleMarkdownPrune();
     renderConversationTimeline();
   }
   function captureStageScroll() {
@@ -47653,6 +47737,7 @@
   }
   function renderStage(pageId) {
     if (deferSystemWindowRender(() => renderStage(pageId))) return;
+    scheduleMarkdownPrune();
     const renderers = {
       run: renderRunPage,
       persona: renderPersonaPage,
@@ -48815,6 +48900,8 @@
     const pane = frame?.context_panes?.find((entry) => entry.id === "01_tool_header");
     const tool = contextToolAnnotations(pane).find((entry) => entry.name === toolName);
     if (!selectedRound || !frame || !tool) return;
+    detailGeneration += 1;
+    state.manualFile = "";
     rememberDetailFocus();
     showDetail({
       sourceType: "TOOL",
@@ -48841,9 +48928,12 @@
     els.manualBody.innerHTML = '<section class="detail-load-error"><h3>'.concat(t("\u8BFB\u53D6\u5931\u8D25"), "</h3><p>").concat(escapeHtml2(message), '</p><button type="button" ').concat(retryAttributes, ">").concat(t("\u53EA\u8BFB\u91CD\u8BD5"), "</button></section>");
     els.manualOverlay.hidden = false;
   }
-  function openMemoryDetail(itemId, { retry = false } = {}) {
+  function openMemoryDetail(itemId, { retry = false, generation = detailGeneration } = {}) {
+    if (generation !== detailGeneration) return -1;
     const item = depositionItems("memory").find((entry) => entry.id === itemId);
-    if (!item) return;
+    if (!item) return -1;
+    detailGeneration += 1;
+    state.manualFile = "";
     if (!retry) rememberDetailFocus();
     const detail = depositionDetail("memory", itemId);
     const sourceRound = detail?.created_round ?? item.created_round;
@@ -48899,8 +48989,10 @@
       }
     }
     if (!retry) focusDetailClose();
+    return detailGeneration;
   }
   async function openManual(file = state.manualFile, { retry = false } = {}) {
+    const generation = ++detailGeneration;
     if (!retry) rememberDetailFocus();
     state.manualFile = file;
     els.manualOverlay.hidden = false;
@@ -48913,6 +49005,7 @@
     if (!retry) focusDetailClose();
     try {
       const parsed = await loadManual(localizedFile);
+      if (generation !== detailGeneration) return;
       showDetail({
         sourceType: "MANUAL",
         title: parsed.meta.title || "UPSP Manual",
@@ -48922,6 +49015,7 @@
         contentMd: parsed.body
       });
     } catch (error) {
+      if (generation !== detailGeneration) return;
       showDetailError({
         sourceType: "MANUAL",
         title: manualTitles[file] ? t(manualTitles[file][0]) : "UPSP Manual",
@@ -48937,6 +49031,8 @@
     return parseFrontmatter(await response.text());
   }
   function openLedgerEvent(round, cardId, card) {
+    detailGeneration += 1;
+    state.manualFile = "";
     rememberDetailFocus();
     showDetail({
       sourceType: "RUNTIME",
@@ -48950,6 +49046,8 @@
     focusDetailClose();
   }
   async function openProtocolDocument(kind, itemId, { retry = false } = {}) {
+    const generation = ++detailGeneration;
+    state.manualFile = "";
     if (!retry) rememberDetailFocus();
     const sourceType = kind === "rule" ? "RULES" : "DOCS";
     els.manualOverlay.hidden = false;
@@ -48963,6 +49061,7 @@
       const response = await fetch("./api/protocol/document?kind=".concat(kind, "&id=").concat(encodeURIComponent(itemId)), { cache: "no-store" });
       if (!response.ok) throw new Error("protocol_document_read_failed:".concat(response.status));
       const payload = await response.json();
+      if (generation !== detailGeneration) return;
       if (payload.schema_version !== "seed_gui_protocol_document.v1" || payload.kind !== kind || payload.id !== itemId || typeof payload.content_md !== "string") {
         throw new Error("protocol_document_schema_mismatch");
       }
@@ -48975,6 +49074,7 @@
         contentMd: payload.content_md
       });
     } catch (error) {
+      if (generation !== detailGeneration) return;
       showDetailError({
         sourceType,
         title: itemId.split("/").at(-1) || itemId,
@@ -48997,6 +49097,9 @@
     return { meta, body: match[2] };
   }
   function closeManual() {
+    detailGeneration += 1;
+    els.manualBody.replaceChildren();
+    scheduleMarkdownPrune();
     if (els.manualOverlay.hidden) return;
     els.manualOverlay.hidden = true;
     const target = manualReturnFocus;
@@ -49128,28 +49231,11 @@
   function escapeHtml3(value) {
     return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
   }
-  function jsonObject(value) {
-    return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
-  }
-  async function requestJson(path3, options = {}) {
-    const response = await fetch(path3, { cache: "no-store", ...options });
-    let payload = {};
-    try {
-      payload = await response.json();
-    } catch {
-      payload = {};
-    }
-    if (!response.ok) {
-      const body3 = jsonObject(payload);
-      throw new Error(typeof body3.error === "string" ? body3.error : "HTTP ".concat(response.status));
-    }
-    return payload;
-  }
   async function loadRecoveryCatalog() {
     if (recoveryCatalogLoading || recoveryCatalog) return;
     recoveryCatalogLoading = true;
     try {
-      const payload = await requestJson("./api/personas");
+      const payload = await fetchLocalJson("./api/personas");
       if (payload.schema_version !== "seed_gui_persona_catalog.v1") {
         throw new Error("persona_catalog_schema_mismatch");
       }
@@ -49166,7 +49252,7 @@
     bootstrapProjection.error = "";
     renderBootstrap();
     try {
-      const receipt = await requestJson("./api/instances/activate", {
+      const receipt = await fetchLocalJson("./api/instances/activate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pid, instance_id: instanceId })
@@ -49176,7 +49262,9 @@
       }
       bootstrapProjection.feedback = t("\u6B63\u5728\u5207\u6362\u4F4D\u683C\u6216\u5206\u8EAB");
     } catch (error) {
-      bootstrapProjection.error = error instanceof Error ? error.message : String(error);
+      recoveryCatalog = null;
+      await loadRecoveryCatalog();
+      bootstrapProjection.error = submissionUnconfirmed(error) ? t("\u63D0\u4EA4\u7ED3\u679C\u672A\u786E\u8BA4\uFF1B\u6B63\u5728\u56DE\u67E5\u5B9E\u9645\u72B6\u6001\uFF0C\u8BF7\u5148\u6838\u5BF9\u8BB0\u5F55\u518D\u64CD\u4F5C\u3002") : error instanceof Error ? error.message : String(error);
       bootstrapProjection.pending = false;
       renderBootstrap();
     }
@@ -49308,7 +49396,7 @@
     const request = (async () => {
       try {
         const wasReady = bootstrapProjection.data?.persona.ready;
-        const payload = await requestJson("./api/bootstrap/status");
+        const payload = await fetchLocalJson("./api/bootstrap/status");
         if (payload.schema_version !== "seed_gui_bootstrap_status.v1") {
           throw new Error("bootstrap_status_schema_mismatch");
         }
@@ -49344,7 +49432,7 @@
     bootstrapProjection.feedback = t("\u6B63\u5728\u6D4B\u8BD5\u6A21\u578B\u8FDE\u63A5");
     renderBootstrap();
     try {
-      const receipt = await requestJson("./api/bootstrap/provider-test", {
+      const receipt = await fetchLocalJson("./api/bootstrap/provider-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}"
@@ -49358,7 +49446,9 @@
       await pollBootstrapStatus();
     } catch (error) {
       bootstrapProjection.testToken = "";
-      bootstrapProjection.error = "".concat(t("\u6A21\u578B\u6D4B\u8BD5\u5931\u8D25"), "\uFF1A").concat(error instanceof Error ? error.message : String(error));
+      await pollBootstrapStatus(false);
+      bootstrapProjection.feedback = "";
+      bootstrapProjection.error = submissionUnconfirmed(error) ? t("\u63D0\u4EA4\u7ED3\u679C\u672A\u786E\u8BA4\uFF1B\u6B63\u5728\u56DE\u67E5\u5B9E\u9645\u72B6\u6001\uFF0C\u8BF7\u5148\u6838\u5BF9\u8BB0\u5F55\u518D\u64CD\u4F5C\u3002") : "".concat(t("\u6A21\u578B\u6D4B\u8BD5\u5931\u8D25"), "\uFF1A").concat(error instanceof Error ? error.message : String(error));
     } finally {
       bootstrapProjection.pending = false;
       renderBootstrap();
@@ -49374,7 +49464,7 @@
     renderBootstrap();
     try {
       const preset = bootstrapProjection.selection === "preset";
-      const receipt = await requestJson(
+      const receipt = await fetchLocalJson(
         bootstrapProjection.manageNewPersona ? "./api/personas" : "./api/bootstrap/persona",
         {
           method: "POST",
@@ -49415,7 +49505,12 @@
           return;
         }
       }
-      bootstrapProjection.error = "".concat(t("\u4F4D\u683C\u521B\u5EFA\u5931\u8D25"), "\uFF1A").concat(message === "instance_restart_host_required" ? t("\u6B64\u64CD\u4F5C\u9700\u8981\u684C\u9762\u5BA2\u6237\u7AEF\u5B89\u5168\u91CD\u542F\u540E\u7AEF\u3002") : message);
+      bootstrapProjection.feedback = "";
+      if (bootstrapProjection.manageNewPersona) {
+        recoveryCatalog = null;
+        await loadRecoveryCatalog();
+      }
+      bootstrapProjection.error = submissionUnconfirmed(error) ? t("\u63D0\u4EA4\u7ED3\u679C\u672A\u786E\u8BA4\uFF1B\u6B63\u5728\u56DE\u67E5\u5B9E\u9645\u72B6\u6001\uFF0C\u8BF7\u5148\u6838\u5BF9\u8BB0\u5F55\u518D\u64CD\u4F5C\u3002") : "".concat(t("\u4F4D\u683C\u521B\u5EFA\u5931\u8D25"), "\uFF1A").concat(message === "instance_restart_host_required" ? t("\u6B64\u64CD\u4F5C\u9700\u8981\u684C\u9762\u5BA2\u6237\u7AEF\u5B89\u5168\u91CD\u542F\u540E\u7AEF\u3002") : message);
       bootstrapProjection.pending = false;
       renderBootstrap();
     }
@@ -49556,48 +49651,24 @@
   }
 
   // src/runtime.ts
+  var settingsGeneration = 0;
   var contextPrefixDiffController = null;
   var depositionDetailRequests = /* @__PURE__ */ new Map();
+  var depositionIndexController = null;
   var LIVE_PROJECTION_RETRY_DELAY_MS = 5e3;
-  var RuntimeRequestError = class extends Error {
-    status;
-    code;
-    payload;
-    constructor(message, status = 0, code4 = "request_failed", payload = {}) {
-      super(message);
-      this.name = "RuntimeRequestError";
-      this.status = status;
-      this.code = code4;
-      this.payload = payload;
-    }
-  };
   function errorView(error) {
-    if (error instanceof RuntimeRequestError) return error;
-    if (error instanceof Error) return new RuntimeRequestError(error.message);
-    return new RuntimeRequestError(String(error || "unknown"));
+    if (error instanceof LocalRequestError) return error;
+    if (error instanceof Error) return new LocalRequestError(error.message);
+    return new LocalRequestError(String(error || "unknown"));
   }
-  function jsonObject2(value) {
+  function mutationOutcomeUnknown(failure) {
+    return failure.status < 400 || failure.status >= 500 || failure.code === "submission_outcome_unconfirmed";
+  }
+  function mutationFailureText(failure, rejected) {
+    return mutationOutcomeUnknown(failure) ? t("\u63D0\u4EA4\u7ED3\u679C\u672A\u786E\u8BA4\uFF1B\u6B63\u5728\u56DE\u67E5\u5B9E\u9645\u72B6\u6001\uFF0C\u8BF7\u5148\u6838\u5BF9\u8BB0\u5F55\u518D\u64CD\u4F5C\u3002") : rejected;
+  }
+  function jsonObject(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
-  }
-  async function fetchRuntimeJson(path3, options = {}) {
-    const response = await fetch(path3, { cache: "no-store", ...options });
-    let payload = {};
-    try {
-      payload = await response.json();
-    } catch {
-      payload = {};
-    }
-    if (!response.ok) {
-      const object = jsonObject2(payload);
-      const code4 = typeof object.error === "string" ? object.error : "request_failed";
-      throw new RuntimeRequestError(
-        typeof object.error === "string" ? object.error : "HTTP ".concat(response.status),
-        response.status,
-        code4,
-        object
-      );
-    }
-    return payload;
   }
   function runtimeProjectionAdvanced() {
     const baseline = runtimeProjection.submitBaseline;
@@ -49618,6 +49689,8 @@
       runtimeProjection.status?.can_stop || false,
       runtimeProjection.status?.pending_tool_approval?.approval_id || "",
       runtimeProjection.status?.interrupted_recovery?.pending || false,
+      runtimeProjection.status?.interrupted_recovery?.reason || "",
+      runtimeProjection.status?.interrupted_recovery?.affected_ids?.join(",") || "",
       runtimeProjection.status?.interrupted_recovery?.round || 0,
       runtimeProjection.status?.interrupted_recovery?.applied_unregistered || 0,
       runtimeProjection.status?.interrupted_recovery?.applied_registered || 0,
@@ -49655,9 +49728,15 @@
       void pollContextPrefixDiffForSelection();
     }
   }
-  function validateLiveState(statePayload) {
-    if (statePayload !== null && statePayload?.schema_version !== "round_live_state.v3") {
+  function validateLiveProjection(payload, incremental = false) {
+    if (!payload || !Object.hasOwn(payload, "round") || !Object.hasOwn(payload, "state") || payload.round !== null && (!Number.isInteger(payload.round) || payload.round < 0) || !incremental && payload.state === null && payload.round !== null) {
+      throw new Error("round_live_projection_schema_mismatch");
+    }
+    if (payload.state !== null && payload.state?.schema_version !== "round_live_state.v3") {
       throw new Error("round_live_state_schema_mismatch");
+    }
+    if (payload.state !== null && payload.state.round !== payload.round) {
+      throw new Error("round_live_projection_mismatch");
     }
   }
   function selectedContextDiffRef() {
@@ -49679,6 +49758,7 @@
     const ref = selectedContextDiffRef();
     if (!ref) {
       contextPrefixDiffController?.abort();
+      contextPrefixDiffController = null;
       runtimeProjection.contextPrefixDiffKey = "";
       runtimeProjection.contextPrefixDiff = null;
       runtimeProjection.contextPrefixDiffLoading = false;
@@ -49690,28 +49770,30 @@
     contextPrefixDiffController?.abort();
     const controller = new AbortController();
     contextPrefixDiffController = controller;
+    const generation = runtimeProjection.detailGeneration;
+    const ownsRequest = () => contextPrefixDiffController === controller && !controller.signal.aborted && runtimeProjection.detailGeneration === generation;
     runtimeProjection.contextPrefixDiffKey = key2;
     runtimeProjection.contextPrefixDiff = null;
     runtimeProjection.contextPrefixDiffLoading = true;
     runtimeProjection.contextPrefixDiffError = "";
     try {
-      const payload = await fetchRuntimeJson(
+      const payload = await fetchLocalJson(
         "./api/context/request-prefix-diff?round=".concat(ref.round, "&frame_id=").concat(encodeURIComponent(ref.frameId)),
         { signal: controller.signal }
       );
       if (!validContextPrefixDiff(payload, ref)) {
         throw new Error("context_prefix_diff_schema_mismatch");
       }
-      if (runtimeProjection.contextPrefixDiffKey === key2) {
+      if (ownsRequest()) {
         runtimeProjection.contextPrefixDiff = payload;
       }
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError") && runtimeProjection.contextPrefixDiffKey === key2) {
+      if (!(error instanceof DOMException && error.name === "AbortError") && ownsRequest()) {
         const failure = errorView(error);
         runtimeProjection.contextPrefixDiffError = failure.code || failure.message || "unknown";
       }
     } finally {
-      if (runtimeProjection.contextPrefixDiffKey === key2) {
+      if (ownsRequest()) {
         runtimeProjection.contextPrefixDiffLoading = false;
         if (state.activePage === "context" && getActivePageTab("context") === "content") {
           renderStage("context");
@@ -49729,7 +49811,7 @@
   async function fetchLiveDetail(kind, round, ref = "") {
     const query = new URLSearchParams({ kind, round: String(round) });
     if (ref) query.set("ref", ref);
-    const payload = await fetchRuntimeJson("./api/live/detail?".concat(query.toString()));
+    const payload = await fetchLocalJson("./api/live/detail?".concat(query.toString()));
     if (payload.schema_version !== "round_live_detail.v1" || payload.kind !== kind || payload.round !== round) {
       throw new Error("round_live_detail_schema_mismatch");
     }
@@ -49745,7 +49827,7 @@
     try {
       const detail = await fetchLiveDetail("legacy_conversation", round);
       if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return;
-      const body3 = jsonObject2(detail.payload);
+      const body3 = jsonObject(detail.payload);
       if (!Array.isArray(body3.conversation)) throw new Error("legacy_conversation_detail_invalid");
       runtimeProjection.legacyCards.set(round, body3.conversation);
     } catch (error) {
@@ -49770,7 +49852,7 @@
     try {
       const detail = await fetchLiveDetail("ledger", round);
       if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return;
-      const body3 = jsonObject2(detail.payload);
+      const body3 = jsonObject(detail.payload);
       if (!Array.isArray(body3.items)) throw new Error("ledger_detail_invalid");
       runtimeProjection.ledgerItems.set(round, body3.items);
     } catch (error) {
@@ -49790,9 +49872,9 @@
     const generation = runtimeProjection.detailGeneration;
     const detail = await fetchLiveDetail("event", round, eventRef);
     if (generation !== runtimeProjection.detailGeneration || !liveForRound(round)) return null;
-    const body3 = jsonObject2(detail.payload);
+    const body3 = jsonObject(detail.payload);
     const cards = Array.isArray(body3.cards) ? body3.cards : [];
-    const event = jsonObject2(body3.event);
+    const event = jsonObject(body3.event);
     if (cards.length) {
       const sections = cards.map((card) => {
         const title = String(card.title || card.type || "event");
@@ -49913,6 +49995,12 @@
   }
   function clearLiveDetails() {
     runtimeProjection.detailGeneration += 1;
+    contextPrefixDiffController?.abort();
+    contextPrefixDiffController = null;
+    runtimeProjection.contextPrefixDiffKey = "";
+    runtimeProjection.contextPrefixDiff = null;
+    runtimeProjection.contextPrefixDiffLoading = false;
+    runtimeProjection.contextPrefixDiffError = "";
     runtimeProjection.legacyCards.clear();
     runtimeProjection.legacyCardsLoading.clear();
     runtimeProjection.legacyCardsErrors.clear();
@@ -49928,6 +50016,21 @@
   }
   function clearRoundProjectionForIdentityMutation() {
     clearLiveDetails();
+    depositionIndexController?.abort();
+    depositionIndexController = null;
+    polling.deposition = null;
+    polling.depositionForceQueued = false;
+    for (const { controller } of depositionDetailRequests.values()) controller.abort();
+    depositionDetailRequests.clear();
+    depositionProjection.index = null;
+    depositionProjection.details = { memory: {}, container: {}, relation: {} };
+    depositionProjection.pendingDetails.clear();
+    depositionProjection.detailErrors = {};
+    depositionProjection.loading = false;
+    depositionProjection.error = "";
+    depositionProjection.renderKey = "";
+    closeManual();
+    clearMarkdownDocuments();
     state.conversationStickToBottom = true;
     runtimeProjection.hostSession = "";
     runtimeProjection.live = null;
@@ -49978,7 +50081,7 @@
     runtimeProjection.conversationHistoryLoading = true;
     refreshRuntimeUi();
     try {
-      const payload = await fetchRuntimeJson("./api/rounds");
+      const payload = await fetchLocalJson("./api/rounds");
       if (generation !== runtimeProjection.detailGeneration) return;
       if (!Array.isArray(payload.rounds)) throw new Error("round_list_schema_mismatch");
       const roundIds = [...new Set(payload.rounds.map((item) => Number(item.round)).filter((round) => Number.isInteger(round)))].sort((left, right) => left - right);
@@ -49994,9 +50097,9 @@
       const failed = [];
       for (const round of force ? missing.slice(0, 2) : []) {
         try {
-          const roundPayload = await fetchRuntimeJson("./api/live/state?round=".concat(round));
+          const roundPayload = await fetchLocalJson("./api/live/state?round=".concat(round));
           if (generation !== runtimeProjection.detailGeneration) return;
-          validateLiveState(roundPayload.state || null);
+          validateLiveProjection(roundPayload);
           if (Number(roundPayload.round) !== round || !roundPayload.state) {
             throw new Error("round_history_projection_mismatch");
           }
@@ -50042,21 +50145,21 @@
     }
   }
   async function fetchFullLiveProjection() {
-    const payload = await fetchRuntimeJson("./api/live/state?round=latest");
-    validateLiveState(payload.state || null);
-    return { round: payload.round ?? null, state: payload.state || null };
+    const payload = await fetchLocalJson("./api/live/state?round=latest");
+    validateLiveProjection(payload);
+    return payload;
   }
   async function fetchLiveProjection(forceFull = false) {
     if (forceFull || runtimeProjection.fullRefreshNeeded) return fetchFullLiveProjection();
     const after = Number(runtimeProjection.live?.last_event_index || 0);
-    const payload = await fetchRuntimeJson("./api/live/events?round=latest&after=".concat(after));
+    const payload = await fetchLocalJson("./api/live/events?round=latest&after=".concat(after));
     if (payload.schema_version !== "round_live_events.v2") {
       throw new Error("round_live_events_schema_mismatch");
     }
-    const nextRound = payload.round ?? null;
+    validateLiveProjection(payload, true);
+    const nextRound = payload.round;
     if (nextRound !== runtimeProjection.round) return fetchFullLiveProjection();
     if (payload.state != null) {
-      validateLiveState(payload.state);
       return { round: nextRound, state: payload.state };
     }
     return { round: runtimeProjection.round, state: runtimeProjection.live };
@@ -50071,8 +50174,14 @@
       let requestGeneration = runtimeProjection.detailGeneration;
       let status;
       try {
-        status = await fetchRuntimeJson("./api/runtime/status");
-        if (status.schema_version !== "seed_gui_runtime_status.v3") {
+        status = await fetchLocalJson("./api/runtime/status");
+        if (status.schema_version !== "seed_gui_runtime_status.v3" || typeof status.host_session !== "string" || !status.host_session || typeof status.stage !== "string" || !status.stage || !(status.current_round === null || Number.isInteger(status.current_round) && Number(status.current_round) > 0) || [
+          status.can_stop,
+          status.send_in_flight,
+          status.relay_in_flight,
+          status.mutation_in_flight,
+          status.restart_requested
+        ].some((value) => typeof value !== "boolean")) {
           throw new Error("runtime_status_schema_mismatch");
         }
       } catch (error) {
@@ -50090,9 +50199,7 @@
       }
       if (requestGeneration !== runtimeProjection.detailGeneration) return false;
       const nextHostSession = status.host_session || "";
-      const identityChanged = Boolean(
-        runtimeProjection.hostSession && runtimeProjection.hostSession !== nextHostSession
-      );
+      const identityChanged = runtimeProjection.hostSession !== nextHostSession;
       if (identityChanged) {
         clearRoundProjectionForIdentityMutation();
         requestGeneration = runtimeProjection.detailGeneration;
@@ -50196,7 +50303,7 @@
     let changed = force;
     const request = (async () => {
       try {
-        const payload = await fetchRuntimeJson("./api/workbench/task");
+        const payload = await fetchLocalJson("./api/workbench/task");
         if (payload.schema_version !== "seed_gui_task_projection.v1" || payload.task !== null && typeof payload.task !== "object") {
           throw new Error("task_projection_schema_mismatch");
         }
@@ -50235,7 +50342,7 @@
     if (!force && protocolProjection.catalog) return false;
     protocolProjection.loading = true;
     try {
-      const payload = await fetchRuntimeJson("./api/protocol/catalog");
+      const payload = await fetchLocalJson("./api/protocol/catalog");
       if (payload.schema_version !== "seed_gui_protocol_catalog.v1" || !Array.isArray(payload.rules?.categories) || !Array.isArray(payload.docs?.entries)) {
         throw new Error("protocol_catalog_schema_mismatch");
       }
@@ -50259,6 +50366,7 @@
   }
   function acceptSettingsPayload(payload) {
     validateSettingsPayload(payload);
+    settingsGeneration += 1;
     settingsProjection.data = payload;
     settingsProjection.renderKey = JSON.stringify(payload);
     settingsProjection.error = "";
@@ -50299,7 +50407,7 @@
     refreshPersonaUi();
     const request = (async () => {
       try {
-        const payload = await fetchRuntimeJson("./api/persona/core");
+        const payload = await fetchLocalJson("./api/persona/core");
         if (payload.schema_version !== "seed_gui_persona_core.v1" || typeof payload.source_ref !== "string" || typeof payload.content_md !== "string" || !payload.content_md.trim()) {
           throw new Error("persona_core_schema_mismatch");
         }
@@ -50330,7 +50438,7 @@
     if (!personaProjection.state) refreshPersonaUi();
     const request = (async () => {
       try {
-        const payload = await fetchRuntimeJson("./api/persona/state");
+        const payload = await fetchLocalJson("./api/persona/state");
         if (payload.schema_version !== "seed_gui_persona_state.v1" || typeof payload.observed_at !== "string" || typeof payload.source_ref !== "string" || !Array.isArray(payload.fields) || payload.fields.some((field) => typeof field?.path !== "string")) {
           throw new Error("persona_state_schema_mismatch");
         }
@@ -50369,11 +50477,14 @@
     }
     if (!force && settingsProjection.data) return Promise.resolve(false);
     settingsProjection.loading = true;
+    const generation = settingsGeneration;
     const request = (async () => {
       try {
-        acceptSettingsPayload(await fetchRuntimeJson("./api/settings"));
-        settingsProjection.feedback = "";
+        const payload = await fetchLocalJson("./api/settings");
+        if (generation !== settingsGeneration) return false;
+        acceptSettingsPayload(payload);
       } catch (error) {
+        if (generation !== settingsGeneration) return false;
         const failure = errorView(error);
         settingsProjection.error = failure.status === 404 ? t("\u672C\u5730\u5BBF\u4E3B\u7248\u672C\u8FC7\u65E7\uFF0C\u8BF7\u91CD\u542F GUI \u670D\u52A1") : "".concat(t("\u8BBE\u7F6E\u8BFB\u53D6\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
       } finally {
@@ -50393,13 +50504,14 @@
   }
   async function submitSettings(updates) {
     if (settingsProjection.pending || !settingsProjection.data || !updates.length) return;
+    settingsGeneration += 1;
     settingsProjection.pending = true;
     settingsProjection.feedback = t("\u6B63\u5728\u4FDD\u5B58\u8BBE\u7F6E");
     settingsProjection.error = "";
     refreshSettingsUi();
     try {
       for (const [fileId, changes] of updates) {
-        const payload = await fetchRuntimeJson("./api/settings", {
+        const payload = await fetchLocalJson("./api/settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -50413,8 +50525,13 @@
       settingsProjection.feedback = t("\u8BBE\u7F6E\u5DF2\u4FDD\u5B58");
     } catch (error) {
       const failure = errorView(error);
+      if (mutationOutcomeUnknown(failure)) {
+        if (polling.settings) await polling.settings;
+        await pollSettings({ force: true });
+      }
       settingsProjection.error = failure.status === 409 ? t("\u8BBE\u7F6E\u5DF2\u88AB\u5176\u4ED6\u64CD\u4F5C\u66F4\u65B0\uFF0C\u8BF7\u91CD\u65B0\u8F7D\u5165\u540E\u518D\u8BD5") : "".concat(t("\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
-      settingsProjection.feedback = "";
+      settingsProjection.feedback = mutationOutcomeUnknown(failure) ? mutationFailureText(failure, "") : "";
+      if (settingsProjection.feedback) settingsProjection.error = "";
     } finally {
       settingsProjection.pending = false;
     }
@@ -50422,12 +50539,13 @@
   }
   async function submitProviderKey(connectionId, action, key2) {
     if (settingsProjection.pending || !settingsProjection.data) return;
+    settingsGeneration += 1;
     settingsProjection.pending = true;
     settingsProjection.error = "";
     settingsProjection.feedback = action === "set" ? t("\u6B63\u5728\u4FDD\u5B58\u5BC6\u94A5") : t("\u6B63\u5728\u5220\u9664\u5BC6\u94A5");
     refreshSettingsUi();
     try {
-      const payload = await fetchRuntimeJson("./api/settings/provider-key", {
+      const payload = await fetchLocalJson("./api/settings/provider-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -50441,8 +50559,13 @@
       settingsProjection.feedback = action === "set" ? t("\u5BC6\u94A5\u5DF2\u4FDD\u5B58") : t("\u5BC6\u94A5\u5DF2\u5220\u9664");
     } catch (error) {
       const failure = errorView(error);
+      if (mutationOutcomeUnknown(failure)) {
+        if (polling.settings) await polling.settings;
+        await pollSettings({ force: true });
+      }
       settingsProjection.error = failure.status === 409 ? t("\u5F53\u524D\u6709\u5176\u4ED6\u5199\u5165\u6B63\u5728\u8FDB\u884C\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5") : "".concat(action === "set" ? t("\u5BC6\u94A5\u4FDD\u5B58\u5931\u8D25") : t("\u5BC6\u94A5\u5220\u9664\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
-      settingsProjection.feedback = "";
+      settingsProjection.feedback = mutationOutcomeUnknown(failure) ? mutationFailureText(failure, "") : "";
+      if (settingsProjection.feedback) settingsProjection.error = "";
     } finally {
       settingsProjection.pending = false;
     }
@@ -50450,13 +50573,14 @@
   }
   async function submitModelCatalog(entity, action, id, values) {
     if (settingsProjection.pending || !settingsProjection.data) return;
+    settingsGeneration += 1;
     settingsProjection.pending = true;
     settingsProjection.error = "";
     settingsProjection.feedback = t("\u6B63\u5728\u4FDD\u5B58\u8BBE\u7F6E");
     refreshModelCatalogMutationUi(entity, id);
     let saved = false;
     try {
-      const payload = await fetchRuntimeJson("./api/settings/model-catalog", {
+      const payload = await fetchLocalJson("./api/settings/model-catalog", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -50474,8 +50598,13 @@
       saved = true;
     } catch (error) {
       const failure = errorView(error);
+      if (mutationOutcomeUnknown(failure)) {
+        if (polling.settings) await polling.settings;
+        await pollSettings({ force: true });
+      }
       settingsProjection.error = failure.status === 409 ? t("\u8BBE\u7F6E\u5DF2\u88AB\u5176\u4ED6\u64CD\u4F5C\u66F4\u65B0\uFF0C\u8BF7\u91CD\u65B0\u8F7D\u5165\u540E\u518D\u8BD5") : "".concat(t("\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
-      settingsProjection.feedback = "";
+      settingsProjection.feedback = mutationOutcomeUnknown(failure) ? mutationFailureText(failure, "") : "";
+      if (settingsProjection.feedback) settingsProjection.error = "";
     } finally {
       settingsProjection.pending = false;
     }
@@ -50493,49 +50622,60 @@
     if (!itemId) return Promise.resolve(false);
     const key2 = "".concat(kind, ":").concat(itemId);
     const pending = depositionDetailRequests.get(key2);
+    const hostSession = runtimeProjection.hostSession;
     if (pending) {
-      return force ? pending.then(() => loadDepositionDetail(kind, itemId, { force: true, render: render4 })) : pending;
+      return force ? pending.request.then(() => !pending.controller.signal.aborted && runtimeProjection.hostSession === hostSession ? loadDepositionDetail(kind, itemId, { force: true, render: render4 }) : false) : pending.request;
     }
     if (!force && depositionProjection.details[kind]?.[itemId]) return Promise.resolve(true);
     depositionProjection.pendingDetails.add(key2);
     delete depositionProjection.detailErrors[key2];
+    const controller = new AbortController();
+    const ownsRequest = () => runtimeProjection.hostSession === hostSession && depositionDetailRequests.get(key2)?.controller === controller;
     const request = (async () => {
       try {
-        const payload = await fetchRuntimeJson("./api/deposition/".concat(kind, "?id=").concat(encodeURIComponent(itemId)));
+        const payload = await fetchLocalJson("./api/deposition/".concat(kind, "?id=").concat(encodeURIComponent(itemId)), { signal: controller.signal });
+        if (!ownsRequest()) return false;
         if (payload.schema_version !== "seed_gui_deposition_detail.v1" || payload.kind !== kind || payload.item?.id !== itemId) {
           throw new Error("deposition_detail_schema_mismatch");
         }
         depositionProjection.details[kind][itemId] = payload;
         return true;
       } catch (error) {
+        if (!ownsRequest()) return false;
         const failure = errorView(error);
         depositionProjection.detailErrors[key2] = "".concat(t("\u8BE6\u60C5\u8BFB\u53D6\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
         return false;
       }
     })();
     const tracked = request.finally(() => {
+      if (!ownsRequest()) return;
       depositionDetailRequests.delete(key2);
       depositionProjection.pendingDetails.delete(key2);
       if (render4 && state.activePage === depositionPage(kind)) renderStage(state.activePage);
     });
-    depositionDetailRequests.set(key2, tracked);
+    depositionDetailRequests.set(key2, { request: tracked, controller });
     return tracked;
   }
   function pollDeposition({ force = false, ignoreVisibility = false } = {}) {
     if (document.hidden && !ignoreVisibility) return Promise.resolve(false);
+    const hostSession = runtimeProjection.hostSession;
     if (polling.deposition) {
       if (force) {
         polling.depositionForceQueued = true;
-        return polling.deposition.then(() => polling.deposition || pollDeposition({ force: true, ignoreVisibility }));
+        return polling.deposition.then(() => runtimeProjection.hostSession === hostSession ? polling.deposition || pollDeposition({ force: true, ignoreVisibility }) : false);
       }
       return polling.deposition;
     }
     if (!depositionProjection.index) depositionProjection.loading = true;
     let changed = force;
     let loaded = false;
+    const controller = new AbortController();
+    depositionIndexController = controller;
+    const ownsRequest = () => depositionIndexController === controller && runtimeProjection.hostSession === hostSession;
     const request = (async () => {
       try {
-        const payload = await fetchRuntimeJson("./api/deposition");
+        const payload = await fetchLocalJson("./api/deposition", { signal: controller.signal });
+        if (!ownsRequest()) return false;
         if (payload.schema_version !== "seed_gui_deposition_index.v1" || !Array.isArray(payload.memory) || !Array.isArray(payload.containers) || !Array.isArray(payload.relations)) {
           throw new Error("deposition_index_schema_mismatch");
         }
@@ -50554,13 +50694,15 @@
           await Promise.all(selected.map(([kind, item]) => item ? loadDepositionDetail(kind, item.id, { force: true }) : Promise.resolve()));
         }
       } catch (error) {
+        if (!ownsRequest()) return false;
         const failure = errorView(error);
         const nextError = "".concat(t("\u6C89\u6DC0\u7D22\u5F15\u8BFB\u53D6\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message || "unknown");
         changed = changed || nextError !== depositionProjection.error;
         depositionProjection.error = nextError;
       } finally {
-        depositionProjection.loading = false;
+        if (ownsRequest()) depositionProjection.loading = false;
       }
+      if (!ownsRequest()) return false;
       if (changed) {
         renderSourceState();
         if (["mem", "relations", "containers"].includes(state.activePage)) {
@@ -50571,6 +50713,8 @@
       return loaded;
     })();
     polling.deposition = request.finally(() => {
+      if (!ownsRequest()) return;
+      depositionIndexController = null;
       polling.deposition = null;
       if (polling.depositionForceQueued) {
         polling.depositionForceQueued = false;
@@ -50592,6 +50736,7 @@
   }
   async function submitRuntimeMessage(event) {
     event.preventDefault();
+    if (runtimeProjection.sending || runtimeProjection.awaitingProjection) return;
     const message = els.messageInput.value;
     const permissionLevel = els.permissionLevel.value;
     runtimeProjection.sendFeedback = "";
@@ -50625,7 +50770,7 @@
     runtimeProjection.awaitingProjection = true;
     refreshRuntimeUi();
     try {
-      await fetchRuntimeJson("./api/runtime/send", {
+      const receipt = await fetchLocalJson("./api/runtime/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -50634,6 +50779,9 @@
           unlimited_confirmed: permissionLevel === "unlimited" && runtimeProjection.unlimitedConfirmed
         })
       });
+      if (receipt.ok !== true || receipt.command !== "send" || typeof jsonObject(receipt.data).status !== "string") {
+        throw new Error("runtime_send_receipt_mismatch");
+      }
     } catch (error) {
       if (!els.messageInput.value) els.messageInput.value = message;
       const failure = errorView(error);
@@ -50646,7 +50794,10 @@
         502: t("\u8FD0\u884C\u65F6\u6267\u884C\u5931\u8D25"),
         503: t("\u672C\u5730\u8FD0\u884C\u65F6\u5BBF\u4E3B\u4E0D\u53EF\u7528")
       };
-      runtimeProjection.sendFeedback = "".concat(labels[failure.status] || t("\u63D0\u4EA4\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
+      runtimeProjection.sendFeedback = mutationFailureText(
+        failure,
+        "".concat(labels[failure.status] || t("\u63D0\u4EA4\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message)
+      );
     } finally {
       runtimeProjection.sending = false;
       await pollRuntime({ forceFull: true, ignoreVisibility: true });
@@ -50662,9 +50813,9 @@
     let mutationAccepted = false;
     let truthReloaded = false;
     const detailKey2 = "memory:".concat(memId);
-    openMemoryDetail(memId, { retry: true });
+    const generation = openMemoryDetail(memId, { retry: true });
     try {
-      const payload = await fetchRuntimeJson("./api/deposition/memory/periodic", {
+      const payload = await fetchLocalJson("./api/deposition/memory/periodic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, mem_id: memId })
@@ -50694,11 +50845,15 @@
         409: t("Runtime \u6B63\u5FD9\u6216\u6302\u8F7D\u72B6\u6001\u51B2\u7A81"),
         503: t("\u672C\u5730\u5B9A\u671F\u5C42\u5904\u7406\u5668\u4E0D\u53EF\u7528")
       };
-      mutation.feedback = mutationAccepted && !truthReloaded ? t("\u64CD\u4F5C\u5DF2\u63D0\u4EA4\uFF0C\u4F46\u8BB0\u5FC6\u771F\u6E90\u91CD\u8BFB\u5931\u8D25\uFF1B\u4E3A\u907F\u514D\u663E\u793A\u65E7\u72B6\u6001\uFF0C\u8BF7\u91CD\u65B0\u8BFB\u53D6\u8BE6\u60C5\u3002") : failure.code === "periodic_memory_budget_exceeded" ? t("\u5B9A\u671F\u5C42\u5DF2\u8FBE\u5230\u5F53\u524D\u914D\u7F6E\u4E0A\u9650\uFF0C\u8BF7\u5148\u53D6\u6D88\u5176\u4ED6\u6302\u8F7D\u6216\u8C03\u6574\u4E0A\u9650\u540E\u518D\u8BD5\u3002") : "".concat(labels[failure.status] || t("\u5B9A\u671F\u5C42\u6302\u8F7D\u53D8\u66F4\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
+      mutation.feedback = mutationAccepted && !truthReloaded ? t("\u64CD\u4F5C\u5DF2\u63D0\u4EA4\uFF0C\u4F46\u8BB0\u5FC6\u771F\u6E90\u91CD\u8BFB\u5931\u8D25\uFF1B\u4E3A\u907F\u514D\u663E\u793A\u65E7\u72B6\u6001\uFF0C\u8BF7\u91CD\u65B0\u8BFB\u53D6\u8BE6\u60C5\u3002") : failure.code === "periodic_memory_budget_exceeded" ? t("\u5B9A\u671F\u5C42\u5DF2\u8FBE\u5230\u5F53\u524D\u914D\u7F6E\u4E0A\u9650\uFF0C\u8BF7\u5148\u53D6\u6D88\u5176\u4ED6\u6302\u8F7D\u6216\u8C03\u6574\u4E0A\u9650\u540E\u518D\u8BD5\u3002") : mutationFailureText(failure, "".concat(labels[failure.status] || t("\u5B9A\u671F\u5C42\u6302\u8F7D\u53D8\u66F4\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message));
+      if (!mutationAccepted && mutationOutcomeUnknown(failure)) {
+        await pollDeposition({ force: true, ignoreVisibility: true });
+        await loadDepositionDetail("memory", memId, { force: true, render: false });
+      }
       window.alert(mutation.feedback);
     } finally {
       mutation.pending = false;
-      openMemoryDetail(memId, { retry: true });
+      openMemoryDetail(memId, { retry: true, generation });
     }
   }
   async function submitRuntimePermissionChange() {
@@ -50713,10 +50868,10 @@
       return;
     }
     runtimeProjection.permissionChanging = true;
-    runtimeProjection.sendFeedback = t("\u6267\u884C\u6743\u9650\u5C06\u5728\u4E0B\u4E00\u5E27\u8FB9\u754C\u751F\u6548\u3002");
+    runtimeProjection.sendFeedback = "";
     refreshRuntimeUi();
     try {
-      await fetchRuntimeJson("./api/runtime/execution-permission", {
+      const receipt = await fetchLocalJson("./api/runtime/execution-permission", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -50724,17 +50879,21 @@
           unlimited_confirmed: permissionLevel === "unlimited" && runtimeProjection.unlimitedConfirmed
         })
       });
+      if (receipt.schema_version !== "seed_gui_execution_permission_receipt.v1" || receipt.status !== "pending" || receipt.permission_level !== permissionLevel) {
+        throw new Error("execution_permission_receipt_mismatch");
+      }
+      runtimeProjection.sendFeedback = t("\u6267\u884C\u6743\u9650\u5C06\u5728\u4E0B\u4E00\u5E27\u8FB9\u754C\u751F\u6548\u3002");
     } catch (error) {
       els.permissionLevel.value = projected;
       const failure = errorView(error);
-      runtimeProjection.sendFeedback = "".concat(t("\u6267\u884C\u6743\u9650\u5207\u6362\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
+      runtimeProjection.sendFeedback = mutationFailureText(failure, "".concat(t("\u6267\u884C\u6743\u9650\u5207\u6362\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message));
     } finally {
       runtimeProjection.permissionChanging = false;
       await pollRuntime({ forceFull: true, ignoreVisibility: true });
     }
   }
   async function resolveModelContextWindow(connectionId, model) {
-    const payload = await fetchRuntimeJson(
+    const payload = await fetchLocalJson(
       "./api/settings/model-context-window/resolve",
       {
         method: "POST",
@@ -50753,14 +50912,17 @@
     runtimeProjection.approvalFeedback = "";
     renderChat();
     try {
-      await fetchRuntimeJson("./api/runtime/tool-approval", {
+      const receipt = await fetchLocalJson("./api/runtime/tool-approval", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ approval_id: approvalId, decision })
       });
+      if (receipt.schema_version !== "general_tool_approval_receipt.v1" || receipt.approval_id !== approvalId || receipt.decision !== decision) {
+        throw new Error("tool_approval_receipt_mismatch");
+      }
     } catch (error) {
       const failure = errorView(error);
-      runtimeProjection.approvalFeedback = "".concat(t("\u5BA1\u6279\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
+      runtimeProjection.approvalFeedback = mutationFailureText(failure, "".concat(t("\u5BA1\u6279\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message));
     } finally {
       runtimeProjection.approvalSubmitting = "";
       await pollRuntime({ forceFull: true, ignoreVisibility: true });
@@ -50772,7 +50934,7 @@
     aboutProjection.loading = true;
     const request = (async () => {
       try {
-        const payload = await fetchRuntimeJson("./api/about");
+        const payload = await fetchLocalJson("./api/about");
         if (payload.schema_version !== "seed_gui_about.v1" || typeof payload.product?.version !== "string" || typeof payload.links?.repository !== "string" || typeof payload.build?.git_head !== "string") throw new Error("about_projection_schema_mismatch");
         aboutProjection.data = payload;
         aboutProjection.error = "";
@@ -50797,7 +50959,7 @@
     personaCatalogProjection.loading = true;
     const request = (async () => {
       try {
-        const payload = await fetchRuntimeJson("./api/personas");
+        const payload = await fetchLocalJson("./api/personas");
         if (payload.schema_version !== "seed_gui_persona_catalog.v1") {
           throw new Error("persona_catalog_schema_mismatch");
         }
@@ -50823,7 +50985,7 @@
     personaCatalogProjection.error = "";
     renderIdentity();
     try {
-      const receipt = await fetchRuntimeJson(path3, {
+      const receipt = await fetchLocalJson(path3, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body3)
@@ -50842,7 +51004,12 @@
       }
     } catch (error) {
       const failure = errorView(error);
-      personaCatalogProjection.error = failure.code === "instance_restart_host_required" ? t("\u6B64\u64CD\u4F5C\u9700\u8981\u684C\u9762\u5BA2\u6237\u7AEF\u5B89\u5168\u91CD\u542F\u540E\u7AEF\u3002") : failure.code === "instance_mutation_failed" ? t("\u4F4D\u683C\u6216\u5206\u8EAB\u53D8\u66F4\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5\u3002") : failure.code || failure.message;
+      if (mutationOutcomeUnknown(failure)) {
+        if (polling.personas) await polling.personas;
+        await pollPersonaCatalog({ force: true });
+        await pollRuntime({ forceFull: true, ignoreVisibility: true });
+      }
+      personaCatalogProjection.error = mutationFailureText(failure, failure.code === "instance_restart_host_required" ? t("\u6B64\u64CD\u4F5C\u9700\u8981\u684C\u9762\u5BA2\u6237\u7AEF\u5B89\u5168\u91CD\u542F\u540E\u7AEF\u3002") : failure.code === "instance_mutation_failed" ? t("\u4F4D\u683C\u6216\u5206\u8EAB\u53D8\u66F4\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5\u3002") : failure.code || failure.message);
     } finally {
       personaCatalogProjection.pending = false;
       renderIdentity();
@@ -50854,12 +51021,12 @@
     runtimeProjection.sendFeedback = t("\u6B63\u5728\u8BF7\u6C42\u505C\u6B62");
     refreshRuntimeUi();
     try {
-      const receipt = await fetchRuntimeJson("./api/runtime/stop", {
+      const receipt = await fetchLocalJson("./api/runtime/stop", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}"
       });
-      if (receipt.schema_version !== "seed_gui_runtime_stop_receipt.v1") {
+      if (receipt.schema_version !== "seed_gui_runtime_stop_receipt.v1" || receipt.accepted !== true) {
         throw new Error("runtime_stop_receipt_mismatch");
       }
       runtimeProjection.sendFeedback = receipt.reason === "local_cleanup_in_progress" ? t("\u6B63\u5728\u672C\u5730\u5584\u540E") : t("\u5DF2\u8BF7\u6C42\u505C\u6B62\uFF1B\u5C06\u5B8C\u6210\u672C\u5730\u4FDD\u5B58\u4E0E\u7ED3\u7B97");
@@ -50870,7 +51037,7 @@
         409: t("\u5F53\u524D\u6CA1\u6709\u6B63\u5728\u6267\u884C\u7684\u8F6E\u6B21"),
         503: t("\u672C\u5730\u8FD0\u884C\u65F6\u5BBF\u4E3B\u4E0D\u53EF\u7528")
       };
-      runtimeProjection.sendFeedback = "".concat(labels[failure.status] || t("\u505C\u6B62\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
+      runtimeProjection.sendFeedback = mutationFailureText(failure, "".concat(labels[failure.status] || t("\u505C\u6B62\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message));
     } finally {
       runtimeProjection.stopping = false;
       await pollRuntime({ forceFull: true, ignoreVisibility: true });
@@ -50901,7 +51068,7 @@
     renderComposerState();
     renderStage("run");
     try {
-      const payload = await fetchRuntimeJson("./api/runtime/relay", {
+      const payload = await fetchLocalJson("./api/runtime/relay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -50909,10 +51076,11 @@
           unlimited_confirmed: permissionLevel === "unlimited" && runtimeProjection.unlimitedConfirmed
         })
       });
-      if (payload.ok !== true || payload.command !== "relay") {
+      const outcome = jsonObject(payload.data);
+      if (payload.ok !== true || payload.command !== "relay" || typeof outcome.status !== "string" || typeof outcome.settlement_status !== "string") {
         throw new Error("runtime_relay_response_mismatch");
       }
-      taskProjection.relayFeedback = t("\u4E2D\u7EE7\u5DF2\u5B8C\u6210\uFF1B\u754C\u9762\u53EA\u663E\u793A\u968F\u540E\u91CD\u8BFB\u5230\u7684\u771F\u5B9E\u8F6E\u6B21\u8D26\u672C\u3002");
+      taskProjection.relayFeedback = outcome.status === "round_completed" && ["settled", "degraded"].includes(String(outcome.settlement_status)) ? t("\u4E2D\u7EE7\u5DF2\u5B8C\u6210\uFF1B\u754C\u9762\u53EA\u663E\u793A\u968F\u540E\u91CD\u8BFB\u5230\u7684\u771F\u5B9E\u8F6E\u6B21\u8D26\u672C\u3002") : t("\u4E2D\u7EE7\u5DF2\u8FD4\u56DE\uFF1B\u8BF7\u6838\u5BF9\u8F6E\u6B21\u7ED3\u7B97\u72B6\u6001\u3002");
     } catch (error) {
       const failure = errorView(error);
       const labels = {
@@ -50922,7 +51090,7 @@
         502: t("\u8FD0\u884C\u65F6\u4E2D\u7EE7\u6267\u884C\u5931\u8D25"),
         503: t("\u672C\u5730\u8FD0\u884C\u65F6\u5BBF\u4E3B\u4E0D\u53EF\u7528")
       };
-      taskProjection.relayFeedback = "".concat(labels[failure.status] || t("\u4E2D\u7EE7\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message);
+      taskProjection.relayFeedback = mutationFailureText(failure, "".concat(labels[failure.status] || t("\u4E2D\u7EE7\u5931\u8D25"), "\uFF1A").concat(failure.code || failure.message));
     } finally {
       taskProjection.relayPending = false;
       await Promise.all([
@@ -50972,7 +51140,7 @@
     }
     try {
       const detail = await fetchLiveDetail("evidence", round);
-      const payload = jsonObject2(detail.payload);
+      const payload = jsonObject(detail.payload);
       payload.exported_at = (/* @__PURE__ */ new Date()).toISOString();
       payload.task_projection = taskProjection.data;
       payload.deposition_index = depositionProjection.index;
@@ -51323,7 +51491,8 @@
       const retryMemory = target.closest("[data-retry-memory-detail]");
       if (retryMemory) {
         const itemId = retryMemory.dataset.memoryId || "";
-        void loadDepositionDetail("memory", itemId, { force: true, render: false }).then(() => openMemoryDetail(itemId, { retry: true }));
+        const generation = openMemoryDetail(itemId, { retry: true });
+        void loadDepositionDetail("memory", itemId, { force: true, render: false }).then(() => openMemoryDetail(itemId, { retry: true, generation }));
         return;
       }
       const protocolDocument = target.closest("[data-protocol-document], [data-retry-protocol-document]");
@@ -51451,8 +51620,8 @@
         const itemId = depositionButton.dataset.depositionId || "";
         if (kind === "memory") {
           state.selectedMemoryId = itemId;
-          openMemoryDetail(itemId);
-          void loadDepositionDetail(kind, itemId, { render: false }).then(() => openMemoryDetail(itemId, { retry: true }));
+          const generation = openMemoryDetail(itemId);
+          void loadDepositionDetail(kind, itemId, { render: false }).then(() => openMemoryDetail(itemId, { retry: true, generation }));
           return;
         } else if (kind === "container") state.selectedContainerId = itemId;
         else state.selectedRelationId = itemId;
@@ -51468,8 +51637,8 @@
           state.selectedMemoryId = itemId;
           setPage("mem", "map");
           els.stagePage.querySelector('[data-deposition-kind="memory"][data-deposition-id="'.concat(CSS.escape(itemId), '"]'))?.focus();
-          openMemoryDetail(itemId);
-          void loadDepositionDetail(kind, itemId, { render: false }).then(() => openMemoryDetail(itemId, { retry: true }));
+          const generation = openMemoryDetail(itemId);
+          void loadDepositionDetail(kind, itemId, { render: false }).then(() => openMemoryDetail(itemId, { retry: true, generation }));
           return;
         } else if (kind === "container") {
           state.selectedContainerId = itemId;

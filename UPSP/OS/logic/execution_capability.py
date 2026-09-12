@@ -2,6 +2,8 @@
 
 from logic.general_tools import (
     _clean,
+    _clean_list,
+    general_tool_input_denial,
     _file_read_allowed_roots,
     _permission_denial,
     _resolve_request_path,
@@ -207,7 +209,7 @@ def _check_web_fetch(request, tool_id, phase):
 
 def _path_list_paths_and_denial(raw_value, allowed_roots=None):
     paths = []
-    for raw_path in _split_list_text(raw_value):
+    for raw_path in _clean_list(raw_value):
         path = _resolve_request_path(raw_path, allowed_roots)
         if path is None:
             continue
@@ -296,6 +298,8 @@ def check_general_tool_request(
     request = request or {}
     tool_id = normalize_tool_id(_clean(request.get("tool_id")))
     normalized_phase = _clean(phase) or "reaction"
+    if denial := general_tool_input_denial(request):
+        return _decision(tool_id, normalized_phase, False, denial)
     if normalized_phase != "reaction":
         return _decision(
             tool_id,

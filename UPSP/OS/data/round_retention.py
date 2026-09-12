@@ -186,7 +186,7 @@ def enforce_active_round_retention():
 
     receipt_path = active_round_retention_receipt_path()
     try:
-        config, migrated = ConfigStore().migrate_system_audit_policy()
+        config = ConfigStore().load("system")
         audit = config["audit"]
     except Exception as exc:
         _write_receipt(receipt_path, {
@@ -227,6 +227,5 @@ def enforce_active_round_retention():
         "deleted": static_deleted,
         "freed_bytes": sum(item["bytes"] for item in static_deleted),
     }
-    receipt["policy_migrated"] = migrated
     _write_receipt(receipt_path, receipt)
     return receipt

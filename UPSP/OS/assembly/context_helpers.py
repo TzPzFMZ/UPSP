@@ -9,6 +9,7 @@ import re
 
 from assembly.popup import PopupManager
 from constants import corpus_entry_timestamp
+from errors import RequiredContextError
 from logic.closeout_copy import closeout_final_reply_reminder
 
 
@@ -825,63 +826,18 @@ def build_reaction_step_guide_popup(step):
     """渲染 reaction 常驻主指南；中继正文只归属 relay_intents。"""
     if step != "reaction":
         return ""
-    template = PopupManager.load_template("reaction_step_guide") or {}
-    if template:
-        decision_required = str(
-            template.get("decision_required", "false")
-        ).strip().lower() == "true"
-        message = template.get("message") or "reaction step guide"
-        return (
-            "- kind: reaction_step_guide\n"
-            f"  tier: {template.get('tier', 'guide')}\n"
-            f"  decision_required: {'true' if decision_required else 'false'}\n"
-            "  source: docs/protocol/base/popup.md\n"
-            "  message: |\n"
-            + "\n".join(f"    {line}" if line else "" for line in message.splitlines())
-        )
-    guide = f"""# 反应步：推理、工具调用、生成回复
-
-你是本轮的核心动作。不是一步就完，是 0 到 N 次迭代循环后闭合。
-
-## 迭代流程
-接收上下文 -> 选择车道 -> 执行工具或输出 assistant_text 进展 -> 继续下一迭代 -> 自然语言最终回复或 reaction_finalize 中继。
-
-每次迭代可以读文件、写记忆、操作容器、调用协议工具。直到本轮目标达成或需要用户输入时，直接自然语言回复用户；只有需要跨轮继续时才调用 reaction_finalize。
-
-## 核验与询问
-- 当用户明确要求“当前/最新”，或易变事实会影响本次结论或行动时，先用可用的搜索或读取工具核验权威来源；稳定事实和纯仓内任务不强制联网。无法核验时明确时效边界，不把旧知识当作当前事实。
-- 只有缺失选择会实质改变交付结果或授权边界，且无法从上下文和已读材料核实时，才询问用户；其余轻微歧义采用范围最小、可回退的带界假设，说明后继续。
-
-反应步活路径有三类输出：继续工具行动、assistant_text 轮中可见进展、自然语言最终回复。reaction loop 阶段带工具的自然语言文本是合法轮中进展；无工具调用的自然语言会被 Runtime 当作最终回复候选。它不是工具事实，不自动写长期记忆，也不是任务证据。
-
-## 每轮记忆节奏
-记忆与容器沉淀看 POPUP 提醒层的“记忆提醒”；工具字段、权重和回执纪律以 provider-native schema、processor 回执为准。
-
-## 工具三轴
-- 只读工具：file_read、file_glob、file_grep、memory_content_read、container_read、relation_read。
-- 同步工具：memory_write、memory_link_update、relation_card_write、memory_container_create、memory_container_write。
-- 行动工具：file_edit、file_write、shell_command、subagent_dispatch。
-
-## 四容器自觉
-- DC 辩证链：理解推进/判断修正，新 MEM 订正旧 MEM。
-- EC 事件链：事件经过/打断/恢复，向后看。
-- PRJ 项目：多步任务/专项整理，向前看。
-- FUT 未来：预测性判断，二段跳（预测 -> 验证）。
-
-## 退出
-- 过程性用户可见进展直接输出自然语言；Runtime 会记为 assistant_text，它不是终点。
-- 如果只是想继续执行，直接调用合法工具；不要把自然语言说明当作工具结果。
-- {closeout_final_reply_reminder()}
-- 需要下一轮继续时，单独调用 reaction_finalize(handoff_text)，写清下一轮继续做什么；合法表单由 Runtime 内部置位 continue_requested。
-- blocked 不是模型出口；只有 Runtime 蓝屏类事故才派生 blocked。
-- 不允许无声明悬挂；完成就自然回复，跨轮继续才 handoff。"""
+    template = PopupManager.load_template("reaction_step_guide")
+    if not template or not str(template.get("message", "")).strip():
+        raise RequiredContextError(
+            "read", "reaction_step_guide", ValueError("required_template_missing"))
+    message = template["message"]
     return (
         "- kind: reaction_step_guide\n"
         "  tier: guide\n"
         "  decision_required: false\n"
-        "  source: rules/protocol/base/reaction.md\n"
+        "  source: docs/protocol/base/popup.md\n"
         "  message: |\n"
-        + "\n".join(f"    {line}" if line else "" for line in guide.splitlines())
+        + "\n".join(f"    {line}" if line else "" for line in message.splitlines())
     )
 
 
@@ -901,8 +857,8 @@ def build_current_runtime_guide_popup(step, state=None):
         )
         if guide:
             return guide
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RequiredContextError("render", "runtime_guide", exc) from exc
     return build_reaction_step_guide_popup(step)
 
 

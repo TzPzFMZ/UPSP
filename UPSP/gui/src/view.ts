@@ -50,6 +50,7 @@ import { applySystemWindowSplit, deferSystemWindowRender } from "./system-window
 import {
   hydrateLedgerJsonTables,
   hydrateMarkdownDocuments,
+  scheduleMarkdownPrune,
   memoryBodyMarkdown,
   renderMarkdownDocument,
   renderStructuredJson,
@@ -62,6 +63,7 @@ type LedgerRow = readonly [unknown, unknown, unknown, string];
 type OverviewRow = readonly [unknown, unknown, unknown, PageId, string?, string?];
 let navCollapseTimer = 0;
 let manualReturnFocus: HTMLElement | null = null;
+let detailGeneration = 0;
 let systemCloseTimer = 0;
 let systemReturnFocus: SystemReturnFocus = null;
 let globalSettingsReturnFocus: HTMLElement | null = null;
@@ -599,6 +601,7 @@ function renderFullTime(value: unknown, className = ""): string {
 }
 
 export function renderChat(): void {
+  scheduleMarkdownPrune();
   renderConversationTimeline();
 }
 
@@ -634,6 +637,7 @@ function restoreStageScroll(snapshots: Map<string, StageScrollSnapshot>): void {
 
 export function renderStage(pageId: PageId): void {
   if (deferSystemWindowRender(() => renderStage(pageId))) return;
+  scheduleMarkdownPrune();
   const renderers: Record<PageId, () => string> = {
     run: renderRunPage,
     persona: renderPersonaPage,
@@ -2588,6 +2592,8 @@ export function openContextToolAnnotation(toolName: string): void {
   const pane = frame?.context_panes?.find((entry) => entry.id === "01_tool_header");
   const tool = contextToolAnnotations(pane).find((entry) => entry.name === toolName);
   if (!selectedRound || !frame || !tool) return;
+  detailGeneration += 1;
+  state.manualFile = "";
   rememberDetailFocus();
   showDetail({
     sourceType: "TOOL",
@@ -2622,9 +2628,15 @@ function showDetailError({
   els.manualOverlay.hidden = false;
 }
 
-export function openMemoryDetail(itemId: string, { retry = false }: { retry?: boolean } = {}): void {
+export function openMemoryDetail(
+  itemId: string,
+  { retry = false, generation = detailGeneration }: { retry?: boolean; generation?: number } = {},
+): number {
+  if (generation !== detailGeneration) return -1;
   const item = depositionItems("memory").find((entry) => entry.id === itemId);
-  if (!item) return;
+  if (!item) return -1;
+  detailGeneration += 1;
+  state.manualFile = "";
   if (!retry) rememberDetailFocus();
   const detail = depositionDetail("memory", itemId);
   const sourceRound = detail?.created_round ?? item.created_round;
@@ -2684,9 +2696,11 @@ export function openMemoryDetail(itemId: string, { retry = false }: { retry?: bo
     }
   }
   if (!retry) focusDetailClose();
+  return detailGeneration;
 }
 
 export async function openManual(file = state.manualFile, { retry = false }: { retry?: boolean } = {}): Promise<void> {
+  const generation = ++detailGeneration;
   if (!retry) rememberDetailFocus();
   state.manualFile = file;
   els.manualOverlay.hidden = false;
@@ -2699,6 +2713,7 @@ export async function openManual(file = state.manualFile, { retry = false }: { r
   if (!retry) focusDetailClose();
   try {
     const parsed = await loadManual(localizedFile);
+    if (generation !== detailGeneration) return;
     showDetail({
       sourceType: "MANUAL",
       title: parsed.meta.title || "UPSP Manual",
@@ -2708,6 +2723,7 @@ export async function openManual(file = state.manualFile, { retry = false }: { r
       contentMd: parsed.body,
     });
   } catch (error: unknown) {
+    if (generation !== detailGeneration) return;
     showDetailError({
       sourceType: "MANUAL",
       title: manualTitles[file] ? t(manualTitles[file][0]) : "UPSP Manual",
@@ -2725,6 +2741,8 @@ async function loadManual(file: string): Promise<{ meta: Record<string, string>;
 }
 
 export function openLedgerEvent(round: number, cardId: string, card: ConversationCard): void {
+  detailGeneration += 1;
+  state.manualFile = "";
   rememberDetailFocus();
   showDetail({
     sourceType: "RUNTIME",
@@ -2743,6 +2761,8 @@ export async function openProtocolDocument(
   itemId: string,
   { retry = false }: { retry?: boolean } = {},
 ): Promise<void> {
+  const generation = ++detailGeneration;
+  state.manualFile = "";
   if (!retry) rememberDetailFocus();
   const sourceType = kind === "rule" ? "RULES" : "DOCS";
   els.manualOverlay.hidden = false;
@@ -2756,6 +2776,7 @@ export async function openProtocolDocument(
     const response = await fetch(`./api/protocol/document?kind=${kind}&id=${encodeURIComponent(itemId)}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`protocol_document_read_failed:${response.status}`);
     const payload = await response.json() as ProtocolDocumentPayload;
+    if (generation !== detailGeneration) return;
     if (
       payload.schema_version !== "seed_gui_protocol_document.v1"
       || payload.kind !== kind
@@ -2773,6 +2794,7 @@ export async function openProtocolDocument(
       contentMd: payload.content_md,
     });
   } catch (error: unknown) {
+    if (generation !== detailGeneration) return;
     showDetailError({
       sourceType,
       title: itemId.split("/").at(-1) || itemId,
@@ -2797,6 +2819,9 @@ function parseFrontmatter(markdown: string): { meta: Record<string, string>; bod
 }
 
 export function closeManual(): void {
+  detailGeneration += 1;
+  els.manualBody.replaceChildren();
+  scheduleMarkdownPrune();
   if (els.manualOverlay.hidden) return;
   els.manualOverlay.hidden = true;
   const target = manualReturnFocus;

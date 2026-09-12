@@ -646,6 +646,7 @@ def _migrate_memory_overlay(layout: ActiveLayout) -> None:
     else:
         overlay = {"schema_version": MEMORY_OVERLAY_SCHEMA, "entries": {}}
     overlay_changed = False
+    meta_updates = []
     for relative in LTM_META_RELATIVE_PATHS:
         path = persona / relative
         if not path.is_file():
@@ -678,9 +679,13 @@ def _migrate_memory_overlay(layout: ActiveLayout) -> None:
                     del entry[key]
                     changed = True
         if changed:
-            _atomic_write_json(path, meta)
+            meta_updates.append((path, meta))
+    # Commit the local values before removing their legacy source fields.
+    # A retry keeps the committed overlay and finishes any remaining cleanup.
     if overlay_changed or not overlay_path.exists():
         _atomic_write_json(overlay_path, overlay)
+    for path, meta in meta_updates:
+        _atomic_write_json(path, meta)
     stm_meta_path = layout.persona_dir / "STM" / "memory" / "meta.json"
     if stm_meta_path.is_file():
         try:

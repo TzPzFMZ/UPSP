@@ -581,9 +581,6 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
             def __init__(self):
                 self.boosted = []
 
-            def recall_boost(self, mem_id, round_num=None):
-                self.boosted.append((mem_id, round_num))
-
         store = DummyMemoryStore()
         heat = DummyHeat()
 
@@ -594,7 +591,7 @@ class TestRuntimeReactionReadTools(RuntimeTestMixin):
 
             def recall(self, mem_id, *, round_num=None, boosted_ids=None,
                        reconsolidation_tracker=None, **_transaction):
-                self.heat.recall_boost(mem_id, round_num=round_num)
+                self.heat.boosted.append((mem_id, round_num))
                 if isinstance(boosted_ids, set):
                     boosted_ids.add(mem_id)
                 return {

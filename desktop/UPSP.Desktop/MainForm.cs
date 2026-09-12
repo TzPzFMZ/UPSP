@@ -93,8 +93,7 @@ internal sealed class MainForm : Form
         try
         {
             var userData = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "UPSP",
+                DesktopPaths.LocalStateRoot,
                 "cache",
                 "webview2");
             Directory.CreateDirectory(userData);
@@ -419,12 +418,22 @@ internal sealed class MainForm : Form
 
     private async Task ShutdownAfterStartupFailureAsync()
     {
-        if (!await _backend.ShutdownAsync())
+        try
         {
-            DesktopLog.Write("Backend did not finish a graceful shutdown after WebView2 failure.");
+            if (await _backend.ShutdownAsync())
+            {
+                _allowClose = true;
+                Close();
+                return;
+            }
         }
-        _allowClose = true;
-        Close();
+        catch (Exception error)
+        {
+            DesktopLog.Write(error);
+        }
+        DesktopLog.Write("Backend exit unconfirmed after WebView2 failure; retaining the tray and process ownership.");
+        _statusTimer.Start();
+        Hide();
     }
 
     private void UseDarkTitleBar()

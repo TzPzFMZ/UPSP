@@ -65,3 +65,8 @@ setup / cleanup 的终端结果只能来自对应 finalize 工具；反应步完
 交接不再另设 LLM-facing 工具。`reaction_finalize` 只保留 `handoff_text` 作为跨轮中继自然语言出口；不给善后步写自然语言交接。善后必需材料来自 `cleanup_round` 临时材料块、结构化回执和 Runtime pending metadata。Runtime 把合法 `continue` 的 `handoff_text` 登记为 `runtime.relay_intents` 调度 payload，生成 `relay_intent_id` 写入中继规划池，并内部置位 `continue_requested`；同时写成 `kind=relay_handoff` / `role=user` 交接语料，标题声明不是用户原始输入。模型可见层展示上轮交接任务、当前中继目标卡和中继意图指针，不投递为 POPUP 交接层或 model-visible `relay_input`。若所有必需任务项和验收项已经有证据地完成或阻塞且至少一项阻塞，Runtime 会直接按 `terminal_blocked` 进入善后；此时不得再用 `reaction_finalize` 制造下一轮。
 
 解析器在本边界下退休为保安和证据观察员：它可以扫描 prompt injection、旧接口污染、危险命令、来源声称和越权意图，但不能把文本解析成工具请求、协议提交、processor receipt、缓存写入或用户回复。
+
+
+## 故障与部分结果
+
+参数错误、公开网络失败或安全拒绝以真实回执为准，可按回执调整。批量中的前项已完成，不会因后项失败而撤销；只按已返回的结果判断，未执行的后项没有执行事实。必需上下文、账本或写后恢复未完成时，Runtime 停止后续工具和 provider，保全已有回执及受影响 ID，保持未结算。恢复提示包括历史已闭轮遗留行动及协议写后不确定状态；不得把重启、超时、空白显示或历史 `round_closed` 当作恢复完成，也不得盲目重发副作用。

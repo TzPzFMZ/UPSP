@@ -66,6 +66,7 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
     def test_reaction_forgetting_skips_private_entries_and_keeps_public_behavior(
             self, monkeypatch):
         from data.memory_store import MemoryStore
+        from data.stm_heat_calculator import STMHeatCalculator
         from engines.reaction_metabolism import ReactionMetabolism
         from types import SimpleNamespace
 
@@ -73,6 +74,8 @@ class TestRuntimeMemoryLifecycle(RuntimeTestMixin):
         public_id = "MEM-PUBLIC01"
 
         class Heat:
+            calculator = STMHeatCalculator()
+
             @staticmethod
             def load_heat():
                 return {"entries": {

@@ -2,7 +2,7 @@
 
 import re
 
-from errors import ReadError
+from errors import ReadError, UncertainEffectError, WriteError
 from logic.alert_mode_settle import apply_alert_mode_settlement_declarations
 from logic.chronicle_write import apply_chronicle_write_declarations
 from logic.fault_record import apply_fault_record_declarations
@@ -352,337 +352,359 @@ def apply_guide_submit(workbench_store, arguments, evidence_context=None):
     reopened_flags = []
     cache_compaction_status = None
     backend_applied = False
-    for submission in submissions:
-        normalized = _normalize_submission(submission)
-        accepted_ledger_extra = {}
-        if (
-                guide.get("kind") == "task_bootstrap"
-                and normalized.get("item_id") == BOOTSTRAP_ITEM_ID
-                and normalized.get("option_id") == "not_a_task"):
-            _dismiss_task_bootstrap_guide(
-                workbench_store,
-                guide,
-                guide_id,
-                normalized.get("fields") or {},
-            )
-            _clear_work_intent_debt_if_present(evidence_context)
+    def preserve_prior(receipt):
+        receipt.setdefault("accepted_submissions", list(accepted))
+        current = list(receipt.get("backend_receipts") or [])
+        if backend_receipts:
+            receipt["backend_receipts"] = list(backend_receipts) + [row for row in current if row not in backend_receipts]
+        return receipt
+
+    try:
+        for submission in submissions:
+            normalized = _normalize_submission(submission)
+            accepted_ledger_extra = {}
+            if (
+                    guide.get("kind") == "task_bootstrap"
+                    and normalized.get("item_id") == BOOTSTRAP_ITEM_ID
+                    and normalized.get("option_id") == "not_a_task"):
+                _dismiss_task_bootstrap_guide(
+                    workbench_store,
+                    guide,
+                    guide_id,
+                    normalized.get("fields") or {},
+                )
+                _clear_work_intent_debt_if_present(evidence_context)
+                accepted.append(normalized)
+                workbench_store.append_guide_ledger(guide_id, {
+                    "event": "guide_submission_accepted",
+                    "item_id": normalized.get("item_id"),
+                    "option_id": normalized.get("option_id"),
+                    "fields": normalized.get("fields") or {},
+                    "evidence_refs": normalized.get("evidence_refs") or [],
+                    "reason": normalized.get("reason") or "",
+                })
+                receipt = _base_receipt(guide_id)
+                receipt.update({
+                    "status": "accepted",
+                    "action": "task_bootstrap_dismissed",
+                    "accepted_submissions": accepted,
+                    "active_guide": None,
+                })
+                return preserve_prior(receipt)
+            if (
+                    guide.get("kind") == "task_bootstrap"
+                    and normalized.get("item_id") == BOOTSTRAP_ITEM_ID
+                    and normalized.get("option_id") == BOOTSTRAP_SUBMIT_OPTION_ID):
+                normalized = _adapt_task_bootstrap_submission(
+                    normalized,
+                    evidence_context,
+                )
+                bootstrap_validation = validate_task_plan_structure(
+                    normalized.get("fields") or {},
+                    strict_sections={
+                        "source_requirements", "items", "acceptance",
+                    },
+                )
+                if bootstrap_validation.get("status") == "rejected":
+                    workbench_store.append_guide_ledger(guide_id, {
+                        "event": "guide_submission_rejected",
+                        "reason": bootstrap_validation.get("reason"),
+                        "details": bootstrap_validation.get("details") or {},
+                    })
+                    return preserve_prior(_rejection_receipt(
+                        guide_id,
+                        bootstrap_validation,
+                        guide=guide,
+                    ))
+                normalized["fields"].update(
+                    bootstrap_validation.get("normalized_plan") or {}
+                )
+                task_id = materialize_initial_task_guide(
+                    workbench_store,
+                    normalized.get("fields") or {},
+                    evidence_refs=normalized.get("evidence_refs") or [],
+                    round_num=(evidence_context or {}).get("round_num"),
+                )
+                _mark_guide_completed(workbench_store, guide, guide_id)
+                _clear_work_intent_debt_if_present(evidence_context)
+            elif str(guide.get("kind") or "").strip() == "task_bootstrap":
+                details = {
+                    "item_id": normalized.get("item_id"),
+                    "option_id": normalized.get("option_id"),
+                }
+                workbench_store.append_guide_ledger(guide_id, {
+                    "event": "guide_submission_rejected",
+                    "reason": "unsupported_task_bootstrap_submission",
+                    "details": details,
+                })
+                return preserve_prior(_reject(
+                    guide_id,
+                    "unsupported_task_bootstrap_submission",
+                    details,
+                ))
+            elif (
+                    guide.get("kind") == "task_execution"
+                    and normalized.get("item_id") == TASK_PROGRESS_ITEM_ID
+                    and normalized.get("option_id") == TASK_PROGRESS_UPDATE_OPTION_ID):
+                pending_block = _pending_interaction_first_block(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                )
+                if pending_block:
+                    return preserve_prior(_task_pending_first_receipt(
+                        workbench_store,
+                        guide_id,
+                        pending_block,
+                        status="rejected",
+                    ))
+                task_update = apply_task_status_update(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                    normalized.get("fields") or {},
+                    evidence_refs=normalized.get("evidence_refs") or [],
+                    evidence_context=evidence_context,
+                )
+                if task_update.get("status") == "rejected":
+                    workbench_store.append_guide_ledger(guide_id, {
+                        "event": "guide_submission_rejected",
+                        "reason": task_update.get("reason"),
+                        "details": task_update.get("details") or {},
+                    })
+                    return preserve_prior(_rejection_receipt(guide_id, task_update, guide=guide))
+                refresh_task_execution_active_guide(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                )
+
+            elif (
+                    guide.get("kind") == "task_execution"
+                    and normalized.get("item_id") == TASK_PROGRESS_ITEM_ID
+                    and normalized.get("option_id") == TASK_PLAN_REVISE_OPTION_ID):
+                pending_block = _pending_interaction_first_block(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                )
+                if pending_block:
+                    return preserve_prior(_task_pending_first_receipt(
+                        workbench_store,
+                        guide_id,
+                        pending_block,
+                        status="rejected",
+                    ))
+                normalized = _adapt_task_bootstrap_submission(
+                    normalized,
+                    evidence_context,
+                )
+                revision = apply_task_plan_revision(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                    normalized.get("fields") or {},
+                    reason=normalized.get("reason") or "",
+                )
+                if revision.get("status") == "rejected":
+                    workbench_store.append_guide_ledger(guide_id, {
+                        "event": "guide_submission_rejected",
+                        "reason": revision.get("reason"),
+                        "details": revision.get("details") or {},
+                    })
+                    return preserve_prior(_rejection_receipt(guide_id, revision, guide=guide))
+                task_plan_revision = revision.get("task_plan_revision") or {}
+                task_plan_revisions.append(task_plan_revision)
+                accepted_ledger_extra["task_plan_revision"] = task_plan_revision
+                if task_plan_revision.get("action") == "applied":
+                    refresh_task_execution_active_guide(
+                        workbench_store,
+                        str(guide.get("task_id") or "").strip(),
+                    )
+
+            elif (
+                    guide.get("kind") == "task_execution"
+                    and normalized.get("item_id") == TASK_PROGRESS_ITEM_ID
+                    and normalized.get("option_id") == TASK_PENDING_INPUT_OPTION_ID):
+                pending_input_update = apply_pending_input_integration(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                    normalized.get("fields") or {},
+                    evidence_refs=normalized.get("evidence_refs") or [],
+                    evidence_context=evidence_context,
+                )
+                if pending_input_update.get("status") == "rejected":
+                    workbench_store.append_guide_ledger(guide_id, {
+                        "event": "guide_submission_rejected",
+                        "reason": pending_input_update.get("reason"),
+                        "details": pending_input_update.get("details") or {},
+                    })
+                    return preserve_prior(_rejection_receipt(
+                        guide_id,
+                        pending_input_update,
+                        guide=guide,
+                    ))
+                refresh_task_execution_active_guide(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                )
+
+            elif str(guide.get("kind") or "").strip() == "task_execution":
+                direct_fields = _direct_task_checklist_update_fields(
+                    guide,
+                    normalized,
+                )
+                if direct_fields is None:
+                    return preserve_prior(_reject(
+                        guide_id,
+                        "unsupported_task_guide_submission",
+                        {
+                            "item_id": normalized.get("item_id"),
+                            "option_id": normalized.get("option_id"),
+                        },
+                    ))
+                pending_block = _pending_interaction_first_block(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                )
+                if pending_block:
+                    return preserve_prior(_task_pending_first_receipt(
+                        workbench_store,
+                        guide_id,
+                        pending_block,
+                        status="rejected",
+                    ))
+                task_update = apply_task_status_update(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                    direct_fields,
+                    evidence_refs=normalized.get("evidence_refs") or [],
+                    evidence_context=evidence_context,
+                )
+                if task_update.get("status") == "rejected":
+                    workbench_store.append_guide_ledger(guide_id, {
+                        "event": "guide_submission_rejected",
+                        "reason": task_update.get("reason"),
+                        "details": task_update.get("details") or {},
+                    })
+                    return preserve_prior(_rejection_receipt(guide_id, task_update, guide=guide))
+                refresh_task_execution_active_guide(
+                    workbench_store,
+                    str(guide.get("task_id") or "").strip(),
+                )
+
+            elif str(guide.get("kind") or "").strip() in RHYTHM_GUIDE_KINDS:
+                backend = _apply_rhythm_guide_submission(
+                    guide,
+                    normalized,
+                    evidence_context=evidence_context,
+                    workbench_store=workbench_store,
+                )
+                if backend.get("status") == "rejected":
+                    workbench_store.append_guide_ledger(guide_id, {
+                        "event": "guide_submission_rejected",
+                        "reason": backend.get("reason"),
+                        "details": backend.get("details") or {},
+                    })
+                    return preserve_prior(_rejection_receipt(
+                        guide_id,
+                        backend,
+                        guide=guide,
+                        extra={
+                            "backend_receipts": backend.get("backend_receipts") or [],
+                            "completed_ids": backend.get("completed_ids") or [],
+                            "remaining_ids": backend.get("remaining_ids") or [],
+                        },
+                    ))
+                backend_receipts.extend(backend.get("backend_receipts") or [])
+                completed_flags.extend(backend.get("completed_flags") or [])
+                reopened_flags.extend(backend.get("reopened_flags") or [])
+                if backend.get("cache_compaction"):
+                    cache_compaction_status = backend.get("cache_compaction")
+                if backend.get("status") == "applied":
+                    backend_applied = True
+
             accepted.append(normalized)
-            workbench_store.append_guide_ledger(guide_id, {
+            accepted_ledger_entry = {
                 "event": "guide_submission_accepted",
                 "item_id": normalized.get("item_id"),
                 "option_id": normalized.get("option_id"),
                 "fields": normalized.get("fields") or {},
                 "evidence_refs": normalized.get("evidence_refs") or [],
                 "reason": normalized.get("reason") or "",
-            })
-            receipt = _base_receipt(guide_id)
-            receipt.update({
-                "status": "accepted",
-                "action": "task_bootstrap_dismissed",
-                "accepted_submissions": accepted,
-                "active_guide": None,
-            })
-            return receipt
-        if (
-                guide.get("kind") == "task_bootstrap"
-                and normalized.get("item_id") == BOOTSTRAP_ITEM_ID
-                and normalized.get("option_id") == BOOTSTRAP_SUBMIT_OPTION_ID):
-            normalized = _adapt_task_bootstrap_submission(
-                normalized,
-                evidence_context,
-            )
-            bootstrap_validation = validate_task_plan_structure(
-                normalized.get("fields") or {},
-                strict_sections={
-                    "source_requirements", "items", "acceptance",
-                },
-            )
-            if bootstrap_validation.get("status") == "rejected":
-                workbench_store.append_guide_ledger(guide_id, {
-                    "event": "guide_submission_rejected",
-                    "reason": bootstrap_validation.get("reason"),
-                    "details": bootstrap_validation.get("details") or {},
-                })
-                return _rejection_receipt(
-                    guide_id,
-                    bootstrap_validation,
-                    guide=guide,
-                )
-            normalized["fields"].update(
-                bootstrap_validation.get("normalized_plan") or {}
-            )
-            task_id = materialize_initial_task_guide(
-                workbench_store,
-                normalized.get("fields") or {},
-                evidence_refs=normalized.get("evidence_refs") or [],
-                round_num=(evidence_context or {}).get("round_num"),
-            )
-            _mark_guide_completed(workbench_store, guide, guide_id)
-            _clear_work_intent_debt_if_present(evidence_context)
-        elif str(guide.get("kind") or "").strip() == "task_bootstrap":
-            details = {
-                "item_id": normalized.get("item_id"),
-                "option_id": normalized.get("option_id"),
             }
-            workbench_store.append_guide_ledger(guide_id, {
-                "event": "guide_submission_rejected",
-                "reason": "unsupported_task_bootstrap_submission",
-                "details": details,
-            })
-            return _reject(
-                guide_id,
-                "unsupported_task_bootstrap_submission",
-                details,
-            )
-        elif (
-                guide.get("kind") == "task_execution"
-                and normalized.get("item_id") == TASK_PROGRESS_ITEM_ID
-                and normalized.get("option_id") == TASK_PROGRESS_UPDATE_OPTION_ID):
-            pending_block = _pending_interaction_first_block(
-                workbench_store,
-                str(guide.get("task_id") or "").strip(),
-            )
-            if pending_block:
-                return _task_pending_first_receipt(
+            accepted_ledger_entry.update(accepted_ledger_extra)
+            workbench_store.append_guide_ledger(guide_id, accepted_ledger_entry)
+
+        receipt = _base_receipt(guide_id)
+        receipt.update({
+            "status": "accepted",
+            "accepted_submissions": accepted,
+        })
+        if backend_receipts:
+            receipt["backend_receipts"] = backend_receipts
+            receipt["completed_flags"] = _unique(completed_flags)
+            if reopened_flags:
+                receipt["reopened_flags"] = _unique(reopened_flags)
+            if cache_compaction_status:
+                receipt["cache_compaction"] = cache_compaction_status
+            if backend_applied:
+                receipt["status"] = "applied"
+            if completed_flags:
+                receipt["status"] = "applied"
+                _mark_guide_items_completed(
                     workbench_store,
-                    guide_id,
-                    pending_block,
-                    status="rejected",
-                )
-            task_update = apply_task_status_update(
-                workbench_store,
-                str(guide.get("task_id") or "").strip(),
-                normalized.get("fields") or {},
-                evidence_refs=normalized.get("evidence_refs") or [],
-                evidence_context=evidence_context,
-            )
-            if task_update.get("status") == "rejected":
-                workbench_store.append_guide_ledger(guide_id, {
-                    "event": "guide_submission_rejected",
-                    "reason": task_update.get("reason"),
-                    "details": task_update.get("details") or {},
-                })
-                return _rejection_receipt(guide_id, task_update, guide=guide)
-            refresh_task_execution_active_guide(
-                workbench_store,
-                str(guide.get("task_id") or "").strip(),
-            )
-
-        elif (
-                guide.get("kind") == "task_execution"
-                and normalized.get("item_id") == TASK_PROGRESS_ITEM_ID
-                and normalized.get("option_id") == TASK_PLAN_REVISE_OPTION_ID):
-            pending_block = _pending_interaction_first_block(
-                workbench_store,
-                str(guide.get("task_id") or "").strip(),
-            )
-            if pending_block:
-                return _task_pending_first_receipt(
-                    workbench_store,
-                    guide_id,
-                    pending_block,
-                    status="rejected",
-                )
-            normalized = _adapt_task_bootstrap_submission(
-                normalized,
-                evidence_context,
-            )
-            revision = apply_task_plan_revision(
-                workbench_store,
-                str(guide.get("task_id") or "").strip(),
-                normalized.get("fields") or {},
-                reason=normalized.get("reason") or "",
-            )
-            if revision.get("status") == "rejected":
-                workbench_store.append_guide_ledger(guide_id, {
-                    "event": "guide_submission_rejected",
-                    "reason": revision.get("reason"),
-                    "details": revision.get("details") or {},
-                })
-                return _rejection_receipt(guide_id, revision, guide=guide)
-            task_plan_revision = revision.get("task_plan_revision") or {}
-            task_plan_revisions.append(task_plan_revision)
-            accepted_ledger_extra["task_plan_revision"] = task_plan_revision
-            if task_plan_revision.get("action") == "applied":
-                refresh_task_execution_active_guide(
-                    workbench_store,
-                    str(guide.get("task_id") or "").strip(),
-                )
-
-        elif (
-                guide.get("kind") == "task_execution"
-                and normalized.get("item_id") == TASK_PROGRESS_ITEM_ID
-                and normalized.get("option_id") == TASK_PENDING_INPUT_OPTION_ID):
-            pending_input_update = apply_pending_input_integration(
-                workbench_store,
-                str(guide.get("task_id") or "").strip(),
-                normalized.get("fields") or {},
-                evidence_refs=normalized.get("evidence_refs") or [],
-                evidence_context=evidence_context,
-            )
-            if pending_input_update.get("status") == "rejected":
-                workbench_store.append_guide_ledger(guide_id, {
-                    "event": "guide_submission_rejected",
-                    "reason": pending_input_update.get("reason"),
-                    "details": pending_input_update.get("details") or {},
-                })
-                return _rejection_receipt(
-                    guide_id,
-                    pending_input_update,
-                    guide=guide,
-                )
-            refresh_task_execution_active_guide(
-                workbench_store,
-                str(guide.get("task_id") or "").strip(),
-            )
-
-        elif str(guide.get("kind") or "").strip() == "task_execution":
-            direct_fields = _direct_task_checklist_update_fields(
-                guide,
-                normalized,
-            )
-            if direct_fields is None:
-                return _reject(
-                    guide_id,
-                    "unsupported_task_guide_submission",
-                    {
-                        "item_id": normalized.get("item_id"),
-                        "option_id": normalized.get("option_id"),
-                    },
-                )
-            pending_block = _pending_interaction_first_block(
-                workbench_store,
-                str(guide.get("task_id") or "").strip(),
-            )
-            if pending_block:
-                return _task_pending_first_receipt(
-                    workbench_store,
-                    guide_id,
-                    pending_block,
-                    status="rejected",
-                )
-            task_update = apply_task_status_update(
-                workbench_store,
-                str(guide.get("task_id") or "").strip(),
-                direct_fields,
-                evidence_refs=normalized.get("evidence_refs") or [],
-                evidence_context=evidence_context,
-            )
-            if task_update.get("status") == "rejected":
-                workbench_store.append_guide_ledger(guide_id, {
-                    "event": "guide_submission_rejected",
-                    "reason": task_update.get("reason"),
-                    "details": task_update.get("details") or {},
-                })
-                return _rejection_receipt(guide_id, task_update, guide=guide)
-            refresh_task_execution_active_guide(
-                workbench_store,
-                str(guide.get("task_id") or "").strip(),
-            )
-
-        elif str(guide.get("kind") or "").strip() in RHYTHM_GUIDE_KINDS:
-            backend = _apply_rhythm_guide_submission(
-                guide,
-                normalized,
-                evidence_context=evidence_context,
-                workbench_store=workbench_store,
-            )
-            if backend.get("status") == "rejected":
-                workbench_store.append_guide_ledger(guide_id, {
-                    "event": "guide_submission_rejected",
-                    "reason": backend.get("reason"),
-                    "details": backend.get("details") or {},
-                })
-                return _rejection_receipt(
-                    guide_id,
-                    backend,
-                    guide=guide,
-                    extra={
-                        "backend_receipts": backend.get("backend_receipts") or [],
-                        "completed_ids": backend.get("completed_ids") or [],
-                        "remaining_ids": backend.get("remaining_ids") or [],
-                    },
-                )
-            backend_receipts.extend(backend.get("backend_receipts") or [])
-            completed_flags.extend(backend.get("completed_flags") or [])
-            reopened_flags.extend(backend.get("reopened_flags") or [])
-            if backend.get("cache_compaction"):
-                cache_compaction_status = backend.get("cache_compaction")
-            if backend.get("status") == "applied":
-                backend_applied = True
-
-        accepted.append(normalized)
-        accepted_ledger_entry = {
-            "event": "guide_submission_accepted",
-            "item_id": normalized.get("item_id"),
-            "option_id": normalized.get("option_id"),
-            "fields": normalized.get("fields") or {},
-            "evidence_refs": normalized.get("evidence_refs") or [],
-            "reason": normalized.get("reason") or "",
-        }
-        accepted_ledger_entry.update(accepted_ledger_extra)
-        workbench_store.append_guide_ledger(guide_id, accepted_ledger_entry)
-
-    receipt = _base_receipt(guide_id)
-    receipt.update({
-        "status": "accepted",
-        "accepted_submissions": accepted,
-    })
-    if backend_receipts:
-        receipt["backend_receipts"] = backend_receipts
-        receipt["completed_flags"] = _unique(completed_flags)
-        if reopened_flags:
-            receipt["reopened_flags"] = _unique(reopened_flags)
-        if cache_compaction_status:
-            receipt["cache_compaction"] = cache_compaction_status
-        if backend_applied:
-            receipt["status"] = "applied"
-        if completed_flags:
-            receipt["status"] = "applied"
-            _mark_guide_items_completed(
-                workbench_store,
-                guide,
-                guide_id,
-                completed_flags,
-            )
-            if _guide_should_clear_after_completed_flags(
                     guide,
+                    guide_id,
                     completed_flags,
-                    evidence_context):
-                _mark_guide_completed(workbench_store, guide, guide_id)
+                )
+                if _guide_should_clear_after_completed_flags(
+                        guide,
+                        completed_flags,
+                        evidence_context):
+                    _mark_guide_completed(workbench_store, guide, guide_id)
+                    receipt["active_guide"] = _clear_active_guide(workbench_store, guide_id)
+        if task_id:
+            receipt["task_id"] = task_id
+            receipt["active_guide"] = f"task:{task_id}"
+        if task_plan_revisions:
+            receipt["task_plan_revision"] = task_plan_revisions[-1]
+            if len(task_plan_revisions) > 1:
+                receipt["task_plan_revisions"] = task_plan_revisions
+        if task_update:
+            receipt["task_update"] = task_update
+            task_acceptance = validate_task_closeout(
+                workbench_store,
+                {"closeout_decision": "finish"},
+            )
+            receipt["task_acceptance"] = task_acceptance
+            if task_acceptance.get("allowed") is True:
                 receipt["active_guide"] = _clear_active_guide(workbench_store, guide_id)
-    if task_id:
-        receipt["task_id"] = task_id
-        receipt["active_guide"] = f"task:{task_id}"
-    if task_plan_revisions:
-        receipt["task_plan_revision"] = task_plan_revisions[-1]
-        if len(task_plan_revisions) > 1:
-            receipt["task_plan_revisions"] = task_plan_revisions
-    if task_update:
-        receipt["task_update"] = task_update
-        task_acceptance = validate_task_closeout(
-            workbench_store,
-            {"closeout_decision": "finish"},
-        )
-        receipt["task_acceptance"] = task_acceptance
-        if task_acceptance.get("allowed") is True:
-            receipt["active_guide"] = _clear_active_guide(workbench_store, guide_id)
-            receipt["task_completion"] = _complete_task_guide(
-                workbench_store, guide, "task_update")
-            receipt["next_action"] = "natural_final_reply"
-    if pending_input_update:
-        receipt["pending_input_update"] = pending_input_update
-        task_acceptance = validate_task_closeout(
-            workbench_store,
-            {"closeout_decision": "finish"},
-        )
-        receipt["task_acceptance"] = task_acceptance
-        if task_acceptance.get("allowed") is True:
-            receipt["active_guide"] = _clear_active_guide(workbench_store, guide_id)
-            receipt["task_completion"] = _complete_task_guide(
-                workbench_store, guide, "pending_input_update")
-            receipt["next_action"] = "natural_final_reply"
-    return receipt
+                receipt["task_completion"] = _complete_task_guide(
+                    workbench_store, guide, "task_update")
+                receipt["next_action"] = "natural_final_reply"
+        if pending_input_update:
+            receipt["pending_input_update"] = pending_input_update
+            task_acceptance = validate_task_closeout(
+                workbench_store,
+                {"closeout_decision": "finish"},
+            )
+            receipt["task_acceptance"] = task_acceptance
+            if task_acceptance.get("allowed") is True:
+                receipt["active_guide"] = _clear_active_guide(workbench_store, guide_id)
+                receipt["task_completion"] = _complete_task_guide(
+                    workbench_store, guide, "pending_input_update")
+                receipt["next_action"] = "natural_final_reply"
+        return receipt
+    except Exception as exc:
+        prior = list(backend_receipts) + list(getattr(exc, "partial_receipts", []))
+        if accepted or task_id or prior or isinstance(exc, WriteError):
+            partial = _base_receipt(guide_id)
+            partial.update(status="error", reason="guide_submission_incomplete",
+                           accepted_submissions=accepted, backend_receipts=prior)
+            if task_id:
+                partial["task_id"] = task_id
+            raise UncertainEffectError(
+                "guide_submission_incomplete", affected_ids=[guide_id] + ([task_id] if task_id else []),
+                cause=exc, partial_receipts=[partial],
+            ) from exc
+        raise
+
 
 
 def _direct_task_checklist_update_fields(guide, submission):
@@ -916,11 +938,8 @@ def _apply_reaction_loop_resident_submit(
 
 def _active_work_guide_id(workbench_store):
     if hasattr(workbench_store, "active_guide_slots"):
-        try:
-            slots = workbench_store.active_guide_slots()
-            return str((slots or {}).get("work") or "").strip()
-        except Exception:
-            return ""
+        slots = workbench_store.active_guide_slots()
+        return str((slots or {}).get("work") or "").strip()
     return str(workbench_store.get("base.active_guide") or "").strip()
 
 
@@ -946,13 +965,10 @@ def _reaction_resident_source_refs(evidence_context=None):
 
 
 def _append_reaction_resident_ledger(workbench_store, event, payload=None):
-    try:
-        workbench_store.append_guide_ledger(
-            REACTION_LOOP_GUIDE_ID,
-            {"event": event, **(payload or {})},
-        )
-    except Exception:
-        pass
+    workbench_store.append_guide_ledger(
+        REACTION_LOOP_GUIDE_ID,
+        {"event": event, **(payload or {})},
+    )
 
 
 def _clear_work_intent_debt_if_present(evidence_context=None):
@@ -960,22 +976,16 @@ def _clear_work_intent_debt_if_present(evidence_context=None):
     state_store = context.get("state_store")
     if state_store is None:
         return
-    try:
-        clear_work_intent_debt(state_store)
-    except Exception:
-        pass
+    clear_work_intent_debt(state_store)
 
 
 def _pending_interaction_first_block(workbench_store, task_id):
     task_id = str(task_id or "").strip()
     if not task_id:
         return None
-    try:
-        if not has_open_pending_inputs(workbench_store, task_id):
-            return None
-        pending_ids = open_pending_input_ids(workbench_store, task_id)
-    except Exception:
+    if not has_open_pending_inputs(workbench_store, task_id):
         return None
+    pending_ids = open_pending_input_ids(workbench_store, task_id)
     return {
         "reason": "pending_interaction_first",
         "task_id": task_id,
@@ -1045,16 +1055,7 @@ def _mark_guide_items_completed(workbench_store, guide, guide_id, completed_flag
     if not changed:
         return
     updated["items"] = items
-    try:
-        workbench_store.save_guide(updated, active=False)
-    except Exception:
-        try:
-            workbench_store.append_guide_ledger(guide_id, {
-                "event": "guide_item_status_update_failed",
-                "completed_flags": sorted(completed),
-            })
-        except Exception:
-            pass
+    workbench_store.save_guide(updated, active=False)
 
 
 def _task_pending_first_receipt(workbench_store, guide_id, block, *, status):
@@ -1065,19 +1066,16 @@ def _task_pending_first_receipt(workbench_store, guide_id, block, *, status):
         "pending_input_ids": (block or {}).get("pending_input_ids") or [],
         "next_option_id": (block or {}).get("next_option_id"),
     }
-    try:
-        workbench_store.append_guide_ledger(guide_id, {
-            "event": (
-                "guide_submission_rejected"
-                if status == "rejected"
-                else "guide_submission_blocked"
-            ),
-            "reason": reason,
-            "blockers": (block or {}).get("blockers") or [],
-            "next_option_id": (block or {}).get("next_option_id"),
-        })
-    except Exception:
-        pass
+    workbench_store.append_guide_ledger(guide_id, {
+        "event": (
+            "guide_submission_rejected"
+            if status == "rejected"
+            else "guide_submission_blocked"
+        ),
+        "reason": reason,
+        "blockers": (block or {}).get("blockers") or [],
+        "next_option_id": (block or {}).get("next_option_id"),
+    })
     receipt = _base_receipt(guide_id)
     receipt.update({
         "status": status,
@@ -1132,22 +1130,29 @@ def _apply_rhythm_guide_submission(
                 receipts, ensure_ascii=False, sort_keys=True,
                 separators=(",", ":"), default=str,
             ).encode("utf-8")).hexdigest()
-            maintenance = manager.prepare_daily_cycle(
-                local_date=local_now().date().isoformat(),
-                round_num=evidence_context.get("round_num"),
-                chronicle_receipt_hash=chronicle_hash,
-            )
-            receipts.append({
-                "tool_id": "memory_compression_daily_maintenance",
-                **maintenance,
-            })
-            state_store = evidence_context.get("state_store")
-            compression_active = manager.has_active_cycle()
-            if state_store is not None:
-                state_store.set_flag(
-                    "memory_compression_due",
-                    compression_active,
+            try:
+                maintenance = manager.prepare_daily_cycle(
+                    local_date=local_now().date().isoformat(),
+                    round_num=evidence_context.get("round_num"),
+                    chronicle_receipt_hash=chronicle_hash,
                 )
+                receipts.append({
+                    "tool_id": "memory_compression_daily_maintenance",
+                    **maintenance,
+                })
+                state_store = evidence_context.get("state_store")
+                compression_active = manager.has_active_cycle()
+                if state_store is not None:
+                    state_store.set_flag(
+                        "memory_compression_due",
+                        compression_active,
+                    )
+            except Exception as exc:
+                raise UncertainEffectError(
+                    "chronicle_maintenance_incomplete", cause=exc,
+                    affected_ids=[str((evidence_context.get("chronicle_write_scope") or {}).get("scope_id") or item_id)],
+                    partial_receipts=receipts + list(getattr(exc, "partial_receipts", [])),
+                ) from exc
             result = _backend_result(
                 item_id,
                 receipts,
@@ -1224,7 +1229,7 @@ def _apply_rhythm_guide_submission(
                 expected_batch_id=str(fields.get("batch_id") or ""),
                 round_num=evidence_context.get("round_num"),
             )
-        except Exception as exc:
+        except ValueError as exc:
             rejected = _backend_reject(
                 str(exc) or "memory_compression_batch_rejected",
                 {
@@ -1235,10 +1240,17 @@ def _apply_rhythm_guide_submission(
             rejected["remaining_ids"] = remaining_ids
             rejected["completed_ids"] = []
             return rejected
-        remaining = manager.has_active_cycle()
-        state_store = evidence_context.get("state_store")
-        if state_store is not None:
-            state_store.set_flag("memory_compression_due", remaining)
+        try:
+            remaining = manager.has_active_cycle()
+            state_store = evidence_context.get("state_store")
+            if state_store is not None:
+                state_store.set_flag("memory_compression_due", remaining)
+        except Exception as exc:
+            raise UncertainEffectError(
+                "memory_compression_flag_incomplete", cause=exc,
+                affected_ids=[str(item.get("mem_id") or "") for item in receipt.get("items", [])],
+                partial_receipts=[receipt],
+            ) from exc
         return {
             "status": "applied",
             "backend_receipts": [receipt],
@@ -1868,23 +1880,14 @@ def _mark_guide_completed(workbench_store, guide, guide_id):
     if not guide_id:
         return
     updated = dict(guide or {})
-    try:
-        updated = workbench_store.load_guide(guide_id)
-    except Exception:
-        pass
+    updated = workbench_store.load_guide(guide_id)
     updated = dict(updated or {})
     updated["status"] = "completed"
-    try:
-        workbench_store.save_guide(updated, active=False)
-    except Exception:
-        pass
-    try:
-        workbench_store.append_guide_ledger(guide_id, {
-            "event": "guide_completed",
-            "status": "completed",
-        })
-    except Exception:
-        pass
+    workbench_store.save_guide(updated, active=False)
+    workbench_store.append_guide_ledger(guide_id, {
+        "event": "guide_completed",
+        "status": "completed",
+    })
 
 
 def _dismiss_task_bootstrap_guide(workbench_store, guide, guide_id, fields=None):
@@ -1892,27 +1895,18 @@ def _dismiss_task_bootstrap_guide(workbench_store, guide, guide_id, fields=None)
     if not guide_id:
         return
     updated = dict(guide or {})
-    try:
-        updated = workbench_store.load_guide(guide_id)
-    except Exception:
-        pass
+    updated = workbench_store.load_guide(guide_id)
     updated = dict(updated or {})
     updated["status"] = "dismissed"
     reason = str((fields or {}).get("reason") or "").strip()
     if reason:
         updated["dismiss_reason"] = reason
-    try:
-        workbench_store.save_guide(updated, active=False)
-    except Exception:
-        pass
-    try:
-        workbench_store.append_guide_ledger(guide_id, {
-            "event": "task_bootstrap_dismissed",
-            "status": "dismissed",
-            "reason": reason,
-        })
-    except Exception:
-        pass
+    workbench_store.save_guide(updated, active=False)
+    workbench_store.append_guide_ledger(guide_id, {
+        "event": "task_bootstrap_dismissed",
+        "status": "dismissed",
+        "reason": reason,
+    })
     _clear_active_guide(workbench_store, guide_id)
 
 

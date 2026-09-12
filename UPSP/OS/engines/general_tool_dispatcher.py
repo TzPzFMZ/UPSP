@@ -1,5 +1,6 @@
 """General tool dispatch helpers for reaction-loop external actions."""
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ from logic.general_tools import (
     UNRESTRICTED_ALLOWED_ROOTS,
     WORKSPACE_ROOT,
     execute_general_tool_call,
+    general_tool_input_denial,
     format_general_tool_fact,
     format_general_tool_material_entry,
     format_general_tool_result,
@@ -214,25 +216,27 @@ class GeneralToolDispatcher:
                     denied_roots=denied_roots,
                     action_recovery=action_recovery,
                 )
-            try:
-                return self.execute_fn(
-                    call, allowed_roots=roots, denied_roots=denied_roots
-                )
-            except TypeError:
-                try:
-                    return self.execute_fn(call, allowed_roots=roots)
-                except TypeError:
-                    return self.execute_fn(call)
+            candidates = [dict(allowed_roots=roots, denied_roots=denied_roots),
+                          dict(allowed_roots=roots), {}]
+            return self._call_compatible_executor(call, candidates)
         if self.execute_fn is execute_general_tool_call:
             return self.execute_fn(
                 call,
                 allowed_roots=UNRESTRICTED_ALLOWED_ROOTS,
                 action_recovery=action_recovery,
             )
-        try:
-            return self.execute_fn(call, allowed_roots=UNRESTRICTED_ALLOWED_ROOTS)
-        except TypeError:
-            return self.execute_fn(call)
+        return self._call_compatible_executor(
+            call, [dict(allowed_roots=UNRESTRICTED_ALLOWED_ROOTS), {}])
+
+    def _call_compatible_executor(self, call, candidates):
+        signature = inspect.signature(self.execute_fn)
+        for kwargs in candidates:
+            try:
+                signature.bind(call, **kwargs)
+            except TypeError:
+                continue
+            return self.execute_fn(call, **kwargs)
+        raise TypeError("unsupported_general_tool_executor_signature")
 
     @staticmethod
     def _approval_summary(tool_id, request):
@@ -582,7 +586,9 @@ class GeneralToolDispatcher:
         return file_read_batch.observe(result)
 
     def handle_requests(self, requests, active_guides, prior_results=None, runtime_context=None):
-        results = []
+        return list(self.iter_results(requests, active_guides, prior_results, runtime_context))
+
+    def iter_results(self, requests, active_guides, prior_results=None, runtime_context=None):
         known_results = list(prior_results or [])
         frozen_recovery = (runtime_context or {}).get("action_recovery_results")
         if requests and isinstance(frozen_recovery, list):
@@ -608,35 +614,40 @@ class GeneralToolDispatcher:
             tool_id = normalize_tool_id(raw_tool_id)
             meta = tool_metadata_for(tool_id)
             if not meta or meta.get("execution_route") != "host_dispatch":
-                results.append(self._with_dispatch_stage(
+                yield self._with_dispatch_stage(
                     self._with_trace(self._base_result(
                         tool_id,
                         "rejected",
                         reason="unknown_general_tool",
                     ), request),
                     DISPATCH_STAGE_CAPABILITY_GATE,
-                ))
+                )
                 continue
             if meta.get("status") != "enabled":
-                results.append(self._with_dispatch_stage(
+                yield self._with_dispatch_stage(
                     self._with_trace(self._base_result(
                         tool_id,
                         "rejected",
                         reason="general_tool_not_enabled",
                     ), request),
                     DISPATCH_STAGE_CAPABILITY_GATE,
-                ))
+                )
+                continue
+            if denial := general_tool_input_denial(request):
+                yield self._with_dispatch_stage(
+                    self._with_trace(self._base_result(tool_id, "rejected", reason=denial), request),
+                    DISPATCH_STAGE_CAPABILITY_GATE)
                 continue
             backend_issue = self._backend_readiness_issue(tool_id)
             if backend_issue:
-                results.append(self._with_dispatch_stage(
+                yield self._with_dispatch_stage(
                     self._with_trace(self._base_result(
                         tool_id,
                         "rejected",
                         reason=backend_issue,
                     ), request),
                     DISPATCH_STAGE_CAPABILITY_GATE,
-                ))
+                )
                 continue
             request, path_alias_info = normalize_sandbox_tool_path_alias(
                 sandbox_grant,
@@ -672,8 +683,8 @@ class GeneralToolDispatcher:
                     signature,
                 )
                 result = self._with_path_alias_info(result, path_alias_info)
-                results.append(result)
-                known_results.append(results[-1])
+                yield result
+                known_results.append(result)
                 continue
             reusable_results = self._reusable_prior_results(
                 known_results,
@@ -700,7 +711,7 @@ class GeneralToolDispatcher:
                         request,
                     )
                     result = self._with_path_alias_info(result, path_alias_info)
-                    results.append(result)
+                    yield result
                     known_results.append(result)
                     continue
             if (
@@ -713,7 +724,7 @@ class GeneralToolDispatcher:
                     approval_result = self._with_path_alias_info(
                         approval_result, path_alias_info
                     )
-                    results.append(approval_result)
+                    yield approval_result
                     known_results.append(approval_result)
                     continue
             result = self._execute_allowed_request(
@@ -725,9 +736,8 @@ class GeneralToolDispatcher:
                 file_read_batch,
                 runtime_context,
             )
-            results.append(result)
+            yield result
             known_results.append(result)
-        return results
 
     @staticmethod
     def format_result(result):

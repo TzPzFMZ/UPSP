@@ -173,6 +173,11 @@ class FakeCli:
         self.runtime_error = RuntimeError
         self.host = {"address": "127.0.0.1", "port": 0}
         self.closed = False
+        self.last_outcome = {}
+
+    def record_uncertain_effect(self, exc):
+        self.last_outcome.update(status="mutation_unsettled", settlement_status="unsettled",
+            persistent_effect_failure=exc.as_dict())
 
     def start(self, *, host_address, port):
         self.host = {"address": host_address, "port": port}
@@ -206,7 +211,7 @@ class FakeCli:
                 "heartbeat_suspended": False,
                 "pending_tool_approval": None,
             },
-            "last_outcome": {},
+            "last_outcome": dict(self.last_outcome),
         }
 
     def submit_message(self, message, permission_level, *,
@@ -513,7 +518,7 @@ def test_spec683_static_whitelist_polling_and_runtime_status(tmp_path):
         status, about = _request(server, "GET", "/api/about")
         assert status == 200
         assert about["schema_version"] == "seed_gui_about.v1"
-        assert about["product"]["version"] == "0.1.2"
+        assert about["product"]["version"] == "0.1.3"
         assert about["product"]["author"]["zh-CN"] == (
             "由 TzPzFMZ 发起、设计并与 AI 协作开发"
         )
@@ -3436,6 +3441,30 @@ def test_spec776_live_event_cache_reloads_same_size_prefix_rewrite(tmp_path):
         _close(server, thread)
 
 
+def test_live_event_cache_waits_for_partial_line_and_rejects_corrupt_complete_line(tmp_path):
+    server, thread = _server(tmp_path, FakeCli())
+    path = tmp_path / "round" / "round_806.jsonl"
+    line = json.dumps({"round": 806, "event_index": 1, "event_type": "round_started", "payload": {}}) + "\n"
+    try:
+        handler = server.RequestHandlerClass
+        handler._event_cache = {}
+        path.write_text(line[:20], encoding="utf-8")
+        assert handler._load_cached_round_events(806) == []
+        assert handler._load_cached_round_events(806) == []
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(line[20:])
+        assert [event["event_index"] for event in handler._load_cached_round_events(806)] == [1]
+        assert [event["event_index"] for event in handler._load_cached_round_events(806)] == [1]
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("{broken\n")
+        before = path.read_bytes()
+        with pytest.raises(json.JSONDecodeError):
+            handler._load_cached_round_events(806)
+        assert path.read_bytes() == before
+    finally:
+        _close(server, thread)
+
+
 def test_spec776_live_event_cache_overflow_is_bounded_and_not_reparsed(
         tmp_path, monkeypatch):
     server, thread = _server(tmp_path, FakeCli())
@@ -3498,6 +3527,94 @@ def test_spec772_latest_full_state_reuses_incremental_event_cache(
         assert round_num == 772
         assert events == [{"round": 772, "event_index": 1}]
         assert calls == [772]
+    finally:
+        _close(server, thread)
+
+
+@pytest.mark.parametrize("schema", [None, "round_audit.v1", "round_audit.v2"])
+@pytest.mark.parametrize("phase", ["setup", "reaction", "cleanup"])
+def test_spec807_frame_detail_keeps_recorded_context_when_active_files_change(
+        tmp_path, schema, phase):
+    from data.audit_store import AuditStore
+    from data.provider_request_wire import (
+        build_request_body_source_map, provider_request_body_sha256,
+        serialize_provider_request_body,
+    )
+    from data.round_snapshot_store import RoundSnapshotStore
+
+    fake = FakeCli()
+    server, thread = _server(tmp_path, fake)
+    audit = AuditStore(**{step + "_dir": str(tmp_path / step)
+                          for step in ("setup", "reaction", "cleanup")})
+    store = RoundSnapshotStore(tmp_path, static_projection_enabled=False)
+    step_path = tmp_path / phase / "step.json"
+
+    def write_current(text, *, request=True):
+        audit.write_audit(phase, {"now": text, "full_system": text})
+        audit.write_call_layers(phase, call={"step": phase}, provider={},
+                                endpoint={}, tool_header={}, generation_config={})
+        if request:
+            body = {"model": "unit", "messages": [{"role": "user", "content": text}]}
+            digest = provider_request_body_sha256(body)
+            audit.write_compiled_provider_request(phase, {
+                "schema": "provider_request.v1", "call": {"step": phase},
+                "created_at": "2026-09-05T10:00:00+08:00",
+                "context_window_tokens": 128000, "request_body": body,
+                "request_body_sha256": digest, "wire_body_sha256": digest,
+                "wire_body_encoding": "canonical_json_utf8.v1",
+                "wire_body_bytes": len(serialize_provider_request_body(body)),
+                "request_body_source_map": build_request_body_source_map(
+                    body, audit.read_context_layers(phase)),
+            })
+
+    def detail(iteration=1):
+        status, result = _request(server, "GET",
+            f"/api/live/detail?round=807&kind=frame&ref=R000807:{phase}:{iteration}")
+        assert status == 200, result
+        return result
+
+    try:
+        write_current("A recorded")
+        store.start_round(807, "interactive")
+        store.record_step_input_from_files(807, phase, 1)
+        path = Path(store._round_path(807))
+        if schema != "round_audit.v2":
+            events = store.read_events(807)
+            for event in events:
+                event.pop("schema_version", None)
+                event["payload"].pop("audit_snapshot", None)
+                if schema:
+                    event["schema_version"] = schema
+            path.write_text("".join(json.dumps(event) + "\n" for event in events),
+                            encoding="utf-8")
+            store = RoundSnapshotStore(tmp_path, static_projection_enabled=False)
+        original = path.read_bytes()
+        before = detail()
+        assert next(p for p in before["payload"]["context_panes"]
+                    if p["id"] == "50_now")["content_md"] == "A recorded"
+        for stage in ("layers_first", "request_changed", "request_broken"):
+            if stage == "request_broken":
+                step_path.write_text("{broken", encoding="utf-8")
+            else:
+                write_current("B current", request=stage != "layers_first")
+            active = {p: p.read_bytes() for p in (tmp_path / phase).rglob("*") if p.is_file()}
+            assert detail() == before, stage
+            assert path.read_bytes() == original
+            assert all(p.read_bytes() == content for p, content in active.items())
+        status, exported = _request(server, "GET", "/api/live/detail?round=807&kind=evidence")
+        assert status == 200
+        assert exported["payload"]["runtime_projection"]["context_panes"] == before["payload"]["context_panes"]
+        write_current("B current")
+        store.record_step_input_from_files(807, phase, 2)
+        second = detail(2)["payload"]["context_panes"]
+        write_current("C current")
+        assert detail()["payload"]["context_panes"] == before["payload"]["context_panes"]
+        assert detail(2)["payload"]["context_panes"] == second
+        store.append_event(807, "round_closed", {"status": "closed"})
+        assert detail(2)["payload"]["context_panes"] == second
+        store.start_round(808, "interactive")
+        assert detail(2)["payload"]["context_panes"] == second
+        assert fake.calls == []
     finally:
         _close(server, thread)
 
@@ -3971,7 +4088,7 @@ def test_spec705_desktop_environment_and_ready_record(tmp_path, monkeypatch):
             "process_id": os.getpid(),
             "session_id": "b" * 32,
             "origin": f"http://127.0.0.1:{server.server_address[1]}",
-            "product_version": "0.1.2",
+            "product_version": "0.1.3",
         }
     finally:
         _close(server, thread)
@@ -4372,6 +4489,10 @@ def test_spec717_chat_metadata_uses_event_time_and_markdown_source():
     assert 'button[data-markdown-copy], button[data-markdown-document-copy]' in markdown_source
     assert 'htmlCache.get(documentRoot.dataset.markdownDocumentId || "")?.source' in markdown_source
     assert '"复制最终回复": "Copy final reply"' in i18n_source
+    # 图片/字体在真实聊天中异步完成的接线尚无等价浏览器用例，先保留。
+    assert "document.fonts?.ready.then(scrollConversationToBottomIfSticky)" in timeline_source
+    assert "hydrateMarkdownDocuments(body, els.chatThread, () => state.conversationStickToBottom)" in timeline_source
+    assert "markdownStickResolvers.get(documentRoot)" in markdown_source
 
 
 def test_spec717_stage_refresh_preserves_primary_scroll_surfaces():
@@ -4455,37 +4576,6 @@ def test_spec693_gui_retained_round_conversation_contract():
     assert "当前保留的 Round 会按时间顺序组成连续对话" in intro
 
 
-def test_spec785_conversation_scroll_uses_explicit_sticky_bottom_state():
-    contracts_source = _gui_ts_source("contracts.ts")
-    state_source = _gui_ts_source("state.ts")
-    events_source = _gui_ts_source("events.ts")
-    timeline_source = _gui_ts_source("conversation-timeline.ts")
-    markdown_source = _gui_ts_source("markdown.ts")
-    runtime_source = _gui_ts_source("runtime.ts")
-    scroll_source = _gui_ts_source("conversation-scroll.ts")
-    package = json.loads((GUI_ROOT / "package.json").read_text(encoding="utf-8"))
-
-    assert "conversationStickToBottom: boolean" in contracts_source
-    assert "conversationStickToBottom: true" in state_source
-    assert 'els.chatThread.addEventListener("scroll"' in events_source
-    assert "updateConversationStickyState(els.chatThread, state)" in events_source
-    assert "distanceFromBottom <= 24" in scroll_source
-    assert 'els.chatThread.addEventListener("toggle"' in events_source
-    assert "wasAtLatest" not in timeline_source
-    assert "const stickToBottom = state.conversationStickToBottom" in timeline_source
-    assert "if (stickToBottom) els.chatThread.scrollTop = els.chatThread.scrollHeight" in timeline_source
-    assert "if (changed) scrollConversationToBottomIfSticky()" in timeline_source
-    assert "document.fonts?.ready.then(scrollConversationToBottomIfSticky)" in timeline_source
-    assert "hydrateMarkdownDocuments(body, els.chatThread, () => state.conversationStickToBottom)" in timeline_source
-    assert "const stickToBottom = shouldStickToBottom ? shouldStickToBottom() : atBottom" in scroll_source
-    assert "markdownStickResolvers.get(documentRoot)" in markdown_source
-    assert "state.conversationStickToBottom = true" in runtime_source
-    assert "updateConversationStickyState" in scroll_source
-    assert "scrollConversationToBottomIfSticky" in scroll_source
-    assert "mutateScrollLayout" in scroll_source
-    assert "test:conversation-scroll" in package["scripts"]["check"]
-
-
 def test_spec704_gui_stop_control_uses_resident_status_and_empty_post():
     runtime_source = _gui_ts_source("runtime.ts")
     view_source = _gui_ts_source("view.ts")
@@ -4528,107 +4618,20 @@ def test_spec778_gui_terminal_waits_for_runtime_host_release():
     assert '"本地结算不可中断": "Local settlement cannot be interrupted"' in i18n_source
 
 
-def test_spec694_gui_substage_animation_only_tracks_open_transition():
-    css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
-    system_rule = css_source.split(".system-window {", 1)[1].split("}", 1)[0]
-    open_rule = css_source.split(".app-shell.system-open .stage-page {", 1)[1].split("}", 1)[0]
-
-    assert "system-window-in" not in system_rule
-    assert "animation: system-window-in 180ms var(--ease-out) both;" in open_rule
-    assert ".system-window.closing { animation: system-window-out 140ms ease-in both; }" in css_source
-
-
-def test_spec694_gui_substage_open_system_page_reflows_dialogue_without_moving_nav_anchor():
-    css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
-    shell_rule = css_source.split(".app-shell {", 1)[1].split("}", 1)[0]
-    nav_expanded_rule = css_source.split(".left-rail.nav-expanded {", 1)[1].split("}", 1)[0]
-    desktop_open_rule = css_source.split("@media (min-width: 761px) {", 1)[1].split("}", 1)[0]
-    reading_column_rule = css_source.split(".dialogue-backplane > .pane-head,", 1)[1].split("}", 1)[0]
-
-    assert "grid-template-columns: var(--rail-collapsed) minmax(0, 1fr);" in shell_rule
-    assert "width: var(--rail-expanded);" in nav_expanded_rule
-    assert "grid-template-columns" not in nav_expanded_rule
-    assert ".app-shell.system-open .dialogue-backplane {" in desktop_open_rule
-    assert "left: calc(var(--system-window-width) + 24px);" in desktop_open_rule
-    assert "padding-inline: 24px 18px;" in desktop_open_rule
-    assert "max-width: 100%;" in reading_column_rule
-
-
-def test_spec694_gui_substage_three_by_four_stages_when_room_allows():
-    css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
-    shell_rule = css_source.split(".app-shell {", 1)[1].split("}", 1)[0]
-
-    assert "--conversation-width: min(780px, calc(100vw - var(--rail-collapsed) - 72px));" in css_source
-    assert "--system-window-width: calc((100% - 24px) / 2);" in shell_rule
-    assert "58vw" not in shell_rule
-
-
-def test_spec787_system_window_split_is_resizable_persistent_and_accessible():
-    package = json.loads((GUI_ROOT / "package.json").read_text(encoding="utf-8"))
-    css_source = (GUI_ROOT / "styles.css").read_text(encoding="utf-8")
-    index_source = (GUI_ROOT / "index.html").read_text(encoding="utf-8")
-    controller = (GUI_ROOT / "src" / "system-window-split.ts").read_text(encoding="utf-8")
-    model = (GUI_ROOT / "src" / "system-window-split-model.ts").read_text(encoding="utf-8")
-    view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
-    browser_test = (GUI_ROOT / "scripts" / "test-system-window-split-browser.mjs").read_text(encoding="utf-8")
-
-    assert package["scripts"]["test:system-window-split"] == "node scripts/test-system-window-split.mjs"
-    assert package["scripts"]["test:system-window-split-browser"] == "node scripts/test-system-window-split-browser.mjs"
-    assert 'id="systemWindowSplitter"' in index_source
-    assert 'role="separator"' in index_source
-    assert 'aria-orientation="vertical"' in index_source
-    assert 'tabindex="-1"' in index_source
-    assert "upsp.v5.systemWindowRatio" in model
-    assert "MIN_SYSTEM_WINDOW_PX = 480" in model
-    assert "MIN_DIALOGUE_PX = 520" in model
-    assert "MIN_SYSTEM_WINDOW_RATIO = 0.3" in model
-    assert "MAX_SYSTEM_WINDOW_RATIO = 0.7" in model
-    assert 'key === "ArrowLeft"' in model
-    assert 'key === "ArrowRight"' in model
-    assert 'key === "Home"' in model
-    assert 'key === "End"' in model
-    assert 'splitter.addEventListener("pointercancel"' in controller
-    assert 'splitter.addEventListener("lostpointercapture"' in controller
-    assert 'splitter.addEventListener("dblclick"' in controller
-    assert 'localStorage.removeItem(SYSTEM_WINDOW_RATIO_STORAGE_KEY)' in controller
-    assert 'els.app.style.setProperty("--system-window-width"' in controller
-    assert "initialSystemWidth" in controller
-    assert "startClientX" in controller
-    assert "deferSystemWindowRender" in controller
-    assert "flushDeferredRender" in controller
-    assert "deferSystemWindowRender(() => renderStage(pageId))" in view_source
-    assert "  desiredRatio: number;" not in model
-    assert "constrained" not in model
-    assert "resizeObserver?.disconnect()" not in controller
-    assert 'import { renderStage } from "./src/view.ts"' in browser_test
-    assert "window.qa.requestRender('mem')" in browser_test
-    assert ".system-window-splitter {" in css_source
-    assert "touch-action: none;" in css_source
-    mobile_rule = css_source.split("@media (max-width: 760px) {", 1)[1]
-    assert ".system-window-splitter { display: none !important; }" in mobile_rule
-    reduced_motion_rule = css_source.split("@media (prefers-reduced-motion: reduce) {", 1)[1].split("/* Spec702", 1)[0]
-    assert "system-window-splitter" not in reduced_motion_rule
-
-
 def test_spec695_typescript_is_the_only_gui_source_and_bundle_stays_host_compatible():
     package = json.loads((GUI_ROOT / "package.json").read_text(encoding="utf-8"))
     tsconfig = json.loads((GUI_ROOT / "tsconfig.json").read_text(encoding="utf-8"))
-    source_names = {path.name for path in (GUI_ROOT / "src").glob("*.ts")}
     bundle = (GUI_ROOT / "app.js").read_text(encoding="utf-8")
     view_source = (GUI_ROOT / "src" / "view.ts").read_text(encoding="utf-8")
     app_source = (GUI_ROOT / "src" / "app.ts").read_text(encoding="utf-8")
 
     assert package["private"] is True
-    assert package["devDependencies"]["esbuild"] == "0.28.1"
-    assert package["devDependencies"]["typescript"] == "7.0.2"
     assert package["scripts"]["build:check"] == "node scripts/build.mjs --check"
+    for name in ("test:conversation-scroll", "test:system-window-split", "test:system-window-split-browser", "test:defense-browser"):
+        assert name in package["scripts"]
+        assert f"npm run {name}" in package["scripts"]["check"].split(" && ")
     assert tsconfig["compilerOptions"]["strict"] is True
     assert tsconfig["compilerOptions"]["noEmit"] is True
-    assert source_names == {
-        "app.ts", "bootstrap.ts", "contracts.ts", "events.ts", "markdown-mermaid.ts",
-        "i18n.ts", "markdown.ts", "runtime.ts", "state.ts", "view.ts", "conversation-timeline.ts",
-        "conversation-scroll.ts", "system-window-split.ts", "system-window-split-model.ts",
-    }
     assert bundle.startswith("/* Generated from src/app.ts. Do not edit app.js directly. */")
     assert "sourceMappingURL" not in bundle
     assert 'from "./runtime"' not in view_source

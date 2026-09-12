@@ -37,11 +37,33 @@ const documentPrefixes = new Map<string, string>();
 const approvedImageDocuments = new Set<string>();
 const markdownStickResolvers = new WeakMap<HTMLElement, () => boolean>();
 const imageLoads = new Map<string, Promise<ImageSize>>();
-const mermaidRenders = new Map<string, Promise<string>>();
+const mermaidRenders = new Map<string, Map<string, Promise<string>>>();
+let pruneScheduled = false;
 let documentSequence = 0;
 let mermaidSequence = 0;
 let mermaidModule: Promise<MermaidModule> | null = null;
 let interactionsReady = false;
+
+export function clearMarkdownDocuments(): void {
+  htmlCache.clear();
+  documentPrefixes.clear();
+  approvedImageDocuments.clear();
+  mermaidRenders.clear();
+  imageLoads.clear();
+}
+
+export function scheduleMarkdownPrune(): void {
+  if (pruneScheduled) return;
+  pruneScheduled = true;
+  queueMicrotask(() => {
+    pruneScheduled = false;
+    const mounted = new Set([...document.querySelectorAll<HTMLElement>(".md-document[data-markdown-document-id]")]
+      .map((element) => element.dataset.markdownDocumentId));
+    for (const cache of [htmlCache, documentPrefixes, approvedImageDocuments, mermaidRenders]) {
+      for (const id of cache.keys()) if (!mounted.has(id)) cache.delete(id);
+    }
+  });
+}
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
@@ -99,6 +121,9 @@ const imageHandler: NonNullable<NonNullable<RemarkRehypeOptions["handlers"]>["im
 
 const sanitizeSchema: SanitizeOptions = {
   ...defaultSchema,
+  // Raw HTML is disabled; remark assigns document-scoped IDs. A second
+  // sanitizer prefix would change those IDs without changing their hrefs.
+  clobberPrefix: "",
   tagNames: [...(defaultSchema.tagNames || []).filter((tag) => !["img", "picture", "source"].includes(tag)), "button"],
   attributes: {
     ...defaultSchema.attributes,
@@ -168,6 +193,7 @@ export function renderMarkdownDocument(documentId: string, value: unknown): stri
     html = `<pre class="md-render-fallback"><code>${escapeHtml(source || t("无可展示内容。"))}</code></pre>`;
   }
   htmlCache.set(documentId, { source, html });
+  mermaidRenders.delete(documentId);
   return `<div class="md-document" data-markdown-document-id="${escapeHtml(documentId)}">${html}</div>`;
 }
 
@@ -264,9 +290,8 @@ function preloadImage(url: string): Promise<ImageSize> {
     image.addEventListener("load", () => resolve({ width: image.naturalWidth, height: image.naturalHeight }), { once: true });
     image.addEventListener("error", () => reject(new Error("remote_image_load_failed")), { once: true });
     image.src = url;
-  }).catch((error: unknown) => {
-    imageLoads.delete(url);
-    throw error;
+  }).finally(() => {
+    if (imageLoads.get(url) === request) imageLoads.delete(url);
   });
   imageLoads.set(url, request);
   return request;
@@ -325,16 +350,21 @@ function loadMermaidModule(): Promise<MermaidModule> {
 }
 
 function mermaidHtml(documentId: string, position: number, source: string): Promise<string> {
-  const key = `${documentId}:${position}:${source}`;
-  const existing = mermaidRenders.get(key);
+  let renders = mermaidRenders.get(documentId);
+  if (!renders) {
+    renders = new Map();
+    mermaidRenders.set(documentId, renders);
+  }
+  const key = `${position}:${source}`;
+  const existing = renders.get(key);
   if (existing) return existing;
   const request = loadMermaidModule()
     .then((loaded) => loaded.renderMermaid(`md-diagram-${++mermaidSequence}`, source))
     .catch((error: unknown) => {
-      mermaidRenders.delete(key);
+      renders.delete(key);
       throw error;
     });
-  mermaidRenders.set(key, request);
+  renders.set(key, request);
   return request;
 }
 
@@ -446,6 +476,7 @@ export function hydrateMarkdownDocuments(
   scrollContainer: HTMLElement | null = null,
   shouldStickToBottom?: () => boolean,
 ): void {
+  scheduleMarkdownPrune();
   root.querySelectorAll<HTMLElement>(".md-document[data-markdown-document-id]").forEach((documentRoot) => {
     if (shouldStickToBottom) markdownStickResolvers.set(documentRoot, shouldStickToBottom);
     enhanceTables(documentRoot);

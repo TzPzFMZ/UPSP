@@ -406,10 +406,6 @@ class RoundLiveHandler(BaseHTTPRequestHandler):
                     events,
                     kind=kind,
                     ref=ref,
-                    live_context_root=str(self.round_dir.parent),
-                    use_live_layers=(
-                        kind == "frame" and self._is_latest_round_number(round_num)
-                    ),
                 )
                 detail["source_sha"] = source_sha
             except FileNotFoundError:
@@ -432,11 +428,7 @@ class RoundLiveHandler(BaseHTTPRequestHandler):
             except FileNotFoundError:
                 self._send_json(404, {"error": "round_not_found"})
                 return
-            state = build_live_state(
-                events,
-                live_context_root=str(self.round_dir.parent),
-                use_live_layers=self._is_latest_round_number(round_num),
-            )
+            state = build_live_state(events)
             self._send_json(200, {"round": round_num, "state": state})
             return
         if path == "/api/live/events":
@@ -484,8 +476,6 @@ class RoundLiveHandler(BaseHTTPRequestHandler):
             payload = events_after(
                 events,
                 after=after,
-                live_context_root=str(self.round_dir.parent),
-                use_live_layers=self._is_latest_round_number(round_num),
             )
             payload.pop("events", None)
             payload["round"] = round_num

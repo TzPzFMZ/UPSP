@@ -7,6 +7,7 @@ DDS §11 关系系统
 import json
 import os
 import re
+import threading
 from datetime import datetime
 
 from data.atomic_write import atomic_write_json, atomic_write_text
@@ -17,6 +18,9 @@ from schemas.relation import (
 )
 from errors import WriteError, ReadError
 from constants import local_now
+
+
+RELATION_MUTATION_LOCK = threading.RLock()
 
 
 AXIS_NAMES = {
@@ -65,34 +69,55 @@ class RelationStore:
 
     def get_card_path(self, card_id, category="ours"):
         """关系卡文件路径（全部通过 paths.py 定义）"""
+        for label, value in (("category", category), ("id", card_id)):
+            if (not isinstance(value, str) or not value or value in {".", ".."}
+                    or any(ord(c) < 32 or c in '<>:"/\\|?*' for c in value)):
+                raise ValueError(f"invalid_relation_{label}")
         return os.path.join(RELATION_DIR, category, f"{card_id}.md")
 
     def create_card(self, card_id, name, category="ours"):
         """创建新关系卡"""
-        card = default_relation_card(card_id, name, category)
-        path = self.get_card_path(card_id, category)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with RELATION_MUTATION_LOCK:
+            card = default_relation_card(card_id, name, category)
+            path = self.get_card_path(card_id, category)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        tmp = path + ".tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(_format_relation_md(card))
-            os.replace(tmp, path)
-        except OSError as e:
-            if os.path.isfile(tmp):
-                os.remove(tmp)
-            raise WriteError(path, cause=e)
+            reg = self.load_registry()
+            before = None
+            if os.path.isfile(path):
+                with open(path, encoding="utf-8") as handle:
+                    before = handle.read()
+            try:
+                atomic_write_text(path, _format_relation_md(card))
+                reg_entry = default_registry_card_entry(
+                    card_id, name, category, f"relation/{category}/{card_id}.md")
+                from copy import deepcopy
+                updated = deepcopy(reg)
+                updated["cards"].append(reg_entry)
+                self.save_registry(updated)
+            except Exception as exc:
+                errors = []
+                try:
+                    if before is None:
+                        if os.path.isfile(path):
+                            os.remove(path)
+                    else:
+                        atomic_write_text(path, before)
+                except Exception as restore_exc:
+                    errors.append(restore_exc)
+                try:
+                    self.save_registry(reg)
+                except Exception as restore_exc:
+                    errors.append(restore_exc)
+                if errors:
+                    from errors import UncertainEffectError
+                    raise UncertainEffectError(
+                        "relation_create_rollback_failed", affected_ids=[card_id],
+                        cause=exc, rollback_causes=errors,
+                    ) from exc
+                raise
 
-        # 注册表
-        reg = self.load_registry()
-        reg_entry = default_registry_card_entry(
-            card_id, name, category,
-            f"relation/{category}/{card_id}.md"
-        )
-        reg["cards"].append(reg_entry)
-        self.save_registry(reg)
-
-        return card
+            return card
 
     def find_card(self, name_or_id):
         """按 id 或对象名查注册表条目，兼容旧注册表缺 name 的情况。"""
@@ -176,77 +201,79 @@ class RelationStore:
 
     def add_note(self, card_id, content):
         """追加交互笔记"""
-        card = self.read_card(card_id)
-        if card is None:
-            return None
-        observed_at = local_now().isoformat()
-        note = {"date": observed_at, "content": content}
-        path = self.get_card_path(card["id"], card.get("category", "ours"))
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                raw = handle.read()
-            raw = _replace_metadata_line(raw, "最后交互", observed_at)
-            raw = _append_section_line(raw, "笔记", f"- {observed_at}：{content}")
-            atomic_write_text(path, raw)
-        except OSError as exc:
-            raise WriteError(path, cause=exc)
-        card["notes"].append(note)
-        card["updated_at"] = observed_at
-        return card
+        with RELATION_MUTATION_LOCK:
+            card = self.read_card(card_id)
+            if card is None:
+                return None
+            observed_at = local_now().isoformat()
+            note = {"date": observed_at, "content": content}
+            path = self.get_card_path(card["id"], card.get("category", "ours"))
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    raw = handle.read()
+                raw = _replace_metadata_line(raw, "最后交互", observed_at)
+                raw = _append_section_line(raw, "笔记", f"- {observed_at}：{content}")
+                atomic_write_text(path, raw)
+            except OSError as exc:
+                raise WriteError(path, cause=exc)
+            card["notes"].append(note)
+            card["updated_at"] = observed_at
+            return card
 
     def apply_state_settlement(self, card_id, axes, settlement_id, observed_at=None):
         """原子补丁关系六轴并记录结算 ID；同 ID 重试不重复累计。"""
-        card = self.read_card(card_id)
-        if card is None:
-            raise ReadError(str(card_id), message="关系卡不存在")
-        settlement_id = str(settlement_id or "").strip()
-        if not settlement_id:
-            raise ValueError("settlement_id_required")
-        before = {
-            axis: int(card.get("axes", {}).get(axis, 0))
-            for axis in AXIS_NAMES
-        }
-        after = {
-            axis: max(-100, min(100, int((axes or {}).get(axis, before[axis]))))
-            for axis in AXIS_NAMES
-        }
-        if card.get("last_state_settlement_id") == settlement_id:
+        with RELATION_MUTATION_LOCK:
+            card = self.read_card(card_id)
+            if card is None:
+                raise ReadError(str(card_id), message="关系卡不存在")
+            settlement_id = str(settlement_id or "").strip()
+            if not settlement_id:
+                raise ValueError("settlement_id_required")
+            before = {
+                axis: int(card.get("axes", {}).get(axis, 0))
+                for axis in AXIS_NAMES
+            }
+            after = {
+                axis: max(-100, min(100, int((axes or {}).get(axis, before[axis]))))
+                for axis in AXIS_NAMES
+            }
+            if card.get("last_state_settlement_id") == settlement_id:
+                return {
+                    "status": "already_applied",
+                    "card_id": card["id"],
+                    "settlement_id": settlement_id,
+                    "before": before,
+                    "after": before,
+                }
+
+            observed_at = observed_at or local_now().isoformat()
+            path = self.get_card_path(card["id"], card.get("category", "ours"))
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    raw = handle.read()
+                for axis, value in after.items():
+                    raw = _replace_axis_line(raw, axis, value)
+                raw = _replace_metadata_line(raw, "最后状态结算", settlement_id)
+                changes = "；".join(
+                    f"{AXIS_NAMES[axis]} {before[axis]:+d}→{after[axis]:+d}"
+                    for axis in AXIS_NAMES
+                    if before[axis] != after[axis]
+                ) or "六轴无净变化"
+                raw = _append_section_line(
+                    raw,
+                    "历史（History）",
+                    f"- {observed_at}：状态结算 {settlement_id}；{changes}",
+                )
+                atomic_write_text(path, raw)
+            except OSError as exc:
+                raise WriteError(path, cause=exc)
             return {
-                "status": "already_applied",
+                "status": "applied",
                 "card_id": card["id"],
                 "settlement_id": settlement_id,
                 "before": before,
-                "after": before,
+                "after": after,
             }
-
-        observed_at = observed_at or local_now().isoformat()
-        path = self.get_card_path(card["id"], card.get("category", "ours"))
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                raw = handle.read()
-            for axis, value in after.items():
-                raw = _replace_axis_line(raw, axis, value)
-            raw = _replace_metadata_line(raw, "最后状态结算", settlement_id)
-            changes = "；".join(
-                f"{AXIS_NAMES[axis]} {before[axis]:+d}→{after[axis]:+d}"
-                for axis in AXIS_NAMES
-                if before[axis] != after[axis]
-            ) or "六轴无净变化"
-            raw = _append_section_line(
-                raw,
-                "历史（History）",
-                f"- {observed_at}：状态结算 {settlement_id}；{changes}",
-            )
-            atomic_write_text(path, raw)
-        except OSError as exc:
-            raise WriteError(path, cause=exc)
-        return {
-            "status": "applied",
-            "card_id": card["id"],
-            "settlement_id": settlement_id,
-            "before": before,
-            "after": after,
-        }
 
     def list_cards(self, category=None, status="active"):
         """列出关系卡"""
@@ -260,14 +287,15 @@ class RelationStore:
 
     def set_summary_resident(self, card_id, enabled=True):
         """切换 STATUSBAR 关系摘要常驻标记。"""
-        reg = self.load_registry()
-        for c in reg.get("cards", []):
-            if c.get("id") == card_id:
-                c["summary_resident"] = bool(enabled)
-                c["updated_at"] = local_now().isoformat()
-                break
-        self.save_registry(reg)
-        return reg
+        with RELATION_MUTATION_LOCK:
+            reg = self.load_registry()
+            for c in reg.get("cards", []):
+                if c.get("id") == card_id:
+                    c["summary_resident"] = bool(enabled)
+                    c["updated_at"] = local_now().isoformat()
+                    break
+            self.save_registry(reg)
+            return reg
 
 
 def _read_relation_md(path):

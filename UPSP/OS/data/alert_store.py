@@ -4,11 +4,14 @@
 DDS §38.6 L3 心跳急救与 alerts.md Base 版条目格式。
 """
 import os
-from datetime import datetime
+import threading
 
 from paths import ALERTS_MD
 from errors import ReadError, WriteError
 from constants import local_now
+from data.atomic_write import atomic_write_text
+
+_ALERT_MUTATION_LOCK = threading.RLock()
 
 
 class AlertStore:
@@ -16,12 +19,12 @@ class AlertStore:
 
     def read(self):
         """读取 alerts.md 全文；不存在时返回空字符串。"""
-        if not os.path.isfile(ALERTS_MD):
-            return ""
         try:
             with open(ALERTS_MD, "r", encoding="utf-8") as f:
                 return f.read()
-        except OSError as e:
+        except FileNotFoundError:
+            return ""
+        except (OSError, UnicodeError) as e:
             raise ReadError(ALERTS_MD, cause=e)
 
     def append_alert(self, round_num, step, event_type, detail, action):
@@ -36,33 +39,25 @@ class AlertStore:
             f"| action={self._one_line(action)}"
         )
 
-        existing = self.read()
-        if not existing.strip():
-            existing = "<!-- 意外事件日志 -->\n"
-        content = existing.rstrip() + "\n\n" + line + "\n"
-
-        tmp = ALERTS_MD + ".tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp, ALERTS_MD)
-        except OSError as e:
-            if os.path.isfile(tmp):
-                os.remove(tmp)
-            raise WriteError(ALERTS_MD, cause=e)
+        with _ALERT_MUTATION_LOCK:
+            existing = self.read()
+            if not existing.strip():
+                existing = "<!-- 意外事件日志 -->\n"
+            content = existing.rstrip() + "\n\n" + line + "\n"
+            self._write(content)
 
     def clear(self):
         """清空 alerts.md，保留文件头。"""
         os.makedirs(os.path.dirname(ALERTS_MD), exist_ok=True)
-        tmp = ALERTS_MD + ".tmp"
+        with _ALERT_MUTATION_LOCK:
+            self._write("<!-- 意外事件日志 -->\n")
+
+    @staticmethod
+    def _write(content):
         try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write("<!-- 意外事件日志 -->\n")
-            os.replace(tmp, ALERTS_MD)
+            atomic_write_text(ALERTS_MD, content, durable=True)
         except OSError as e:
-            if os.path.isfile(tmp):
-                os.remove(tmp)
-            raise WriteError(ALERTS_MD, cause=e)
+            raise WriteError(ALERTS_MD, cause=e) from e
 
     @staticmethod
     def _format_round(round_num):

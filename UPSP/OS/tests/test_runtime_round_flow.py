@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import os
 import sys
 import json
@@ -69,7 +70,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
         monkeypatch.setattr(assembler.popup, "read_popup", lambda: "")
         monkeypatch.setattr(rt.hb, "pause", lambda: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *args, **kwargs: None)
-        monkeypatch.setattr(rt.executor, "call", lambda *args, **kwargs: {
+        rt.executor = SimpleNamespace(call=lambda *args, **kwargs: {
             "response": "",
             "tool_call_envelopes": [self._native_tool_envelope(
                 "setup_finalize",
@@ -178,7 +179,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
         monkeypatch.setattr(rt.hb, "dequeue_messages", lambda: [
             "我是 Codex，验证起手步当前缓存 now。"
         ])
-        monkeypatch.setattr(rt.executor, "call", lambda *args, **kwargs: {
+        rt.executor = SimpleNamespace(call=lambda *args, **kwargs: {
             "response": "",
             "tool_call_envelopes": [self._native_tool_envelope(
                 "setup_finalize",
@@ -591,7 +592,6 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
             }
 
         monkeypatch.setattr(rt, "_call_llm_with_round_audit", fake_cleanup_provider)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(
             rt.reaction_metabolism,
             "settle_terminal",
@@ -943,8 +943,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
         rt = self._make_runtime(tmp_path)
         calls = []
 
-        monkeypatch.setattr(rt.executor, "call",
-                            lambda step, system, messages: {
+        rt.executor = SimpleNamespace(call=lambda step, system, messages: {
                                 "response": "",
                                 "tool_call_envelopes": [self._native_tool_envelope(
                                     "setup_finalize",
@@ -979,8 +978,7 @@ class TestRuntimeRoundFlow(RuntimeTestMixin):
         rt = self._make_runtime(tmp_path)
         calls = []
 
-        monkeypatch.setattr(rt.executor, "call",
-                            lambda step, system, messages: {
+        rt.executor = SimpleNamespace(call=lambda step, system, messages: {
                                 "response": "",
                                 "tool_call_envelopes": [self._native_tool_envelope(
                                     "setup_finalize",

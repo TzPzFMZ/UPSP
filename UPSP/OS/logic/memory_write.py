@@ -1,5 +1,6 @@
 """反应步 memory_write 协议工具落盘管线。"""
 import re
+from errors import UncertainEffectError
 
 from data.memory_store import (
     MEMORY_MUTATION_LOCK,
@@ -390,13 +391,19 @@ def apply_memory_write_declarations(declarations, state, round_num, data_modules
                     if callable(fault_hook):
                         fault_hook("after_verify")
                 except Exception as exc:
-                    try:
-                        memory_store.restore_stm_files(stm_snapshot)
-                        memory_store.restore_ltm_files(ltm_snapshot)
-                    except Exception as restore_exc:
-                        raise RuntimeError(
-                            "memory_write_rollback_failed:"
-                            f"{type(restore_exc).__name__}"
+                    rollback_errors = []
+                    for restore, snapshot in (
+                            (memory_store.restore_stm_files, stm_snapshot),
+                            (memory_store.restore_ltm_files, ltm_snapshot)):
+                        try:
+                            restore(snapshot)
+                        except Exception as restore_exc:
+                            rollback_errors.append(restore_exc)
+                    if rollback_errors:
+                        raise UncertainEffectError(
+                            "memory_write_rollback_failed",
+                            affected_ids=[mem_id], cause=exc,
+                            rollback_causes=rollback_errors,
                         ) from exc
                     raise
 
@@ -409,7 +416,15 @@ def apply_memory_write_declarations(declarations, state, round_num, data_modules
                     "admission_status": "pending",
                 },
             ))
-        except Exception as exc:
+        except UncertainEffectError as exc:
+            receipts.append(_receipt("error", normalized, mem_id=mem_id,
+                                     keywords=keywords, reason=str(exc)))
+            exc.partial_receipts = receipts
+            raise
+        except ValueError as exc:
             receipts.append(_receipt("error", normalized, keywords=keywords, reason=str(exc)))
+        except Exception as exc:
+            exc.partial_receipts = receipts
+            raise
 
     return receipts

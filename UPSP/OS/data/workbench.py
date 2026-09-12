@@ -7,13 +7,14 @@ data 层独占 WB 文件 I/O。WB 本身只由脚本操作，LLM 只通过
 """
 import json
 import os
+import threading
 import re
 import shutil
 from datetime import datetime
 
 from constants import local_now
 from data.atomic_write import atomic_write_json, atomic_write_text
-from errors import ReadError, WriteError
+from errors import UncertainEffectError, ReadError, WriteError
 from paths import WB_DIR
 
 
@@ -29,6 +30,9 @@ RHYTHM_GUIDE_KINDS = {
     "cache_compaction_rhythm_guide",
     "memory_compression_rhythm_guide",
 }
+
+
+_LOCK = threading.RLock()
 
 
 def default_workbench_status():
@@ -81,12 +85,13 @@ class WorkbenchStore:
 
     def init_if_missing(self):
         """确保 WB 三区目录和 status.json 存在"""
-        for path in self.zone_dirs.values():
-            os.makedirs(path, exist_ok=True)
-        if not os.path.isfile(self.status_path):
-            self.save_status(default_workbench_status())
-            return True
-        return False
+        with _LOCK:
+            for path in self.zone_dirs.values():
+                os.makedirs(path, exist_ok=True)
+            if not os.path.isfile(self.status_path):
+                self.save_status(default_workbench_status())
+                return True
+            return False
 
     def load_status(self):
         if not os.path.isfile(self.status_path):
@@ -98,8 +103,9 @@ class WorkbenchStore:
             raise ReadError(self.status_path, cause=e)
 
     def save_status(self, data):
-        os.makedirs(os.path.dirname(self.status_path), exist_ok=True)
-        self._atomic_write_json(self.status_path, data)
+        with _LOCK:
+            os.makedirs(os.path.dirname(self.status_path), exist_ok=True)
+            self._atomic_write_json(self.status_path, data)
 
     def get(self, dotpath, default=None):
         data = self.load_status()
@@ -112,15 +118,16 @@ class WorkbenchStore:
         return cur
 
     def set(self, dotpath, value):
-        data = self.load_status()
-        cur = data
-        keys = dotpath.split(".")
-        for key in keys[:-1]:
-            if key not in cur or not isinstance(cur[key], dict):
-                cur[key] = {}
-            cur = cur[key]
-        cur[keys[-1]] = value
-        self.save_status(data)
+        with _LOCK:
+            data = self.load_status()
+            cur = data
+            keys = dotpath.split(".")
+            for key in keys[:-1]:
+                if key not in cur or not isinstance(cur[key], dict):
+                    cur[key] = {}
+                cur = cur[key]
+            cur[keys[-1]] = value
+            self.save_status(data)
 
     # ============================================================
     # 任务物流
@@ -151,16 +158,17 @@ class WorkbenchStore:
     # ============================================================
 
     def save_guide(self, guide, active=False):
-        guide = dict(guide or {})
-        guide_id = str(guide.get("guide_id") or "").strip()
-        if not guide_id:
-            raise ValueError("guide_id required")
-        guide_dir = self._guide_dir(guide_id)
-        os.makedirs(guide_dir, exist_ok=True)
-        self._atomic_write_json(os.path.join(guide_dir, "guide.json"), guide)
-        if active:
-            self.set_active_guide_slot(self.guide_slot_for(guide), guide_id)
-        return guide_id
+        with _LOCK:
+            guide = dict(guide or {})
+            guide_id = str(guide.get("guide_id") or "").strip()
+            if not guide_id:
+                raise ValueError("guide_id required")
+            guide_dir = self._guide_dir(guide_id)
+            os.makedirs(guide_dir, exist_ok=True)
+            self._atomic_write_json(os.path.join(guide_dir, "guide.json"), guide)
+            if active:
+                self.set_active_guide_slot(self.guide_slot_for(guide), guide_id)
+            return guide_id
 
     def load_guide(self, guide_id):
         path = os.path.join(self._guide_dir(guide_id), "guide.json")
@@ -207,83 +215,90 @@ class WorkbenchStore:
         return legacy or None
 
     def set_active_guide_slot(self, slot, guide_id):
-        slot = str(slot or "").strip()
-        if slot not in GUIDE_SLOTS:
-            raise ValueError(f"unknown guide slot: {slot}")
-        guide_id = str(guide_id or "").strip()
-        if not guide_id:
-            raise ValueError("guide_id required")
-        data = self.load_status()
-        base = data.setdefault("base", {})
-        slots = self._active_guide_slots_from_base(base)
-        slots[slot] = guide_id
-        base["active_guides"] = slots
-        self._sync_active_guide_projection(base)
-        self.save_status(data)
-        return guide_id
+        with _LOCK:
+            slot = str(slot or "").strip()
+            if slot not in GUIDE_SLOTS:
+                raise ValueError(f"unknown guide slot: {slot}")
+            guide_id = str(guide_id or "").strip()
+            if not guide_id:
+                raise ValueError("guide_id required")
+            data = self.load_status()
+            base = data.setdefault("base", {})
+            slots = self._active_guide_slots_from_base(base)
+            slots[slot] = guide_id
+            base["active_guides"] = slots
+            self._sync_active_guide_projection(base)
+            self.save_status(data)
+            return guide_id
 
 
     def clear_active_guide(self, guide_id=None):
-        expected = str(guide_id or "").strip()
-        data = self.load_status()
-        base = data.setdefault("base", {})
-        slots = self._active_guide_slots_from_base(base)
-        for slot in GUIDE_SLOTS:
-            current = str(slots.get(slot) or "").strip()
-            if current and (not expected or current == expected):
-                slots[slot] = None
-        if expected and str(base.get("active_guide") or "").strip() == expected:
-            base["active_guide"] = None
-        base["active_guides"] = slots
-        self._sync_active_guide_projection(base)
-        self.save_status(data)
-        return base.get("active_guide")
+        with _LOCK:
+            expected = str(guide_id or "").strip()
+            data = self.load_status()
+            base = data.setdefault("base", {})
+            slots = self._active_guide_slots_from_base(base)
+            for slot in GUIDE_SLOTS:
+                current = str(slots.get(slot) or "").strip()
+                if current and (not expected or current == expected):
+                    slots[slot] = None
+            if expected and str(base.get("active_guide") or "").strip() == expected:
+                base["active_guide"] = None
+            base["active_guides"] = slots
+            self._sync_active_guide_projection(base)
+            self.save_status(data)
+            return base.get("active_guide")
 
     def append_guide_ledger(self, guide_id, entry):
-        guide_id = str(guide_id or "").strip()
-        if not guide_id:
-            raise ValueError("guide_id required")
-        guide_dir = self._guide_dir(guide_id)
-        os.makedirs(guide_dir, exist_ok=True)
-        ledger_path = os.path.join(guide_dir, "ledger.jsonl")
-        payload = dict(entry or {})
-        payload.setdefault("created_at", local_now().isoformat())
-        try:
-            with open(ledger_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        except OSError as e:
-            raise WriteError(ledger_path, cause=e)
-        return payload
+        with _LOCK:
+            guide_id = str(guide_id or "").strip()
+            if not guide_id:
+                raise ValueError("guide_id required")
+            guide_dir = self._guide_dir(guide_id)
+            os.makedirs(guide_dir, exist_ok=True)
+            ledger_path = os.path.join(guide_dir, "ledger.jsonl")
+            payload = dict(entry or {})
+            payload.setdefault("created_at", local_now().isoformat())
+            try:
+                with open(ledger_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            except OSError as e:
+                raise WriteError(ledger_path, cause=e)
+            return payload
 
     def create_task_guide_task(self, task_title, task_goal="", guide=None):
-        self.init_if_missing()
-        task_id = self._next_task_id()
-        self._validate_task_id(task_id)
-        task_dir = self._task_dir("process", task_id)
-        os.makedirs(task_dir, exist_ok=False)
-        manifest = {
-            "task_id": task_id,
-            "title": task_title,
-            "weight": 5,
-            "priority": 3,
-            "dispatch": "guide",
-            "keywords": [],
-            "target": None,
-            "source": "guide_submit",
-            "created_at": local_now().isoformat(),
-            "status": "process",
-            "progress": 0,
-        }
-        guide_doc = dict(guide or {})
-        guide_doc.setdefault("task_id", task_id)
-        guide_doc.setdefault("task_title", task_title)
-        guide_doc.setdefault("task_goal", task_goal or "")
-        self._atomic_write_json(os.path.join(task_dir, "manifest.json"), manifest)
-        self._atomic_write_text(os.path.join(task_dir, "payload.md"), task_goal or "")
-        self._atomic_write_json(os.path.join(task_dir, "task_guide.json"), guide_doc)
-        self._atomic_write_text(os.path.join(task_dir, "acceptance_ledger.jsonl"), "")
-        self.set("base.active_task", task_id)
-        return task_id
+        with _LOCK:
+            self.init_if_missing()
+            task_id = self._next_task_id()
+            self._validate_task_id(task_id)
+            task_dir = self._task_dir("process", task_id)
+            os.makedirs(task_dir, exist_ok=False)
+            manifest = {
+                "task_id": task_id,
+                "title": task_title,
+                "weight": 5,
+                "priority": 3,
+                "dispatch": "guide",
+                "keywords": [],
+                "target": None,
+                "source": "guide_submit",
+                "created_at": local_now().isoformat(),
+                "status": "process",
+                "progress": 0,
+            }
+            guide_doc = dict(guide or {})
+            guide_doc.setdefault("task_id", task_id)
+            guide_doc.setdefault("task_title", task_title)
+            guide_doc.setdefault("task_goal", task_goal or "")
+            try:
+                self._atomic_write_json(os.path.join(task_dir, "manifest.json"), manifest)
+                self._atomic_write_text(os.path.join(task_dir, "payload.md"), task_goal or "")
+                self._atomic_write_json(os.path.join(task_dir, "task_guide.json"), guide_doc)
+                self._atomic_write_text(os.path.join(task_dir, "acceptance_ledger.jsonl"), "")
+                self.set("base.active_task", task_id)
+            except Exception as exc:
+                raise UncertainEffectError("workbench_task_creation_incomplete", affected_ids=[task_id], cause=exc) from exc
+            return task_id
 
     def load_task_guide(self, task_id):
         try:
@@ -298,40 +313,48 @@ class WorkbenchStore:
             raise ReadError(path, cause=e)
 
     def complete_task_guide_task(self, task_id, result="", guide_id=None):
-        self._validate_task_id(task_id)
-        guide_id = str(guide_id or f"task:{task_id}").strip()
-        task_dir = self._find_task_dir(task_id, zone="process")
-        guide_dir = self._guide_dir(guide_id)
-        if os.path.isdir(guide_dir):
-            record_dir = os.path.join(task_dir, "guide_record")
-            shutil.copytree(guide_dir, record_dir, dirs_exist_ok=True)
-        manifest = self.move_to_output(
-            task_id,
-            result or "Task guide completed and accepted.",
-            progress=100,
-        )
-        if os.path.isdir(guide_dir):
-            shutil.rmtree(guide_dir)
-        self.clear_active_guide(guide_id)
-        return manifest
+        with _LOCK:
+            self._validate_task_id(task_id)
+            guide_id = str(guide_id or f"task:{task_id}").strip()
+            task_dir = self._find_task_dir(task_id, zone="process")
+            guide_dir = self._guide_dir(guide_id)
+            try:
+                if os.path.isdir(guide_dir):
+                    record_dir = os.path.join(task_dir, "guide_record")
+                    shutil.copytree(guide_dir, record_dir, dirs_exist_ok=True)
+                manifest = self.move_to_output(
+                    task_id,
+                    result or "Task guide completed and accepted.",
+                    progress=100,
+                )
+                if os.path.isdir(guide_dir):
+                    shutil.rmtree(guide_dir)
+                self.clear_active_guide(guide_id)
+            except Exception as exc:
+                raise UncertainEffectError("workbench_task_closeout_incomplete",
+                    affected_ids=[task_id, guide_id], cause=exc,
+                    partial_receipts=getattr(exc, "partial_receipts", [])) from exc
+            return manifest
 
     def save_task_guide(self, task_id, guide):
-        task_dir = self._find_task_dir(task_id, zone="process")
-        path = os.path.join(task_dir, "task_guide.json")
-        self._atomic_write_json(path, dict(guide or {}))
-        return path
+        with _LOCK:
+            task_dir = self._find_task_dir(task_id, zone="process")
+            path = os.path.join(task_dir, "task_guide.json")
+            self._atomic_write_json(path, dict(guide or {}))
+            return path
 
     def append_task_acceptance_ledger(self, task_id, entry):
-        task_dir = self._find_task_dir(task_id, zone="process")
-        ledger_path = os.path.join(task_dir, "acceptance_ledger.jsonl")
-        payload = dict(entry or {})
-        payload.setdefault("created_at", local_now().isoformat())
-        try:
-            with open(ledger_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        except OSError as e:
-            raise WriteError(ledger_path, cause=e)
-        return payload
+        with _LOCK:
+            task_dir = self._find_task_dir(task_id, zone="process")
+            ledger_path = os.path.join(task_dir, "acceptance_ledger.jsonl")
+            payload = dict(entry or {})
+            payload.setdefault("created_at", local_now().isoformat())
+            try:
+                with open(ledger_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            except OSError as e:
+                raise WriteError(ledger_path, cause=e)
+            return payload
 
     # ============================================================
     # Source evidence ledger
@@ -339,16 +362,17 @@ class WorkbenchStore:
 
     def append_source_read_evidence(self, entry):
         """记录跨轮可复用的来源已读证据；只写元数据，不写正文。"""
-        payload = self._normalize_source_read_evidence(entry)
-        if not payload:
-            return None
-        os.makedirs(self.root_dir, exist_ok=True)
-        try:
-            with open(self.source_evidence_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        except OSError as e:
-            raise WriteError(self.source_evidence_path, cause=e)
-        return payload
+        with _LOCK:
+            payload = self._normalize_source_read_evidence(entry)
+            if not payload:
+                return None
+            os.makedirs(self.root_dir, exist_ok=True)
+            try:
+                with open(self.source_evidence_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            except OSError as e:
+                raise WriteError(self.source_evidence_path, cause=e)
+            return payload
 
     def load_source_read_evidence(self):
         if not os.path.isfile(self.source_evidence_path):
@@ -376,27 +400,31 @@ class WorkbenchStore:
 
     def _move_task(self, task_id, src_zone, dst_zone, progress,
                    content_name=None, content=None, active_task=None):
-        self._validate_task_id(task_id)
-        src = self._task_dir(src_zone, task_id)
-        dst = self._task_dir(dst_zone, task_id)
-        if not os.path.isdir(src):
-            raise FileNotFoundError(src)
-        if os.path.exists(dst):
-            raise ValueError(f"WB 任务目标目录已存在: {dst}")
+        with _LOCK:
+            self._validate_task_id(task_id)
+            src = self._task_dir(src_zone, task_id)
+            dst = self._task_dir(dst_zone, task_id)
+            if not os.path.isdir(src):
+                raise FileNotFoundError(src)
+            if os.path.exists(dst):
+                raise ValueError(f"WB 任务目标目录已存在: {dst}")
 
-        try:
-            os.rename(src, dst)
-        except OSError as e:
-            raise WriteError(dst, cause=e)
+            try:
+                os.rename(src, dst)
+            except OSError as e:
+                raise WriteError(dst, cause=e)
 
-        manifest = self.load_manifest(task_id, zone=dst_zone)
-        manifest["status"] = dst_zone
-        manifest["progress"] = int(progress)
-        self._atomic_write_json(os.path.join(dst, "manifest.json"), manifest)
-        if content_name and content is not None:
-            self._atomic_write_text(os.path.join(dst, content_name), content)
-        self.set("base.active_task", active_task)
-        return manifest
+            try:
+                manifest = self.load_manifest(task_id, zone=dst_zone)
+                manifest["status"] = dst_zone
+                manifest["progress"] = int(progress)
+                self._atomic_write_json(os.path.join(dst, "manifest.json"), manifest)
+                if content_name and content is not None:
+                    self._atomic_write_text(os.path.join(dst, content_name), content)
+                self.set("base.active_task", active_task)
+            except Exception as exc:
+                raise UncertainEffectError("workbench_task_move_incomplete", affected_ids=[task_id], cause=exc) from exc
+            return manifest
 
     def _next_task_id(self):
         today = local_now().strftime("%Y%m%d")

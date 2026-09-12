@@ -499,9 +499,11 @@ def test_cleanup_settlement_fault_rolls_back_ltm_stm_and_ledger(
         "after_apply:MEM-75700009", "after_ledger_finish",
     ],
 )
+@pytest.mark.parametrize("rollback_fails", [False, True])
 def test_batch_apply_fault_restores_source_and_pending_phase(
-        compression_layout, failure_stage):
+        compression_layout, failure_stage, rollback_fails, monkeypatch):
     from data.memory_compression_store import MemoryCompressionManager
+    from errors import UncertainEffectError
 
     env = compression_layout
     mem_id = "MEM-75700009"
@@ -520,14 +522,22 @@ def test_batch_apply_fault_restores_source_and_pending_phase(
         if stage == failure_stage else None
     )
 
-    with pytest.raises(OSError, match=failure_stage):
+    if rollback_fails:
+        monkeypatch.setattr(env["store"], "restore_ltm_files", lambda _: (_ for _ in ()).throw(OSError("restore LTM failed")))
+    with pytest.raises(UncertainEffectError if rollback_fails else OSError) as caught:
         manager.apply_batch([{
             "mem_id": mem_id,
             "semantic_content": "批次失败不能留下半结果。",
             "retained_keywords": ["主体"],
         }], round_num=21)
 
-    assert env["store"].ltm_entry_state(mem_id) == before_ltm
+    if rollback_fails:
+        assert caught.value.affected_ids == [mem_id]
+        assert str(caught.value.cause) == failure_stage
+        assert str(caught.value.rollback_causes[0]) == "restore LTM failed"
+    else:
+        assert str(caught.value) == failure_stage
+        assert env["store"].ltm_entry_state(mem_id) == before_ltm
     assert env["store"].stm_entry_state(mem_id)["body"] is None
     assert json.loads(env["ledger"].read_text(encoding="utf-8")) == before_ledger
 

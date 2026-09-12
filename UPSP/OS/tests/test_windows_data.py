@@ -158,6 +158,109 @@ def test_legacy_os_layout_migrates_once_to_meta(tmp_path):
     }
 
 
+def _legacy_memory_overlay_layout(tmp_path):
+    environment = _roots(tmp_path)
+    layout = ensure_active_instance(PROGRAM_ROOT, environ=environment)
+    shutil.copytree(
+        PROGRAM_ROOT / "initialization" / "persona_template", layout.persona_dir
+    )
+    entries = {}
+    meta_paths = []
+    for tier, mem_id in (("Full", "MEM-802AAAA"), ("Summary", "MEM-802BBBB")):
+        entries[mem_id] = {
+            "linked_containers": [f"PRJ-{tier}"],
+            "current_overview": f"original {tier} overview",
+            "current_overview_updated_at": "2026-09-05T00:00:00+08:00",
+        }
+        path = layout.shared_persona_dir / "LTM" / "Memory" / tier / "meta.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({mem_id: {"title": tier, **entries[mem_id]}}),
+            encoding="utf-8",
+        )
+        meta_paths.append(path)
+    return layout, environment, entries, meta_paths
+
+
+@pytest.mark.parametrize(
+    ("failed_target", "existing_overlay"),
+    [("overlay", False), ("overlay", True), ("Full", True), ("Summary", True)],
+)
+def test_memory_overlay_write_failure_is_recoverable(
+        tmp_path, monkeypatch, failed_target, existing_overlay):
+    layout, environment, expected, meta_paths = _legacy_memory_overlay_layout(tmp_path)
+    overlay_path = layout.persona_dir / "LTM" / "memory_links.json"
+    if existing_overlay:
+        expected["MEM-802AAAA"]["current_overview"] = "newer local overview"
+        overlay_path.write_text(json.dumps({
+            "schema_version": windows_data.MEMORY_OVERLAY_SCHEMA,
+            "entries": {"MEM-802AAAA": expected["MEM-802AAAA"]},
+        }), encoding="utf-8")
+    overlay_before = overlay_path.read_bytes() if existing_overlay else None
+    source_before = {path: path.read_bytes() for path in meta_paths}
+    failure_path = (
+        overlay_path if failed_target == "overlay"
+        else next(path for path in meta_paths if path.parent.name == failed_target)
+    )
+    original_replace = windows_data.os.replace
+
+    def fail_replace(source, target):
+        if Path(target) == failure_path:
+            raise OSError("memory_overlay_migration_interrupted")
+        return original_replace(source, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(windows_data.os, "replace", fail_replace)
+        with pytest.raises(OSError, match="memory_overlay_migration_interrupted"):
+            ensure_active_instance(PROGRAM_ROOT, environ=environment)
+
+    if failed_target == "overlay":
+        assert {path: path.read_bytes() for path in meta_paths} == source_before
+        if existing_overlay:
+            assert overlay_path.read_bytes() == overlay_before
+        else:
+            assert not overlay_path.exists()
+    else:
+        assert json.loads(overlay_path.read_text(encoding="utf-8"))["entries"] == expected
+        assert failure_path.read_bytes() == source_before[failure_path]
+        if failed_target == "Summary":
+            full_entry = json.loads(meta_paths[0].read_text(encoding="utf-8"))["MEM-802AAAA"]
+            assert "current_overview" not in full_entry
+
+    ensure_active_instance(PROGRAM_ROOT, environ=environment)
+    assert json.loads(overlay_path.read_text(encoding="utf-8"))["entries"] == expected
+    for path, mem_id in zip(meta_paths, expected):
+        entry = json.loads(path.read_text(encoding="utf-8"))[mem_id]
+        assert entry == {
+            "title": path.parent.name,
+            "created_instance_id": META_INSTANCE_ID,
+            "last_recalled_instance_id": META_INSTANCE_ID,
+        }
+
+    replacements = []
+
+    def record_replace(source, target):
+        replacements.append(Path(target))
+        return original_replace(source, target)
+
+    monkeypatch.setattr(windows_data.os, "replace", record_replace)
+    ensure_active_instance(PROGRAM_ROOT, environ=environment)
+    assert replacements == []
+
+
+def test_memory_overlay_invalid_later_meta_preserves_sources(tmp_path):
+    layout, environment, _expected, meta_paths = _legacy_memory_overlay_layout(tmp_path)
+    original = meta_paths[0].read_bytes()
+    meta_paths[1].write_text("{invalid", encoding="utf-8")
+
+    with pytest.raises(DataRootError, match="memory_meta_invalid"):
+        ensure_active_instance(PROGRAM_ROOT, environ=environment)
+
+    assert meta_paths[0].read_bytes() == original
+    assert meta_paths[1].read_text(encoding="utf-8") == "{invalid"
+    assert not (layout.persona_dir / "LTM" / "memory_links.json").exists()
+
+
 def test_legacy_os_and_meta_conflict_fails_closed(tmp_path):
     environment = _roots(tmp_path)
     layout = ensure_active_instance(PROGRAM_ROOT, environ=environment)

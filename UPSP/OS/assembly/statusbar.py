@@ -55,6 +55,8 @@ class StatusBarBuilder:
     def build_projection(self, state, round_type="interactive",
                          response_anchor=""):
         """生成模型 STATUSBAR 与 GUI 共用的结构化只读投影。"""
+        from paths import ACTIVE_INSTANCE_ID
+
         base = state.get("base", {})
         meta = base.get("meta", {})
         flags = base.get("heartbeat_flags", {})
@@ -68,6 +70,7 @@ class StatusBarBuilder:
         ]
         projection = {
             "schema": "statusbar_snapshot.v1",
+            "instance_id": ACTIVE_INSTANCE_ID,
             "observed_at": now.isoformat(),
             "round": {
                 "id": self._round_id(meta.get("total_round", 0)),
@@ -103,9 +106,13 @@ class StatusBarBuilder:
     def render_with_block_index(projection):
         projection = projection or {}
         round_meta = projection.get("round", {})
-        lines = ["## STATUSBAR"]
+        instance_id = projection.get("instance_id") or ""
+        round_id = round_meta.get("id", "R000000")
+        if instance_id:
+            round_id = f"{instance_id}/{round_id}"
+        lines = ["## STATUSBAR", f"当前分身：{instance_id or '未记录'}"]
         lines.append(
-            f"当前轮：{round_meta.get('id', 'R000000')} | "
+            f"当前轮：{round_id} | "
             f"进程：{round_meta.get('progress', '运行状态未知')} | "
             f"轮类型：{round_meta.get('type', 'interactive')}"
         )

@@ -23,7 +23,7 @@ def test_spec779_task_bootstrap_and_general_results_settle_independently(tmp_pat
     all_general_results = [prior_read]
     all_protocol_receipts = []
     general_dispatcher = SimpleNamespace(
-        handle_requests=lambda requests, guides, prior_results, runtime_context: [
+        iter_results=lambda requests, guides, prior_results, runtime_context: [
             current_general_result
         ],
     )
@@ -31,6 +31,7 @@ def test_spec779_task_bootstrap_and_general_results_settle_independently(tmp_pat
         workbench=store,
         sm=SimpleNamespace(
             get_total_round=lambda: 691,
+            set=lambda *args: None,
             get=lambda key, default=None: default,
         ),
         ctx_store=None,
@@ -688,7 +689,7 @@ def test_action_result_and_frame_settlement_fail_closed_after_effect():
 
     class Dispatcher:
         @staticmethod
-        def handle_requests(*_args, **_kwargs):
+        def iter_results(*_args, **_kwargs):
             return [{"tool_id": "file_write", "status": "ok",
                      "action_id": "ACT-R000001-F000001-A001"}]
 
@@ -708,9 +709,12 @@ def test_action_result_and_frame_settlement_fail_closed_after_effect():
             @staticmethod
             def _write_general_tool_results(*_args, **_kwargs):
                 if failure_site == "tool_fact":
-                    raise OSError("tool fact offline")
+                    from errors import RequiredContextError
+                    raise RequiredContextError("write", "tool_results", OSError("tool fact offline"))
 
-        with pytest.raises(ActionRecoveryEffectError, match="result_record_failed"):
+        from errors import RequiredContextError
+        error_type = RequiredContextError if failure_site == "tool_fact" else ActionRecoveryEffectError
+        with pytest.raises(error_type):
             ReactionToolSettlementDispatcher(Runner()).handle_general_tool_results(
                 iter_general_tool_requests=[], active_general_tool_guides=[],
                 accumulated_messages=[], iter_native_tool_call_envelopes=[],

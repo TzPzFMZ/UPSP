@@ -325,27 +325,27 @@ def test_spec759_rewrite_storage_failure_rolls_back_and_keeps_pending(
 
     monkeypatch.setattr(env["heat"], "set_entry", fault_after_heat)
 
-    receipt = apply_memory_write_rewrite_guide(
-        {
-            "guide_id": tracker.guide_id,
-            "item_id": "memory_write_rewrite_due",
-            "option_id": "submit_memory_write_rewrites",
-            "fields": {"results": [{
-                "rewrite_id": "MWR-R000759-N001",
-                "action": "rewrite",
-                "semantic_content": "回滚后不得留下任何半写状态。",
-            }]},
-        },
-        {
-            "memory_write_rewrite_tracker": tracker,
-            "state_store": _StateStore(),
-            "round_num": 759,
-            **_data_modules(env),
-        },
-    )
+    with pytest.raises(RuntimeError, match="injected_after_heat"):
+        receipt = apply_memory_write_rewrite_guide(
+            {
+                "guide_id": tracker.guide_id,
+                "item_id": "memory_write_rewrite_due",
+                "option_id": "submit_memory_write_rewrites",
+                "fields": {"results": [{
+                    "rewrite_id": "MWR-R000759-N001",
+                    "action": "rewrite",
+                    "semantic_content": "回滚后不得留下任何半写状态。",
+                }]},
+            },
+            {
+                "memory_write_rewrite_tracker": tracker,
+                "state_store": _StateStore(),
+                "round_num": 759,
+                **_data_modules(env),
+            },
+        )
 
-    assert receipt["status"] == "rejected"
-    assert receipt["remaining_ids"] == ["MWR-R000759-N001"]
+    assert tracker.pending_ids() == ["MWR-R000759-N001"]
     assert env["store"].ltm_entry_state("MEM-75900006") is None
     stm = env["store"].stm_entry_state("MEM-75900006")
     assert stm["body"] is None

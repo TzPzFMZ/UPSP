@@ -1,7 +1,6 @@
 """Runtime truth source for relay intentions."""
 
 from copy import deepcopy
-from datetime import datetime
 
 from constants import local_now
 
@@ -26,39 +25,32 @@ def _relay_pool_from_state(state):
     return pool if isinstance(pool, list) else []
 
 
-def _load_pool(sm):
-    try:
-        pool = sm.get("base.runtime.relay_intents", [])
-    except Exception:
-        pool = _relay_pool_from_state(sm.load())
-    return pool if isinstance(pool, list) else []
-
-
-def _store_pool(sm, pool):
-    sm.set("base.runtime.relay_intents", pool)
-
-
-def _next_intent_id(sm, source_round):
-    source_round = int(source_round or 0)
-    try:
-        current = int(sm.get("base.runtime.relay_intent_seq", 0) or 0)
-    except Exception:
-        current = 0
-    next_seq = current + 1
-    try:
-        sm.set("base.runtime.relay_intent_seq", next_seq)
-    except Exception:
-        pass
-    return f"RLY-R{source_round:06d}-N{next_seq:03d}"
-
-
 def create_relay_intent(sm, *, source_round, handoff_text,
                         reaction_finalize_id="", user_input_ref="",
                         progress_fingerprint="", progress_evidence=None):
-    pool = list(_load_pool(sm))
+    intent = {}
+
+    def apply(state):
+        intent.update(append_relay_intent(
+            state, source_round=source_round, handoff_text=handoff_text,
+            reaction_finalize_id=reaction_finalize_id, user_input_ref=user_input_ref,
+            progress_fingerprint=progress_fingerprint, progress_evidence=progress_evidence,
+        ))
+
+    sm.mutate(apply)
+    return intent
+
+
+def append_relay_intent(state, *, source_round, handoff_text,
+                        reaction_finalize_id="", user_input_ref="",
+                        progress_fingerprint="", progress_evidence=None):
+    """只修改当前 mutation 的状态；由调用者一次提交序号、意图与继续标记。"""
+    runtime = state["base"]["runtime"]
+    runtime["relay_intent_seq"] += 1
+    source_round = int(source_round)
     now = local_now().isoformat()
     intent = {
-        "relay_intent_id": _next_intent_id(sm, source_round),
+        "relay_intent_id": f"RLY-R{source_round:06d}-N{runtime['relay_intent_seq']:03d}",
         "status": "open",
         "source_round": int(source_round or 0),
         "reaction_finalize_id": _clean_text(reaction_finalize_id),
@@ -76,8 +68,7 @@ def create_relay_intent(sm, *, source_round, handoff_text,
     })
     if evidence:
         intent["progress_evidence"] = evidence
-    pool.append(intent)
-    _store_pool(sm, pool)
+    runtime["relay_intents"].append(intent)
     return deepcopy(intent)
 
 
@@ -95,19 +86,17 @@ def mark_relay_handoff_projected(sm, relay_intent_id, *, round_num):
     intent_id = _clean_text(relay_intent_id)
     if not intent_id:
         return None
-    pool = list(_load_pool(sm))
-    now = local_now().isoformat()
-    for item in pool:
-        if not isinstance(item, dict):
-            continue
-        if item.get("relay_intent_id") != intent_id:
-            continue
-        item["handoff_projected_round"] = int(round_num or 0)
-        item["handoff_projected_at"] = now
-        item["updated_at"] = now
-        _store_pool(sm, pool)
-        return deepcopy(item)
-    return None
+    projected = {}
+    def apply(state):
+        now = local_now().isoformat()
+        for item in _relay_pool_from_state(state):
+            if isinstance(item, dict) and item.get("relay_intent_id") == intent_id:
+                item.update(handoff_projected_round=int(round_num or 0),
+                            handoff_projected_at=now, updated_at=now)
+                projected.update(deepcopy(item))
+                break
+    sm.mutate(apply)
+    return projected or None
 
 
 def render_open_relay_intents_for_context(state):
@@ -142,7 +131,6 @@ def settle_relay_intent(sm, request, *, round_num):
     intent_id = _clean_text(request.get("relay_intent_id"))
     status = _clean_text(request.get("status"))
     note = _clean_text(request.get("note"))
-    pool = list(_load_pool(sm))
     base = {
         "tool_id": "relay_intent_settle",
         "protocol_tool_receipt": True,
@@ -157,33 +145,31 @@ def settle_relay_intent(sm, request, *, round_num):
             "status": "rejected",
             "reason": "invalid_relay_intent_status",
         }
-    for item in pool:
-        if not isinstance(item, dict):
-            continue
-        if item.get("relay_intent_id") != intent_id:
-            continue
-        item["status"] = SETTLED_STATUSES[status]
-        item["updated_at"] = local_now().isoformat()
-        item["settlement"] = {
-            "status": SETTLED_STATUSES[status],
-            "note": note,
-            "round_num": int(round_num or 0),
-        }
-        _store_pool(sm, pool)
-        return {
-            **base,
-            "status": "applied",
-            "reason": "relay_intent_settled",
-            "final_status": item["status"],
-        }
-    return {
-        **base,
-        "status": "not_found",
-        "reason": "relay_intent_not_found",
-    }
+    result = {**base, "status": "not_found", "reason": "relay_intent_not_found"}
+    def apply(state):
+        for item in _relay_pool_from_state(state):
+            if not isinstance(item, dict) or item.get("relay_intent_id") != intent_id:
+                continue
+            item.update(status=SETTLED_STATUSES[status], updated_at=local_now().isoformat(),
+                settlement={"status": SETTLED_STATUSES[status], "note": note, "round_num": int(round_num or 0)})
+            result.update(status="applied", reason="relay_intent_settled", final_status=item["status"])
+            break
+    sm.mutate(apply)
+    return result
 
 
 def settle_open_relay_intents(sm, *, status, round_num, note="", source="runtime"):
+    receipt = {}
+
+    def apply(state):
+        receipt.update(settle_open_relay_intents_in_state(
+            state, status=status, round_num=round_num, note=note, source=source))
+
+    sm.mutate(apply)
+    return receipt
+
+
+def settle_open_relay_intents_in_state(state, *, status, round_num, note="", source="runtime"):
     final_status = _clean_text(status)
     note = _clean_text(note)
     source = _clean_text(source)
@@ -197,7 +183,7 @@ def settle_open_relay_intents(sm, *, status, round_num, note="", source="runtime
             "round_num": int(round_num or 0),
             "settled_relay_intent_ids": [],
         }
-    pool = list(_load_pool(sm))
+    pool = state["base"]["runtime"]["relay_intents"]
     now = local_now().isoformat()
     settled = []
     for item in pool:
@@ -214,7 +200,6 @@ def settle_open_relay_intents(sm, *, status, round_num, note="", source="runtime
             "source": source,
         }
         settled.append(_clean_text(item.get("relay_intent_id")))
-    _store_pool(sm, pool)
     return {
         "tool_id": "relay_intent_settle",
         "protocol_tool_receipt": True,

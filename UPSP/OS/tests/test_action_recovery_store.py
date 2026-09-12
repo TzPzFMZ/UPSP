@@ -70,6 +70,36 @@ def test_file_action_uses_sha_journal_without_full_backup(tmp_path):
     assert store.load()["items"] == []
 
 
+@pytest.mark.parametrize("recorded", [False, True])
+def test_spec808_closed_or_unanchored_round_is_still_classified(tmp_path, recorded):
+    store = _store(tmp_path)
+    action_id = store.prepare_opaque(tool_id="shell_command", request_sha256="a" * 64,
+        runtime_context=_context(), call_id="interrupted", target="probe")
+    if recorded:
+        store.record_results([{"action_id": action_id, "status": "ok"}])
+    store.note_round_closed(12)
+    assert store.has_unsettled(12)
+    summary = store.classify_pending()
+    assert summary["pending"] is True
+    assert summary["known_result" if recorded else "outcome_unknown"] == 1
+    before = Path(store.path).read_bytes()
+    assert store.classify_pending() == summary
+    assert Path(store.path).read_bytes() == before
+    assert store.recovered_results()[0]["status"] == ("ok" if recorded else "blocked")
+
+
+def test_spec808_pending_classification_does_not_recover_settled_success(tmp_path):
+    store = _store(tmp_path)
+    action_id = store.prepare_opaque(tool_id="shell_command", request_sha256="a" * 64,
+        runtime_context=_context(), call_id="complete", target="probe")
+    result = {"action_id": action_id, "status": "ok"}
+    store.settle_results([result])
+    assert not store.has_unsettled(12)
+    assert store.classify_pending()["pending"] is False
+    store.note_round_closed(12)
+    assert store.load()["items"] == []
+
+
 def test_public_file_targets_distinguish_same_basename_without_private_path(tmp_path):
     store = _store(tmp_path)
     first = tmp_path / "one" / "output.txt"
@@ -207,7 +237,9 @@ def test_real_process_exit_leaves_classifiable_metadata_only(tmp_path):
     source_root = str(Path(__file__).parents[1])
     script = r'''
 import os
+import sys
 from pathlib import Path
+sys.path[:0] = [os.environ["ACTION_RECOVERY_TEST_SOURCE"]]
 from data.action_recovery_store import ActionRecoveryStore
 root = Path(os.environ["ACTION_RECOVERY_TEST_ROOT"])
 store = ActionRecoveryStore(root / "context" / "action_recovery_pending.json")
@@ -224,7 +256,7 @@ store.prepare_opaque(tool_id="shell_command", request_sha256="b" * 64,
 os._exit(91)
 '''
     env = os.environ.copy()
-    env["PYTHONPATH"] = source_root + os.pathsep + env.get("PYTHONPATH", "")
+    env["ACTION_RECOVERY_TEST_SOURCE"] = source_root
     env["ACTION_RECOVERY_TEST_ROOT"] = str(tmp_path)
     result = subprocess.run(
         [sys.executable, "-c", script], cwd=source_root, env=env, check=False,

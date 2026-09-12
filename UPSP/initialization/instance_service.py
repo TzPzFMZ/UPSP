@@ -32,6 +32,13 @@ class InstanceServiceError(RuntimeError):
     pass
 
 
+def _uncertain_instance(cause, rollback, *paths):
+    # Initialization remains importable before the OS module search path is set.
+    from errors import UncertainEffectError
+    return UncertainEffectError("instance_recovery_required", cause=cause,
+        rollback_causes=[rollback], affected_ids=[str(path) for path in paths])
+
+
 def generate_instance_id(now: datetime | None = None) -> str:
     stamp = (now or datetime.now().astimezone()).strftime("%Y%m%d-%H%M%S")
     return f"I{stamp}-{secrets.token_hex(2).upper()}"
@@ -100,6 +107,16 @@ class InstanceService:
                 "instance_id": validate_instance_id(instance_id),
             },
         )
+
+    def _cleanup_failed_creation(self, target: Path, owner: Path, cause):
+        try:
+            active = _read_json(self.manifest_path)
+            if (active.get("pid"), active.get("instance_id")) != (self.layout.pid, self.layout.instance_id):
+                self._write_active(self.layout.pid, self.layout.instance_id)
+            if target.is_dir() and target.resolve().parent == owner.resolve():
+                shutil.rmtree(target)
+        except Exception as rollback:
+            raise _uncertain_instance(cause, rollback, target, self.manifest_path) from cause
 
     @staticmethod
     def _manifest(
@@ -287,9 +304,8 @@ class InstanceService:
                 )
                 validate_instance_layout(self.layout, pid, META_INSTANCE_ID)
                 self._write_active(pid, META_INSTANCE_ID)
-            except Exception:
-                if pid_root.is_dir() and pid_root.resolve().parent == self.layout.personas_root.resolve():
-                    shutil.rmtree(pid_root)
+            except Exception as exc:
+                self._cleanup_failed_creation(pid_root, self.layout.personas_root, exc)
                 raise
             return {
                 "schema_version": "seed_gui_instance_mutation_receipt.v1",
@@ -324,6 +340,8 @@ class InstanceService:
             )
             instance_id = generate_instance_id()
             target = self._instance_root(self.layout.pid, instance_id)
+            # Only a target exclusively created here belongs to failure cleanup.
+            target.mkdir()
             try:
                 source_persona = source / "persona"
 
@@ -337,7 +355,7 @@ class InstanceService:
 
                 shutil.copytree(
                     source, target, copy_function=shutil.copyfile,
-                    ignore=ignore_shared,
+                    ignore=ignore_shared, dirs_exist_ok=True,
                 )
                 if mode == "new":
                     self._reset_new_branch(target)
@@ -357,9 +375,8 @@ class InstanceService:
                 )
                 validate_instance_layout(self.layout, self.layout.pid, instance_id)
                 self._write_active(self.layout.pid, instance_id)
-            except Exception:
-                if target.is_dir() and target.resolve().parent == self.layout.pid_root.resolve():
-                    shutil.rmtree(target)
+            except Exception as exc:
+                self._cleanup_failed_creation(target, self.layout.pid_root, exc)
                 raise
             return {
                 "schema_version": "seed_gui_instance_mutation_receipt.v1",
@@ -437,9 +454,14 @@ class InstanceService:
                 self._write_active(self.layout.pid, META_INSTANCE_ID)
             try:
                 os.replace(source, target)
-            except Exception:
-                if active:
-                    self._write_active(self.layout.pid, instance_id)
+            except Exception as exc:
+                try:
+                    if not source.exists() and target.exists():
+                        os.replace(target, source)
+                    if active:
+                        self._write_active(self.layout.pid, instance_id)
+                except Exception as rollback:
+                    raise _uncertain_instance(exc, rollback, source, target, self.manifest_path) from exc
                 raise
             return {
                 "schema_version": "seed_gui_instance_mutation_receipt.v1",
@@ -465,8 +487,11 @@ class InstanceService:
             os.replace(source, target)
             try:
                 validate_instance_layout(self.layout, self.layout.pid, instance_id)
-            except Exception:
-                os.replace(target, source)
+            except Exception as exc:
+                try:
+                    os.replace(target, source)
+                except Exception as rollback:
+                    raise _uncertain_instance(exc, rollback, source, target) from exc
                 raise
             return {
                 "schema_version": "seed_gui_instance_mutation_receipt.v1",

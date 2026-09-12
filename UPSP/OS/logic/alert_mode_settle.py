@@ -105,41 +105,44 @@ def _write_alert_settlement(item, round_num, stores, interaction_meta):
     if item["status"] == "deferred" and item["alert_type"] in ALERT_CLEAR_FLAGS:
         if item["alert_type"] not in clear_flags:
             clear_flags.append(item["alert_type"])
-    if clear_flags:
-        state_store.clear_flags(clear_flags)
-    if item["status"] == "deferred":
-        now = local_now()
-        defer_until = now + timedelta(seconds=DEFAULT_DEFER_SECONDS)
-        def defer(data):
+    if clear_flags or item["status"] == "deferred":
+        def settle(data):
             base = data.setdefault("base", {})
-            deferrals = base.setdefault("alert_deferrals", {})
-            deferrals[item["alert_type"]] = {
-                "status": "deferred",
-                "defer_seconds": DEFAULT_DEFER_SECONDS,
-                "defer_until": defer_until.isoformat(),
-                "reason": item["reason"],
-                "summary": item["summary"],
-                "round_num": round_num,
-            }
-
-        state_store.mutate(defer)
-    alert_store.append_alert(
-        round_num=round_num,
-        step="reaction",
-        event_type=f"{item['alert_type']}:{item['status']}",
-        detail=item["summary"],
-        action=item["reason"],
-    )
-    if context_store is not None:
-        meta = cache_interaction_meta(interaction_meta)
-        context_store.append_to_cache(
-            round_num,
-            "system",
-            _fault_note_text(item),
-            kind="fault_note",
+            flags = base.setdefault("heartbeat_flags", {})
+            for flag in clear_flags:
+                flags[flag] = False
+            if item["status"] == "deferred":
+                defer_until = local_now() + timedelta(seconds=DEFAULT_DEFER_SECONDS)
+                base.setdefault("alert_deferrals", {})[item["alert_type"]] = {
+                    "status": "deferred", "defer_seconds": DEFAULT_DEFER_SECONDS,
+                    "defer_until": defer_until.isoformat(), "reason": item["reason"],
+                    "summary": item["summary"], "round_num": round_num,
+                }
+        state_store.mutate(settle)
+    try:
+        alert_store.append_alert(
+            round_num=round_num,
             step="reaction",
-            **meta,
+            event_type=f"{item['alert_type']}:{item['status']}",
+            detail=item["summary"],
+            action=item["reason"],
         )
+        if context_store is not None:
+            meta = cache_interaction_meta(interaction_meta)
+            context_store.append_to_cache(
+                round_num,
+                "system",
+                _fault_note_text(item),
+                kind="fault_note",
+                step="reaction",
+                **meta,
+            )
+    except Exception as exc:
+        from errors import UncertainEffectError
+        raise UncertainEffectError(
+            "alert_settlement_unregistered", affected_ids=[item["alert_type"]],
+            cause=exc,
+        ) from exc
 
 
 def apply_alert_mode_settlement_declarations(
@@ -232,6 +235,10 @@ def apply_alert_mode_settlement_declarations(
                 fault_refs=item["fault_refs"],
                 next_attention=item["next_attention"],
             ))
+            from errors import UncertainEffectError
+            if not isinstance(exc, ValueError):
+                exc.partial_receipts = receipts
+                raise
             continue
         cleared_flags = list(item["clear_flags"])
         if item["status"] == "deferred" and item["alert_type"] in ALERT_CLEAR_FLAGS:

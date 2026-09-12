@@ -575,8 +575,11 @@ export function renderConversationTimeline(): void {
       + Number(interrupted.known_result || 0);
     const uncertain = Number(interrupted.conflict || 0)
       + Number(interrupted.outcome_unknown || 0);
-    notice.querySelector("strong")!.textContent = t("上次任务意外中断，下一条消息将先核对现场");
+    notice.querySelector("strong")!.textContent = interrupted.reason === "persistent_effect_recovery_required"
+      ? t("本地写入恢复尚未确认，请先核对受影响记录")
+      : t("上次任务意外中断，下一条消息将先核对现场");
     notice.querySelector("small")!.textContent = `${t("已确定动作")} ${known} · ${t("受阻或结果不确定动作")} ${uncertain}`;
+    if (interrupted.affected_ids?.length) notice.querySelector("small")!.textContent += ` · ${interrupted.affected_ids.join(", ")}`;
     order.push(key);
   }
   if (runtimeProjection.liveError) {

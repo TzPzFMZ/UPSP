@@ -52,6 +52,9 @@ def test_public_path_contract() -> None:
     assert not is_public_path("UPSP/OS/persona/core.md")
     assert not is_public_path("UPSP/gui/AGENTS.md")
     assert not is_public_path("tools/upsp_visible_dogfood.py")
+    assert not is_public_path("tools/serve_docs_workbench.py")
+    assert not is_public_path("tools/serve_rules_workbench.py")
+    assert not is_public_path("tools/workbench_server.py")
     assert not is_public_path("UPSP/OS/tests/test_dds_truth_audit.py")
     assert not is_public_path("UPSP/OS/tests/test_prompt_cache_planner.py")
     assert not is_public_path("UPSP/OS/tests/test_spec721_recovery_tool.py")
@@ -143,6 +146,13 @@ def test_export_is_tracked_only_and_manifested(tmp_path: Path) -> None:
     private = repo / ".speckit" / "evidence.json"
     private.parent.mkdir()
     private.write_text('{"private": true}\n', encoding="utf-8")
+    internal_gates = (
+        "tools/check_protocol_tool_registration.py",
+        "tools/check_native_tool_calling_acceptance.py",
+    )
+    (repo / "tools").mkdir()
+    for relative in internal_gates:
+        (repo / relative).write_text("import audit_upsp_consistency\n", encoding="utf-8")
     commit = _commit(repo)
     (repo / "UPSP" / "OS" / "untracked.txt").write_text("not exported\n", encoding="utf-8")
 
@@ -159,6 +169,10 @@ def test_export_is_tracked_only_and_manifested(tmp_path: Path) -> None:
     assert manifest["schema_version"] == "upsp_public_source_manifest.v1"
     assert manifest["source_commit"] == commit
     assert manifest["file_count"] == 4
+    for relative in internal_gates:
+        assert (repo / relative).read_text(encoding="utf-8") == "import audit_upsp_consistency\n"
+        assert not (output / relative).exists()
+        assert relative not in {item["path"] for item in manifest["files"]}
     record = next(item for item in manifest["files"] if item["path"] == "LICENSE")
     assert record["sha256"] == hashlib.sha256(
         (output / "LICENSE").read_bytes()

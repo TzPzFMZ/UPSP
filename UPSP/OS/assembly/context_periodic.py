@@ -67,20 +67,10 @@ def build_periodic_with_block_index(assembler, state, step, round_type):
 
 
 def periodic_limits(config_store=None):
-    try:
-        cfg = config_store
-        if cfg is None:
-            from data.config_store import ConfigStore
-
-            cfg = ConfigStore()
-        limits = cfg.get_periodic_limits()
-    except Exception:
-        limits = {}
-    if not isinstance(limits, dict):
-        limits = {}
-    return {
-        "periodic_memory_items_chars": limits.get("periodic_memory_items_chars", 65536),
-    }
+    if config_store is None:
+        from data.config_store import ConfigStore
+        config_store = ConfigStore()
+    return config_store.get_periodic_limits()
 
 
 def render_structured_periodic(mounts, memory_limit):

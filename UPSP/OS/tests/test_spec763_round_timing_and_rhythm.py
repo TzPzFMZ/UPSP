@@ -104,12 +104,12 @@ def test_spec763_explicit_milestones_drive_feedback_and_auto_relay():
 
     state = StateManager()
     relay, ledger, guard = build_runtime_auto_continue_closeout(
-        state, elapsed_seconds=1901, time_limit_seconds=milestones)
+        elapsed_seconds=1901, time_limit_seconds=milestones)
     assert "1900秒" in relay["handoff_text"]
     assert ledger["reminder_seconds"] == 700
     assert ledger["warning_seconds"] == 1300
     assert guard["auto_relay_seconds"] == 1900
-    assert state.flags["continue_requested"] is True
+    assert "continue_requested" not in state.flags
 
 
 def test_spec763_calendar_day_guide_aggregates_real_backend_path(
@@ -224,6 +224,7 @@ def test_spec763_rhythm_backend_result_rejects_without_applied_receipt():
 
 def test_spec763_calendar_day_maintenance_exception_is_not_swallowed(
         tmp_path, monkeypatch):
+    from errors import UncertainEffectError
     from data.memory_compression_store import MemoryCompressionManager
     from logic.guide_submit import _apply_rhythm_guide_submission
 
@@ -240,7 +241,7 @@ def test_spec763_calendar_day_maintenance_exception_is_not_swallowed(
         fail_maintenance,
     )
 
-    with pytest.raises(RuntimeError, match="daily-maintenance-failed"):
+    with pytest.raises(UncertainEffectError, match="chronicle_maintenance_incomplete") as caught:
         _apply_rhythm_guide_submission(
             {"kind": "calendar_rhythm_guide"},
             {
@@ -260,6 +261,8 @@ def test_spec763_calendar_day_maintenance_exception_is_not_swallowed(
                 },
             },
         )
+    assert str(caught.value.cause) == "daily-maintenance-failed"
+    assert caught.value.partial_receipts[0]["tool_id"] == "chronicle_write"
 
 
 def test_spec763_gui_exposes_three_time_fields_and_no_legacy_label():

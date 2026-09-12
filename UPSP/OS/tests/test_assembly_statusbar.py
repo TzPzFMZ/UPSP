@@ -19,6 +19,7 @@ class TestStatusBar:
 
     def test_build_full(self):
         from assembly.statusbar import StatusBarBuilder
+        from paths import ACTIVE_INSTANCE_ID
         sb = StatusBarBuilder()
         state = {
             "base": {
@@ -40,7 +41,8 @@ class TestStatusBar:
             }
         }
         result = sb.build_full(state, "interactive")
-        assert "当前轮：R000042" in result
+        assert f"当前分身：{ACTIVE_INSTANCE_ID}" in result
+        assert f"当前轮：{ACTIVE_INSTANCE_ID}/R000042" in result
         assert "已稳定运行多轮" in result
         assert "疲劳" not in result
         assert "轻微疲劳" not in result
@@ -161,28 +163,45 @@ class TestStatusBar:
             "interaction_source": "instance_selection",
         }) == ""
 
-    def test_statusbar_audit_json_keeps_markdown_and_projection(self, tmp_path):
+    def test_statusbar_audit_json_keeps_markdown_and_projection(self, tmp_path, monkeypatch):
+        from assembly.statusbar import StatusBarBuilder
         from data.audit_store import AuditStore
+        import paths
 
+        builder = StatusBarBuilder()
+        monkeypatch.setattr(paths, "ACTIVE_INSTANCE_ID", "I-OLD")
+        projection = builder.build_projection(self._state())
+        projection["interaction"]["relation_id"] = "REL-1"
+        rendered = builder.render(projection)
         store = AuditStore(
             setup_dir=str(tmp_path / "setup"),
             reaction_dir=str(tmp_path / "reaction"),
             cleanup_dir=str(tmp_path / "cleanup"),
         )
         store.write_audit("reaction", {
-            "statusbar": "status text",
-            "statusbar_projection": {
-                "schema": "statusbar_snapshot.v1",
-                "interaction": {"relation_id": "REL-1"},
-            },
+            "statusbar": rendered,
+            "statusbar_projection": projection,
         })
 
+        monkeypatch.setattr(paths, "ACTIVE_INSTANCE_ID", "I-NEW")
+        current = builder.build_projection(self._state())
+        assert current["round"]["id"] == projection["round"]["id"] == "R000001"
+        assert "当前分身：I-NEW" in builder.render(current)
+        assert "当前轮：I-NEW/R000001" in builder.render(current)
         payload = json.loads(
             (tmp_path / "reaction" / "layers" / "60_statusbar.json").read_text(
                 encoding="utf-8"))
-        assert payload["content"] == "status text"
+        assert payload["content"] == rendered == builder.render(payload["projection"])
         assert payload["projection"]["schema"] == "statusbar_snapshot.v1"
         assert payload["projection"]["interaction"]["relation_id"] == "REL-1"
+        assert payload["projection"]["instance_id"] == "I-OLD"
+        assert "当前分身：I-OLD" in rendered
+        assert "当前轮：I-OLD/R000001" in rendered
+        del projection["instance_id"]
+        legacy = builder.render(projection)
+        assert "当前分身：未记录" in legacy
+        assert "当前轮：R000001" in legacy
+        assert "I-NEW" not in legacy
 
     def test_spec458_statusbar_budget_limit_is_retired(self):
         from pathlib import Path

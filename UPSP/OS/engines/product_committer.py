@@ -117,23 +117,31 @@ class RuntimeProductCommitter:
             relation_index_factory=lambda: s.memory_index,
             assembler=s.assembler,
         )
-        meta = interaction_meta if isinstance(interaction_meta, dict) else {}
-        if str(meta.get("identity_status") or "") == "unregistered":
-            submitted = str(meta.get("interaction_object") or "").strip()
-            for receipt in receipts:
-                if (
-                        receipt.get("status") not in {"applied", "degraded"}
-                        or not receipt.get("card_id")):
-                    continue
-                card = active_relation_card(s.relation_store, receipt["card_id"])
-                if not card or submitted not in {
-                        str(card.get("id") or ""), str(card.get("name") or "")}:
-                    continue
-                s.sm.set_interaction_anchor(
-                    relation_id=card["id"], source="relation_card_created")
-                meta.update(interaction_meta_for_card(
-                    card, "relation_card_created"))
-                break
+        try:
+            meta = interaction_meta if isinstance(interaction_meta, dict) else {}
+            if str(meta.get("identity_status") or "") == "unregistered":
+                submitted = str(meta.get("interaction_object") or "").strip()
+                for receipt in receipts:
+                    if (
+                            receipt.get("status") not in {"applied", "degraded"}
+                            or not receipt.get("card_id")):
+                        continue
+                    card = active_relation_card(s.relation_store, receipt["card_id"])
+                    if not card or submitted not in {
+                            str(card.get("id") or ""), str(card.get("name") or "")}:
+                        continue
+                    s.sm.set_interaction_anchor(
+                        relation_id=card["id"], source="relation_card_created")
+                    meta.update(interaction_meta_for_card(
+                        card, "relation_card_created"))
+                    break
+        except Exception as exc:
+            from errors import UncertainEffectError
+            raise UncertainEffectError(
+                "relation_anchor_incomplete", cause=exc,
+                affected_ids=[str(row.get("card_id") or "") for row in receipts if row.get("card_id")],
+                partial_receipts=receipts,
+            ) from exc
         return receipts
 
     def commit_product(
@@ -154,18 +162,24 @@ class RuntimeProductCommitter:
         }
         if tool_id not in set(allowed_tools or ()):
             return [{**self._rejected(tool_id, "organ_role_product_not_allowed"), **meta}]
-        receipts = self.commit(
-            tool_id,
-            [product.get("arguments") if isinstance(product.get("arguments"), dict) else {}],
-            round_num=round_num,
-            interaction_meta=interaction_meta,
-            pending_memory_ids=pending_memory_ids,
-            visible_container_targets=visible_container_targets,
-            visible_relation_body_ids=visible_relation_body_ids,
-            chronicle_store=chronicle_store,
-            chronicle_write_scope=chronicle_write_scope,
-            memory_heat_boosted_ids=memory_heat_boosted_ids,
-        )
+        try:
+            receipts = self.commit(
+                tool_id,
+                [product.get("arguments") if isinstance(product.get("arguments"), dict) else {}],
+                round_num=round_num,
+                interaction_meta=interaction_meta,
+                pending_memory_ids=pending_memory_ids,
+                visible_container_targets=visible_container_targets,
+                visible_relation_body_ids=visible_relation_body_ids,
+                chronicle_store=chronicle_store,
+                chronicle_write_scope=chronicle_write_scope,
+                memory_heat_boosted_ids=memory_heat_boosted_ids,
+            )
+        except Exception as exc:
+            receipts = list(getattr(exc, "partial_receipts", []))
+            attach_registered_tool_metadata(receipts)
+            exc.partial_receipts = [{**dict(receipt), **meta} for receipt in receipts]
+            raise
         attach_registered_tool_metadata(receipts)
         return [{**dict(receipt or {}), **meta} for receipt in receipts]
 

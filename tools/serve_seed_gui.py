@@ -70,7 +70,7 @@ from engines.resident_runtime import (  # noqa: E402
 )
 from engines.tool_approval import ToolApprovalConflict  # noqa: E402
 from logic.periodic_memory_mount import PeriodicMemoryMountError  # noqa: E402
-from errors import APIBridgeError, ReadError, WriteError  # noqa: E402
+from errors import APIBridgeError, ReadError, UncertainEffectError, WriteError  # noqa: E402
 from paths import (  # noqa: E402
     ACTIVE_INSTANCE_ID,
     DOCS_DIR,
@@ -902,15 +902,23 @@ class SettingsService:
             elif new_routing != old_routing:
                 self.configs.save("model_routing", new_routing)
             self.configs.resolve_model_routes()
-        except (ValueError, ReadError, WriteError) as exc:
-            try:
-                self.configs.save("models", old_catalog)
-                self.configs.save("model_routing", old_routing)
-            except Exception:
-                pass
-            if isinstance(exc, (ReadError, WriteError)):
-                raise
-            raise SettingsValidationError(str(exc)) from exc
+        except Exception as exc:
+            rollback_errors = []
+            for name, previous in (("models", old_catalog), ("model_routing", old_routing)):
+                try:
+                    self.configs.save(name, previous)
+                    if self.configs.load(name) != previous:
+                        raise WriteError(name, message="model_catalog_rollback_readback_failed")
+                except Exception as rollback_exc:
+                    rollback_errors.append(rollback_exc)
+            if rollback_errors:
+                raise UncertainEffectError(
+                    "model_catalog_recovery_required", affected_ids=[item_id, "models", "model_routing"],
+                    cause=exc, rollback_causes=rollback_errors,
+                ) from exc
+            if isinstance(exc, ValueError):
+                raise SettingsValidationError(str(exc)) from exc
+            raise
         return item_id
 
     @staticmethod
@@ -1609,6 +1617,31 @@ class SeedGuiHandler(RoundLiveHandler):
     desktop_control_token = None
     desktop_session_id = None
 
+    def end_headers(self):
+        self.send_header("X-UPSP-Request-Session", self.server.request_session)
+        super().end_headers()
+
+    def _claim_request(self):
+        request_id = self.headers.get("X-UPSP-Request-Id")
+        session = self.headers.get("X-UPSP-Request-Session")
+        if request_id is None and session is None:
+            return True  # Existing native clients retain their current interface.
+        if (not request_id or not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", request_id)
+                or session != self.server.request_session):
+            reason = "submission_outcome_unconfirmed"
+        else:
+            with self.server.request_lock:
+                if request_id in self.server.request_ids:
+                    reason = "submission_outcome_unconfirmed"
+                elif len(self.server.request_ids) >= 65536:
+                    reason = "request_session_capacity_reached"
+                else:
+                    self.server.request_ids.add(request_id)
+                    return True
+        self._discard_bounded_request_body()
+        self._error(409, reason)
+        return False
+
     def log_message(self, fmt: str, *args: object) -> None:
         if (
             self.desktop_control_token is not None
@@ -1776,11 +1809,21 @@ class SeedGuiHandler(RoundLiveHandler):
         return False
 
     def _mutation_conflict_code(self) -> str:
+        if self.runtime_service.last_outcome.get("persistent_effect_failure"):
+            return "persistent_effect_recovery_required"
         if self.send_lock.locked():
             return "send_in_flight"
         if self.relay_lock.locked():
             return "relay_in_flight"
         return "mutation_in_flight"
+
+    def _acquire_mutation(self) -> bool:
+        if not self.mutation_lock.acquire(blocking=False):
+            return False
+        if self.runtime_service.last_outcome.get("persistent_effect_failure"):
+            self.mutation_lock.release()
+            return False
+        return True
 
     def _permission_payload(
             self, optional_keys: set[str] | None = None
@@ -2034,6 +2077,13 @@ class SeedGuiHandler(RoundLiveHandler):
             self._discard_bounded_request_body()
             self._error(403, "source_forbidden")
             return
+        if not self._claim_request():
+            return
+        if (path != "/api/runtime/stop"
+                and self.runtime_service.last_outcome.get("persistent_effect_failure")):
+            self._discard_bounded_request_body()
+            self._error(409, "persistent_effect_recovery_required")
+            return
         if path == "/api/bootstrap/provider-test":
             self._bootstrap_provider_test()
             return
@@ -2127,7 +2177,7 @@ class SeedGuiHandler(RoundLiveHandler):
         if not model_ready:
             self._error(409, "model_setup_required")
             return
-        if not self.mutation_lock.acquire(blocking=False):
+        if not self._acquire_mutation():
             self._error(409, self._mutation_conflict_code())
             return
         if not self.send_lock.acquire(blocking=False):
@@ -2200,7 +2250,7 @@ class SeedGuiHandler(RoundLiveHandler):
         })
         if payload is None:
             return
-        if not self.mutation_lock.acquire(blocking=False):
+        if not self._acquire_mutation():
             self._error(409, self._mutation_conflict_code())
             return
         response_status = 200
@@ -2253,7 +2303,7 @@ class SeedGuiHandler(RoundLiveHandler):
         if path != "/api/instances/restore" and not self.desktop_control_token:
             self._error(409, "instance_restart_host_required")
             return
-        if not self.mutation_lock.acquire(blocking=False):
+        if not self._acquire_mutation():
             self._error(409, self._mutation_conflict_code())
             return
         paused = False
@@ -2299,6 +2349,10 @@ class SeedGuiHandler(RoundLiveHandler):
             elif paused:
                 self.runtime_service.cancel_instance_switch()
                 paused = False
+        except UncertainEffectError as exc:
+            # Retain the switch pause: the active directory/pointer is not confirmed.
+            self.server.restart_requested.set()
+            error_response = (503, str(exc), ",".join(exc.affected_ids))
         except (
             DataRootError, InstanceServiceError,
             PersonaInitializationError, ValueError,
@@ -2407,7 +2461,7 @@ class SeedGuiHandler(RoundLiveHandler):
         if permission_payload is None:
             return
         permission, _confirmed, _payload = permission_payload
-        if not self.mutation_lock.acquire(blocking=False):
+        if not self._acquire_mutation():
             self._error(409, self._mutation_conflict_code())
             return
         if not self.relay_lock.acquire(blocking=False):
@@ -2459,7 +2513,7 @@ class SeedGuiHandler(RoundLiveHandler):
                 r"MEM-[0-9A-F]{8}", mem_id):
             self._error(400, "invalid_periodic_memory_id")
             return
-        if not self.mutation_lock.acquire(blocking=False):
+        if not self._acquire_mutation():
             self._error(409, self._mutation_conflict_code())
             return
         result = None
@@ -2491,7 +2545,7 @@ class SeedGuiHandler(RoundLiveHandler):
         payload = self._json_object({"revision", "file", "changes"})
         if payload is None:
             return
-        if not self.mutation_lock.acquire(blocking=False):
+        if not self._acquire_mutation():
             self._error(409, self._mutation_conflict_code())
             return
         response_status = 200
@@ -2535,7 +2589,7 @@ class SeedGuiHandler(RoundLiveHandler):
         payload = self._json_object({"connection_id", "action", "key", "revision"})
         if payload is None:
             return
-        if not self.mutation_lock.acquire(blocking=False):
+        if not self._acquire_mutation():
             self._error(409, self._mutation_conflict_code())
             return
         response_status = 200
@@ -2575,7 +2629,7 @@ class SeedGuiHandler(RoundLiveHandler):
         payload = self._json_object({"revision", "entity", "action", "id", "values"})
         if payload is None:
             return
-        if not self.mutation_lock.acquire(blocking=False):
+        if not self._acquire_mutation():
             self._error(409, self._mutation_conflict_code())
             return
         status = 200
@@ -2604,10 +2658,17 @@ class SeedGuiHandler(RoundLiveHandler):
             error = "model_catalog_read_failed"
         except WriteError:
             status = 503
+        except UncertainEffectError as exc:
+            status = 503
+            try:
+                self.runtime_service.record_uncertain_effect(exc)
+            except UncertainEffectError as record_exc:
+                exc = record_exc
+            response = {"error": str(exc), "persistent_effect_failure": exc.as_dict()}
         finally:
             self.mutation_lock.release()
-        if status == 200:
-            self._send_json(200, response)
+        if response is not None:
+            self._send_json(status, response)
         else:
             self._error(status, error)
 
@@ -2638,6 +2699,10 @@ class SeedGuiServer(ThreadingHTTPServer):
         super().__init__(*args, **kwargs)
         self.desktop_shutdown_requested = threading.Event()
         self.restart_requested = threading.Event()
+        self.request_session = os.urandom(16).hex()
+        self.request_lock = threading.Lock()
+        # ponytail: one bounded set per host; refuse at capacity instead of evicting replay guards.
+        self.request_ids = set()
 
     def request_desktop_shutdown(self):
         if self.desktop_shutdown_requested.is_set():

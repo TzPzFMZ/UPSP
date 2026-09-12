@@ -7,13 +7,12 @@ tool headers, and settlement behavior before dogfood.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 from datetime import datetime
 import json
 import os
 from pathlib import Path
 import re
-import shutil
+import subprocess
 import sys
 import tempfile
 from typing import Any
@@ -27,15 +26,10 @@ DEFAULT_BOOK_PATH = Path(
     r"D:\AI_WORKSPACE\base\book\共格主体论_V5_6.1.md"
 )
 
-for path in (PROGRAM_OS_ROOT, TOOLS_DIR):
+for path in (UPSP_ROOT, PROGRAM_OS_ROOT, TOOLS_DIR):
     text = str(path)
     if text not in sys.path:
         sys.path.insert(0, text)
-
-from paths import PERSONA_DIR  # noqa: E402
-
-LIVE_PERSONA = Path(PERSONA_DIR)
-
 
 def _json_dump(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -452,69 +446,6 @@ def validate_spark_observation(report: dict[str, Any]) -> list[dict[str, str]]:
     return issues
 
 
-class InMemoryHeat:
-    def load_heat(self):
-        return {"entries": {}}
-
-    def check_upgrade(self):
-        return []
-
-    def recall_boost(self, *args, **kwargs):
-        return None
-
-    def tick_decay(self, *args, **kwargs):
-        return None
-
-    def has_pending_degrade(self):
-        return False
-
-
-class NoopMemoryStore:
-    def load_meta(self):
-        return []
-
-    def active_ltm_meta_by_id(self):
-        return {}
-
-    def __getattr__(self, _name):
-        def _noop(*args, **kwargs):
-            return [] if _name.startswith("load") else None
-        return _noop
-
-
-class NoopMemoryIndex:
-    def __getattr__(self, _name):
-        def _noop(*args, **kwargs):
-            return None
-        return _noop
-
-
-class NoopRelationStore:
-    def load_registry(self):
-        return {"cards": []}
-
-    def read_card(self, *args, **kwargs):
-        return None
-
-    def set_summary_resident(self, *args, **kwargs):
-        return None
-
-@contextmanager
-def _extra_file_read_root(path: Path):
-    old_value = os.environ.get("UPSP_FILE_READ_EXTRA_ROOTS")
-    roots = [str(Path(path).resolve())]
-    if old_value:
-        roots.append(old_value)
-    os.environ["UPSP_FILE_READ_EXTRA_ROOTS"] = os.pathsep.join(roots)
-    try:
-        yield
-    finally:
-        if old_value is None:
-            os.environ.pop("UPSP_FILE_READ_EXTRA_ROOTS", None)
-        else:
-            os.environ["UPSP_FILE_READ_EXTRA_ROOTS"] = old_value
-
-
 def _build_runtime(runtime_root: Path, executor: FakeAcceptanceExecutor):
     from assembly.context import ContextAssembler
     from data.chronicle_store import ChronicleStore
@@ -550,10 +481,6 @@ def _build_runtime(runtime_root: Path, executor: FakeAcceptanceExecutor):
         config_store=config_store,
         workbench_store=WorkbenchStore(str(runtime_root / "workbench")),
         connectivity_store=ConnectivityStore(str(runtime_root / "connectivity.json")),
-        heat=InMemoryHeat(),
-        memory_store=NoopMemoryStore(),
-        memory_index=NoopMemoryIndex(),
-        relation_store=NoopRelationStore(),
     )
     rt.hb.pause = lambda *args, **kwargs: None
     rt.hb.resume = lambda *args, **kwargs: None
@@ -572,7 +499,6 @@ def _build_runtime(runtime_root: Path, executor: FakeAcceptanceExecutor):
             executor.book_path,
         ),
     )
-    _patch_cleanup_for_isolation(rt)
     return rt
 
 
@@ -607,23 +533,6 @@ def _fake_general_tool_execute(request: dict[str, Any], book_path: Path) -> dict
         "read_mode": "bounded",
         "protocol_tool_receipt": False,
     }
-
-
-def _patch_cleanup_for_isolation(rt) -> None:
-    pipeline = rt.cleanup_pipeline
-    pipeline._build_forgetting_context = lambda *args, **kwargs: ""
-    for name in (
-            "_settle_round_retention",
-            "_process_calendar_cleanup",
-            "_cleanup_trash",
-            "_process_memory_lifecycle",
-            "_process_forgetting_result",
-            "_process_evolution_set",
-            "_process_rest_cycle",
-            "_process_cleanup_output",
-            "_process_forgetting_result"):
-        setattr(pipeline, name, lambda *args, **kwargs: None)
-    rt.ctx_store.save_round_to_cache = lambda *args, **kwargs: None
 
 
 def _default_output_dir() -> Path:
@@ -665,37 +574,81 @@ def run_acceptance(
         raise ValueError(f"unknown_acceptance_scenario:{scenario}")
     if mode not in {"fake", "spark-envelope"}:
         raise ValueError(f"unsupported_acceptance_mode:{mode}")
-    output_dir = Path(output_dir) if output_dir else _default_output_dir()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    runtime_root = output_dir / "runtime"
-    if runtime_root.exists():
-        shutil.rmtree(runtime_root)
-    book_path = _scenario_book_path(book_path)
+    book_path = _scenario_book_path(book_path).resolve()
     if not book_path.is_file():
         raise FileNotFoundError(str(book_path))
+    if mode == "spark-envelope":
+        if not envelope_path:
+            raise ValueError("spark_envelope_path_required")
+        envelope_path = Path(envelope_path).resolve()
+        issues = validate_spark_envelope(_read_json(envelope_path))
+        if issues:
+            raise ValueError(f"invalid_spark_envelope:{issues}")
+    output_dir = Path(output_dir).resolve() if output_dir else _default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    runtime_root = Path(tempfile.mkdtemp(prefix="runtime-", dir=output_dir))
+    env = os.environ.copy()
+    env.update({
+        "UPSP_DATA_ROOT": str(runtime_root / "data"),
+        "UPSP_LOCAL_STATE_ROOT": str(runtime_root / "local-state"),
+        "UPSP_PROVIDER_CALL_INTERVAL_SECONDS": "0",
+    })
+    request = {
+        "scenario": scenario, "mode": mode, "strict": strict,
+        "runtime_root": str(runtime_root), "book_path": str(book_path),
+        "envelope_path": str(envelope_path) if envelope_path else None,
+    }
+    completed = subprocess.run(
+        [sys.executable, "-B", "-X", "utf8", str(Path(__file__).resolve())],
+        input=json.dumps(request, ensure_ascii=False),
+        env=env, cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+    )
+    (runtime_root / "worker.log").write_text(
+        completed.stdout + completed.stderr, encoding="utf-8")
+    completed.check_returncode()
+    report = _read_json(runtime_root / "round_context_acceptance_report.json")
+    report["report_path"] = str(output_dir / "round_context_acceptance_report.json")
+    _json_dump(Path(report["report_path"]), report)
+    return report
+
+
+def _run_acceptance_worker(*, scenario, mode, strict, runtime_root,
+                           book_path, envelope_path):
+    # Environment roots are set by the parent before any path-bound import.
+    from initialization.windows_data import ensure_active_instance
+    from initialization.persona_initializer import PersonaInitializer, load_preset
+
+    runtime_root = Path(runtime_root)
+    book_path = Path(book_path)
+    layout = ensure_active_instance(UPSP_ROOT)
+    from data.config_store import ConfigStore
+    ConfigStore().init_all()
+    PersonaInitializer(
+        layout.persona_dir,
+        UPSP_ROOT / "initialization" / "persona_template",
+        UPSP_ROOT / "initialization" / "persona_presets",
+        pid=layout.pid,
+    ).create(load_preset(UPSP_ROOT / "initialization" / "persona_presets", "alyosha"), {
+        "profile_id": "acceptance-fake", "model_alias": "acceptance fake",
+        "model": "acceptance-fake", "context_window": 1_000_000,
+    })
 
     spark_envelope = None
     spark_envelope_issues: list[dict[str, str]] = []
     if mode == "spark-envelope":
-        if not envelope_path:
-            raise ValueError("spark_envelope_path_required")
         spark_envelope = _read_json(Path(envelope_path))
-        spark_envelope_issues = validate_spark_envelope(spark_envelope)
-        if spark_envelope_issues:
-            raise ValueError(f"invalid_spark_envelope:{spark_envelope_issues}")
         executor = ScriptedAcceptanceExecutor(
             book_path=book_path,
             envelope=spark_envelope,
         )
     else:
         executor = FakeAcceptanceExecutor(book_path=book_path)
-    with _extra_file_read_root(book_path.parent):
-        rt = _build_runtime(runtime_root, executor)
-        rt.sm.set_flag("calendar_day_due", True)
-        rt.sm.set_flag("user_message_waiting", True)
-        state = rt.sm.load()
-        flags = state.get("base", {}).get("heartbeat_flags", {})
-        rt._run_one_round("rhythm", state, flags)
+    rt = _build_runtime(runtime_root, executor)
+    rt.sm.set_flag("calendar_day_due", True)
+    rt.sm.set_flag("user_message_waiting", True)
+    state = rt.sm.load()
+    flags = state.get("base", {}).get("heartbeat_flags", {})
+    rt._run_one_round("rhythm", state, flags)
 
     final_state = rt.sm.load()
     round_closed_payload = _latest_round_closed_payload(runtime_root)
@@ -720,7 +673,9 @@ def run_acceptance(
         "context_profile": "full",
         "created_at": datetime.now().isoformat(),
         "runtime_root": str(runtime_root),
-        "live_persona": str(LIVE_PERSONA),
+        "isolated_persona": str(layout.persona_dir),
+        "data_root": str(layout.data_root),
+        "local_state_root": str(layout.local_state_root),
         "live_persona_touched": False,
         "provider_calls": executor.provider_calls,
         "book_path": str(book_path),
@@ -739,7 +694,7 @@ def run_acceptance(
         "summary": {"failed_checks": failed_checks},
         "spark_observation": None,
     }
-    report_path = output_dir / "round_context_acceptance_report.json"
+    report_path = runtime_root / "round_context_acceptance_report.json"
     report["report_path"] = str(report_path)
     _json_dump(report_path, report)
     return report
@@ -990,3 +945,7 @@ def cli_import_spark_report(args) -> dict[str, Any]:
 
 def cli_require_spark(args) -> dict[str, Any]:
     return require_spark_observation(args.report_path)
+
+
+if __name__ == "__main__":
+    _run_acceptance_worker(**json.loads(sys.stdin.read()))

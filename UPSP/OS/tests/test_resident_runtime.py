@@ -194,7 +194,7 @@ def test_spec704_cancellation_bypasses_retry_breaker_and_connectivity(monkeypatc
         def record_failure(self):
             raise AssertionError("cancel must not record provider failure")
 
-    def cancel(*_args):
+    def cancel(*_args, wire_body=None):
         calls.append(True)
         raise ProviderCallCancelled()
 
@@ -273,6 +273,9 @@ class FakeAudit:
 
 class FakeRuntime:
     def __init__(self):
+        from types import SimpleNamespace
+        self.sm = SimpleNamespace(load=lambda: {"base": {}}, get=lambda *args: None)
+        self.workbench = SimpleNamespace(active_guide_slots=lambda: {}, get=lambda *args: None)
         self.control = RuntimeControl()
         self.executor = FakeExecutor()
         self.hb = FakeHeartbeat()
@@ -354,6 +357,24 @@ def test_spec704_resident_service_owns_one_lock_and_reports_host(tmp_path):
         assert exc.value.host == {"address": "127.0.0.1", "port": 8770}
     finally:
         first.close()
+
+
+def test_spec808_wait_timeout_keeps_operation_until_runtime_release(tmp_path):
+    runtime = FakeRuntime()
+    runtime.submit_message = lambda *a, **k: True  # 接收成功，轮次尚未被工作线程取走。
+    resident = service(tmp_path / "runtime", runtime)
+    resident.start()
+    try:
+        with pytest.raises(RuntimeServiceError, match="runtime_wait_timeout"):
+            resident.submit_message("one", "guarded", timeout=0)
+        assert resident.status()["send_in_flight"] is True
+        with pytest.raises(RuntimeServiceError, match="round_in_flight"):
+            resident.submit_message("two", "guarded", timeout=0)
+        resident._on_round_released(808, "interactive", {"_settlement": {"status": "settled"}})
+        assert resident.status()["send_in_flight"] is False
+        assert resident._operation is None
+    finally:
+        resident.close()
 
 
 def test_spec743_periodic_memory_mutation_pauses_heartbeat_and_rechecks_idle(
@@ -541,6 +562,34 @@ def test_spec743_periodic_mutation_failure_releases_idle_reservation(
         runtime.control.release_idle_mutation()
     finally:
         resident.close()
+
+
+def test_spec808_periodic_uncertainty_is_persisted_and_blocks_next_write(tmp_path, monkeypatch):
+    from errors import UncertainEffectError
+    runtime = FakeRuntime()
+    runtime.memory_store = runtime.heat = runtime.assembler = runtime.cfg = object()
+    calls = []
+    class Processor:
+        def __init__(self, **kwargs):
+            pass
+        def apply(self, action, mem_id):
+            calls.append(mem_id)
+            raise UncertainEffectError("rollback failed", affected_ids=[mem_id], cause=OSError("write failed"))
+    monkeypatch.setattr("logic.periodic_memory_mount.PeriodicMemoryMountProcessor", Processor)
+    resident = service(tmp_path / "runtime", runtime)
+    resident.start()
+    try:
+        with pytest.raises(UncertainEffectError):
+            resident.mutate_periodic_memory("mount", "MEM-80800001")
+        assert runtime.hb._paused is True
+        assert resident.status()["interrupted_recovery"]["affected_ids"] == ["MEM-80800001"]
+        with pytest.raises(RuntimeServiceError, match="persistent_effect_recovery_required"):
+            resident.mutate_periodic_memory("mount", "MEM-80800001")
+        assert calls == ["MEM-80800001"]
+    finally:
+        resident.close()
+    saved = json.loads(Path(resident.supervisor_path).read_text(encoding="utf-8"))
+    assert saved["last_outcome"]["persistent_effect_failure"]["affected_ids"] == calls
 
 
 def test_spec743_instance_switch_reserves_idle_runtime_until_cancelled(tmp_path):
@@ -787,6 +836,30 @@ def test_spec721_resident_restart_falls_back_to_guarded(tmp_path):
         assert runtime.execution_permission_level == "guarded"
     finally:
         resident.close()
+
+
+def test_spec808_uncertain_protocol_write_survives_restart_and_blocks_replay(tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    failure = {"reason": "memory_write_rollback_failed", "affected_ids": ["MEM-808"],
+               "cause": "receipt failed", "rollback_causes": ["restore failed"]}
+    resident = service(runtime_dir, FakeRuntime())
+    resident.start()
+    resident.last_outcome = {"persistent_effect_failure": failure}
+    resident.close()
+    runtime = FakeRuntime()
+    restarted = service(runtime_dir, runtime)
+    restarted.start()
+    try:
+        status = restarted.status()
+        assert status["last_outcome"]["persistent_effect_failure"] == failure
+        assert status["interrupted_recovery"]["pending"] is True
+        assert status["interrupted_recovery"]["affected_ids"] == ["MEM-808"]
+        assert runtime.control.stop_latched and runtime.hb._paused
+        with pytest.raises(RuntimeServiceError, match="persistent_effect_recovery_required"):
+            restarted.submit_message("retry", "limited")
+        assert restarted._operation is None
+    finally:
+        restarted.close()
 
 
 def test_spec729_resident_status_projects_small_runtime_truth(tmp_path):
@@ -1101,6 +1174,9 @@ def test_spec789_startup_retries_persisted_action_retention_round(tmp_path):
         def note_round_closed(self, round_num):
             observed.append(round_num)
 
+        def classify_pending(self, round_num=None):
+            return self.summary()
+
         @staticmethod
         def summary():
             return {"pending": False, "round": None}
@@ -1164,9 +1240,20 @@ def test_spec704_service_without_persona_stays_initialization_only(tmp_path):
         resident.close()
 
 
+@pytest.mark.parametrize("schema", [None, "round_audit.v1", "round_audit.v2"])
+@pytest.mark.parametrize("trailing_newline", [False, True])
 def test_spec704_crash_recovery_marks_one_unsettled_without_provider(
-        tmp_path, monkeypatch):
-    store = FakeAuditStore([{"event_type": "round_started"}])
+        tmp_path, monkeypatch, schema, trailing_newline):
+    from data.round_snapshot_store import RoundSnapshotStore
+
+    store = RoundSnapshotStore(tmp_path / "context", static_projection_enabled=False)
+    path = Path(store._round_path(704))
+    path.parent.mkdir(parents=True)
+    event = {"event_type": "round_started", "event_index": 1, "round": 704}
+    if schema:
+        event["schema_version"] = schema
+    path.write_text(json.dumps(event) + ("\n" if trailing_newline else ""), encoding="utf-8")
+    original = path.read_bytes()
     calls = []
 
     class State:
@@ -1213,7 +1300,10 @@ def test_spec704_crash_recovery_marks_one_unsettled_without_provider(
     resident._recover_interrupted_round(runtime, previous)
     resident._recover_interrupted_round(runtime, previous)
 
-    event_types = [item["event_type"] for item in store.events]
+    events = store.read_events(704)
+    event_types = [item["event_type"] for item in events]
+    assert path.read_bytes().startswith(original)
+    assert all(item["schema_version"] == "round_audit.v2" for item in events[1:])
     assert event_types.count("runtime_process_interrupted") == 1
     assert event_types.count("round_unsettled") == 1
     assert ("clear", ("user_message_waiting", "continue_requested")) in calls
@@ -1422,3 +1512,18 @@ def test_spec704_close_keeps_instance_lock_until_runtime_thread_exits(tmp_path):
                 raise
             time.sleep(0.01)
     second.close()
+
+
+def test_spec808_runtime_projection_failure_is_not_empty_success(tmp_path):
+    runtime = FakeRuntime()
+    def fail():
+        raise OSError("state offline")
+    resident = service(tmp_path / "runtime", runtime)
+    resident.start()
+    runtime.sm.load = fail
+    try:
+        with pytest.raises(RuntimeServiceError, match="runtime_projection_read_failed") as caught:
+            resident.status()
+        assert str(caught.value.__cause__) == "state offline"
+    finally:
+        resident.close()

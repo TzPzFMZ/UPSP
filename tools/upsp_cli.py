@@ -502,12 +502,9 @@ def _round_decision_from_flags(flags: dict[str, Any]) -> dict[str, Any]:
 
 
 def _workbench_pending_status() -> dict[str, Any]:
-    try:
-        from data.workbench import WorkbenchStore
-        from logic.task_acceptance import SETTLED_PENDING_INPUT_STATUSES
-        from logic.work_intent_debt import current_work_intent_debt
-    except Exception:
-        return {}
+    from data.workbench import WorkbenchStore
+    from logic.task_guide import PENDING_INPUT_SETTLED_STATUSES
+    from logic.work_intent_debt import current_work_intent_debt
     try:
         store = WorkbenchStore()
         slots = (
@@ -555,7 +552,7 @@ def _workbench_pending_status() -> dict[str, Any]:
                 if not isinstance(item, dict):
                     continue
                 status = str(item.get("status") or "pending").strip().lower()
-                if status in SETTLED_PENDING_INPUT_STATUSES:
+                if status in PENDING_INPUT_SETTLED_STATUSES:
                     continue
                 pending_id = str(
                     item.get("pending_input_id") or item.get("id") or ""
@@ -1110,7 +1107,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    _configure_active_paths()
+    if args.command != "acceptance":
+        _configure_active_paths()
     command = _command_name(args)
     try:
         if args.command == "doctor":

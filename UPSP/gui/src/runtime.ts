@@ -1,3 +1,4 @@
+import { fetchLocalJson as fetchRuntimeJson, LocalRequestError as RuntimeRequestError } from "./local-request";
 import type {
   AboutPayload,
   CallFrame,
@@ -60,25 +61,15 @@ import {
   openMemoryDetail,
   renderStageAndFocus,
   selectDepositionItem,
+  closeManual,
 } from "./view";
+import { clearMarkdownDocuments } from "./markdown";
 
+let settingsGeneration = 0;
 let contextPrefixDiffController: AbortController | null = null;
-const depositionDetailRequests = new Map<string, Promise<boolean>>();
+const depositionDetailRequests = new Map<string, { request: Promise<boolean>; controller: AbortController }>();
+let depositionIndexController: AbortController | null = null;
 const LIVE_PROJECTION_RETRY_DELAY_MS = 5_000;
-
-class RuntimeRequestError extends Error {
-  status: number;
-  code: string;
-  payload: JsonObject;
-
-  constructor(message: string, status = 0, code = "request_failed", payload: JsonObject = {}) {
-    super(message);
-    this.name = "RuntimeRequestError";
-    this.status = status;
-    this.code = code;
-    this.payload = payload;
-  }
-}
 
 function errorView(error: unknown): RuntimeRequestError {
   if (error instanceof RuntimeRequestError) return error;
@@ -86,31 +77,20 @@ function errorView(error: unknown): RuntimeRequestError {
   return new RuntimeRequestError(String(error || "unknown"));
 }
 
+function mutationOutcomeUnknown(failure: RuntimeRequestError): boolean {
+  return failure.status < 400 || failure.status >= 500 || failure.code === "submission_outcome_unconfirmed";
+}
+
+function mutationFailureText(failure: RuntimeRequestError, rejected: string): string {
+  return mutationOutcomeUnknown(failure)
+    ? t("提交结果未确认；正在回查实际状态，请先核对记录再操作。")
+    : rejected;
+}
+
 function jsonObject(value: unknown): JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as JsonObject
     : {};
-}
-
-async function fetchRuntimeJson<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { cache: "no-store", ...options });
-  let payload: unknown = {};
-  try {
-    payload = await response.json();
-  } catch {
-    payload = {};
-  }
-  if (!response.ok) {
-    const object = jsonObject(payload);
-    const code = typeof object.error === "string" ? object.error : "request_failed";
-    throw new RuntimeRequestError(
-      typeof object.error === "string" ? object.error : `HTTP ${response.status}`,
-      response.status,
-      code,
-      object,
-    );
-  }
-  return payload as T;
 }
 
 function runtimeProjectionAdvanced(): boolean {
@@ -134,6 +114,8 @@ export function refreshRuntimeUi(): void {
     runtimeProjection.status?.can_stop || false,
     runtimeProjection.status?.pending_tool_approval?.approval_id || "",
     runtimeProjection.status?.interrupted_recovery?.pending || false,
+    runtimeProjection.status?.interrupted_recovery?.reason || "",
+    runtimeProjection.status?.interrupted_recovery?.affected_ids?.join(",") || "",
     runtimeProjection.status?.interrupted_recovery?.round || 0,
     runtimeProjection.status?.interrupted_recovery?.applied_unregistered || 0,
     runtimeProjection.status?.interrupted_recovery?.applied_registered || 0,
@@ -172,9 +154,17 @@ export function refreshRuntimeUi(): void {
   }
 }
 
-function validateLiveState(statePayload: LiveState | null): void {
-  if (statePayload !== null && statePayload?.schema_version !== "round_live_state.v3") {
+function validateLiveProjection(payload: LivePayload, incremental = false): void {
+  if (!payload || !Object.hasOwn(payload, "round") || !Object.hasOwn(payload, "state")
+    || (payload.round !== null && (!Number.isInteger(payload.round) || payload.round < 0))
+    || (!incremental && payload.state === null && payload.round !== null)) {
+    throw new Error("round_live_projection_schema_mismatch");
+  }
+  if (payload.state !== null && payload.state?.schema_version !== "round_live_state.v3") {
     throw new Error("round_live_state_schema_mismatch");
+  }
+  if (payload.state !== null && payload.state.round !== payload.round) {
+    throw new Error("round_live_projection_mismatch");
   }
 }
 
@@ -218,6 +208,7 @@ export async function pollContextPrefixDiffForSelection(
   const ref = selectedContextDiffRef();
   if (!ref) {
     contextPrefixDiffController?.abort();
+    contextPrefixDiffController = null;
     runtimeProjection.contextPrefixDiffKey = "";
     runtimeProjection.contextPrefixDiff = null;
     runtimeProjection.contextPrefixDiffLoading = false;
@@ -237,6 +228,9 @@ export async function pollContextPrefixDiffForSelection(
   contextPrefixDiffController?.abort();
   const controller = new AbortController();
   contextPrefixDiffController = controller;
+  const generation = runtimeProjection.detailGeneration;
+  const ownsRequest = () => contextPrefixDiffController === controller
+    && !controller.signal.aborted && runtimeProjection.detailGeneration === generation;
   runtimeProjection.contextPrefixDiffKey = key;
   runtimeProjection.contextPrefixDiff = null;
   runtimeProjection.contextPrefixDiffLoading = true;
@@ -249,17 +243,17 @@ export async function pollContextPrefixDiffForSelection(
     if (!validContextPrefixDiff(payload, ref)) {
       throw new Error("context_prefix_diff_schema_mismatch");
     }
-    if (runtimeProjection.contextPrefixDiffKey === key) {
+    if (ownsRequest()) {
       runtimeProjection.contextPrefixDiff = payload;
     }
   } catch (error: unknown) {
     if (!(error instanceof DOMException && error.name === "AbortError")
-        && runtimeProjection.contextPrefixDiffKey === key) {
+        && ownsRequest()) {
       const failure = errorView(error);
       runtimeProjection.contextPrefixDiffError = failure.code || failure.message || "unknown";
     }
   } finally {
-    if (runtimeProjection.contextPrefixDiffKey === key) {
+    if (ownsRequest()) {
       runtimeProjection.contextPrefixDiffLoading = false;
       if (state.activePage === "context" && getActivePageTab("context") === "content") {
         renderStage("context");
@@ -498,6 +492,12 @@ export function loadSelectedRuntimeDetails(pageId: PageId, tabId = ""): void {
 
 function clearLiveDetails(): void {
   runtimeProjection.detailGeneration += 1;
+  contextPrefixDiffController?.abort();
+  contextPrefixDiffController = null;
+  runtimeProjection.contextPrefixDiffKey = "";
+  runtimeProjection.contextPrefixDiff = null;
+  runtimeProjection.contextPrefixDiffLoading = false;
+  runtimeProjection.contextPrefixDiffError = "";
   runtimeProjection.legacyCards.clear();
   runtimeProjection.legacyCardsLoading.clear();
   runtimeProjection.legacyCardsErrors.clear();
@@ -514,6 +514,21 @@ function clearLiveDetails(): void {
 
 function clearRoundProjectionForIdentityMutation(): void {
   clearLiveDetails();
+  depositionIndexController?.abort();
+  depositionIndexController = null;
+  polling.deposition = null;
+  polling.depositionForceQueued = false;
+  for (const { controller } of depositionDetailRequests.values()) controller.abort();
+  depositionDetailRequests.clear();
+  depositionProjection.index = null;
+  depositionProjection.details = { memory: {}, container: {}, relation: {} };
+  depositionProjection.pendingDetails.clear();
+  depositionProjection.detailErrors = {};
+  depositionProjection.loading = false;
+  depositionProjection.error = "";
+  depositionProjection.renderKey = "";
+  closeManual();
+  clearMarkdownDocuments();
   state.conversationStickToBottom = true;
   runtimeProjection.hostSession = "";
   runtimeProjection.live = null;
@@ -598,7 +613,7 @@ async function syncConversationHistory({ force = false }: { force?: boolean } = 
       try {
         const roundPayload = await fetchRuntimeJson<LivePayload>(`./api/live/state?round=${round}`);
         if (generation !== runtimeProjection.detailGeneration) return;
-        validateLiveState(roundPayload.state || null);
+        validateLiveProjection(roundPayload);
         if (Number(roundPayload.round) !== round || !roundPayload.state) {
           throw new Error("round_history_projection_mismatch");
         }
@@ -648,8 +663,8 @@ async function syncConversationHistory({ force = false }: { force?: boolean } = 
 
 async function fetchFullLiveProjection(): Promise<{ round: number | null; state: LiveState | null }> {
   const payload = await fetchRuntimeJson<LivePayload>("./api/live/state?round=latest");
-  validateLiveState(payload.state || null);
-  return { round: payload.round ?? null, state: payload.state || null };
+  validateLiveProjection(payload);
+  return payload;
 }
 
 async function fetchLiveProjection(forceFull = false): Promise<{ round: number | null; state: LiveState | null }> {
@@ -659,10 +674,10 @@ async function fetchLiveProjection(forceFull = false): Promise<{ round: number |
   if (payload.schema_version !== "round_live_events.v2") {
     throw new Error("round_live_events_schema_mismatch");
   }
-  const nextRound = payload.round ?? null;
+  validateLiveProjection(payload, true);
+  const nextRound = payload.round;
   if (nextRound !== runtimeProjection.round) return fetchFullLiveProjection();
   if (payload.state != null) {
-    validateLiveState(payload.state);
     return { round: nextRound, state: payload.state };
   }
   return { round: runtimeProjection.round, state: runtimeProjection.live };
@@ -679,7 +694,12 @@ export function pollRuntime({ forceFull = false, ignoreVisibility = false }: { f
     let status: RuntimeStatus;
     try {
       status = await fetchRuntimeJson<RuntimeStatus>("./api/runtime/status");
-      if (status.schema_version !== "seed_gui_runtime_status.v3") {
+      if (status.schema_version !== "seed_gui_runtime_status.v3"
+          || typeof status.host_session !== "string" || !status.host_session
+          || typeof status.stage !== "string" || !status.stage
+          || !(status.current_round === null || (Number.isInteger(status.current_round) && Number(status.current_round) > 0))
+          || [status.can_stop, status.send_in_flight, status.relay_in_flight,
+            status.mutation_in_flight, status.restart_requested].some(value => typeof value !== "boolean")) {
         throw new Error("runtime_status_schema_mismatch");
       }
     } catch (error: unknown) {
@@ -698,10 +718,7 @@ export function pollRuntime({ forceFull = false, ignoreVisibility = false }: { f
     if (requestGeneration !== runtimeProjection.detailGeneration) return false;
 
     const nextHostSession = status.host_session || "";
-    const identityChanged = Boolean(
-      runtimeProjection.hostSession
-      && runtimeProjection.hostSession !== nextHostSession,
-    );
+    const identityChanged = runtimeProjection.hostSession !== nextHostSession;
     if (identityChanged) {
       clearRoundProjectionForIdentityMutation();
       requestGeneration = runtimeProjection.detailGeneration;
@@ -915,6 +932,7 @@ function validateSettingsPayload(payload: SettingsPayload): void {
 
 function acceptSettingsPayload(payload: SettingsPayload): void {
   validateSettingsPayload(payload);
+  settingsGeneration += 1;
   settingsProjection.data = payload;
   settingsProjection.renderKey = JSON.stringify(payload);
   settingsProjection.error = "";
@@ -1048,11 +1066,14 @@ export function pollSettings({ force = false }: { force?: boolean } = {}): Promi
   }
   if (!force && settingsProjection.data) return Promise.resolve(false);
   settingsProjection.loading = true;
+  const generation = settingsGeneration;
   const request = (async () => {
     try {
-      acceptSettingsPayload(await fetchRuntimeJson<SettingsPayload>("./api/settings"));
-      settingsProjection.feedback = "";
+      const payload = await fetchRuntimeJson<SettingsPayload>("./api/settings");
+      if (generation !== settingsGeneration) return false;
+      acceptSettingsPayload(payload);
     } catch (error: unknown) {
+      if (generation !== settingsGeneration) return false;
       const failure = errorView(error);
       settingsProjection.error = failure.status === 404
         ? t("本地宿主版本过旧，请重启 GUI 服务")
@@ -1077,6 +1098,7 @@ export async function submitSettings(
   updates: Array<[SettingsFileId, Record<string, SettingValue>]>,
 ): Promise<void> {
   if (settingsProjection.pending || !settingsProjection.data || !updates.length) return;
+  settingsGeneration += 1;
   settingsProjection.pending = true;
   settingsProjection.feedback = t("正在保存设置");
   settingsProjection.error = "";
@@ -1103,10 +1125,16 @@ export async function submitSettings(
     settingsProjection.feedback = t("设置已保存");
   } catch (error: unknown) {
     const failure = errorView(error);
+    if (mutationOutcomeUnknown(failure)) {
+      if (polling.settings) await polling.settings;
+      await pollSettings({ force: true });
+    }
     settingsProjection.error = failure.status === 409
       ? t("设置已被其他操作更新，请重新载入后再试")
       : `${t("设置保存失败")}：${failure.code || failure.message || "unknown"}`;
-    settingsProjection.feedback = "";
+    settingsProjection.feedback = mutationOutcomeUnknown(failure)
+      ? mutationFailureText(failure, "") : "";
+    if (settingsProjection.feedback) settingsProjection.error = "";
   } finally {
     settingsProjection.pending = false;
   }
@@ -1119,6 +1147,7 @@ export async function submitProviderKey(
   key: string,
 ): Promise<void> {
   if (settingsProjection.pending || !settingsProjection.data) return;
+  settingsGeneration += 1;
   settingsProjection.pending = true;
   settingsProjection.error = "";
   settingsProjection.feedback = action === "set" ? t("正在保存密钥") : t("正在删除密钥");
@@ -1138,10 +1167,16 @@ export async function submitProviderKey(
     settingsProjection.feedback = action === "set" ? t("密钥已保存") : t("密钥已删除");
   } catch (error: unknown) {
     const failure = errorView(error);
+    if (mutationOutcomeUnknown(failure)) {
+      if (polling.settings) await polling.settings;
+      await pollSettings({ force: true });
+    }
     settingsProjection.error = failure.status === 409
       ? t("当前有其他写入正在进行，请稍后再试")
       : `${action === "set" ? t("密钥保存失败") : t("密钥删除失败")}：${failure.code || failure.message || "unknown"}`;
-    settingsProjection.feedback = "";
+    settingsProjection.feedback = mutationOutcomeUnknown(failure)
+      ? mutationFailureText(failure, "") : "";
+    if (settingsProjection.feedback) settingsProjection.error = "";
   } finally {
     settingsProjection.pending = false;
   }
@@ -1155,6 +1190,7 @@ export async function submitModelCatalog(
   values: JsonObject,
 ): Promise<void> {
   if (settingsProjection.pending || !settingsProjection.data) return;
+  settingsGeneration += 1;
   settingsProjection.pending = true;
   settingsProjection.error = "";
   settingsProjection.feedback = t("正在保存设置");
@@ -1179,10 +1215,16 @@ export async function submitModelCatalog(
     saved = true;
   } catch (error: unknown) {
     const failure = errorView(error);
+    if (mutationOutcomeUnknown(failure)) {
+      if (polling.settings) await polling.settings;
+      await pollSettings({ force: true });
+    }
     settingsProjection.error = failure.status === 409
       ? t("设置已被其他操作更新，请重新载入后再试")
       : `${t("设置保存失败")}：${failure.code || failure.message || "unknown"}`;
-    settingsProjection.feedback = "";
+    settingsProjection.feedback = mutationOutcomeUnknown(failure)
+      ? mutationFailureText(failure, "") : "";
+    if (settingsProjection.feedback) settingsProjection.error = "";
   } finally {
     settingsProjection.pending = false;
   }
@@ -1209,44 +1251,54 @@ export function loadDepositionDetail(kind: DepositionKind, itemId: string, { for
   if (!itemId) return Promise.resolve(false);
   const key = `${kind}:${itemId}`;
   const pending = depositionDetailRequests.get(key);
+  const hostSession = runtimeProjection.hostSession;
   if (pending) {
     return force
-      ? pending.then(() => loadDepositionDetail(kind, itemId, { force: true, render }))
-      : pending;
+      ? pending.request.then(() => (!pending.controller.signal.aborted && runtimeProjection.hostSession === hostSession
+        ? loadDepositionDetail(kind, itemId, { force: true, render }) : false))
+      : pending.request;
   }
   if (!force && depositionProjection.details[kind]?.[itemId]) return Promise.resolve(true);
   depositionProjection.pendingDetails.add(key);
   delete depositionProjection.detailErrors[key];
+  const controller = new AbortController();
+  const ownsRequest = () => runtimeProjection.hostSession === hostSession
+    && depositionDetailRequests.get(key)?.controller === controller;
   const request = (async () => {
     try {
-      const payload = await fetchRuntimeJson<DepositionDetailPayload>(`./api/deposition/${kind}?id=${encodeURIComponent(itemId)}`);
+      const payload = await fetchRuntimeJson<DepositionDetailPayload>(`./api/deposition/${kind}?id=${encodeURIComponent(itemId)}`, { signal: controller.signal });
+      if (!ownsRequest()) return false;
       if (payload.schema_version !== "seed_gui_deposition_detail.v1" || payload.kind !== kind || payload.item?.id !== itemId) {
         throw new Error("deposition_detail_schema_mismatch");
       }
       depositionProjection.details[kind][itemId] = payload;
       return true;
     } catch (error: unknown) {
+      if (!ownsRequest()) return false;
       const failure = errorView(error);
       depositionProjection.detailErrors[key] = `${t("详情读取失败")}：${failure.code || failure.message || "unknown"}`;
       return false;
     }
   })();
   const tracked = request.finally(() => {
+    if (!ownsRequest()) return;
     depositionDetailRequests.delete(key);
     depositionProjection.pendingDetails.delete(key);
     if (render && state.activePage === depositionPage(kind)) renderStage(state.activePage);
   });
-  depositionDetailRequests.set(key, tracked);
+  depositionDetailRequests.set(key, { request: tracked, controller });
   return tracked;
 }
 
 export function pollDeposition({ force = false, ignoreVisibility = false }: { force?: boolean; ignoreVisibility?: boolean } = {}): Promise<boolean> {
   if (document.hidden && !ignoreVisibility) return Promise.resolve(false);
+  const hostSession = runtimeProjection.hostSession;
   if (polling.deposition) {
     if (force) {
       polling.depositionForceQueued = true;
       return polling.deposition.then(() => (
-        polling.deposition || pollDeposition({ force: true, ignoreVisibility })
+        runtimeProjection.hostSession === hostSession
+          ? polling.deposition || pollDeposition({ force: true, ignoreVisibility }) : false
       ));
     }
     return polling.deposition;
@@ -1254,9 +1306,13 @@ export function pollDeposition({ force = false, ignoreVisibility = false }: { fo
   if (!depositionProjection.index) depositionProjection.loading = true;
   let changed = force;
   let loaded = false;
+  const controller = new AbortController();
+  depositionIndexController = controller;
+  const ownsRequest = () => depositionIndexController === controller && runtimeProjection.hostSession === hostSession;
   const request = (async () => {
     try {
-      const payload = await fetchRuntimeJson<DepositionIndexPayload>("./api/deposition");
+      const payload = await fetchRuntimeJson<DepositionIndexPayload>("./api/deposition", { signal: controller.signal });
+      if (!ownsRequest()) return false;
       if (payload.schema_version !== "seed_gui_deposition_index.v1"
           || !Array.isArray(payload.memory)
           || !Array.isArray(payload.containers)
@@ -1280,13 +1336,15 @@ export function pollDeposition({ force = false, ignoreVisibility = false }: { fo
         )));
       }
     } catch (error: unknown) {
+      if (!ownsRequest()) return false;
       const failure = errorView(error);
       const nextError = `${t("沉淀索引读取失败")}：${failure.code || failure.message || "unknown"}`;
       changed = changed || nextError !== depositionProjection.error;
       depositionProjection.error = nextError;
     } finally {
-      depositionProjection.loading = false;
+      if (ownsRequest()) depositionProjection.loading = false;
     }
+    if (!ownsRequest()) return false;
     if (changed) {
       renderSourceState();
       if (["mem", "relations", "containers"].includes(state.activePage)) {
@@ -1297,6 +1355,8 @@ export function pollDeposition({ force = false, ignoreVisibility = false }: { fo
     return loaded;
   })();
   polling.deposition = request.finally(() => {
+    if (!ownsRequest()) return;
+    depositionIndexController = null;
     polling.deposition = null;
     if (polling.depositionForceQueued) {
       polling.depositionForceQueued = false;
@@ -1320,6 +1380,7 @@ function confirmUnlimitedPermission(permissionLevel: PermissionLevel): boolean {
 
 export async function submitRuntimeMessage(event: SubmitEvent): Promise<void> {
   event.preventDefault();
+  if (runtimeProjection.sending || runtimeProjection.awaitingProjection) return;
   const message = els.messageInput.value;
   const permissionLevel = els.permissionLevel.value as PermissionLevel;
   runtimeProjection.sendFeedback = "";
@@ -1353,7 +1414,7 @@ export async function submitRuntimeMessage(event: SubmitEvent): Promise<void> {
   runtimeProjection.awaitingProjection = true;
   refreshRuntimeUi();
   try {
-    await fetchRuntimeJson<JsonObject>("./api/runtime/send", {
+    const receipt = await fetchRuntimeJson<JsonObject>("./api/runtime/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1362,6 +1423,9 @@ export async function submitRuntimeMessage(event: SubmitEvent): Promise<void> {
         unlimited_confirmed: permissionLevel === "unlimited" && runtimeProjection.unlimitedConfirmed,
       }),
     });
+    if (receipt.ok !== true || receipt.command !== "send" || typeof jsonObject(receipt.data).status !== "string") {
+      throw new Error("runtime_send_receipt_mismatch");
+    }
   } catch (error: unknown) {
     if (!els.messageInput.value) els.messageInput.value = message;
     const failure = errorView(error);
@@ -1374,7 +1438,8 @@ export async function submitRuntimeMessage(event: SubmitEvent): Promise<void> {
       502: t("运行时执行失败"),
       503: t("本地运行时宿主不可用"),
     };
-    runtimeProjection.sendFeedback = `${labels[failure.status as keyof typeof labels] || t("提交失败")}：${failure.code || failure.message}`;
+    runtimeProjection.sendFeedback = mutationFailureText(failure,
+      `${labels[failure.status as keyof typeof labels] || t("提交失败")}：${failure.code || failure.message}`);
   } finally {
     runtimeProjection.sending = false;
     await pollRuntime({ forceFull: true, ignoreVisibility: true });
@@ -1394,7 +1459,7 @@ export async function submitPeriodicMemory(
   let mutationAccepted = false;
   let truthReloaded = false;
   const detailKey = `memory:${memId}`;
-  openMemoryDetail(memId, { retry: true });
+  const generation = openMemoryDetail(memId, { retry: true });
   try {
     const payload = await fetchRuntimeJson<{
       schema_version: string;
@@ -1442,11 +1507,15 @@ export async function submitPeriodicMemory(
       ? t("操作已提交，但记忆真源重读失败；为避免显示旧状态，请重新读取详情。")
       : failure.code === "periodic_memory_budget_exceeded"
         ? t("定期层已达到当前配置上限，请先取消其他挂载或调整上限后再试。")
-        : `${labels[failure.status as keyof typeof labels] || t("定期层挂载变更失败")}：${failure.code || failure.message}`;
+        : mutationFailureText(failure, `${labels[failure.status as keyof typeof labels] || t("定期层挂载变更失败")}：${failure.code || failure.message}`);
+    if (!mutationAccepted && mutationOutcomeUnknown(failure)) {
+      await pollDeposition({ force: true, ignoreVisibility: true });
+      await loadDepositionDetail("memory", memId, { force: true, render: false });
+    }
     window.alert(mutation.feedback);
   } finally {
     mutation.pending = false;
-    openMemoryDetail(memId, { retry: true });
+    openMemoryDetail(memId, { retry: true, generation });
   }
 }
 
@@ -1464,10 +1533,10 @@ export async function submitRuntimePermissionChange(): Promise<void> {
     return;
   }
   runtimeProjection.permissionChanging = true;
-  runtimeProjection.sendFeedback = t("执行权限将在下一帧边界生效。");
+  runtimeProjection.sendFeedback = "";
   refreshRuntimeUi();
   try {
-    await fetchRuntimeJson<JsonObject>("./api/runtime/execution-permission", {
+    const receipt = await fetchRuntimeJson<JsonObject>("./api/runtime/execution-permission", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1475,10 +1544,15 @@ export async function submitRuntimePermissionChange(): Promise<void> {
         unlimited_confirmed: permissionLevel === "unlimited" && runtimeProjection.unlimitedConfirmed,
       }),
     });
+    if (receipt.schema_version !== "seed_gui_execution_permission_receipt.v1"
+        || receipt.status !== "pending" || receipt.permission_level !== permissionLevel) {
+      throw new Error("execution_permission_receipt_mismatch");
+    }
+    runtimeProjection.sendFeedback = t("执行权限将在下一帧边界生效。");
   } catch (error: unknown) {
     els.permissionLevel.value = projected;
     const failure = errorView(error);
-    runtimeProjection.sendFeedback = `${t("执行权限切换失败")}：${failure.code || failure.message}`;
+    runtimeProjection.sendFeedback = mutationFailureText(failure, `${t("执行权限切换失败")}：${failure.code || failure.message}`);
   } finally {
     runtimeProjection.permissionChanging = false;
     await pollRuntime({ forceFull: true, ignoreVisibility: true });
@@ -1516,14 +1590,18 @@ export async function submitToolApproval(
   runtimeProjection.approvalFeedback = "";
   renderChat();
   try {
-    await fetchRuntimeJson<JsonObject>("./api/runtime/tool-approval", {
+    const receipt = await fetchRuntimeJson<JsonObject>("./api/runtime/tool-approval", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ approval_id: approvalId, decision }),
     });
+    if (receipt.schema_version !== "general_tool_approval_receipt.v1" || receipt.approval_id !== approvalId
+        || receipt.decision !== decision) {
+      throw new Error("tool_approval_receipt_mismatch");
+    }
   } catch (error: unknown) {
     const failure = errorView(error);
-    runtimeProjection.approvalFeedback = `${t("审批失败")}：${failure.code || failure.message}`;
+    runtimeProjection.approvalFeedback = mutationFailureText(failure, `${t("审批失败")}：${failure.code || failure.message}`);
   } finally {
     runtimeProjection.approvalSubmitting = "";
     await pollRuntime({ forceFull: true, ignoreVisibility: true });
@@ -1612,11 +1690,16 @@ export async function submitInstanceMutation(
     }
   } catch (error: unknown) {
     const failure = errorView(error);
-    personaCatalogProjection.error = failure.code === "instance_restart_host_required"
+    if (mutationOutcomeUnknown(failure)) {
+      if (polling.personas) await polling.personas;
+      await pollPersonaCatalog({ force: true });
+      await pollRuntime({ forceFull: true, ignoreVisibility: true });
+    }
+    personaCatalogProjection.error = mutationFailureText(failure, failure.code === "instance_restart_host_required"
       ? t("此操作需要桌面客户端安全重启后端。")
       : failure.code === "instance_mutation_failed"
         ? t("位格或分身变更失败，请重试。")
-      : failure.code || failure.message;
+      : failure.code || failure.message);
   } finally {
     personaCatalogProjection.pending = false;
     renderIdentity();
@@ -1631,6 +1714,7 @@ export async function submitRuntimeStop(): Promise<void> {
   try {
     const receipt = await fetchRuntimeJson<{
       schema_version?: string;
+      accepted?: boolean;
       reason?: string;
       stage?: string;
     }>("./api/runtime/stop", {
@@ -1638,7 +1722,7 @@ export async function submitRuntimeStop(): Promise<void> {
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
-    if (receipt.schema_version !== "seed_gui_runtime_stop_receipt.v1") {
+    if (receipt.schema_version !== "seed_gui_runtime_stop_receipt.v1" || receipt.accepted !== true) {
       throw new Error("runtime_stop_receipt_mismatch");
     }
     runtimeProjection.sendFeedback = receipt.reason === "local_cleanup_in_progress"
@@ -1651,7 +1735,7 @@ export async function submitRuntimeStop(): Promise<void> {
       409: t("当前没有正在执行的轮次"),
       503: t("本地运行时宿主不可用"),
     };
-    runtimeProjection.sendFeedback = `${labels[failure.status as keyof typeof labels] || t("停止失败")}：${failure.code || failure.message}`;
+    runtimeProjection.sendFeedback = mutationFailureText(failure, `${labels[failure.status as keyof typeof labels] || t("停止失败")}：${failure.code || failure.message}`);
   } finally {
     runtimeProjection.stopping = false;
     await pollRuntime({ forceFull: true, ignoreVisibility: true });
@@ -1683,7 +1767,7 @@ export async function submitRuntimeRelay(): Promise<void> {
   renderComposerState();
   renderStage("run");
   try {
-    const payload = await fetchRuntimeJson<{ ok?: boolean; command?: string }>("./api/runtime/relay", {
+    const payload = await fetchRuntimeJson<{ ok?: boolean; command?: string; data?: unknown }>("./api/runtime/relay", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1691,10 +1775,13 @@ export async function submitRuntimeRelay(): Promise<void> {
         unlimited_confirmed: permissionLevel === "unlimited" && runtimeProjection.unlimitedConfirmed,
       }),
     });
-    if (payload.ok !== true || payload.command !== "relay") {
+    const outcome = jsonObject(payload.data);
+    if (payload.ok !== true || payload.command !== "relay" || typeof outcome.status !== "string" || typeof outcome.settlement_status !== "string") {
       throw new Error("runtime_relay_response_mismatch");
     }
-    taskProjection.relayFeedback = t("中继已完成；界面只显示随后重读到的真实轮次账本。");
+    taskProjection.relayFeedback = outcome.status === "round_completed" && ["settled", "degraded"].includes(String(outcome.settlement_status))
+      ? t("中继已完成；界面只显示随后重读到的真实轮次账本。")
+      : t("中继已返回；请核对轮次结算状态。");
   } catch (error: unknown) {
     const failure = errorView(error);
     const labels = {
@@ -1704,7 +1791,7 @@ export async function submitRuntimeRelay(): Promise<void> {
       502: t("运行时中继执行失败"),
       503: t("本地运行时宿主不可用"),
     };
-    taskProjection.relayFeedback = `${labels[failure.status as keyof typeof labels] || t("中继失败")}：${failure.code || failure.message}`;
+    taskProjection.relayFeedback = mutationFailureText(failure, `${labels[failure.status as keyof typeof labels] || t("中继失败")}：${failure.code || failure.message}`);
   } finally {
     taskProjection.relayPending = false;
     await Promise.all([

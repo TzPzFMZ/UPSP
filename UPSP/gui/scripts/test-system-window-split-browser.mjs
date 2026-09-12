@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { extname, join, relative, resolve } from "node:path";
 
 import { build } from "esbuild";
 import { availablePort, browserExecutable as browser, connectCdp, pollJson } from "./browser-test-utils.mjs";
@@ -16,7 +16,9 @@ const result = await build({
     contents: `
       import { applySystemWindowSplit, initSystemWindowSplit } from "./src/system-window-split.ts";
       import { els, state } from "./src/state.ts";
-      import { renderStage } from "./src/view.ts";
+      import { closeSystemWindow, renderStage } from "./src/view.ts";
+      els.app.hidden = false;
+      els.bootstrapRoot.hidden = true;
       state.systemWindowOpen = true;
       els.app.classList.add("system-open");
       renderStage("run");
@@ -26,6 +28,7 @@ const result = await build({
       window.qa = {
         ready: true,
         apply: applySystemWindowSplit,
+        close: closeSystemWindow,
         setOpen(open) {
           state.systemWindowOpen = open;
           els.app.classList.toggle("system-open", open);
@@ -44,9 +47,17 @@ const result = await build({
           const split = document.querySelector("#systemWindowSplitter");
           return {
             stageWidth: stage.getBoundingClientRect().width,
+            stageX: stage.getBoundingClientRect().x,
+            railX: document.querySelector('.left-rail').getBoundingClientRect().x,
             panelWidth: panel.getBoundingClientRect().width,
+            panelRight: panel.getBoundingClientRect().right,
             chatWidth: chat.getBoundingClientRect().width,
             chatX: chat.getBoundingClientRect().x,
+            splitX: split.getBoundingClientRect().x + split.getBoundingClientRect().width / 2,
+            splitY: split.getBoundingClientRect().y + split.getBoundingClientRect().height / 2,
+            role: split.getAttribute('role'),
+            orientation: split.getAttribute('aria-orientation'),
+            touchAction: getComputedStyle(split).touchAction,
             hidden: split.hidden,
             tabIndex: split.tabIndex,
             ariaNow: Number(split.getAttribute("aria-valuenow")),
@@ -72,45 +83,25 @@ const result = await build({
   logLevel: "silent",
 });
 
-const stubElements = `
-  <main id="bootstrapRoot"></main><div id="appShell">
-  <aside class="left-rail"></aside><div id="personaTabs"></div>
-  <details id="personaMoreMenu"><summary id="personaMoreToggle"></summary><div id="personaNameOptions"></div></details>
-  <button id="createPersonaButton"></button><div id="instanceTabs"></div>
-  <details id="instanceMoreMenu"><summary id="instanceMoreToggle"></summary><div id="instanceOptions"></div></details>
-  <button id="createInstanceButton"></button><div id="identityFeedback"></div><div id="statusReadouts"></div>
-  <div id="productVersionName"></div><div id="productVersionNumber"></div><div id="surfaceNav"></div>
-  <button id="navLockToggle"></button><div id="pageCode"></div><div id="pageTitle"></div>
-  <main id="mainStage"><section id="stagePage"><article class="system-window"></article></section>
-    <section id="chatPane"><div id="chatThread"></div></section>
-    <div id="systemWindowSplitter" role="separator" aria-orientation="vertical" tabindex="-1" hidden></div>
-  </main>
-  <div id="overviewContent"></div><div id="overviewPane"></div><button id="overviewToggle"></button>
-  <button id="globalSettingsToggle"></button><div id="globalSettingsOverlay"></div><div id="globalSettingsContent"></div>
-  <div id="manualOverlay"></div><div id="manualTitle"></div><div id="manualSummary"></div><div id="manualPageLabel"></div>
-  <div id="manualSources"></div><div id="manualBody"></div><div id="runtimeState"><span></span></div><div id="commsSource"></div>
-  <form id="runtimeComposer"><textarea id="messageInput"></textarea><select id="permissionLevel"></select><button id="sendButton"></button></form>
-  <button id="stopButton"></button><button id="configureModelButton"></button><div id="sendFeedback"></div><output id="contextUsage"></output>
-  <div id="ledgerRound"></div><div id="ledgerContext"></div><div id="ledgerFrame"></div><div id="ledgerSettlement"></div></div>`;
-
-const html = `<!doctype html><meta charset="utf-8"><style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
-  #appShell { --system-window-width: calc((100% - 24px) / 2); width: 100%; height: 100%; }
-  #mainStage { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
-  #stagePage { position: absolute; inset: 0; }
-  .system-window { position: absolute; inset: 12px auto 12px 12px; width: var(--system-window-width); background: #122; }
-  #chatPane { position: absolute; inset: 0; left: calc(var(--system-window-width) + 24px); background: #011; }
-  #systemWindowSplitter { position: absolute; z-index: 6; top: 12px; bottom: 12px; left: calc(var(--system-window-width) + 12px); width: 12px; cursor: col-resize; touch-action: none; }
-  @media (max-width: 760px) { #appShell { --system-window-width: 100%; } #systemWindowSplitter { display: none !important; } .system-window { inset: 0; width: 100%; } }
-</style>${stubElements}<script>${result.outputFiles[0].text}</script>`;
+const html = (await readFile(join(guiRoot, 'index.html'), 'utf8'))
+  .replace(/<script[^>]*src="\.\/app\.js[^\"]*"[^>]*><\/script>/, '<script src="/test.js"></script>');
+assert.ok(html.includes('/test.js'));
 
 const temporary = await mkdtemp(join(tmpdir(), "upsp-system-split-test-"));
 const port = await availablePort();
 const debugPort = await availablePort();
-const server = createServer((request, response) => {
-  response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-  response.end(html);
+const server = createServer(async (request, response) => {
+  const path = new URL(request.url, 'http://localhost').pathname;
+  if (request.method !== 'GET' || path.startsWith('/api/')) { response.writeHead(403); response.end(); return; }
+  response.setHeader('Cache-Control', 'no-store');
+  if (path === '/') { response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(html); return; }
+  if (path === '/test.js') { response.setHeader('Content-Type', 'text/javascript'); response.end(result.outputFiles[0].text); return; }
+  try {
+    const file = resolve(guiRoot, '.' + path);
+    assert.ok(!relative(guiRoot, file).startsWith('..'));
+    response.setHeader('Content-Type', ({'.css':'text/css', '.png':'image/png', '.woff2':'font/woff2'})[extname(file)] || 'application/octet-stream');
+    response.end(await readFile(file));
+  } catch { response.writeHead(404); response.end(); }
 });
 await new Promise((resolveReady, reject) => {
   server.once("error", reject);
@@ -132,7 +123,10 @@ const evaluate = async (expression) => {
 const waitReady = async () => {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (await evaluate("Boolean(window.qa?.ready)")) return;
+    if (await evaluate("Boolean(window.qa?.ready)")) {
+      await evaluate("document.fonts.ready.then(() => Promise.all(document.querySelector('#stagePage').getAnimations().map(a => a.finished)))");
+      return;
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 25));
   }
   throw new Error("system split browser test did not become ready");
@@ -147,21 +141,42 @@ try {
   const target = pages.find((candidate) => candidate.type === "page");
   assert.ok(target?.webSocketDebuggerUrl, "headless browser did not expose a page target");
   cdp = await connectCdp(target.webSocketDebuggerUrl);
+  await cdp.call('Network.enable');
+  await cdp.call('Network.setBlockedURLs', { urls: ['https://*', 'http://*/api/*'] });
   await setViewport(1440, 960);
   await cdp.call("Page.navigate", { url: `http://127.0.0.1:${port}/` });
   await waitReady();
 
   let snapshot = await evaluate("window.qa.snapshot()");
-  assert.equal(snapshot.stageWidth, 1440);
-  assert.equal(snapshot.panelWidth, 708);
+  assert.ok(snapshot.stageWidth > 1000);
+  assert.ok(Math.abs(snapshot.panelWidth - snapshot.chatWidth) <= 1);
+  assert.ok(snapshot.chatX >= snapshot.panelRight);
   assert.equal(snapshot.ariaNow, 50);
   assert.equal(snapshot.hidden, false);
   assert.equal(snapshot.tabIndex, 0);
+  assert.equal(snapshot.role, 'separator');
+  assert.equal(snapshot.orientation, 'vertical');
+  assert.equal(snapshot.touchAction, 'none');
+  const anchors = { stageX: snapshot.stageX, railX: snapshot.railX };
+  await evaluate("document.querySelector('.left-rail').classList.add('nav-expanded')");
+  snapshot = await evaluate('window.qa.snapshot()');
+  assert.equal(snapshot.stageX, anchors.stageX, 'navigation expansion moved the main stage');
+  assert.equal(snapshot.railX, anchors.railX, 'navigation expansion moved its anchor');
+  await evaluate("document.querySelector('.left-rail').classList.remove('nav-expanded')");
+  assert.equal(await evaluate(`(() => {
+    const stage = document.querySelector('#stagePage');
+    const animation = stage.getAnimations()[0];
+    if (!animation) throw new Error('opening the system window did not animate');
+    window.qa.requestRender('run');
+    return stage.getAnimations()[0] === animation;
+  })()`), true, 'refresh restarted the opening animation');
+  await evaluate('window.qa.acceptCurrentPanel()');
 
-  const startX = 12 + snapshot.panelWidth + 6;
+  const startX = snapshot.splitX;
+  const pointerY = snapshot.splitY;
   const initialPanelWidth = snapshot.panelWidth;
-  await cdp.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: startX, y: 400 });
-  await cdp.call("Input.dispatchMouseEvent", { type: "mousePressed", x: startX, y: 400, button: "left", buttons: 1, clickCount: 1 });
+  await cdp.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: startX, y: pointerY });
+  await cdp.call("Input.dispatchMouseEvent", { type: "mousePressed", x: startX, y: pointerY, button: "left", buttons: 1, clickCount: 1 });
   snapshot = await evaluate("window.qa.snapshot()");
   assert.equal(snapshot.panelWidth, initialPanelWidth);
   assert.equal(snapshot.ariaNow, 50);
@@ -171,22 +186,34 @@ try {
   snapshot = await evaluate("window.qa.snapshot()");
   assert.equal(snapshot.activePage, "run");
   assert.equal(snapshot.samePanel, true);
-  await cdp.call("Input.dispatchMouseEvent", { type: "mouseReleased", x: startX, y: 400, button: "left", buttons: 0, clickCount: 1 });
+  await cdp.call("Input.dispatchMouseEvent", { type: "mouseReleased", x: startX, y: pointerY, button: "left", buttons: 0, clickCount: 1 });
   snapshot = await evaluate("window.qa.snapshot()");
   assert.equal(snapshot.activePage, "mem");
   assert.equal(snapshot.samePanel, false);
   await evaluate("window.qa.acceptCurrentPanel()");
 
-  const targetX = startX + (1440 - 24) * 0.1;
-  await cdp.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: startX, y: 400 });
-  await cdp.call("Input.dispatchMouseEvent", { type: "mousePressed", x: startX, y: 400, button: "left", buttons: 1, clickCount: 1 });
-  await cdp.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: targetX, y: 400, button: "left", buttons: 1 });
-  await cdp.call("Input.dispatchMouseEvent", { type: "mouseReleased", x: targetX, y: 400, button: "left", buttons: 0, clickCount: 1 });
+  const targetX = startX + (snapshot.panelWidth + snapshot.chatWidth) * 0.1;
+  await cdp.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: startX, y: pointerY });
+  await cdp.call("Input.dispatchMouseEvent", { type: "mousePressed", x: startX, y: pointerY, button: "left", buttons: 1, clickCount: 1 });
+  await cdp.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: targetX, y: pointerY, button: "left", buttons: 1 });
+  await cdp.call("Input.dispatchMouseEvent", { type: "mouseReleased", x: targetX, y: pointerY, button: "left", buttons: 0, clickCount: 1 });
   snapshot = await evaluate("window.qa.snapshot()");
   assert.equal(snapshot.ariaNow, 60);
   assert.equal(snapshot.dragging, false);
   assert.equal(snapshot.samePanel, true);
   assert.equal(snapshot.sameChat, true);
+
+  for (const event of ['pointercancel', 'lostpointercapture']) {
+    const before = await evaluate('window.qa.snapshot()');
+    await cdp.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: before.splitX, y: before.splitY });
+    await cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: before.splitX, y: before.splitY, button: 'left', buttons: 1, clickCount: 1 });
+    await cdp.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: before.splitX + 30, y: before.splitY, button: 'left', buttons: 1 });
+    await evaluate(`document.querySelector('#systemWindowSplitter').dispatchEvent(new PointerEvent('${event}', {pointerId:1}))`);
+    await cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: before.splitX + 30, y: before.splitY, button: 'left', buttons: 0, clickCount: 1 });
+    snapshot = await evaluate('window.qa.snapshot()');
+    assert.equal(snapshot.dragging, false, event);
+    assert.equal(snapshot.ariaNow, before.ariaNow, event + ' did not restore the original ratio');
+  }
 
   await setViewport(900, 700);
   snapshot = await evaluate("window.qa.snapshot()");
@@ -226,28 +253,39 @@ try {
 
   await setViewport(1366, 768);
   snapshot = await evaluate("window.qa.snapshot()");
-  assert.equal(snapshot.panelWidth, 671);
-  assert.equal(snapshot.chatWidth, 671);
+  assert.ok(Math.abs(snapshot.panelWidth - snapshot.chatWidth) <= 1);
   assert.equal(snapshot.ariaNow, 50);
   await setViewport(1920, 1080);
   snapshot = await evaluate("window.qa.snapshot()");
-  assert.equal(snapshot.panelWidth, 948);
-  assert.equal(snapshot.chatWidth, 948);
+  assert.ok(Math.abs(snapshot.panelWidth - snapshot.chatWidth) <= 1);
   assert.equal(snapshot.ariaNow, 50);
 
   await evaluate("window.qa.setOpen(false)");
   snapshot = await evaluate("window.qa.snapshot()");
   assert.equal(snapshot.hidden, true);
   assert.equal(snapshot.tabIndex, -1);
+  assert.equal(snapshot.stageX, anchors.stageX);
+  assert.ok(snapshot.chatWidth > snapshot.panelWidth);
   await evaluate("window.qa.setOpen(true)");
   snapshot = await evaluate("window.qa.snapshot()");
   assert.equal(snapshot.ariaNow, 50);
+
+  await cdp.call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  assert.equal(await evaluate(`(() => {
+    window.qa.close();
+    return document.getAnimations().every(a => Number(a.effect.getTiming().duration) <= 1);
+  })()`), true, 'reduced motion left a long layout animation');
+  await new Promise(resolveWait => setTimeout(resolveWait, 180));
+  assert.equal(await evaluate("document.querySelector('#systemWindowSplitter').hidden && !document.querySelector('.system-window')"), true);
+  await evaluate("window.qa.setOpen(true);window.qa.requestRender('run');document.querySelector('#systemWindowSplitter').focus()");
+  await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight' });
+  assert.equal((await evaluate('window.qa.snapshot()')).ariaNow, 52, 'reduced motion disabled the accessible splitter');
 
   await setViewport(390, 844);
   snapshot = await evaluate("window.qa.snapshot()");
   assert.equal(snapshot.hidden, true);
   assert.equal(snapshot.tabIndex, -1);
-  assert.equal(snapshot.panelWidth, 390);
+  assert.equal(snapshot.panelWidth, snapshot.stageWidth);
 
   console.log("System window split browser tests passed");
 } finally {

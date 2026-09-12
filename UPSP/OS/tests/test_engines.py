@@ -71,7 +71,7 @@ class TestAPIExecutor:
         ex._provider_call_interval_seconds = 0
         ex._sleep = lambda _seconds: None
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             calls.append((url, api_key, json.loads(json.dumps(payload))))
             if len(calls) < 3:
                 raise TimeoutError("probe timeout")
@@ -80,7 +80,7 @@ class TestAPIExecutor:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         result = ex.probe_model_profile("model_probe")
 
         assert result["response"] == "连接成功"
@@ -104,11 +104,11 @@ class TestAPIExecutor:
         ex._provider_call_interval_seconds = 0
         ex._sleep = lambda _seconds: None
 
-        def fail_401(*_args):
+        def fail_401(*_args, wire_body=None):
             calls.append(True)
             raise APIBridgeError("model_probe", "HTTP 401: unauthorized")
 
-        monkeypatch.setattr(ex, "_send_request", fail_401)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fail_401)
         with pytest.raises(APIBridgeError, match="401"):
             ex.probe_model_profile("model_probe")
         assert len(calls) == 1
@@ -116,9 +116,11 @@ class TestAPIExecutor:
     def test_spec631_reaction_snapshot_failure_blocks_provider_before_call(self):
         from types import SimpleNamespace
         from engines.round_audit import RoundAuditRecorder
+        from engines.executor import APIExecutor
 
-        class Executor:
+        class Executor(APIExecutor):
             def __init__(self):
+                super().__init__(ConfigStoreStub(), connectivity_store=NoopConnectivity())
                 self.provider_calls = 0
 
             def prepare_provider_request(self, *_args, **_kwargs):
@@ -143,7 +145,6 @@ class TestAPIExecutor:
             audit_params=lambda: {"round_snapshot_retention": 8},
         ))
         recorder._store = Store()
-        recorder._executor_uses_prepared_requests = lambda: True
 
         with pytest.raises(
                 RuntimeError,
@@ -161,9 +162,11 @@ class TestAPIExecutor:
     def test_spec631_reaction_snapshot_write_error_blocks_provider_before_call(self):
         from types import SimpleNamespace
         from engines.round_audit import RoundAuditRecorder
+        from engines.executor import APIExecutor
 
-        class Executor:
+        class Executor(APIExecutor):
             def __init__(self):
+                super().__init__(ConfigStoreStub(), connectivity_store=NoopConnectivity())
                 self.provider_calls = 0
 
             def prepare_provider_request(self, *_args, **_kwargs):
@@ -184,7 +187,6 @@ class TestAPIExecutor:
             audit_params=lambda: {"round_snapshot_retention": 8},
         ))
         recorder._store = Store()
-        recorder._executor_uses_prepared_requests = lambda: True
 
         with pytest.raises(
                 RuntimeError,
@@ -277,13 +279,15 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["url"] = url
             sent["api_key"] = api_key
             sent["payload"] = payload
+            assert isinstance(wire_body, bytes)
+            assert json.loads(wire_body) == payload
             return self._fake_response_for_provider(provider)
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call(
             "reaction",
@@ -363,11 +367,11 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(_url, _api_key, payload):
+        def fake_send(_url, _api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call(
             "reaction",
@@ -529,8 +533,8 @@ class TestAPIExecutor:
         calls = []
         monkeypatch.setattr(
             executor,
-            "_send_request",
-            lambda *_args: calls.append(True),
+            "_send_request_cancellable",
+            lambda *_args, wire_body=None: calls.append(True),
         )
         with pytest.raises(ValueError, match="provider_request_wire_mismatch"):
             executor.call_prepared_once(prepared)
@@ -637,11 +641,11 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(_url, _api_key, payload):
+        def fake_send(_url, _api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return self._fake_response_for_provider(provider)
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         ex.call("reaction", "ignored", [{"role": "user", "content": "ignored"}])
 
         envelope = json.loads(
@@ -737,11 +741,11 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(_url, _api_key, payload):
+        def fake_send(_url, _api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("reaction", "runtime system", [{"role": "user", "content": "ignored"}])
 
@@ -824,11 +828,11 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(_url, _api_key, payload):
+        def fake_send(_url, _api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("reaction", "", [])
 
@@ -1018,11 +1022,11 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(_url, _api_key, payload):
+        def fake_send(_url, _api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("reaction", "", [])
 
@@ -1095,11 +1099,11 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(_url, _api_key, payload):
+        def fake_send(_url, _api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("reaction", "", [])
 
@@ -1302,11 +1306,11 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(_url, _api_key, payload):
+        def fake_send(_url, _api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"content": [{"type": "text", "text": "ok"}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("reaction", "runtime system", [{"role": "user", "content": "ignored"}])
 
@@ -1352,8 +1356,8 @@ class TestAPIExecutor:
         ex._provider_call_interval_seconds = 0
         monkeypatch.setattr(
             ex,
-            "_send_request",
-            lambda *_args: sent.append(True) or {
+            "_send_request_cancellable",
+            lambda *_args, wire_body=None: sent.append(True) or {
                 "choices": [{"message": {"content": "ok"}}],
                 "usage": {},
             },
@@ -1392,11 +1396,11 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(_url, _api_key, payload):
+        def fake_send(_url, _api_key, payload, provider=None, *, wire_body=None):
             sent.append(payload)
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("reaction", "system rules", [{"role": "user", "content": "hello"}])
         store.write_audit("reaction", layers)
@@ -1450,11 +1454,11 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"choices": [{"message": {"content": "final"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("final_reply", "system", [{"role": "user", "content": "close"}])
 
@@ -1487,11 +1491,11 @@ class TestAPIExecutor:
         ex._provider_call_interval_seconds = 0
         monkeypatch.setenv("UPSP_EXECUTION_PERMISSION_LEVEL", "limited")
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("reaction", "system", [{"role": "user", "content": "work"}])
 
@@ -1530,11 +1534,11 @@ class TestAPIExecutor:
         ex._provider_call_interval_seconds = 0
         monkeypatch.setenv("UPSP_EXECUTION_PERMISSION_LEVEL", permission)
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("reaction", "system", [{"role": "user", "content": "work"}])
 
@@ -1587,8 +1591,8 @@ class TestAPIExecutor:
         executor._provider_call_interval_seconds = 0
         monkeypatch.setattr(
             executor,
-            "_send_request",
-            lambda *_args: {
+            "_send_request_cancellable",
+            lambda *_args, wire_body=None: {
                 "choices": [{"message": {"content": "ok"}}],
                 "usage": {},
             },
@@ -1612,13 +1616,13 @@ class TestAPIExecutor:
         assert (tmp_path / "context" / "reaction" / "step.json").is_file()
         assert not (tmp_path / "wrong-context" / "reaction" / "step.json").exists()
 
-    def test_spec765_runtime_services_preserves_explicit_assembler_config(
+    def test_runtime_services_unifies_explicit_configuration(
             self, tmp_path):
         from assembly.context import ContextAssembler
         from engines.runtime_services import RuntimeServices
 
         runtime_config = self._PayloadTruthConfig("openai_chat")
-        explicit_config = object()
+        explicit_config = self._PayloadTruthConfig("anthropic_messages")
         assembler = ContextAssembler(
             context_dir=str(tmp_path / "context"),
             config_store=explicit_config,
@@ -1631,7 +1635,12 @@ class TestAPIExecutor:
         )
 
         assert services.cfg is runtime_config
-        assert services.assembler.config_store is explicit_config
+        assert services.assembler.config_store is runtime_config
+        assert services.ctx_store.config_store is runtime_config
+        assert services.executor.cfg is runtime_config
+        assert services.assembler.config_store.load("api") == runtime_config.load("api")
+        assert services.assembler.config_store.load("api") != explicit_config.load("api")
+        assert services.heat.memory_store is services.memory_store
 
     def test_spec781_runtime_services_uses_one_resident_store(
             self, tmp_path):
@@ -1713,8 +1722,8 @@ class TestAPIExecutor:
         executor._get_breaker("primary").record_failure()
         monkeypatch.setattr(
             executor,
-            "_send_request",
-            lambda *_args: {
+            "_send_request_cancellable",
+            lambda *_args, wire_body=None: {
                 "choices": [{"message": {"content": "ok"}}],
                 "usage": {},
             },
@@ -1802,7 +1811,7 @@ class TestAPIExecutor:
         executor._provider_call_interval_seconds = 0
         sends = []
 
-        def fake_send(url, _api_key, payload):
+        def fake_send(url, _api_key, payload, provider=None, *, wire_body=None):
             sends.append((url, payload))
             if "primary.invalid" in url:
                 from errors import APIBridgeError
@@ -1813,7 +1822,7 @@ class TestAPIExecutor:
                 )
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(executor, "_send_request", fake_send)
+        monkeypatch.setattr(executor, "_send_request_cancellable", fake_send)
         services = SimpleNamespace(
             executor=executor,
             assembler=SimpleNamespace(_context_dir=str(tmp_path / "context")),
@@ -1929,7 +1938,7 @@ class TestAPIExecutor:
         )
         executor._provider_call_interval_seconds = 0
 
-        def fake_send(_url, _api_key, payload):
+        def fake_send(_url, _api_key, payload, provider=None, *, wire_body=None):
             assert payload["stream"] is True
             assert payload["stream_options"]["include_usage"] is True
             executor._emit_stream_event("llm_stream_first_chunk", {
@@ -1946,7 +1955,7 @@ class TestAPIExecutor:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             }
 
-        monkeypatch.setattr(executor, "_send_request", fake_send)
+        monkeypatch.setattr(executor, "_send_request_cancellable", fake_send)
         services = SimpleNamespace(
             executor=executor,
             assembler=SimpleNamespace(_context_dir=str(tmp_path / "context")),
@@ -2006,8 +2015,8 @@ class TestAPIExecutor:
         ex._provider_call_interval_seconds = 0
         monkeypatch.setattr(
             ex,
-            "_send_request",
-            lambda *_args: sent.append(True) or {
+            "_send_request_cancellable",
+            lambda *_args, wire_body=None: sent.append(True) or {
                 "choices": [{"message": {"content": "ok"}}],
                 "usage": {},
             },
@@ -2052,8 +2061,8 @@ class TestAPIExecutor:
         ex._provider_call_interval_seconds = 0
         monkeypatch.setattr(
             ex,
-            "_send_request",
-            lambda *_args: sent.append(True) or {
+            "_send_request_cancellable",
+            lambda *_args, wire_body=None: sent.append(True) or {
                 "choices": [{"message": {"content": "ok"}}],
                 "usage": {},
             },
@@ -2093,8 +2102,8 @@ class TestAPIExecutor:
         ex._provider_call_interval_seconds = 0
         monkeypatch.setattr(
             ex,
-            "_send_request",
-            lambda *_args: sent.append(True) or {
+            "_send_request_cancellable",
+            lambda *_args, wire_body=None: sent.append(True) or {
                 "choices": [{"message": {"content": "ok"}}],
                 "usage": {},
             },
@@ -2135,13 +2144,13 @@ class TestAPIExecutor:
             sleeps.append(seconds)
             clock["now"] += seconds
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             send_times.append(clock["now"])
             clock["now"] += 0.25
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
         ex._sleep = fake_sleep
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("final_reply", "system", [{"role": "user", "content": "reply"}])
         ex.call("final_reply", "system", [{"role": "user", "content": "reply again"}])
@@ -2183,13 +2192,13 @@ class TestAPIExecutor:
             sleeps.append(seconds)
             clock["now"] += seconds
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             send_times.append(clock["now"])
             clock["now"] += 0.1
             return responses.pop(0)
 
         ex._sleep = fake_sleep
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("setup", "system", [{"role": "user", "content": "start"}])
 
@@ -2256,11 +2265,11 @@ class TestAPIExecutor:
         sends = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(url)
             raise APIBridgeError("primary", "boom")
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         monkeypatch.setattr("engines.executor.time.sleep", lambda seconds: None)
 
         with pytest.raises(APIBridgeError):
@@ -2305,11 +2314,11 @@ class TestAPIExecutor:
         conn = FakeConnectivity()
         ex = APIExecutor(FakeConfig(), connectivity_store=conn)
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(url)
             raise TimeoutError("The read operation timed out")
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         monkeypatch.setattr("engines.executor.time.sleep", lambda seconds: None)
 
         with pytest.raises(APIBridgeError):
@@ -2347,7 +2356,7 @@ class TestAPIExecutor:
         sleeps = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(payload)
             if len(sends) < 3:
                 raise APITimeoutError(
@@ -2360,7 +2369,7 @@ class TestAPIExecutor:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         ex._sleep_between_provider_attempts = sleeps.append
 
         result = ex.call("reaction", "system", [{"role": "user", "content": "go"}])
@@ -2395,7 +2404,7 @@ class TestAPIExecutor:
         sends = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(payload)
             raise APITimeoutError(
                 url,
@@ -2403,7 +2412,7 @@ class TestAPIExecutor:
                 timeout_seconds=300,
             )
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         monkeypatch.setattr("engines.executor.time.sleep", lambda seconds: None)
 
         with pytest.raises(APITimeoutError) as exc_info:
@@ -2434,7 +2443,7 @@ class TestAPIExecutor:
         sends = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(payload)
             raise APITimeoutError(
                 url,
@@ -2442,7 +2451,7 @@ class TestAPIExecutor:
                 timeout_seconds=300,
             )
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         with pytest.raises(APITimeoutError) as exc_info:
             ex.call("reaction", "system", [{"role": "user", "content": "go"}])
@@ -2482,7 +2491,7 @@ class TestAPIExecutor:
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(json.dumps(payload, sort_keys=True))
             if succeeds and len(sends) == 3:
                 return {
@@ -2491,7 +2500,7 @@ class TestAPIExecutor:
                 }
             raise APITimeoutError(url, markers[kind], timeout_seconds=180)
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         ex._sleep_between_provider_attempts = sleeps.append
 
         if succeeds:
@@ -2515,7 +2524,7 @@ class TestAPIExecutor:
         sends = []
         sleeps = []
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(json.dumps(payload, sort_keys=True))
             if len(sends) < 3:
                 raise APIBridgeError(
@@ -2525,7 +2534,7 @@ class TestAPIExecutor:
                 )
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         ex._sleep_between_provider_attempts = sleeps.append
 
         assert ex.call("reaction", "system", [{"role": "user", "content": "go"}])["response"] == "ok"
@@ -2540,13 +2549,13 @@ class TestAPIExecutor:
         ex._provider_call_interval_seconds = 0
         sends = []
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(payload)
             if len(sends) < 3:
                 raise ConnectionResetError("peer disconnected")
             return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         ex._sleep_between_provider_attempts = lambda _seconds: None
 
         assert ex.call("reaction", "system", [{"role": "user", "content": "go"}])["response"] == "ok"
@@ -2756,7 +2765,7 @@ class TestAPIExecutor:
         ex = APIExecutor(FallbackConfig(), connectivity_store=NoopConnectivity())
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(url, _api_key, _payload):
+        def fake_send(url, _api_key, _payload, provider=None, *, wire_body=None):
             sends.append(url)
             if "primary.invalid" in url:
                 raise APIBridgeError(
@@ -2767,7 +2776,7 @@ class TestAPIExecutor:
                 )
             return {"choices": [{"message": {"content": "fallback ok"}}], "usage": {}}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("reaction", "system", [{"role": "user", "content": "go"}])
 
@@ -2786,7 +2795,7 @@ class TestAPIExecutor:
         ex._provider_call_interval_seconds = 0
         sends = []
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(payload)
             raise APIBridgeError(
                 "primary",
@@ -2794,7 +2803,7 @@ class TestAPIExecutor:
                 status_code=status_code,
             )
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         with pytest.raises(APIBridgeError, match=str(status_code)):
             ex.call("reaction", "system", [{"role": "user", "content": "go"}])
@@ -2840,11 +2849,11 @@ class TestAPIExecutor:
         )
         ex._provider_call_interval_seconds = 0
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append((url, json.dumps(payload, sort_keys=True)))
             raise APIBridgeError(url, "HTTP 503: unavailable", status_code=503)
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         ex._sleep_between_provider_attempts = sleeps.append
 
         with pytest.raises(APIBridgeError, match="503"):
@@ -2893,7 +2902,7 @@ class TestAPIExecutor:
         sends = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(url)
             raise APIBridgeError(
                 "primary",
@@ -2901,7 +2910,7 @@ class TestAPIExecutor:
                 status_code=503,
             )
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         monkeypatch.setattr("engines.executor.time.sleep", lambda seconds: None)
 
         with pytest.raises(APIBridgeError):
@@ -2939,11 +2948,11 @@ class TestAPIExecutor:
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
         ex._get_breaker("primary").record_failure()
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append(url)
             return {"choices": [{"message": {"content": "should not call"}}]}
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         with pytest.raises(APIBridgeError):
             ex.call("reaction", "system", [{"role": "user", "content": "go"}])
@@ -3404,8 +3413,9 @@ class TestAPIExecutor:
         )
         assert error_payload["provider_error_recoverable"] is False
 
+    @pytest.mark.parametrize("delta_field", ["content", "reasoning_content"])
     def test_spec524_streaming_plain_text_overrun_is_rejected(
-            self, monkeypatch):
+            self, monkeypatch, delta_field):
         from engines.executor import APIExecutor
         from errors import APIBridgeError
 
@@ -3434,8 +3444,8 @@ class TestAPIExecutor:
             def __iter__(self):
                 chunk = "x" * 700
                 return iter([
-                    ('data: {"choices":[{"delta":{"content":"%s"}}]}\n' % chunk).encode("utf-8"),
-                    ('data: {"choices":[{"delta":{"content":"%s"}}]}\n' % chunk).encode("utf-8"),
+                    ('data: {"choices":[{"delta":{"%s":"%s"}}]}\n' % (delta_field, chunk)).encode("utf-8"),
+                    ('data: {"choices":[{"delta":{"%s":"%s"}}]}\n' % (delta_field, chunk)).encode("utf-8"),
                     b"data: [DONE]\n",
                 ])
 
@@ -3469,7 +3479,17 @@ class TestAPIExecutor:
             "provider_model_format_instability"
         )
         assert error_payload["provider_error_recoverable"] is False
-        assert error_payload["content_chars"] == 1400
+        assert error_payload["content_chars"] == (1400 if delta_field == "content" else 0)
+        assert error_payload["reasoning_chars"] == (1400 if delta_field == "reasoning_content" else 0)
+        assert "total_chars=1400, limit_chars=1000" in str(exc_info.value)
+        assert exc_info.value.affects_connectivity is False
+        assert ex._provider_error_kind(exc_info.value) == "provider_stream_content_overrun"
+        from engines.runtime_control import RuntimeControl
+        result = RuntimeControl.step_exception_result("reaction", exc_info.value)
+        assert result["_local_blocked_reason"] == "blocked/provider_stream_content_overrun"
+        assert "本地输出上限" in result["response"]
+        assert "重试预算" not in result["response"]
+        assert "total_chars=1400, limit_chars=1000" in result["error"]
 
     def test_spec527_provider_interruption_recovers_after_committed_progress(
             self, tmp_path):
@@ -3508,7 +3528,7 @@ class TestAPIExecutor:
 
         assert receipt["status"] == "provider_interruption_recovered"
         assert receipt["provider_error_kind"] == "provider_stream_idle_timeout"
-        assert state.get("base.heartbeat_flags.continue_requested") is True
+        assert state.get("base.heartbeat_flags.continue_requested") is False
         now_text = (tmp_path / "cache" / "now_cache.jsonl").read_text(
             encoding="utf-8"
         )
@@ -3777,13 +3797,13 @@ class TestAPIExecutor:
         conn = FakeConnectivity()
         ex = APIExecutor(FakeConfig(), connectivity_store=conn)
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             return {
                 "choices": [{"message": {"content": "ok"}}],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("setup", "", [{"role": "user", "content": "ping"}])
 
@@ -3820,7 +3840,7 @@ class TestAPIExecutor:
         sent = {}
         ex = APIExecutor(FakeConfig(), connectivity_store=FakeConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent["url"] = url
             sent["payload"] = payload
             return {
@@ -3839,7 +3859,7 @@ class TestAPIExecutor:
                 },
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("setup", "transport", [{"role": "user", "content": "ping"}])
 
@@ -3878,7 +3898,7 @@ class TestAPIExecutor:
 
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             return {
                 "output": [{
                     "id": "fc_setup",
@@ -3890,7 +3910,7 @@ class TestAPIExecutor:
                 "usage": {"input_tokens": 1, "output_tokens": 1},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("setup", "transport", [{"role": "user", "content": "ping"}])
 
@@ -4072,7 +4092,7 @@ class TestAPIExecutor:
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
         ex._sleep = lambda _seconds: None
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             return {
                 "id": "resp_empty_tool",
                 "status": "completed",
@@ -4084,7 +4104,7 @@ class TestAPIExecutor:
                 },
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         try:
             ex.call("setup", "transport", [{"role": "user", "content": "ping"}])
@@ -4118,7 +4138,7 @@ class TestAPIExecutor:
         sent_payloads = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent_payloads.append(payload)
             return {
                 "choices": [{
@@ -4128,7 +4148,7 @@ class TestAPIExecutor:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 0},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         monkeypatch.setattr(
             ex,
             "_sleep_between_provider_attempts",
@@ -4168,7 +4188,7 @@ class TestAPIExecutor:
         sent_payloads = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent_payloads.append(payload)
             if payload.get("tool_choice"):
                 raise AssertionError("Runtime must not send tool_choice")
@@ -4189,7 +4209,7 @@ class TestAPIExecutor:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("setup", "system", [{"role": "user", "content": "setup"}])
 
@@ -4230,7 +4250,7 @@ class TestAPIExecutor:
         sent_payloads = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent_payloads.append(payload)
             if payload.get("tool_choice"):
                 raise AssertionError("Runtime must not send tool_choice")
@@ -4251,7 +4271,7 @@ class TestAPIExecutor:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call(
             "reaction",
@@ -4302,7 +4322,7 @@ class TestAPIExecutor:
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
         ex._sleep = lambda _seconds: None
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sent_payloads.append(payload)
             if len(sent_payloads) == 1:
                 return {
@@ -4329,7 +4349,7 @@ class TestAPIExecutor:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         result = ex.call("setup", "system", [{"role": "user", "content": "setup"}])
 
@@ -4368,7 +4388,7 @@ class TestAPIExecutor:
 
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             return {
                 "choices": [{
                     "message": {
@@ -4387,7 +4407,7 @@ class TestAPIExecutor:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         monkeypatch.setenv("UPSP_VISIBLE_API_PROGRESS", "1")
 
         ex.call("setup", "system", [{"role": "user", "content": "setup"}])
@@ -4446,7 +4466,7 @@ class TestAPIExecutor:
         sleeps = []
         ex = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             sends.append((url, payload))
             if len(sends) == 1:
                 raise APIBridgeError(
@@ -4461,7 +4481,7 @@ class TestAPIExecutor:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             }
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
         monkeypatch.setattr("engines.executor.time.sleep", sleeps.append)
 
         result = ex.call("reaction", "system", [{"role": "user", "content": "go"}])
@@ -4517,7 +4537,7 @@ class TestAPIExecutor:
         ex._sleep = lambda _seconds: None
         attempted_urls = []
 
-        def fake_send(url, api_key, payload):
+        def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
             attempted_urls.append(url)
             raise APIBridgeError(
                 "fallback",
@@ -4525,7 +4545,7 @@ class TestAPIExecutor:
                 status_code=503,
             )
 
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         with pytest.raises(Exception) as exc_info:
             ex.call("setup", "", [{"role": "user", "content": "ping"}])
@@ -4551,7 +4571,7 @@ class TestAPIExecutor:
             def record_success(self):
                 pass
 
-        def fake_send(url, key, payload):
+        def fake_send(url, key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"choices": [{"message": {"content": "{}"}}]}
 
@@ -4559,7 +4579,7 @@ class TestAPIExecutor:
         monkeypatch.setattr(ex, "_get_endpoint", lambda tier: {"url": "http://fake", "model": "fake"})
         monkeypatch.setattr(ex, "_get_api_key", lambda ep: "k")
         monkeypatch.setattr(ex, "_get_breaker", lambda tier: FakeBreaker())
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("setup", "", [{"role": "system", "content": "<!-- 永固层 -->\n正文"}])
 
@@ -4587,7 +4607,7 @@ class TestAPIExecutor:
             def record_success(self):
                 pass
 
-        def fake_send(url, key, payload):
+        def fake_send(url, key, payload, provider=None, *, wire_body=None):
             sent["payload"] = payload
             return {"choices": [{"message": {"content": "{}"}}]}
 
@@ -4595,7 +4615,7 @@ class TestAPIExecutor:
         monkeypatch.setattr(ex, "_get_endpoint", lambda tier: {"url": "http://fake", "model": "fake"})
         monkeypatch.setattr(ex, "_get_api_key", lambda ep: "k")
         monkeypatch.setattr(ex, "_get_breaker", lambda tier: FakeBreaker())
-        monkeypatch.setattr(ex, "_send_request", fake_send)
+        monkeypatch.setattr(ex, "_send_request_cancellable", fake_send)
 
         ex.call("setup", "transport", [{"role": "user", "content": "body"}])
 

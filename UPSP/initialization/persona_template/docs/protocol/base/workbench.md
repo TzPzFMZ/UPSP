@@ -42,4 +42,4 @@ WB 物流通道：input（待处理原料）→ process（正在加工）→ out
 
 工具结果真正改变来源、任务拆分、验收或风险时，`guide_submit(task_progress/revise_task_plan)` 可原子替换一个或多个完整目标片段，并在 ledger 中保存 unified diff。已完成/已通过记录不可删除、换 ID 或语义改写，状态和证据也不能经修订入口提交。
 
-进度只走 `guide_submit(task_progress/update_task_status)`。`done/passed` 只接受成功证据；`blocked` 必须同时写非空 reason 和 Runtime 已登记的 evidence ref。全部 required 记录闭合后 Runtime 自动撤下任务清单；完成则自然语言回复，需要跨轮继续才单独调用 `reaction_finalize(handoff_text)`。
+进度只走 `guide_submit(task_progress/update_task_status)`。`done/passed` 只接受成功证据；`blocked` 必须同时写非空 reason 和 Runtime 已登记的 evidence ref。全部 required 记录闭合后 Runtime 自动撤下任务清单；完成则自然语言回复，需要跨轮继续才调用 `reaction_finalize(handoff_text)`。

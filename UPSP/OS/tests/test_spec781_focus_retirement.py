@@ -70,7 +70,6 @@ def test_resident_list_v1_is_stable_idempotent_and_multi_target(tmp_path):
     path = tmp_path / "resident_list.json"
     store = ResidentListStore(str(path))
 
-    assert store.reconcile()["status"] == "applied"
     first = store.add({"item_type": "memory", "item_id": "MEM-00000001"})
     duplicate = store.add({"item_type": "memory", "item_id": "MEM-00000001"})
     second = store.add({
@@ -100,13 +99,20 @@ def test_resident_list_v1_is_stable_idempotent_and_multi_target(tmp_path):
 
 
 def test_resident_list_upgrades_known_legacy_shapes_in_array_order(tmp_path):
-    from data.resident_list_store import ResidentListError, ResidentListStore
+    from data.resident_list_store import ResidentListError
+    from logic.focus_retirement_migration import migrate_focus_retirement
 
+    state, workbench, relations, containers, store = _migration_fixture(tmp_path)
+    relations.value = {"cards": []}
+    def migrate():
+        return migrate_focus_retirement(
+            state_store=state, workbench=workbench, relation_store=relations,
+            container_store=containers, resident_store=store, assembler=_MigrationAssembler())
     path = tmp_path / "resident_list.json"
     path.write_text('{"items": []}\n', encoding="utf-8")
-    store = ResidentListStore(str(path))
-    assert store.reconcile()["status"] == "applied"
+    assert migrate()["status"] == "applied"
     assert store.load()["schema_version"] == "resident_list.v1"
+    assert json.loads(path.read_text(encoding="utf-8")) == store.load()
 
     path.write_text(json.dumps({
         "schema_version": "resident_list.v1",
@@ -126,7 +132,7 @@ def test_resident_list_upgrades_known_legacy_shapes_in_array_order(tmp_path):
             },
         ],
     }, ensure_ascii=False), encoding="utf-8")
-    assert store.reconcile()["status"] == "applied"
+    assert migrate()["status"] == "applied"
     assert store.load()["items"] == [
         {"item_type": "memory", "item_id": "MEM-00000001"},
         {
@@ -135,6 +141,8 @@ def test_resident_list_upgrades_known_legacy_shapes_in_array_order(tmp_path):
             "target_file": "plan.md",
         },
     ]
+    assert json.loads(path.read_text(encoding="utf-8")) == store.load()
+    assert migrate()["status"] == "noop"
 
     # Generic replacement must normalize the known v1 shape, never erase it.
     legacy_document = {
@@ -156,7 +164,7 @@ def test_resident_list_upgrades_known_legacy_shapes_in_array_order(tmp_path):
     raw = json.dumps(legacy, ensure_ascii=False, indent=2) + "\n"
     path.write_text(raw, encoding="utf-8")
     with pytest.raises(ResidentListError, match="shape_unknown"):
-        store.reconcile()
+        migrate()
     assert path.read_text(encoding="utf-8") == raw
 
 
@@ -164,7 +172,6 @@ def test_resident_list_rejects_noncanonical_container_target(tmp_path):
     from data.resident_list_store import ResidentListError, ResidentListStore
 
     store = ResidentListStore(str(tmp_path / "resident_list.json"))
-    store.reconcile()
     with pytest.raises(ResidentListError, match="resident_container_target_invalid"):
         store.add({
             "item_type": "container",
@@ -177,7 +184,6 @@ def test_resident_list_commits_only_the_exact_preflight_candidate(tmp_path):
     from data.resident_list_store import ResidentListError, ResidentListStore
 
     store = ResidentListStore(str(tmp_path / "resident_list.json"))
-    store.reconcile()
     item = {"item_type": "memory", "item_id": "MEM-00000001"}
     candidate, changed = store.preview_add(item)
     assert changed is True
@@ -200,7 +206,6 @@ def test_resident_list_write_failure_restores_previous_bytes(tmp_path, monkeypat
 
     path = tmp_path / "resident_list.json"
     store = ResidentListStore(str(path))
-    store.reconcile()
     store.add({"item_type": "relation", "item_id": "REL-Codex"})
     before = path.read_bytes()
     original = store._write_verified
@@ -226,7 +231,6 @@ def test_combined_resident_source_preflight_uses_one_projection(tmp_path, monkey
     from data.resident_list_store import ResidentListStore
 
     store = ResidentListStore(str(tmp_path / "resident_list.json"))
-    store.reconcile()
     store.add({"item_type": "memory", "item_id": "MEM-00000003"})
     store.add({
         "item_type": "container",
@@ -296,7 +300,6 @@ def test_future_container_resident_reads_instance_target_on_next_frame(
         "2027-01-01 后核验公告价格是否生效。",
     )
     resident_store = ResidentListStore(str(tmp_path / "resident_list.json"))
-    resident_store.reconcile()
     resident_store.add({
         "item_type": "container",
         "item_id": created["container_id"],
@@ -346,7 +349,6 @@ def test_future_resident_reference_rejects_mismatched_category_file(
     created = container_store.create_container(
         "FUT", "未来预测", target_file="predictions.md")
     resident_store = ResidentListStore(str(tmp_path / "resident_list.json"))
-    resident_store.reconcile()
     resident_store.add({
         "item_type": "container",
         "item_id": created["container_id"],
@@ -369,7 +371,6 @@ def test_resident_relation_body_limit_is_global_across_rounds(
     from data.resident_list_store import ResidentListStore
 
     store = ResidentListStore(str(tmp_path / "resident_list.json"))
-    store.reconcile()
     assembler = ContextAssembler(
         context_dir=str(tmp_path / "context"), resident_store=store)
     monkeypatch.setattr(
@@ -432,7 +433,6 @@ def test_resident_projection_exact_boundary_matches_reaction_render(
     from data.resident_list_store import ResidentListStore
 
     store = ResidentListStore(str(tmp_path / "resident_list.json"))
-    store.reconcile()
     assembler = ContextAssembler(
         context_dir=str(tmp_path / "context"), resident_store=store)
     item = {"item_type": "relation", "item_id": "REL-Boundary"}
@@ -476,7 +476,6 @@ def test_resident_memory_projection_is_not_applied_twice(tmp_path, monkeypatch):
     from data.resident_list_store import ResidentListStore
 
     store = ResidentListStore(str(tmp_path / "resident_list.json"))
-    store.reconcile()
     store.add({"item_type": "memory", "item_id": "MEM-00000004"})
     assembler = ContextAssembler(
         context_dir=str(tmp_path / "context"), resident_store=store)
@@ -573,7 +572,7 @@ def _migration_fixture(tmp_path, *, fail_container=False):
     from data.resident_list_store import ResidentListStore
 
     resident = ResidentListStore(str(tmp_path / "resident_list.json"))
-    resident.reconcile()
+    resident.replace(resident.load())
     return (
         _StateStore(),
         _Workbench(),
@@ -699,6 +698,29 @@ def test_focus_retirement_rolls_back_legacy_resident_upgrade_on_failure(tmp_path
     assert resident.snapshot_bytes() == before
 
 
+@pytest.mark.parametrize("sequences,next_sequence", [([3, 1], 4), ([1, 1], 2), ([True], 2), ([0], 2), ([3], 3)])
+def test_ready_rejects_invalid_legacy_resident_order_without_writes(tmp_path, sequences, next_sequence):
+    from data.resident_list_store import ResidentListError
+    from logic.focus_retirement_migration import migrate_focus_retirement
+
+    state, workbench, relations, containers, resident = _migration_fixture(tmp_path)
+    path = Path(resident.path)
+    path.write_text(json.dumps({
+        "schema_version": "resident_list.v1", "revision": 2,
+        "next_sequence": next_sequence,
+        "items": [{"sequence": seq, "item_type": "memory", "item_id": f"MEM-{i:08X}"}
+                  for i, seq in enumerate(sequences)],
+    }), encoding="utf-8")
+    before = (state.load(), workbench.load_status(), relations.load_registry(),
+              containers.snapshot_mutation_files(), resident.snapshot_bytes())
+    with pytest.raises(ResidentListError, match="resident_(sequence|next_sequence)"):
+        migrate_focus_retirement(
+            state_store=state, workbench=workbench, relation_store=relations,
+            container_store=containers, resident_store=resident, assembler=_MigrationAssembler())
+    assert (state.load(), workbench.load_status(), relations.load_registry(),
+            containers.snapshot_mutation_files(), resident.snapshot_bytes()) == before
+
+
 def test_container_focus_retirement_reuses_mutation_snapshot(
         tmp_path, monkeypatch):
     from data import container_store as cs
@@ -781,8 +803,7 @@ def test_container_transaction_restore_attempts_every_store():
         def restore_mutation_files(self, _snapshot):
             calls.append("container")
 
-    with pytest.raises(RuntimeError, match=(
-            "resident:OSError,ltm:RuntimeError")):
+    with pytest.raises(ExceptionGroup, match="container_transaction_restore_failed") as caught:
         _restore_transaction(
             container_store=Containers(),
             container_snapshot={},
@@ -794,12 +815,13 @@ def test_container_transaction_restore_attempts_every_store():
         )
 
     assert calls == ["resident", "stm", "ltm", "container"]
+    assert [str(exc) for exc in caught.value.exceptions] == ["resident failed", "ltm failed"]
 
 
 def test_relation_context_config_migration_surfaces_rollback_failure(
         tmp_path, monkeypatch):
     from data import config_store as cfs
-    from errors import WriteError
+    from errors import UncertainEffectError
 
     path = tmp_path / "relation.json"
     current = cfs.default_relation_config()
@@ -831,9 +853,10 @@ def test_relation_context_config_migration_surfaces_rollback_failure(
         raise OSError("injected rollback failure")
 
     monkeypatch.setattr(cfs, "atomic_write_text", rollback_failed)
-    with pytest.raises(
-            WriteError, match="relation_migration_rollback_failed:OSError"):
+    with pytest.raises(UncertainEffectError, match="relation_migration_rollback_failed") as caught:
         store.migrate_relation_context_policy()
+    assert str(caught.value.cause) == "relation migration readback mismatch"
+    assert str(caught.value.rollback_causes[0]) == "injected rollback failure"
 
 
 def test_relation_context_config_migration_restores_on_readback_error(

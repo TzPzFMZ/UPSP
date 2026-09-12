@@ -9,6 +9,7 @@ from copy import deepcopy
 from datetime import date
 
 import paths
+from errors import UncertainEffectError
 from constants import local_now
 from data.atomic_write import atomic_write_json, atomic_write_text
 from data.memory_store import (
@@ -318,9 +319,8 @@ class MemoryCompressionManager:
                     raise ValueError("stm_remove_unverified")
                 return {"status": "applied", "mem_id": mem_id, "outcome": outcome}
             except Exception as exc:
-                self.memory_store.restore_ltm_files(ltm_snapshot)
-                self.memory_store.restore_stm_files(stm_snapshot)
-                self.ledger.restore(ledger_snapshot)
+                self._restore_after_failure(exc, ltm_snapshot, ledger_snapshot,
+                                            stm_snapshot=stm_snapshot, affected_ids=[mem_id])
                 raise
 
     def prepare_daily_cycle(self, *, local_date, round_num=None,
@@ -380,9 +380,9 @@ class MemoryCompressionManager:
                 return {"status": "applied", "date": date_text,
                         "pending": len(saved["entries"]),
                         "active_cycle": deepcopy(saved["active_cycle"])}
-            except Exception:
-                self.memory_store.restore_ltm_files(ltm_snapshot)
-                self.ledger.restore(ledger_snapshot)
+            except Exception as exc:
+                self._restore_after_failure(exc, ltm_snapshot, ledger_snapshot,
+                                            affected_ids=[f"MCD-{date_text}"])
                 raise
 
     def current_batch(self):
@@ -587,9 +587,8 @@ class MemoryCompressionManager:
                     "remaining": len(saved["entries"]),
                 }
             except Exception as exc:
-                self.memory_store.restore_ltm_files(ltm_snapshot)
-                self.memory_store.restore_stm_files(stm_snapshot)
-                self.ledger.restore(ledger_snapshot)
+                self._restore_after_failure(exc, ltm_snapshot, ledger_snapshot,
+                                            stm_snapshot=stm_snapshot, affected_ids=list(normalized))
                 raise
 
     def cancel_for_recall(self, mem_id):
@@ -620,9 +619,9 @@ class MemoryCompressionManager:
                 self.ledger.save(doc)
                 return {"status": "applied", "mem_id": mem_id,
                         "reason": "real_recall_override"}
-            except Exception:
-                self.memory_store.restore_ltm_files(ltm_snapshot)
-                self.ledger.restore(ledger_snapshot)
+            except Exception as exc:
+                self._restore_after_failure(exc, ltm_snapshot, ledger_snapshot,
+                                            affected_ids=[mem_id])
                 raise
 
     def cancel_for_pin(self, mem_id):
@@ -731,11 +730,26 @@ class MemoryCompressionManager:
                     "status": "repaired" if settled else "noop",
                     "settled": settled,
                 }
-            except Exception:
-                self.memory_store.restore_ltm_files(ltm_snapshot)
-                self.memory_store.restore_stm_files(stm_snapshot)
-                self.ledger.restore(ledger_snapshot)
+            except Exception as exc:
+                self._restore_after_failure(exc, ltm_snapshot, ledger_snapshot,
+                                            stm_snapshot=stm_snapshot, affected_ids=["STM:degraded_ready"])
                 raise
+
+    def _restore_after_failure(self, cause, ltm_snapshot, ledger_snapshot, *,
+                               stm_snapshot=None, affected_ids=()):
+        restores = [(self.memory_store.restore_ltm_files, ltm_snapshot)]
+        if stm_snapshot is not None:
+            restores.append((self.memory_store.restore_stm_files, stm_snapshot))
+        restores.append((self.ledger.restore, ledger_snapshot))
+        failures = []
+        for restore, snapshot in restores:
+            try:
+                restore(snapshot)
+            except Exception as exc:
+                failures.append(exc)
+        if failures:
+            raise UncertainEffectError("memory_compression_rollback_failed",
+                affected_ids=affected_ids, cause=cause, rollback_causes=failures) from cause
 
     def _queue(self, mem_id, *, reason, source_tier, target_tier,
                target_weight, round_num):

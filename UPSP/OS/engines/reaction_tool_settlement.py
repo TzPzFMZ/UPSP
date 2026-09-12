@@ -1,6 +1,7 @@
 """Reaction loop tool settlement dispatcher."""
 
 import json
+from contextlib import contextmanager
 
 from assembly.context_helpers import active_corpus_ids_from_messages
 from assembly.context_indexes import normalize_index_view_page, normalize_ltm_query_terms
@@ -171,11 +172,20 @@ class ReactionToolSettlementDispatcher:
     def __init__(self, runner):
         self.runner = runner
 
+    @contextmanager
+    def _native_failure_trace(self, declarations):
+        try:
+            yield
+        except Exception as exc:
+            attach_native_trace_to_receipts(getattr(exc, "partial_receipts", []), declarations)
+            raise
+
     def _commit(self, tool_id, declarations, **kwargs):
         committer = getattr(self.runner, "product_committer", None)
         if committer is None:
             committer = RuntimeProductCommitter(self.runner.services)
-        return committer.commit(tool_id, declarations, **kwargs)
+        with self._native_failure_trace(declarations):
+            return committer.commit(tool_id, declarations, **kwargs)
 
     def _record_receipts(
         self,
@@ -214,19 +224,19 @@ class ReactionToolSettlementDispatcher:
             and iter_relay_intent_settle_requests
         ):
             return []
-        receipts = [
-            settle_relay_intent(runner.sm, request, round_num=round_num)
-            for request in iter_relay_intent_settle_requests or []
-            if isinstance(request, dict)
-        ]
-        return self._record_receipts(
-            receipts=receipts,
-            declarations=iter_relay_intent_settle_requests,
-            accumulated_messages=accumulated_messages,
-            iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
-            specific_receipts=all_relay_intent_settle_receipts,
-            all_protocol_tool_receipts=all_protocol_tool_receipts,
-        )
+        receipts = []
+        for request in iter_relay_intent_settle_requests or []:
+            if not isinstance(request, dict):
+                continue
+            receipt = settle_relay_intent(runner.sm, request, round_num=round_num)
+            receipts.extend(self._record_receipts(
+                receipts=[receipt], declarations=[request],
+                accumulated_messages=accumulated_messages,
+                iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
+                specific_receipts=all_relay_intent_settle_receipts,
+                all_protocol_tool_receipts=all_protocol_tool_receipts,
+            ))
+        return receipts
 
     def _filter_duplicate_protocol_reads(
             self, tool_id, requests, prior_receipts, *, mount_ids=()):
@@ -305,22 +315,17 @@ class ReactionToolSettlementDispatcher:
         return False
 
     def _resident_present(self, item_type, item_id, target_file=""):
-        try:
-            return self.runner.resident_store.contains(
-                item_type=item_type,
-                item_id=item_id,
-                target_file=target_file,
-            )
-        except Exception:
-            return False
+        store = getattr(self.runner, "resident_store", None)
+        return bool(store and store.contains(
+            item_type=item_type, item_id=item_id, target_file=target_file))
 
     def _relation_summary_resident(self, card_id):
-        try:
-            for card in self.runner.relation_store.load_registry().get("cards", []):
-                if str(card.get("id") or "").strip() == card_id:
-                    return bool(card.get("summary_resident"))
-        except Exception:
+        store = getattr(self.runner, "relation_store", None)
+        if store is None:
             return False
+        for card in store.load_registry().get("cards", []):
+            if str(card.get("id") or "").strip() == card_id:
+                return bool(card.get("summary_resident"))
         return False
 
     def _stateful_read_still_satisfied(
@@ -456,34 +461,29 @@ class ReactionToolSettlementDispatcher:
         recovery_results = getattr(runner, "_current_action_recovery_results", None)
         if isinstance(recovery_results, list):
             runtime_context["action_recovery_results"] = list(recovery_results)
-        iter_general_tool_results = runner.general_tool_dispatcher.handle_requests(
+        results = runner.general_tool_dispatcher.iter_results(
             iter_general_tool_requests,
             active_general_tool_guides,
             prior_results=all_general_tool_results,
             runtime_context=runtime_context,
         )
-        all_general_tool_results.extend(iter_general_tool_results)
-        iter_native_feedbacks.extend(
-            native_tool_failure_feedbacks(iter_general_tool_results))
-        action_store = runner.action_recovery_store
-        action_results = [
-            item for item in iter_general_tool_results
-            if isinstance(item, dict) and item.get("action_id")
-        ]
-        try:
+        iter_general_tool_results = []
+        for result in results:
+            iter_general_tool_results.append(result)
+            all_general_tool_results.append(result)
+            iter_native_feedbacks.extend(native_tool_failure_feedbacks([result]))
+            if result.get("action_id"):
+                try:
+                    runner.action_recovery_store.record_results([result])
+                except Exception as exc:
+                    raise ActionRecoveryEffectError(
+                        "action_recovery_result_record_failed", action_id=result["action_id"]) from exc
             runner._write_general_tool_results(
-                iter_general_tool_results,
+                [result],
                 round_num,
                 iteration,
                 interaction_meta or {},
             )
-            if action_results:
-                action_store.record_results(action_results)
-        except Exception as exc:
-            if action_results:
-                raise ActionRecoveryEffectError(
-                    "action_recovery_result_record_failed") from exc
-            raise
         return iter_general_tool_results
 
     def handle_tool_summaries(
@@ -756,23 +756,27 @@ class ReactionToolSettlementDispatcher:
             evidence_context["task_root"] = sandbox_grant.get("task_root")
             evidence_context["artifact_roots"] = list(
                 sandbox_grant.get("write_paths") or [])
-        receipts = [
-            apply_guide_submit(
-                runner.workbench,
-                request,
-                evidence_context=evidence_context,
-            )
-            for request in iter_guide_submit_requests or []
-            if isinstance(request, dict)
-        ]
-        return self._record_receipts(
-            receipts=receipts,
-            declarations=iter_guide_submit_requests,
-            accumulated_messages=accumulated_messages,
-            iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
-            specific_receipts=all_guide_submit_receipts,
-            all_protocol_tool_receipts=all_protocol_tool_receipts,
-        )
+        receipts = []
+        for request in iter_guide_submit_requests or []:
+            if not isinstance(request, dict):
+                continue
+            try:
+                receipt = apply_guide_submit(
+                    runner.workbench,
+                    request,
+                    evidence_context=evidence_context,
+                )
+            except Exception as exc:
+                attach_native_trace_to_receipts(getattr(exc, "partial_receipts", []), [request])
+                raise
+            receipts.extend(self._record_receipts(
+                receipts=[receipt], declarations=[request],
+                accumulated_messages=accumulated_messages,
+                iter_native_tool_call_envelopes=iter_native_tool_call_envelopes,
+                specific_receipts=all_guide_submit_receipts,
+                all_protocol_tool_receipts=all_protocol_tool_receipts,
+            ))
+        return receipts
 
     def handle_memory_container_create(
         self,
@@ -880,15 +884,16 @@ class ReactionToolSettlementDispatcher:
             iter_index_view_requests,
             all_index_view_receipts,
         )
-        receipts = apply_index_view_requests(
-            runner.assembler,
-            executable_requests,
-            current_state,
-            round_type,
-            mount_ids_current,
-            interaction_meta or {},
-            hidden_stm_memory_ids,
-        )
+        with self._native_failure_trace(executable_requests):
+            receipts = apply_index_view_requests(
+                runner.assembler,
+                executable_requests,
+                current_state,
+                round_type,
+                mount_ids_current,
+                interaction_meta or {},
+                hidden_stm_memory_ids,
+            )
         receipts = self._finalize_protocol_read_receipts(
             "index_view",
             receipts,
@@ -923,10 +928,11 @@ class ReactionToolSettlementDispatcher:
                 all_memory_search_receipts,
             )
         )
-        receipts = apply_memory_search_requests(
-            runner.assembler,
-            executable_requests,
-        )
+        with self._native_failure_trace(executable_requests):
+            receipts = apply_memory_search_requests(
+                runner.assembler,
+                executable_requests,
+            )
         receipts = self._finalize_protocol_read_receipts(
             "memory_search",
             receipts,
@@ -955,7 +961,8 @@ class ReactionToolSettlementDispatcher:
         if not iter_corpus_read_requests:
             return []
         executable_requests = list(iter_corpus_read_requests or [])
-        receipts = apply_corpus_read_requests(runner.assembler, executable_requests)
+        with self._native_failure_trace(executable_requests):
+            receipts = apply_corpus_read_requests(runner.assembler, executable_requests)
         receipts = self._finalize_protocol_read_receipts(
             "corpus_read",
             receipts,
@@ -995,14 +1002,15 @@ class ReactionToolSettlementDispatcher:
             all_relation_read_receipts,
             mount_ids=mount_ids,
         )
-        receipts, relation_mounts, relation_unmounts = apply_relation_read_requests(
-            executable_requests,
-            {
-                "relation_store": runner.relation_store,
-                "assembler": runner.assembler,
-                "resident_store": runner.resident_store,
-            },
-        )
+        with self._native_failure_trace(executable_requests):
+            receipts, relation_mounts, relation_unmounts = apply_relation_read_requests(
+                executable_requests,
+                {
+                    "relation_store": runner.relation_store,
+                    "assembler": runner.assembler,
+                    "resident_store": runner.resident_store,
+                },
+            )
         receipts = self._finalize_protocol_read_receipts(
             "relation_read",
             receipts,
@@ -1059,20 +1067,21 @@ class ReactionToolSettlementDispatcher:
             and getattr(memory_recall, "heat", None) is runner.heat
         ):
             memory_recall = None
-        memory_content_read_receipts = apply_memory_content_read_requests(
-            executable_requests,
-            runner._build_protocol_processor_state(interaction_meta),
-            {
-                "memory_store": runner.memory_store,
-                "relation_store": runner.relation_store,
-                "memory_recall": memory_recall,
-                "assembler": runner.assembler,
-                "resident_store": runner.resident_store,
-            },
-            round_num=round_num,
-            memory_heat_boosted_ids=boosted_memory_ids,
-            memory_reconsolidation_tracker=memory_reconsolidation_tracker,
-        )
+        with self._native_failure_trace(executable_requests):
+            memory_content_read_receipts = apply_memory_content_read_requests(
+                executable_requests,
+                runner._build_protocol_processor_state(interaction_meta),
+                {
+                    "memory_store": runner.memory_store,
+                    "relation_store": runner.relation_store,
+                    "memory_recall": memory_recall,
+                    "assembler": runner.assembler,
+                    "resident_store": runner.resident_store,
+                },
+                round_num=round_num,
+                memory_heat_boosted_ids=boosted_memory_ids,
+                memory_reconsolidation_tracker=memory_reconsolidation_tracker,
+            )
         (
             memory_content_read_receipts,
             memory_content_mounts,
@@ -1131,14 +1140,15 @@ class ReactionToolSettlementDispatcher:
             all_container_read_receipts,
             mount_ids=mount_ids,
         )
-        receipts, container_mounts = apply_container_read_requests(
-            executable_requests,
-            {
-                "container_store": runner.container_store,
-                "assembler": runner.assembler,
-                "resident_store": runner.resident_store,
-            },
-        )
+        with self._native_failure_trace(executable_requests):
+            receipts, container_mounts = apply_container_read_requests(
+                executable_requests,
+                {
+                    "container_store": runner.container_store,
+                    "assembler": runner.assembler,
+                    "resident_store": runner.resident_store,
+                },
+            )
         receipts = self._finalize_protocol_read_receipts(
             "container_read",
             receipts,
@@ -1175,14 +1185,15 @@ class ReactionToolSettlementDispatcher:
             and iter_mount_cancel_requests
         ):
             return mount_ids
-        receipts, updated_mount_ids = apply_mount_cancel_requests(
-            iter_mount_cancel_requests,
-            {
-                "assembler": runner.assembler,
-                "resident_store": runner.resident_store,
-            },
-            mount_ids=mount_ids,
-        )
+        with self._native_failure_trace(iter_mount_cancel_requests):
+            receipts, updated_mount_ids = apply_mount_cancel_requests(
+                iter_mount_cancel_requests,
+                {
+                    "assembler": runner.assembler,
+                    "resident_store": runner.resident_store,
+                },
+                mount_ids=mount_ids,
+            )
         attach_native_trace_to_receipts(
             receipts,
             iter_mount_cancel_requests,

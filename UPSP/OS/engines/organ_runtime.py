@@ -257,41 +257,26 @@ class OrganRuntime:
                     product_failed = False
                     for product in product_rows:
                         product_sequence += 1
-                        try:
-                            product_receipts = self.product_committer.commit_product(
-                                product,
-                                frame_ref=frame,
-                                role_id=role_id,
-                                sequence=product_sequence,
-                                allowed_tools=role["product_tools"],
-                                round_num=context.get(
-                                    "round_num", frame.get("round_num", 0)),
-                                interaction_meta=context.get("interaction_meta"),
-                                pending_memory_ids=context.get("pending_memory_ids"),
-                                visible_container_targets=context.get(
-                                    "visible_container_targets", ()),
-                                visible_relation_body_ids=context.get(
-                                    "visible_relation_body_ids", ()),
-                                chronicle_store=context.get("chronicle_store"),
-                                chronicle_write_scope=context.get(
-                                    "chronicle_write_scope"),
-                                memory_heat_boosted_ids=context.get(
-                                    "memory_heat_boosted_ids"),
-                            )
-                        except Exception as exc:
-                            product_receipts = [{
-                                "tool_id": product.get("tool_id", ""),
-                                "status": "rejected",
-                                "reason": f"product_commit_failed:{type(exc).__name__}",
-                                "product_id": (
-                                    f"{frame.get('frame_id', '')}:product:"
-                                    f"{product_sequence}"
-                                ),
-                                "role_id": role_id,
-                                "frame_id": frame.get("frame_id", ""),
-                                "trigger_id": frame.get("trigger_id", ""),
-                                "caused_by": frame.get("frame_id", ""),
-                            }]
+                        product_receipts = self.product_committer.commit_product(
+                            product,
+                            frame_ref=frame,
+                            role_id=role_id,
+                            sequence=product_sequence,
+                            allowed_tools=role["product_tools"],
+                            round_num=context.get(
+                                "round_num", frame.get("round_num", 0)),
+                            interaction_meta=context.get("interaction_meta"),
+                            pending_memory_ids=context.get("pending_memory_ids"),
+                            visible_container_targets=context.get(
+                                "visible_container_targets", ()),
+                            visible_relation_body_ids=context.get(
+                                "visible_relation_body_ids", ()),
+                            chronicle_store=context.get("chronicle_store"),
+                            chronicle_write_scope=context.get(
+                                "chronicle_write_scope"),
+                            memory_heat_boosted_ids=context.get(
+                                "memory_heat_boosted_ids"),
+                        )
                         receipts.extend(product_receipts)
                         if product.get("tool_id") == "memory_write":
                             record_pending_memory_ids(
@@ -322,14 +307,8 @@ class OrganRuntime:
                         self._audit(frame, audit_row)
                     completed_caps.update(role["provides"])
                 except Exception as exc:
-                    failed.add(role_id)
-                    record = {
-                        "kind": "organ_failed",
-                        "role_id": role_id,
-                        "error": f"organ_handler_failed:{type(exc).__name__}",
-                    }
-                    records.append(record)
-                    self._audit(frame, record)
+                    exc.partial_receipts = receipts + list(getattr(exc, "partial_receipts", []))
+                    raise
         return {"records": records, "receipts": receipts, "failed_roles": sorted(failed)}
 
     def _activation(self, event_type, axis):

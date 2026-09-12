@@ -71,11 +71,11 @@ def test_spec380_native_tool_headers_follow_call_channel_table(monkeypatch):
     sent_payloads = []
     executor = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-    def fake_send(url, api_key, payload):
+    def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
         sent_payloads.append(payload)
         return {"output_text": "ok"}
 
-    monkeypatch.setattr(executor, "_send_request", fake_send)
+    monkeypatch.setattr(executor, "_send_request_cancellable", fake_send)
 
     executor.call("setup", "system", [{"role": "user", "content": "setup"}])
     executor.call("reaction", "system", [{"role": "user", "content": "loop"}])
@@ -134,11 +134,11 @@ def test_spec383_openai_chat_final_reply_payload_has_user_query_anchor(monkeypat
     sent_payloads = []
     executor = APIExecutor(FakeConfig(), connectivity_store=NoopConnectivity())
 
-    def fake_send(url, api_key, payload):
+    def fake_send(url, api_key, payload, provider=None, *, wire_body=None):
         sent_payloads.append(payload)
         return {"choices": [{"message": {"content": "ok"}}]}
 
-    monkeypatch.setattr(executor, "_send_request", fake_send)
+    monkeypatch.setattr(executor, "_send_request_cancellable", fake_send)
 
     executor.call(
         "final_reply",

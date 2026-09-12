@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import os
 import sys
 
@@ -42,7 +43,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
 
         pipeline = rt.cleanup_pipeline
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
-        monkeypatch.setattr(rt.executor, "call", lambda *a, **kw: {"response": ""})
+        rt.executor = SimpleNamespace(call=lambda *a, **kw: {"response": ""})
         monkeypatch.setattr(pipeline, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(pipeline, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -119,7 +120,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
         rt = Runtime(state_store=sm, assembler=assembler, ctx_store=ctx_store)
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
-        monkeypatch.setattr(rt.executor, "call", lambda *a, **kw: {"response": ""})
+        rt.executor = SimpleNamespace(call=lambda *a, **kw: {"response": ""})
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -176,7 +177,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             )
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
-        monkeypatch.setattr(rt.executor, "call", lambda *a, **kw: {"response": ""})
+        rt.executor = SimpleNamespace(call=lambda *a, **kw: {"response": ""})
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -236,7 +237,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
         rt.cfg = StubConfig()
         pipeline = rt.cleanup_pipeline
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
-        monkeypatch.setattr(rt.executor, "call", lambda *a, **kw: {"response": ""})
+        rt.executor = SimpleNamespace(call=lambda *a, **kw: {"response": ""})
         monkeypatch.setattr(pipeline, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(pipeline, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -283,7 +284,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             }
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
-        monkeypatch.setattr(rt.executor, "call", fake_call)
+        rt.executor = SimpleNamespace(call=fake_call)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -354,7 +355,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             return {"response": ""}
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
-        monkeypatch.setattr(rt.executor, "call", fake_call)
+        rt.executor = SimpleNamespace(call=fake_call)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
 
@@ -430,7 +431,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             return {"response": ""}
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
-        monkeypatch.setattr(rt.executor, "call", fake_call)
+        rt.executor = SimpleNamespace(call=fake_call)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
 
@@ -472,7 +473,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             return {"response": ""}
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
-        monkeypatch.setattr(rt.executor, "call", fake_call)
+        rt.executor = SimpleNamespace(call=fake_call)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
 
@@ -495,7 +496,7 @@ class TestRuntimeCleanupArtifacts(RuntimeTestMixin):
             return {"response": ""}
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
-        monkeypatch.setattr(rt.executor, "call", fake_call)
+        rt.executor = SimpleNamespace(call=fake_call)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)

@@ -1,5 +1,13 @@
 Unicode True
-RequestExecutionLevel admin
+!ifdef ISOLATED_TEST
+  RequestExecutionLevel user
+  !define REGISTRY_ROOT HKCU
+  !define UNINSTALL_KEY "Software\UPSP-Spec808-Isolated\${ISOLATED_TEST}"
+!else
+  RequestExecutionLevel admin
+  !define REGISTRY_ROOT HKLM
+  !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\UPSP"
+!endif
 ManifestDPIAware true
 SetCompressor /SOLID lzma
 
@@ -12,6 +20,9 @@ ${Using:StrFunc} StrCase
 
 !ifndef PAYLOAD_ROOT
   !error "PAYLOAD_ROOT is required"
+!endif
+!ifndef PAYLOAD_MANIFEST_SHA256
+  !error "PAYLOAD_MANIFEST_SHA256 is required"
 !endif
 !ifndef OUTPUT_DIR
   !error "OUTPUT_DIR is required"
@@ -36,7 +47,6 @@ ${Using:StrFunc} StrCase
 !endif
 
 !define PRODUCT_NAME "UPSP"
-!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\UPSP"
 !define WEBVIEW_CLIENT "Software\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 !define WEBVIEW_CLIENT_USER "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 !define MUI_ICON "${PRODUCT_ICON}"
@@ -55,10 +65,19 @@ VIAddVersionKey /LANG=2052 "FileVersion" "${PRODUCT_NUMERIC_VERSION}"
 VIAddVersionKey /LANG=2052 "CompanyName" "TzPzFMZ"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyright (c) 2026 TzPzFMZ"
 InstallDir "$PROGRAMFILES64\UPSP"
-InstallDirRegKey HKLM "${UNINSTALL_KEY}" "InstallLocation"
+InstallDirRegKey ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "InstallLocation"
 
 Var UpgradeMode
 Var ExistingNumericVersion
+Var StageDir
+Var BackupDir
+Var UpgradeRecord
+Var PreviousMoved
+Var NewInstalled
+Var RegistryChanged
+Var ShortcutDir
+Var DesktopShortcutPath
+Var ShortcutsChanged
 
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
@@ -76,15 +95,19 @@ PageExEnd
 !insertmacro MUI_LANGUAGE "English"
 
 Function .onInit
-  SetShellVarContext all
+  !ifdef ISOLATED_TEST
+    SetShellVarContext current
+  !else
+    SetShellVarContext all
+  !endif
   SetRegView 64
   StrCpy $UpgradeMode "0"
-  ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "DisplayVersion"
+  ReadRegStr $0 ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "DisplayVersion"
   ${If} $0 == ""
     Return
   ${EndIf}
 
-  ReadRegStr $ExistingNumericVersion HKLM "${UNINSTALL_KEY}" "VersionNumeric"
+  ReadRegStr $ExistingNumericVersion ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "VersionNumeric"
   ${If} $ExistingNumericVersion == ""
   ${AndIf} $0 == "0.8.5"
     ; Legacy package/DDS-derived label predates the product version sequence.
@@ -95,8 +118,8 @@ Function .onInit
     Abort
   ${EndIf}
 
-  ReadRegStr $INSTDIR HKLM "${UNINSTALL_KEY}" "InstallLocation"
-  ReadRegStr $1 HKLM "${UNINSTALL_KEY}" "UninstallString"
+  ReadRegStr $INSTDIR ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "InstallLocation"
+  ReadRegStr $1 ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "UninstallString"
   ${If} $INSTDIR == ""
   ${OrIfNot} ${FileExists} "$INSTDIR\UPSP.exe"
   ${OrIfNot} ${FileExists} "$INSTDIR\Uninstall.exe"
@@ -126,14 +149,15 @@ Function .onInit
 FunctionEnd
 
 Function un.onInit
-  SetShellVarContext all
+  !ifdef ISOLATED_TEST
+    SetShellVarContext current
+  !else
+    SetShellVarContext all
+  !endif
   SetRegView 64
 FunctionEnd
 
 Function ValidateInstallDirectory
-  ${If} $UpgradeMode == "1"
-    Return
-  ${EndIf}
   StrCpy $4 "$INSTDIR"
   System::Call 'kernel32::GetFullPathNameW(w r4, i ${NSIS_MAX_STRLEN}, w .r0, p 0) i.r5'
   ${If} $5 = 0
@@ -184,6 +208,21 @@ Function ValidateInstallDirectory
     ${EndIf}
   ${EndIf}
 
+  StrCpy $0 "$INSTDIR"
+  check_ancestor:
+    System::Call 'kernel32::GetFileAttributesW(w r0) i.r1'
+    ${If} $1 != -1
+      IntOp $2 $1 & 0x400
+      ${If} $2 != 0
+        Goto invalid
+      ${EndIf}
+    ${EndIf}
+    ${GetParent} "$0" $0
+    StrCmp $0 "" ancestors_checked check_ancestor
+  ancestors_checked:
+  ${If} $UpgradeMode == "1"
+    Return
+  ${EndIf}
   IfFileExists "$INSTDIR\*.*" 0 valid
   FindFirst $0 $1 "$INSTDIR\*.*"
   loop:
@@ -210,6 +249,9 @@ Function SkipDirectoryForUpgrade
 FunctionEnd
 
 Function EnsureWebView2
+  !ifdef ISOLATED_TEST
+    Return
+  !endif
   SetRegView 64
   ReadRegStr $0 HKLM "${WEBVIEW_CLIENT}" "pv"
   ${If} $0 == ""
@@ -232,36 +274,212 @@ Section "UPSP 程序文件" SEC_MAIN
   SectionIn RO
   Call ValidateInstallDirectory
   Call EnsureWebView2
+  StrCpy $PreviousMoved "0"
+  StrCpy $NewInstalled "0"
+  StrCpy $RegistryChanged "0"
+  StrCpy $UpgradeRecord "$INSTDIR.upsp-upgrade.ini"
+  ReadINIStr $0 "$UpgradeRecord" "upgrade" "phase"
+  ${If} $0 != ""
+  ${AndIf} $0 != "completed"
+  ${AndIf} $0 != "rolled_back"
+  ${AndIf} $0 != "aborted"
+    MessageBox MB_ICONSTOP|MB_OK "上次更新尚未确认恢复。请依据 $UpgradeRecord 核对程序目录后再更新。" /SD IDOK
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
+  ${GetParent} "$INSTDIR" $0
+  ClearErrors
+  CreateDirectory "$0"
+  IfErrors stage_failed
+  GetTempFileName $StageDir "$0"
+  Delete "$StageDir"
+  StrCpy $StageDir "$StageDir.upsp-stage"
+  GetTempFileName $BackupDir "$0"
+  Delete "$BackupDir"
+  StrCpy $BackupDir "$BackupDir.upsp-previous"
+  ClearErrors
+  WriteINIStr "$UpgradeRecord" "upgrade" "install_dir" "$INSTDIR"
+  WriteINIStr "$UpgradeRecord" "upgrade" "stage_dir" "$StageDir"
+  WriteINIStr "$UpgradeRecord" "upgrade" "backup_dir" "$BackupDir"
+  WriteINIStr "$UpgradeRecord" "upgrade" "manifest_sha256" "${PAYLOAD_MANIFEST_SHA256}"
+  WriteINIStr "$UpgradeRecord" "upgrade" "phase" "preparing"
+  IfErrors stage_failed
   ${If} $UpgradeMode == "1"
-    ExecWait '"$INSTDIR\Uninstall.exe" /S _?=$INSTDIR' $0
+    ExecWait '"$SYSDIR\reg.exe" export "${REGISTRY_ROOT}\${UNINSTALL_KEY}" "$UpgradeRecord.reg" /y /reg:64' $0
     ${If} $0 != 0
-      MessageBox MB_ICONSTOP|MB_OK "旧版本卸载程序未能正常完成（错误码 $0）。用户数据未受影响，升级已停止。" /SD IDOK
-      Abort
+      Goto stage_failed
     ${EndIf}
   ${EndIf}
-  SetOutPath "$INSTDIR"
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  File /oname=PayloadFiles.ps1 "PayloadFiles.ps1"
+  SetOutPath "$StageDir"
+  ClearErrors
+  SetOverwrite on
   File /r "${PAYLOAD_ROOT}\*"
-  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  IfErrors stage_failed
+  nsExec::ExecToStack /TIMEOUT=60000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\PayloadFiles.ps1" -Root "$StageDir" -ManifestSha256 "${PAYLOAD_MANIFEST_SHA256}"'
+  Pop $0
+  Pop $1
+  WriteINIStr "$UpgradeRecord" "upgrade" "verification_exit" "$0"
+  WriteINIStr "$UpgradeRecord" "upgrade" "verification_detail" "$1"
+  ${If} $0 != 0
+    Goto stage_failed
+  ${EndIf}
+  ClearErrors
+  WriteUninstaller "$StageDir\Uninstall.exe"
+  IfErrors stage_failed
+  SetOutPath "$TEMP"
+  ClearErrors
+  WriteINIStr "$UpgradeRecord" "upgrade" "phase" "replacing"
+  IfErrors stage_failed
+  ${If} ${FileExists} "$INSTDIR"
+    ClearErrors
+    Rename "$INSTDIR" "$BackupDir"
+    IfErrors stage_failed
+    StrCpy $PreviousMoved "1"
+  ${EndIf}
+  !ifdef ISOLATED_TEST
+    !ifdef FAIL_AFTER_BACKUP
+      Goto rollback
+    !endif
+  !endif
+  ClearErrors
+  Rename "$StageDir" "$INSTDIR"
+  IfErrors rollback
+  StrCpy $NewInstalled "1"
+  nsExec::ExecToStack /TIMEOUT=60000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\PayloadFiles.ps1" -Root "$INSTDIR" -ManifestSha256 "${PAYLOAD_MANIFEST_SHA256}"'
+  Pop $0
+  Pop $1
+  WriteINIStr "$UpgradeRecord" "upgrade" "verification_exit" "$0"
+  WriteINIStr "$UpgradeRecord" "upgrade" "verification_detail" "$1"
+  ${If} $0 != 0
+    Goto rollback
+  ${EndIf}
+  !ifdef ISOLATED_TEST
+    !ifdef FAIL_AFTER_REPLACE
+      Goto rollback
+    !endif
+  !endif
+  StrCpy $RegistryChanged "1"
+  ClearErrors
+  Call CreateRegisteredShortcuts
+  IfErrors rollback
+  WriteRegStr ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "DisplayName" "UPSP"
+  WriteRegStr ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
+  WriteRegStr ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "VersionNumeric" "${PRODUCT_NUMERIC_VERSION}"
+  WriteRegStr ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "Publisher" "TzPzFMZ"
+  WriteRegStr ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\UPSP.exe"
+  WriteRegStr ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
+  WriteRegStr ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
+  WriteRegDWORD ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "NoModify" 1
+  WriteRegDWORD ${REGISTRY_ROOT} "${UNINSTALL_KEY}" "NoRepair" 1
+  IfErrors rollback
+  ClearErrors
+  WriteINIStr "$UpgradeRecord" "upgrade" "phase" "completed"
+  IfErrors rollback
+  ${If} $PreviousMoved == "1"
+    nsExec::ExecToStack /TIMEOUT=60000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\PayloadFiles.ps1" -Root "$BackupDir" -RemovePrevious'
+    Pop $0
+    Pop $1
+    WriteINIStr "$UpgradeRecord" "upgrade" "backup_cleanup_exit" "$0"
+    WriteINIStr "$UpgradeRecord" "upgrade" "backup_cleanup_detail" "$1"
+  ${EndIf}
+  Goto done
 
-  CreateDirectory "$SMPROGRAMS\UPSP"
-  CreateShortCut "$SMPROGRAMS\UPSP\UPSP.lnk" "$INSTDIR\UPSP.exe"
-  CreateShortCut "$SMPROGRAMS\UPSP\卸载 UPSP.lnk" "$INSTDIR\Uninstall.exe"
+  rollback:
+    ${If} $RegistryChanged == "1"
+      ${If} $UpgradeMode == "1"
+        ExecWait '"$SYSDIR\reg.exe" import "$UpgradeRecord.reg" /reg:64' $0
+        ${If} $0 != 0
+          Goto recovery_required
+        ${EndIf}
+      ${Else}
+        ClearErrors
+        DeleteRegKey ${REGISTRY_ROOT} "${UNINSTALL_KEY}"
+        IfErrors recovery_required
+      ${EndIf}
+    ${EndIf}
+    ${If} $NewInstalled == "1"
+      ClearErrors
+      Rename "$INSTDIR" "$StageDir"
+      IfErrors recovery_required
+    ${EndIf}
+    ${If} $PreviousMoved == "1"
+      !ifdef ISOLATED_TEST
+        !ifdef FAIL_ROLLBACK
+          Goto recovery_required
+        !endif
+      !endif
+      ClearErrors
+      Rename "$BackupDir" "$INSTDIR"
+      IfErrors recovery_required
+    ${EndIf}
+    ${If} $UpgradeMode == "0"
+    ${AndIf} $ShortcutsChanged == "1"
+      ClearErrors
+      Delete "$DesktopShortcutPath"
+      Delete "$ShortcutDir\UPSP.lnk"
+      Delete "$ShortcutDir\卸载 UPSP.lnk"
+      RMDir "$ShortcutDir"
+      IfErrors recovery_required
+    ${EndIf}
+    WriteINIStr "$UpgradeRecord" "upgrade" "phase" "rolled_back"
+    MessageBox MB_ICONSTOP|MB_OK "更新失败，已恢复更新前的程序目录。失败载荷与恢复记录保留在 $UpgradeRecord。用户数据未改动。" /SD IDOK
+    SetErrorLevel 1
+    Abort
 
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayName" "UPSP"
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "VersionNumeric" "${PRODUCT_NUMERIC_VERSION}"
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "Publisher" "TzPzFMZ"
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\UPSP.exe"
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
-  WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
-  WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair" 1
+  stage_failed:
+    WriteINIStr "$UpgradeRecord" "upgrade" "phase" "aborted"
+    MessageBox MB_ICONSTOP|MB_OK "更新准备失败，程序目录尚未替换。失败现场见 $UpgradeRecord。" /SD IDOK
+    SetErrorLevel 1
+    Abort
+
+  recovery_required:
+    WriteINIStr "$UpgradeRecord" "upgrade" "phase" "recovery_required"
+    MessageBox MB_ICONSTOP|MB_OK "更新和恢复均未完成。请保留程序目录、新载荷及旧程序副本，按 $UpgradeRecord 核对恢复。用户数据未改动。" /SD IDOK
+    SetErrorLevel 1
+    Abort
+  done:
+
 SectionEnd
 
 Section "桌面快捷方式" SEC_DESKTOP
-  CreateShortCut "$DESKTOP\UPSP.lnk" "$INSTDIR\UPSP.exe"
+  ; Selection is consumed before registration and the success marker in SEC_MAIN.
 SectionEnd
+
+Function CreateRegisteredShortcuts
+  !ifdef ISOLATED_TEST
+    StrCpy $ShortcutDir "$INSTDIR.shortcuts"
+    StrCpy $DesktopShortcutPath "$INSTDIR.desktop.lnk"
+  !else
+    StrCpy $ShortcutDir "$SMPROGRAMS\UPSP"
+    StrCpy $DesktopShortcutPath "$DESKTOP\UPSP.lnk"
+  !endif
+  StrCpy $ShortcutsChanged "1"
+  CreateDirectory "$ShortcutDir"
+  IfErrors shortcut_failed
+  CreateShortCut "$ShortcutDir\UPSP.lnk" "$INSTDIR\UPSP.exe"
+  IfErrors shortcut_failed
+  CreateShortCut "$ShortcutDir\卸载 UPSP.lnk" "$INSTDIR\Uninstall.exe"
+  IfErrors shortcut_failed
+  SectionGetFlags ${SEC_DESKTOP} $0
+  IntOp $0 $0 & 1
+  ${If} $0 != 0
+    CreateShortCut "$DesktopShortcutPath" "$INSTDIR\UPSP.exe"
+    IfErrors shortcut_failed
+  ${EndIf}
+  !ifdef ISOLATED_TEST
+    !ifdef FAIL_SHORTCUT_WRITE
+      Goto shortcut_failed
+    !endif
+  !endif
+  ClearErrors
+  Return
+  shortcut_failed:
+    SetErrors
+FunctionEnd
 
 LangString DESC_SEC_MAIN ${LANG_SIMPCHINESE} "安装 UPSP 桌面程序和内置运行时。"
 LangString DESC_SEC_MAIN ${LANG_ENGLISH} "Install UPSP Desktop and its bundled runtimes."
@@ -273,12 +491,18 @@ LangString DESC_SEC_DESKTOP ${LANG_ENGLISH} "Create an UPSP shortcut on the shar
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "Uninstall"
-  SetShellVarContext all
+  !ifdef ISOLATED_TEST
+    SetShellVarContext current
+  !else
+    SetShellVarContext all
+  !endif
+  !ifndef ISOLATED_TEST
   Delete "$DESKTOP\UPSP.lnk"
   Delete "$SMPROGRAMS\UPSP\UPSP.lnk"
   Delete "$SMPROGRAMS\UPSP\卸载 UPSP.lnk"
   RMDir "$SMPROGRAMS\UPSP"
-  DeleteRegKey HKLM "${UNINSTALL_KEY}"
+  !endif
+  DeleteRegKey ${REGISTRY_ROOT} "${UNINSTALL_KEY}"
   !include "${UNINSTALL_INCLUDE}"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"

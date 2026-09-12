@@ -16,9 +16,8 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
     def _patch_minimal_cleanup(self, rt, monkeypatch):
         pipeline = rt.cleanup_pipeline
         monkeypatch.setattr(rt.assembler, "assemble_cleanup", lambda *a, **kw: ("", []))
-        monkeypatch.setattr(rt.executor, "call", lambda *a, **kw: {"response": ""})
+        rt.executor = SimpleNamespace(call=lambda *a, **kw: {"response": ""})
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
-        monkeypatch.setattr(pipeline, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(pipeline, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(pipeline, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
@@ -55,6 +54,49 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         assert outcome["status"] == "unsettled"
         assert outcome["fatal_reasons"] == [
             "flag_finalization:finalize failed"]
+
+    def test_required_guide_failure_keeps_unconsumed_input_after_cleanup(self, tmp_path, monkeypatch):
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+        rt.executor.call = lambda *a, **kw: pytest.fail("fatal context failure must stop provider")
+        rt.sm.set_flag("user_message_waiting", True)
+        before = rt.sm.read_snapshot()["base"]
+        result = {"response": "", "_required_context_failure": {
+            "stage": "read", "scope": "reaction_step_guide", "error_type": "ValueError"}}
+        outcome = rt.cleanup_pipeline.run(self._round_context(rt), result)
+        assert outcome["status"] == "unsettled"
+        assert outcome["fatal_reasons"] == ["required_context:read:reaction_step_guide:ValueError"]
+        after = rt.sm.read_snapshot()["base"]
+        assert after["heartbeat_flags"]["user_message_waiting"] is True
+        assert after["meta"]["last_round_closed_at"] == before["meta"]["last_round_closed_at"]
+
+    @pytest.mark.parametrize("phase", ["prepared", "launching", "result_recorded"])
+    def test_spec808_pending_action_blocks_close_and_cleanup_provider(self, tmp_path, monkeypatch, phase):
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+        rt.executor.call = lambda *a, **kw: pytest.fail("pending effect must stop provider")
+        prepare = (rt.action_recovery_store._append if phase == "prepared"
+                   else rt.action_recovery_store.prepare_opaque)
+        action_id = prepare(
+            tool_id="shell_command", request_sha256="8" * 64,
+            runtime_context={"round_num": 1, "iteration": 1}, call_id="uncertain", target="isolated")
+        if phase == "result_recorded":
+            rt.action_recovery_store.record_results([{"action_id": action_id, "status": "ok"}])
+        outcome = rt.cleanup_pipeline.run(self._round_context(rt), {"response": ""})
+        assert outcome["status"] == "unsettled"
+        assert "action_recovery_unsettled" in outcome["fatal_reasons"]
+        assert rt.action_recovery_store.summary()["pending"]
+
+    @pytest.mark.parametrize("flag,reason", [("_persistent_effect_uncertain", "persistent_effect_uncertain"),
+                                            ("_runtime_step_failed", "runtime_step_failed")])
+    def test_spec808_uncertain_protocol_effect_blocks_cleanup_provider(self, tmp_path, monkeypatch, flag, reason):
+        rt = self._make_runtime(tmp_path)
+        self._patch_minimal_cleanup(rt, monkeypatch)
+        rt.executor.call = lambda *a, **kw: pytest.fail("uncertain effect must stop provider")
+        outcome = rt.cleanup_pipeline.run(self._round_context(rt), {
+            "response": "", flag: True})
+        assert outcome["status"] == "unsettled"
+        assert reason in outcome["fatal_reasons"]
 
     def test_spec776_setup_cache_failure_keeps_input_pending_and_round_open(
             self, tmp_path, monkeypatch):
@@ -117,12 +159,8 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
         self._patch_minimal_cleanup(rt, monkeypatch)
-        monkeypatch.setattr(
-            rt.executor,
-            "call",
-            lambda *args, **kwargs: (_ for _ in ()).throw(
-                RuntimeError("provider unavailable")),
-        )
+        rt.executor = SimpleNamespace(call=lambda *args, **kwargs: (_ for _ in ()).throw(
+                RuntimeError("provider unavailable")))
 
         outcome = rt.cleanup_pipeline.run(
             self._round_context(rt), {"response": "done"})
@@ -524,11 +562,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         rt = self._make_runtime(tmp_path)
         self._patch_minimal_cleanup(rt, monkeypatch)
         provider_calls = []
-        monkeypatch.setattr(
-            rt.executor,
-            "call",
-            lambda *_args, **_kwargs: provider_calls.append(True),
-        )
+        rt.executor = SimpleNamespace(call=lambda *_args, **_kwargs: provider_calls.append(True))
         for flag in (
                 "user_message_waiting", "calendar_day_due",
                 "rhythm_due", "standby_due"):
@@ -840,9 +874,9 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             "response": "继续推进",
             "_closeout_relay_receipts": [{
                 "tool_id": "reaction_finalize",
-                "status": "continue_requested_set",
+                "status": "continue_requested_pending",
                 "source": "closeout_form",
-                "set_flags": ["continue_requested"],
+                "requested_flags": ["continue_requested"],
             }],
         }
 
@@ -869,9 +903,9 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             "response": "relay closeout",
             "_closeout_relay_receipts": [{
                 "tool_id": "reaction_finalize",
-                "status": "continue_requested_set",
+                "status": "continue_requested_pending",
                 "source": "closeout_form",
-                "set_flags": ["continue_requested"],
+                "requested_flags": ["continue_requested"],
             }],
         }
 
@@ -900,8 +934,9 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
             for event in audit_events
         )
 
+    @pytest.mark.parametrize("cleanup_failed", [False, True])
     def test_spec721_second_no_progress_relay_is_blocked_locally(
-            self, tmp_path, monkeypatch):
+            self, tmp_path, monkeypatch, cleanup_failed):
         from logic.relay_intent_pool import open_relay_intents
 
         rt = self._make_runtime(tmp_path)
@@ -917,9 +952,9 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
                 "response": "continue",
                 "_closeout_relay_receipts": [{
                     "tool_id": "reaction_finalize",
-                    "status": "continue_requested_set",
+                    "status": "continue_requested_pending",
                     "source": "closeout_form",
-                    "set_flags": ["continue_requested"],
+                    "requested_flags": ["continue_requested"],
                 }],
             }
 
@@ -930,9 +965,22 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         assert rt.sm.get_flags()["continue_requested"] is True
         assert len(open_relay_intents(rt.sm.load())) == 1
 
+        prior = rt.sm.read_snapshot()["base"]["runtime"]
+        if cleanup_failed:
+            def fail_cleanup(*args, **kwargs):
+                raise OSError("cleanup unavailable")
+            rt.executor = SimpleNamespace(call=fail_cleanup)
         second = continuation()
         second_outcome = rt._run_cleanup(
             "relay", rt.sm.load(), second, 721)
+        if cleanup_failed:
+            assert second_outcome["status"] == "unsettled"
+            assert rt.sm.get_flags()["continue_requested"] is True
+            runtime = rt.sm.read_snapshot()["base"]["runtime"]
+            for key in ("relay_intents", "relay_intent_seq", "pending_relay_target"):
+                assert runtime[key] == prior[key]
+            assert "_relay_intent_terminal_receipts" not in second
+            return
         assert second_outcome["status"] == "degraded"
         assert second["_local_blocked_reason"] == "blocked/no_progress_relay"
         assert second["response"]
@@ -947,9 +995,9 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         self._patch_minimal_cleanup(rt, monkeypatch)
         receipt = [{
             "tool_id": "reaction_finalize",
-            "status": "continue_requested_set",
+            "status": "continue_requested_pending",
             "source": "closeout_form",
-            "set_flags": ["continue_requested"],
+            "requested_flags": ["continue_requested"],
         }]
         rt._run_cleanup("interactive", rt.sm.load(), {
             "response": "continue",
@@ -1045,7 +1093,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         captured = {}
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(rt, "_update_token_usage", lambda result, **kwargs: None)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
@@ -1090,7 +1137,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         captured = {}
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(rt, "_update_token_usage", lambda result, **kwargs: None)
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
@@ -1230,9 +1276,9 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         result = {
             "_closeout_relay_receipts": [{
                 "tool_id": "reaction_finalize",
-                "status": "continue_requested_set",
+                "status": "continue_requested_pending",
                 "source": "closeout_form",
-                "set_flags": ["continue_requested"],
+                "requested_flags": ["continue_requested"],
             }],
         }
 
@@ -1243,7 +1289,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
     def test_cleanup_does_not_run_heat_decay(self, tmp_path, monkeypatch):
         rt = self._make_runtime(tmp_path)
         # mock API 调用
-        monkeypatch.setattr(rt.executor, "call", lambda step, sys, msgs: {"response": "ok"})
+        rt.executor = SimpleNamespace(call=lambda step, sys, msgs: {"response": "ok"})
         # 阻止写真实 persona/ 文件
         monkeypatch.setattr(rt.assembler, "assemble_cleanup", lambda s, rt_type, r: ("", []))
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)
@@ -1303,7 +1349,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(mh, "HEAT_JSON", str(heat_json))
 
         rt.services.heat = mh.MemoryHeat()
-        with pytest.raises(RuntimeError, match="ltm_canonical_truth_missing"):
+        with pytest.raises(ValueError, match="ltm_canonical_truth_missing"):
             rt.reaction_metabolism.settle_terminal(
                 round_num=1,
                 memory_write_receipts=[],
@@ -1357,7 +1403,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
         monkeypatch.setattr(rt.assembler, "assemble_cleanup", lambda s, rt_type, r, **kw: ("sys", []))
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
 
         rt._run_cleanup(
             "interactive",
@@ -1397,7 +1442,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         rt.ctx_store = CapturingContext()
         monkeypatch.setattr(rt.heat, "tick_decay", lambda: None)
         monkeypatch.setattr(rt.assembler, "assemble_cleanup", lambda s, rt_type, r: ("", []))
-        monkeypatch.setattr(rt.executor, "call", lambda step, sys, msgs: {"response": ""})
+        rt.executor = SimpleNamespace(call=lambda step, sys, msgs: {"response": ""})
         monkeypatch.setattr(rt, "_process_cleanup_output", lambda *a, **kw: None)
 
         rt._run_cleanup(
@@ -1451,7 +1496,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         processed = []
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
 
         def assemble_cleanup(*_args, **kwargs):
             content = "cleanup"
@@ -1480,7 +1524,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(
             rt,
             "_process_cleanup_output",
-            lambda cleanup_result, round_num, state, result, iteration=1:
+            lambda cleanup_result, round_num, state, result, iteration=1, current_round_start=None:
             processed.append((iteration, cleanup_result)),
         )
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
@@ -1544,7 +1588,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         processed = []
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
 
         def assemble_cleanup(*_args, **kwargs):
             content = "cleanup"
@@ -1568,7 +1611,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(
             rt,
             "_process_cleanup_output",
-            lambda cleanup_result, round_num, state, result, iteration=1:
+            lambda cleanup_result, round_num, state, result, iteration=1, current_round_start=None:
             processed.append((iteration, cleanup_result)),
         )
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
@@ -1758,7 +1801,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         processed = []
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(
             rt.assembler,
             "assemble_cleanup",
@@ -1770,7 +1812,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(
             rt,
             "_process_cleanup_output",
-            lambda cleanup_result, round_num, state, result, iteration=1:
+            lambda cleanup_result, round_num, state, result, iteration=1, current_round_start=None:
             processed.append((iteration, cleanup_result)),
         )
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
@@ -1802,7 +1844,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         settlements = []
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(
             rt.assembler,
             "assemble_cleanup",
@@ -1819,7 +1860,7 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(
             rt,
             "_process_cleanup_output",
-            lambda cleanup_result, round_num, state, result, iteration=1:
+            lambda cleanup_result, round_num, state, result, iteration=1, current_round_start=None:
             processed.append((iteration, cleanup_result)),
         )
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
@@ -1868,7 +1909,6 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         processed = []
 
         monkeypatch.setattr(rt.heat, "tick_decay", lambda round_num=None: None)
-        monkeypatch.setattr(rt, "_build_forgetting_context", lambda: "", raising=False)
         monkeypatch.setattr(
             rt.assembler,
             "assemble_cleanup",
@@ -1880,10 +1920,9 @@ class TestRuntimeCleanupCore(RuntimeTestMixin):
         monkeypatch.setattr(
             rt,
             "_process_cleanup_output",
-            lambda cleanup_result, round_num, state, result, iteration=1:
+            lambda cleanup_result, round_num, state, result, iteration=1, current_round_start=None:
             processed.append((iteration, cleanup_result)),
         )
-        monkeypatch.setattr(rt, "_process_forgetting_result", lambda *a, **kw: None, raising=False)
         monkeypatch.setattr(rt, "_process_rest_cycle", lambda *a, **kw: None)
         monkeypatch.setattr(rt.hb, "resume", lambda *a, **kw: None)
         monkeypatch.setattr(rt.ctx_store, "save_round_to_cache", lambda *a, **kw: None)

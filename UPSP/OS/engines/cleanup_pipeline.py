@@ -16,16 +16,17 @@ from engines.round_context import FrameRef, RoundContext
 from engines.runtime_services import EngineComponent
 from logic.interaction_meta import cache_interaction_meta
 from logic.cleanup_processor import process_cleanup
+from logic.container_ops import replace_orphan_popup
 from logic.native_tool_calls import project_step_finalize, terminal_finalize_from_envelopes
 from logic.task_acceptance import DONE_ITEM_STATUSES, PASSED_ACCEPTANCE_STATUSES
-from logic.mem_id import make_meta_template
 from logic.relay_target import normalize_pending_target
 from logic.runtime_channels import closeout_final_response_source
 from logic.sandbox_grant import load_sandbox_grant
 from logic.relay_intent_pool import (
-    create_relay_intent,
+    append_relay_intent,
     open_relay_intents,
     settle_open_relay_intents,
+    settle_open_relay_intents_in_state,
 )
 from logic.rhythm_guidance import rhythm_chronicle_write_applied
 
@@ -43,23 +44,6 @@ ALERT_FLAG_NAMES = {
     "token_usage_warning",
     "context_pressure",
 }
-
-
-def _inherit_ltm_memory_meta(entry, source, round_num):
-    for key in (
-        "created_at", "last_recalled_at", "created_instance_id",
-        "last_recalled_instance_id",
-    ):
-        if key in source:
-            entry[key] = source[key]
-    entry["created_round"] = source.get("created_round", round_num)
-    entry["last_recalled_round"] = source.get("last_recalled_round", round_num)
-    for key in (
-        "linked_containers", "current_overview", "current_overview_updated_at",
-    ):
-        if key in source:
-            entry[key] = source[key]
-    return entry
 
 
 class CleanupPipeline(EngineComponent):
@@ -144,6 +128,8 @@ class CleanupPipeline(EngineComponent):
         }
         if error_text:
             audit["error"] = cls._redact_runtime_exception_text(error_text)
+        if result.get("_persistent_effect_failure"):
+            audit["persistent_effect_failure"] = result["_persistent_effect_failure"]
         return audit
 
     def _build_cleanup_round_material(self, user_input_text, result):
@@ -179,40 +165,6 @@ class CleanupPipeline(EngineComponent):
         except Exception as exc:
             if isinstance(result, dict):
                 result["_cleanup_round_material_error"] = str(exc)
-            return {"status": "error", "reason": str(exc)}
-
-    def _write_cleanup_task_material(self, round_num, title, content,
-                                     interaction_source, result=None):
-        content = str(content or "").strip()
-        if not content:
-            return None
-        title = str(title or "善后内部任务").strip() or "善后内部任务"
-        material = f"善后内部任务：{title}\n\n{content}"
-        meta = {
-            "interaction_object": "runtime",
-            "identity_status": "system",
-            "interaction_source": str(interaction_source or "cleanup_task"),
-        }
-        try:
-            self.ctx_store.append_cleanup_round_material(
-                round_num,
-                material,
-                **meta,
-            )
-            if isinstance(result, dict):
-                result.setdefault("_cleanup_task_materials_written", []).append({
-                    "source": meta["interaction_source"],
-                    "title": title,
-                    "chars": len(material),
-                })
-            return {"status": "applied", "chars": len(material)}
-        except Exception as exc:
-            if isinstance(result, dict):
-                result.setdefault("_cleanup_task_material_errors", []).append({
-                    "source": meta["interaction_source"],
-                    "title": title,
-                    "reason": str(exc),
-                })
             return {"status": "error", "reason": str(exc)}
 
     def _clear_cleanup_round_material(self, round_num, result=None):
@@ -290,6 +242,7 @@ class CleanupPipeline(EngineComponent):
                 context.state,
                 result,
                 context.round_num,
+                current_round_start=context.started_at,
                 user_input_text=context.user_input_text,
                 close_round=False,
                 trigger_id=(
@@ -304,13 +257,19 @@ class CleanupPipeline(EngineComponent):
     def _run_pipeline(
             self, round_type, state, result, round_num, user_input_text="",
             close_round=True, trigger_id="", caused_by="",
-            topology_version="", external_interaction=None):
+            topology_version="", external_interaction=None, current_round_start=None):
         """善后步——不可跳过，不回滚。各子操作独立try，互不阻断"""
         cleanup_result = {"response": ""}
         resp_text = ""
         cleanup_iteration = 1
         degraded_reasons = []
         fatal_reasons = []
+        required_context_failure = result.get("_required_context_failure") or {}
+        if required_context_failure:
+            fatal_reasons.append("required_context:{}:{}:{}".format(
+                required_context_failure.get("stage") or "unknown",
+                required_context_failure.get("scope") or "unknown",
+                required_context_failure.get("error_type") or "unknown"))
         user_stop = bool(
             isinstance(result, dict) and result.get("_user_stop_requested")
         )
@@ -385,11 +344,21 @@ class CleanupPipeline(EngineComponent):
                 fatal_reasons.append("reaction_terminal_metabolism_failed")
             if result.get("_action_recovery_failed_after_effect"):
                 fatal_reasons.append("action_recovery_failed_after_effect")
+            if result.get("_persistent_effect_uncertain"):
+                fatal_reasons.append("persistent_effect_uncertain")
+            if result.get("_runtime_step_failed"):
+                fatal_reasons.append("runtime_step_failed")
             if (
                     result.get("_setup_reject_reason")
                     or result.get("standby_skipped_reaction")
                     or setup_failed_before_reaction):
                 executed_phases = ("setup", "cleanup")
+        try:
+            if self.action_recovery_store.has_unsettled(round_num):
+                self.action_recovery_store.classify_pending(round_num)
+                fatal_reasons.append("action_recovery_unsettled")
+        except Exception as exc:
+            fatal_reasons.append(failure_reason("action_recovery_classification", exc))
         try:
             audit_store = self._get_round_audit_store()
             for prior_phase in ("setup", "reaction"):
@@ -402,131 +371,133 @@ class CleanupPipeline(EngineComponent):
 
         # ③ 调API + 解析（用户停止时明确跳过，直接进入本地结算）
         try:
-            if user_stop:
-                set_stage("cleanup_local")
-                cleanup_result = {}
-                raise ProviderCallCancelled("cleanup_provider_skipped_after_user_stop")
-            set_stage("cleanup_model")
-            cleanup_assemble_kwargs = {}
-            organ_runtime = getattr(self, "organ_runtime", None)
-            if organ_runtime is not None:
-                organ_materials = organ_runtime.begin_frame_materials(frame_ref)
-                if organ_materials:
-                    cleanup_assemble_kwargs["material_inputs"] = organ_materials
-            system, messages = self.assembler.assemble_cleanup(
-                state, round_type, result,
-                **cleanup_assemble_kwargs)
-
-            cleanup_result = self._call_llm_with_round_audit(
-                "cleanup",
-                system,
-                messages,
-                round_num,
-                iteration=1,
-            )
-            self._transition_current_cache(
-                round_num,
-                boundary="cleanup_provider_return",
-                consumer_frame_id=cleanup_frame_ref(1).frame_id,
-                phase="cleanup",
-                iteration=1,
-                expire_call_transients=True,
-            )
-            cleanup_iteration = 1
-            retry_needed, parsed, terminal_invalids = (
-                self._cleanup_finalize_retry_parse(cleanup_result, state, result)
-            )
-            while retry_needed and cleanup_iteration < 3:
-                self._round_audit_parsed(round_num, "cleanup", cleanup_iteration, parsed)
-                retry_settlement = self._cleanup_finalize_retry_settlement(
-                    parsed,
-                    terminal_invalids,
-                )
-                retry_settlement["frame_ref"] = cleanup_frame_ref(
-                    cleanup_iteration).as_dict()
-                self._round_audit_settlement(
-                    round_num,
-                    "cleanup",
-                    cleanup_iteration,
-                    retry_settlement,
-                )
-                next_iteration = cleanup_iteration + 1
-                retry_popup = self._cleanup_finalize_retry_popup(
-                    terminal_invalids)
-                cleanup_assemble_kwargs = {
-                    "popup_fragments": [retry_popup],
-                }
+            if not fatal_reasons:
+                if user_stop:
+                    set_stage("cleanup_local")
+                    cleanup_result = {}
+                    raise ProviderCallCancelled("cleanup_provider_skipped_after_user_stop")
+                set_stage("cleanup_model")
+                cleanup_assemble_kwargs = {}
+                organ_runtime = getattr(self, "organ_runtime", None)
                 if organ_runtime is not None:
-                    organ_materials = organ_runtime.begin_frame_materials(
-                        cleanup_frame_ref(next_iteration))
+                    organ_materials = organ_runtime.begin_frame_materials(frame_ref)
                     if organ_materials:
-                        cleanup_assemble_kwargs["material_inputs"] = (
-                            organ_materials)
+                        cleanup_assemble_kwargs["material_inputs"] = organ_materials
                 system, messages = self.assembler.assemble_cleanup(
-                    state,
-                    round_type,
-                    result,
-                    **cleanup_assemble_kwargs,
+                    state, round_type, result,
+                    **cleanup_assemble_kwargs)
+
+                cleanup_result = self._call_llm_with_round_audit(
+                    "cleanup",
+                    system,
+                    messages,
+                    round_num,
+                    iteration=1,
                 )
-                try:
-                    cleanup_result = self._call_llm_with_round_audit(
-                        "cleanup",
-                        system,
-                        messages,
-                        round_num,
-                        iteration=next_iteration,
-                    )
-                    self._transition_current_cache(
-                        round_num,
-                        boundary="cleanup_provider_return",
-                        consumer_frame_id=cleanup_frame_ref(next_iteration).frame_id,
-                        phase="cleanup",
-                        iteration=next_iteration,
-                        expire_call_transients=True,
-                    )
-                except Exception as retry_exc:
-                    interrupted = (
-                        self._cleanup_finalize_retry_interrupted_settlement(
-                            parsed,
-                            terminal_invalids,
-                            retry_exc,
-                        ))
-                    interrupted["frame_ref"] = cleanup_frame_ref(
-                        cleanup_iteration + 1).as_dict()
-                    self._round_audit_settlement(
-                        round_num,
-                        "cleanup",
-                        cleanup_iteration + 1,
-                        interrupted,
-                    )
-                    raise
-                cleanup_iteration = next_iteration
+                self._transition_current_cache(
+                    round_num,
+                    boundary="cleanup_provider_return",
+                    consumer_frame_id=cleanup_frame_ref(1).frame_id,
+                    phase="cleanup",
+                    iteration=1,
+                    expire_call_transients=True,
+                )
+                cleanup_iteration = 1
                 retry_needed, parsed, terminal_invalids = (
                     self._cleanup_finalize_retry_parse(cleanup_result, state, result)
                 )
-            if retry_needed:
-                cleanup_result = {
-                    "response": "",
-                    "tool_call_envelopes": [],
-                    "_terminal_finalize_missing": True,
-                    "_terminal_finalize_issue": "cleanup_finalize_missing_after_retry",
-                    "_terminal_invalids": list(terminal_invalids or []),
-                }
-            self._isolate_cleanup_natural_response(cleanup_result)
-            self._update_token_usage(
-                cleanup_result,
-                round_num=round_num,
-                phase="cleanup",
-                iteration=cleanup_iteration,
-            )
+                while retry_needed and cleanup_iteration < 3:
+                    self._round_audit_parsed(round_num, "cleanup", cleanup_iteration, parsed)
+                    retry_settlement = self._cleanup_finalize_retry_settlement(
+                        parsed,
+                        terminal_invalids,
+                    )
+                    retry_settlement["frame_ref"] = cleanup_frame_ref(
+                        cleanup_iteration).as_dict()
+                    self._round_audit_settlement(
+                        round_num,
+                        "cleanup",
+                        cleanup_iteration,
+                        retry_settlement,
+                    )
+                    next_iteration = cleanup_iteration + 1
+                    retry_popup = self._cleanup_finalize_retry_popup(
+                        terminal_invalids)
+                    cleanup_assemble_kwargs = {
+                        "popup_fragments": [retry_popup],
+                    }
+                    if organ_runtime is not None:
+                        organ_materials = organ_runtime.begin_frame_materials(
+                            cleanup_frame_ref(next_iteration))
+                        if organ_materials:
+                            cleanup_assemble_kwargs["material_inputs"] = (
+                                organ_materials)
+                    system, messages = self.assembler.assemble_cleanup(
+                        state,
+                        round_type,
+                        result,
+                        **cleanup_assemble_kwargs,
+                    )
+                    try:
+                        cleanup_result = self._call_llm_with_round_audit(
+                            "cleanup",
+                            system,
+                            messages,
+                            round_num,
+                            iteration=next_iteration,
+                        )
+                        self._transition_current_cache(
+                            round_num,
+                            boundary="cleanup_provider_return",
+                            consumer_frame_id=cleanup_frame_ref(next_iteration).frame_id,
+                            phase="cleanup",
+                            iteration=next_iteration,
+                            expire_call_transients=True,
+                        )
+                    except Exception as retry_exc:
+                        interrupted = (
+                            self._cleanup_finalize_retry_interrupted_settlement(
+                                parsed,
+                                terminal_invalids,
+                                retry_exc,
+                            ))
+                        interrupted["frame_ref"] = cleanup_frame_ref(
+                            cleanup_iteration + 1).as_dict()
+                        self._round_audit_settlement(
+                            round_num,
+                            "cleanup",
+                            cleanup_iteration + 1,
+                            interrupted,
+                        )
+                        raise
+                    cleanup_iteration = next_iteration
+                    retry_needed, parsed, terminal_invalids = (
+                        self._cleanup_finalize_retry_parse(cleanup_result, state, result)
+                    )
+                if retry_needed:
+                    cleanup_result = {
+                        "response": "",
+                        "tool_call_envelopes": [],
+                        "_terminal_finalize_missing": True,
+                        "_terminal_finalize_issue": "cleanup_finalize_missing_after_retry",
+                        "_terminal_invalids": list(terminal_invalids or []),
+                    }
+                self._isolate_cleanup_natural_response(cleanup_result)
+                self._update_token_usage(
+                    cleanup_result,
+                    round_num=round_num,
+                    phase="cleanup",
+                    iteration=cleanup_iteration,
+                )
 
-            self._process_cleanup_output(
-                cleanup_result,
-                round_num,
-                state,
-                result,
-                iteration=cleanup_iteration,
-            )
+                self._process_cleanup_output(
+                    cleanup_result,
+                    round_num,
+                    state,
+                    result,
+                    iteration=cleanup_iteration,
+                    current_round_start=current_round_start,
+                )
         except ProviderCallCancelled:
             user_stop = True
             if isinstance(result, dict):
@@ -544,8 +515,13 @@ class CleanupPipeline(EngineComponent):
             self._clear_cleanup_round_material(round_num, result)
 
         # ④ 保存语料缓冲（独立）
-        no_progress_block = self._guard_no_progress_relay(
-            round_type, result, round_num)
+        no_progress_block = False
+        if not fatal_reasons:
+            try:
+                no_progress_block = self._guard_no_progress_relay(
+                    round_type, result, round_num)
+            except Exception as exc:
+                fatal_reasons.append(failure_reason("relay_progress_read", exc))
         if no_progress_block and "no_progress_relay" not in degraded_reasons:
             degraded_reasons.append("no_progress_relay")
         resp_text = result.get("response", "")
@@ -589,6 +565,8 @@ class CleanupPipeline(EngineComponent):
                 result["_lately_compression_pending_error"] = str(exc)
                 fatal_reasons.append(
                     failure_reason("lately_pressure_compaction", exc))
+
+        # Before committing closure, account for effects missing a Frame settlement.
 
         # ⑤ round 审计事件流（写入 round_{N}.jsonl）
         try:
@@ -1012,10 +990,7 @@ class CleanupPipeline(EngineComponent):
         if not any(self._is_continue_requested_relay_receipt(item) for item in receipts):
             return False
         current = self._continuation_progress_evidence(result, round_num)
-        try:
-            open_intents = open_relay_intents(self.sm.load())
-        except Exception:
-            open_intents = []
+        open_intents = open_relay_intents(self.sm.load())
         prior = open_intents[-1] if round_type == "relay" and open_intents else {}
         prior_evidence = {
             str(item) for item in prior.get("progress_evidence") or [] if str(item)
@@ -1028,13 +1003,6 @@ class CleanupPipeline(EngineComponent):
         }
         if not prior.get("progress_fingerprint") or current - prior_evidence:
             return False
-        receipt = settle_open_relay_intents(
-            self.sm,
-            status="blocked",
-            round_num=round_num,
-            note="blocked/no_progress_relay",
-            source="cleanup.no_progress_relay",
-        )
         result["_no_progress_relay_blocked"] = True
         result["_exit_signal"] = "blocked"
         result["_local_blocked_reason"] = "blocked/no_progress_relay"
@@ -1042,20 +1010,6 @@ class CleanupPipeline(EngineComponent):
             "任务已停止自动续轮：上一轮中继没有产生新的工具结果、来源证据、"
             "任务落账、输出文件或审批结果。未完成项仍保留，请检查阻塞原因后再继续。"
         )
-        result.setdefault("_relay_intent_terminal_receipts", []).append(receipt)
-        try:
-            self._get_round_audit_store().append_event(
-                round_num,
-                "no_progress_relay_blocked",
-                {
-                    "status": "blocked",
-                    "reason": "blocked/no_progress_relay",
-                    "progress_fingerprint": result["_continuation_progress"]["fingerprint"],
-                },
-                phase="cleanup",
-            )
-        except Exception:
-            pass
         return True
 
     def _finalize_flags(self, state, round_type, round_num, result=None):
@@ -1094,196 +1048,116 @@ class CleanupPipeline(EngineComponent):
         # feeling_settle_due 只由 Reaction 入口或 idle timer 消费；Cleanup
         # 不论轮型都不得清理它。
 
-        # checkpoint + 日历更新时间戳
-        update_meta = {}
-        if heartbeat_flags.get("rhythm_due") and rhythm_chronicle_applied:
-            update_meta["base.meta.last_rhythm_round"] = round_num
-        if any(cf in flags_to_clear for cf in cal_flags):
-            update_meta["base.meta.last_calendar_check_at"] = local_now().isoformat()
-        update_meta["base.meta.last_round_closed_at"] = local_now().isoformat()
-        if round_type == "standby":
-            update_meta["base.meta.last_standby_round"] = round_num
-            # standby_countdown 递减
-            countdown = state.get("base", {}).get("runtime", {}).get("standby_countdown", STANDBY_COUNTDOWN_INITIAL)
-            self.sm.set("base.runtime.standby_countdown", max(0, countdown - 1))
-        else:
-            # 非待命轮：重置 standby_countdown
-            self.sm.set("base.runtime.standby_countdown", STANDBY_COUNTDOWN_INITIAL)
-            if heartbeat_flags.get("standby_due") and "standby_due" not in flags_to_clear:
+        if round_type != "standby" and heartbeat_flags.get("standby_due"):
+            if "standby_due" not in flags_to_clear:
                 flags_to_clear.append("standby_due")
+        events = []
 
-        if update_meta:
-            try:
-                self.sm.update_many(update_meta)
-            except Exception:
-                pass
+        def apply(current):
+            base = current["base"]
+            meta, runtime = base["meta"], base["runtime"]
+            now = local_now().isoformat()
+            if heartbeat_flags.get("rhythm_due") and rhythm_chronicle_applied:
+                meta["last_rhythm_round"] = round_num
+            if any(flag in flags_to_clear for flag in cal_flags):
+                meta["last_calendar_check_at"] = now
+            meta["last_round_closed_at"] = now
+            if round_type == "standby":
+                meta["last_standby_round"] = round_num
+                runtime["standby_countdown"] = max(0, runtime["standby_countdown"] - 1)
+            else:
+                runtime["standby_countdown"] = STANDBY_COUNTDOWN_INITIAL
+            for flag in flags_to_clear:
+                base["heartbeat_flags"][flag] = False
+            events.extend(self._finalize_relay_in_state(
+                current, result, round_type, round_num, flags_to_clear))
 
-        if flags_to_clear:
-            try:
-                self.sm.clear_flags(flags_to_clear)
-            except Exception:
-                pass
-        self._rearm_continue_requested_from_closeout_form(
-            result,
-            round_type=round_type,
-            consumed_flags=flags_to_clear,
-            round_num=round_num,
-        )
-        self._rearm_continue_requested_from_open_relay_intents(
-            result,
-            round_type=round_type,
-            round_num=round_num,
-        )
-
-        # TD-009: 节律轮后定期层数据源可能已更新，标记过期
+        # 任何读取、意图变换或落盘失败都不消费输入，也不报告继续成功。
         if round_type == "rhythm":
+            self.assembler.invalidate_layer("periodic")
+        self.sm.mutate(apply)
+        for result_key, event_type, receipt in events:
+            result.setdefault(result_key, []).append(receipt)
             try:
-                self.assembler.invalidate_layer("periodic")
+                self._get_round_audit_store().append_event(
+                    round_num, event_type, receipt, phase="cleanup")
             except Exception:
                 pass
 
-    def _rearm_continue_requested_from_closeout_form(
-            self, result, *, round_type, consumed_flags, round_num):
-        """清掉本轮入口 flag 后，按反应步 closeout_form 重臂下一轮。"""
+    def _finalize_relay_in_state(self, state, result, round_type, round_num, consumed_flags):
         if not isinstance(result, dict):
-            return
+            return []
+        runtime = state["base"]["runtime"]
+        flags = state["base"]["heartbeat_flags"]
         if result.get("_no_progress_relay_blocked"):
-            return
-        receipts = result.get("_closeout_relay_receipts") or []
-        if not any(self._is_continue_requested_relay_receipt(item) for item in receipts):
-            if round_type != "relay":
-                return
-            self._set_pending_relay_target(
-                {},
-                result,
-                round_num,
-                status="pending_relay_target_cleared",
-                source="no_closeout_form_relay",
-            )
-            return
-        pending_target = normalize_pending_target(result.get("_pending_relay_target"))
-        self._set_pending_relay_target(
-            pending_target,
-            result,
-            round_num,
-            status=(
-                "pending_relay_target_set"
-                if pending_target
-                else "pending_relay_target_cleared"
-            ),
-            source="closeout_form",
-        )
-        relay_intent = None
-        try:
+            runtime["pending_relay_target"] = {}
+            receipt = settle_open_relay_intents_in_state(
+                state, status="blocked", round_num=round_num,
+                note="blocked/no_progress_relay", source="cleanup.no_progress_relay")
+            return [("_relay_intent_terminal_receipts", "no_progress_relay_blocked", {
+                **receipt, "reason": "blocked/no_progress_relay",
+                "progress_fingerprint": result["_continuation_progress"]["fingerprint"],
+            })]
+        source_receipt = next((
+            item for item in result.get("_closeout_relay_receipts", [])
+            if self._is_continue_requested_relay_receipt(item)
+        ), None)
+        if source_receipt is None and round_type != "relay":
+            return []
+        target = normalize_pending_target(result.get("_pending_relay_target")) if source_receipt else {}
+        runtime["pending_relay_target"] = target
+        events = [("_relay_target_state_receipts", "relay_target_state", {
+            "tool_id": "cleanup_pipeline",
+            "status": "pending_relay_target_set" if target else "pending_relay_target_cleared",
+            "source": source_receipt["source"] if source_receipt else "no_closeout_form_relay",
+            "target": target,
+        })]
+        if source_receipt is not None:
             if round_type == "relay":
-                settle_open_relay_intents(
-                    self.sm,
-                    status="merged",
-                    round_num=round_num,
-                    note="relay_progressed_and_continues",
-                    source="cleanup.progress_relay",
-                )
-            source_receipt = next(
-                item for item in receipts
-                if self._is_continue_requested_relay_receipt(item)
-            )
-            relay_intent = create_relay_intent(
-                self.sm,
-                source_round=round_num,
-                handoff_text=(
-                    pending_target.get("handoff_text")
-                    or source_receipt.get("handoff_text")
-                    or source_receipt.get("summary")
-                    or ""
-                ),
+                settle_open_relay_intents_in_state(
+                    state, status="merged", round_num=round_num,
+                    note="relay_progressed_and_continues", source="cleanup.progress_relay")
+            progress = result.get("_continuation_progress") or {}
+            intent = append_relay_intent(
+                state, source_round=round_num,
+                handoff_text=(target.get("handoff_text") or source_receipt.get("handoff_text")
+                              or source_receipt.get("summary") or ""),
                 reaction_finalize_id=source_receipt.get("call_id", ""),
                 user_input_ref=source_receipt.get("user_input_ref", ""),
-                progress_fingerprint=(
-                    result.get("_continuation_progress") or {}
-                ).get("fingerprint", ""),
-                progress_evidence=(
-                    result.get("_continuation_progress") or {}
-                ).get("evidence", []),
+                progress_fingerprint=progress.get("fingerprint", ""),
+                progress_evidence=progress.get("evidence", []),
             )
-        except Exception as exc:
-            relay_intent = {"status": "relay_intent_create_error", "reason": str(exc)}
-        receipt = {
-            "tool_id": "cleanup_pipeline",
-            "status": "continue_requested_rearmed",
-            "source": "closeout_form",
-            "round_type": round_type,
-            "consumed_flags": [
-                flag for flag in consumed_flags
-                if flag == "continue_requested"
-            ],
-            "set_flags": ["continue_requested"],
-            "relay_intent": relay_intent or {},
-        }
-        try:
-            self.sm.set_flag("continue_requested", True)
-        except Exception as exc:
-            receipt["status"] = "continue_requested_rearm_error"
-            receipt["reason"] = str(exc)
-            receipt["set_flags"] = []
-        result.setdefault("_heartbeat_rearm_receipts", []).append(receipt)
-        try:
-            self._get_round_audit_store().append_event(
-                round_num,
-                "heartbeat_rearm",
-                receipt,
-                phase="cleanup",
-            )
-        except Exception:
-            pass
-
-    def _rearm_continue_requested_from_open_relay_intents(
-            self, result, *, round_type, round_num):
-        if round_type != "relay" or not isinstance(result, dict):
-            return
-        if result.get("_no_progress_relay_blocked"):
-            return
-        terminal_decision = self._relay_terminal_closeout_decision(result)
-        if terminal_decision:
-            self._settle_open_relay_intents_for_terminal_closeout(
-                result,
-                round_num=round_num,
-                closeout_decision=terminal_decision,
-            )
-            return
-        try:
-            if self.sm.get_flags().get("continue_requested"):
-                return
-            open_intents = open_relay_intents(self.sm.load())
-        except Exception:
-            open_intents = []
-        if not open_intents:
-            return
-        receipt = {
-            "tool_id": "cleanup_pipeline",
-            "status": "continue_requested_rearmed_from_open_relay_intents",
-            "source": "relay_intent_pool",
-            "round_type": round_type,
-            "set_flags": ["continue_requested"],
-            "open_relay_intent_ids": [
-                item.get("relay_intent_id") for item in open_intents
-            ],
-        }
-        try:
-            self.sm.set_flag("continue_requested", True)
-        except Exception as exc:
-            receipt["status"] = "continue_requested_rearm_error"
-            receipt["reason"] = str(exc)
-            receipt["set_flags"] = []
-        result.setdefault("_heartbeat_rearm_receipts", []).append(receipt)
-        try:
-            self._get_round_audit_store().append_event(
-                round_num,
-                "heartbeat_rearm",
-                receipt,
-                phase="cleanup",
-            )
-        except Exception:
-            pass
+            flags["continue_requested"] = True
+            events.append(("_heartbeat_rearm_receipts", "heartbeat_rearm", {
+                "tool_id": "cleanup_pipeline", "status": "continue_requested_rearmed",
+                "source": source_receipt["source"], "round_type": round_type,
+                "consumed_flags": [f for f in consumed_flags if f == "continue_requested"],
+                "set_flags": ["continue_requested"], "relay_intent": intent,
+            }))
+        else:
+            decision = self._relay_terminal_closeout_decision(result)
+            if decision:
+                settled = settle_open_relay_intents_in_state(
+                    state, status="blocked" if decision == "blocked" else "completed",
+                    round_num=round_num, note=f"relay closeout_decision={decision}",
+                    source="relay_terminal_closeout")
+                events.append(("_relay_intent_terminal_receipts", "relay_intent_terminal_closeout", {
+                    **settled, "tool_id": "cleanup_pipeline",
+                    "status": "relay_terminal_closeout_intents_settled",
+                    "closeout_decision": decision, "set_flags": [],
+                }))
+            else:
+                open_intents = open_relay_intents(state)
+                if open_intents:
+                    flags["continue_requested"] = True
+                    events.append(("_heartbeat_rearm_receipts", "heartbeat_rearm", {
+                        "tool_id": "cleanup_pipeline",
+                        "status": "continue_requested_rearmed_from_open_relay_intents",
+                        "source": "relay_intent_pool", "round_type": round_type,
+                        "set_flags": ["continue_requested"],
+                        "open_relay_intent_ids": [i["relay_intent_id"] for i in open_intents],
+                    }))
+        return events
 
     @staticmethod
     def _relay_terminal_closeout_decision(result):
@@ -1302,75 +1176,14 @@ class CleanupPipeline(EngineComponent):
                 return ""
         return ""
 
-    def _settle_open_relay_intents_for_terminal_closeout(
-            self, result, *, round_num, closeout_decision):
-        final_status = "blocked" if closeout_decision == "blocked" else "completed"
-        try:
-            receipt = settle_open_relay_intents(
-                self.sm,
-                status=final_status,
-                round_num=round_num,
-                note=f"relay closeout_decision={closeout_decision}",
-                source="relay_terminal_closeout",
-            )
-        except Exception as exc:
-            receipt = {
-                "tool_id": "cleanup_pipeline",
-                "status": "relay_terminal_closeout_intent_settle_error",
-                "reason": str(exc),
-                "closeout_decision": closeout_decision,
-                "round_num": int(round_num or 0),
-            }
-        if receipt.get("status") == "applied":
-            receipt = {
-                **receipt,
-                "tool_id": "cleanup_pipeline",
-                "status": "relay_terminal_closeout_intents_settled",
-                "closeout_decision": closeout_decision,
-                "set_flags": [],
-            }
-        result.setdefault("_relay_intent_terminal_receipts", []).append(receipt)
-        try:
-            self._get_round_audit_store().append_event(
-                round_num,
-                "relay_intent_terminal_closeout",
-                receipt,
-                phase="cleanup",
-            )
-        except Exception:
-            pass
-
-    def _set_pending_relay_target(self, target, result, round_num, *, status, source):
-        receipt = {
-            "tool_id": "cleanup_pipeline",
-            "status": status,
-            "source": source,
-            "target": target or {},
-        }
-        try:
-            self.sm.set("base.runtime.pending_relay_target", target or {})
-        except Exception as exc:
-            receipt["status"] = "pending_relay_target_state_error"
-            receipt["reason"] = str(exc)
-        result.setdefault("_relay_target_state_receipts", []).append(receipt)
-        try:
-            self._get_round_audit_store().append_event(
-                round_num,
-                "relay_target_state",
-                receipt,
-                phase="cleanup",
-            )
-        except Exception:
-            pass
-
     @staticmethod
     def _is_continue_requested_relay_receipt(receipt):
         if not isinstance(receipt, dict):
             return False
         return (
-            receipt.get("status") == "continue_requested_set"
-            and receipt.get("source") == "closeout_form"
-            and "continue_requested" in (receipt.get("set_flags") or [])
+            receipt.get("status") == "continue_requested_pending"
+            and receipt.get("source") in {"closeout_form", "runtime_auto_continue"}
+            and "continue_requested" in (receipt.get("requested_flags") or [])
         )
 
     def _process_calendar_cleanup(
@@ -1732,7 +1545,8 @@ class CleanupPipeline(EngineComponent):
             cleanup_result["response"] = ""
 
     def _process_cleanup_output(
-            self, cleanup_result, round_num, state, result, iteration=1):
+            self, cleanup_result, round_num, state, result, iteration=1,
+            current_round_start=None):
         """处理善后 LLM 两线清单 → 分派到 logic/ data/ 管线"""
 
         # 解析善后步输出
@@ -1765,17 +1579,23 @@ class CleanupPipeline(EngineComponent):
         }
 
         # 执行善后步落盘管线
-        report = process_cleanup(parsed, state, round_num, result, data_modules)
+        report = process_cleanup(
+            parsed, state, round_num, result, data_modules,
+            current_round_start=current_round_start)
 
         # Raw/Tacit 与 Raw/Connection 已退役为历史只读材料；保留 wire
         # 兼容，但不再生成新的 pending/processed 记录。
         # 处理悬空容器 POPUP（#24：持久化给下一轮 + 写入 popup store）
-        if report.get("popup"):
-            result["_popup"] = report["popup"]
+        if report.get("orphan_scan_complete"):
             try:
-                self.assembler.popup.write_popup(report["popup"])
-            except Exception:
-                pass
+                self.assembler.popup.update_popup(
+                    lambda current: replace_orphan_popup(current, report["popup"]))
+                if report.get("popup"):
+                    result["_popup"] = report["popup"]
+                else:
+                    result.pop("_popup", None)
+            except Exception as exc:
+                report["errors"].append(f"悬空警告更新失败: {exc}")
 
         # 记录错误
         for err in report.get("errors", []):

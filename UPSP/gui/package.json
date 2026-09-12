@@ -11,8 +11,9 @@
     "test:conversation-scroll": "node scripts/test-conversation-scroll.mjs",
     "test:system-window-split": "node scripts/test-system-window-split.mjs",
     "test:system-window-split-browser": "node scripts/test-system-window-split-browser.mjs",
+    "test:defense-browser": "node scripts/test-defense-browser.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "check": "npm run typecheck && npm run test:i18n && npm run test:markdown && npm run test:conversation-scroll && npm run test:system-window-split && npm run test:system-window-split-browser && npm run build:check && node --check app.js && node --check markdown-mermaid.js"
+    "check": "npm run typecheck && npm run test:i18n && npm run test:markdown && npm run test:conversation-scroll && npm run test:system-window-split && npm run test:system-window-split-browser && npm run test:defense-browser && npm run build:check && node --check app.js && node --check markdown-mermaid.js"
   },
   "devDependencies": {
     "esbuild": "0.28.1",

@@ -100,7 +100,7 @@ def test_spec774_file_edit_guard_tracks_only_handler_failures():
     assert general_tool_guard_failure_trackable(base) is True
 
 
-def test_spec565_provider_interruption_recovery_sets_continue_flag():
+def test_spec565_provider_interruption_recovery_requests_continue_without_setting_flag():
     from engines.reaction_runtime_guards import recover_provider_interruption_if_possible
 
     class Workbench:
@@ -125,10 +125,11 @@ def test_spec565_provider_interruption_recovery_sets_continue_flag():
             self.flags[name] = value
 
     facts = []
+    state_manager = StateManager()
 
     receipt = recover_provider_interruption_if_possible(
         RuntimeError("provider_native_tool_empty_output"),
-        state_manager=StateManager(),
+        state_manager=state_manager,
         workbench=Workbench(),
         append_to_context_cache=lambda *args, **kwargs: facts.append((args, kwargs)),
         round_num=7,
@@ -139,5 +140,6 @@ def test_spec565_provider_interruption_recovery_sets_continue_flag():
 
     assert receipt["status"] == "provider_interruption_recovered"
     assert receipt["provider_error_kind"] == "provider_native_tool_empty_output"
-    assert receipt["set_flags"] == ["continue_requested"]
+    assert receipt["requested_flags"] == ["continue_requested"]
+    assert state_manager.flags == {}
     assert facts

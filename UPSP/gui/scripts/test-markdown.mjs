@@ -87,6 +87,8 @@ flowchart LR
   const firstId = firstFootnote.match(/id="([^"]*fn-1)"/)?.[1];
   const secondId = secondFootnote.match(/id="([^"]*fn-1)"/)?.[1];
   assert.ok(firstId && secondId && firstId !== secondId);
+  assert.ok(firstFootnote.includes(`href="#${firstId}"`));
+  assert.ok(secondFootnote.includes(`href="#${secondId}"`));
 
   const invalidMath = renderMarkdownDocument("test:bad-math", "$\\notacommand{$");
   assert.match(invalidMath, /notacommand|katex-error/);

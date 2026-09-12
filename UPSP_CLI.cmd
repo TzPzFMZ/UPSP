@@ -4,10 +4,7 @@ setlocal
 set "REPO_DIR=%~dp0"
 set "MENU_PS1=%REPO_DIR%tools\upsp_cli_menu.ps1"
 
-if /I "%~1"=="--smoke" (
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%MENU_PS1%" -Smoke
-  exit /b %ERRORLEVEL%
-)
+if /I "%~1"=="--smoke" goto smoke
 
 where wt.exe >nul 2>nul
 if %ERRORLEVEL%==0 (
@@ -17,3 +14,8 @@ if %ERRORLEVEL%==0 (
 )
 
 endlocal
+exit /b
+
+:smoke
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%MENU_PS1%" -Smoke
+exit /b %ERRORLEVEL%

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import unicodedata
+from errors import ReadError
 
 from constants import DREAMS_DISPLAY_LIMIT, STM_INDEX_DISPLAY_LIMIT
 from assembly.context_helpers import fold_marker, slice_entries
@@ -244,7 +245,7 @@ def build_ltm_heat_index(assembler, limit=16, offset=0):
                             continue
                         entries.append((mem_id, info))
                 except Exception:
-                    pass
+                    raise
         if entries:
             entries.sort(key=lambda x: x[1].get("last_recalled_round") or 0, reverse=True)
             now = _dt.now(_tz.utc)
@@ -285,7 +286,7 @@ def build_ltm_heat_index(assembler, limit=16, offset=0):
                                 time_label = f"{days // 365}年前"
                         else:
                             time_label = None
-                    except Exception:
+                    except (ValueError, TypeError, OverflowError):
                         time_label = None
                 else:
                     time_label = None
@@ -300,8 +301,8 @@ def build_ltm_heat_index(assembler, limit=16, offset=0):
                 parts.append(marker)
         else:
             parts.append("（无 LTM 条目）")
-    except Exception:
-        parts.append("（LTM 索引读取失败）")
+    except (OSError, UnicodeError, json.JSONDecodeError, ReadError) as exc:
+        raise ReadError("build_ltm_heat_index", cause=exc) from exc
     return "\n".join(parts)
 
 
@@ -349,7 +350,7 @@ def build_keyword_index(assembler, source, limit=8, offset=0):
                         if title and mem_id not in title_map:
                             title_map[mem_id] = title
                 except Exception:
-                    pass
+                    raise
 
         with open(kw_path, "r", encoding="utf-8") as f:
             kw_data = _json.load(f)
@@ -376,8 +377,7 @@ def build_keyword_index(assembler, source, limit=8, offset=0):
                                 if key and visible:
                                     relation_visible_titles[key] = visible
                     except Exception:
-                        valid_relation_subjects = set()
-                        relation_visible_titles = {}
+                        raise
                 # P1-9 修复：按"条目被多少关键词命中"排序（搜索引擎逻辑）
                 entry_hits = {}  # mem_id → (hit_count, keyword_list)
                 for kw, ids in index_data.items():
@@ -430,8 +430,8 @@ def build_keyword_index(assembler, source, limit=8, offset=0):
                 )
                 if marker:
                     parts.append(marker)
-    except Exception:
-        parts.append("（倒排索引读取失败）")
+    except (OSError, UnicodeError, json.JSONDecodeError, ReadError) as exc:
+        raise ReadError("build_keyword_index", cause=exc) from exc
     return "\n".join(parts)
 
 
@@ -674,8 +674,8 @@ def build_association_index(assembler, limit=16, input_keywords=None, offset=0):
         if not sorted_kws and not mem_matches:
             parts.append("（联想集/联系集数据为空，冷启动中）")
         return "\n".join(parts)
-    except Exception:
-        return ""
+    except (OSError, UnicodeError, json.JSONDecodeError, ReadError) as exc:
+        raise ReadError("build_association_index", cause=exc) from exc
 
 
 # ==============================================================
@@ -685,23 +685,11 @@ def build_association_index(assembler, limit=16, input_keywords=None, offset=0):
 
 def build_stm_heat_index(assembler, limit=STM_INDEX_DISPLAY_LIMIT, offset=0):
     parts = ["## STM 索引"]
-    heat, meta = {}, {}
-    try:
-        memory_heat = getattr(assembler, "memory_heat", None)
-        if memory_heat is None:
-            from data.memory_heat import MemoryHeat
-            memory_heat = MemoryHeat()
-        heat = memory_heat.load_heat()
-    except Exception:
-        pass
-    try:
-        memory_store = getattr(assembler, "memory_store", None)
-        if memory_store is None:
-            from data.memory_store import MemoryStore
-            memory_store = MemoryStore()
-        meta = memory_store.load_meta()
-    except Exception:
-        pass
+    if assembler.memory_heat is None:
+        from data.memory_heat import MemoryHeat
+        assembler.memory_heat = MemoryHeat(memory_store=assembler.memory_store)
+    heat = assembler.memory_heat.load_heat()
+    meta = assembler.memory_store.load_meta()
     entries = heat.get("entries", {})
     if entries:
         visible_entries = [

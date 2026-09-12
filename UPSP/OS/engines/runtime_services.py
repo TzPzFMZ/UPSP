@@ -74,7 +74,9 @@ class RuntimeServices:
                container_store=None, relation_store=None, resident_store=None,
                action_recovery_store=None):
         sm = state_store or StateStore()
-        heat = heat or MemoryHeat()
+        memory_store = memory_store if memory_store is not None else MemoryStore()
+        heat = heat or MemoryHeat(memory_store=memory_store)
+        heat.memory_store = memory_store
         cfg = config_store or ConfigStore()
         active_endpoint_ids = getattr(cfg, "get_active_model_profile_ids", None)
         setup_endpoint_ids = getattr(cfg, "get_model_profile_ids_for_phase", None)
@@ -104,8 +106,8 @@ class RuntimeServices:
             assembler.state_store = sm
         if getattr(assembler, "context_store", None) is None:
             assembler.context_store = ctx_store
-        if getattr(assembler, "config_store", None) is None:
-            assembler.config_store = cfg
+        assembler.config_store = cfg
+        ctx_store.config_store = cfg
         if getattr(getattr(assembler, "popup", None), "state_store", None) is None:
             try:
                 assembler.popup.state_store = sm
@@ -116,7 +118,7 @@ class RuntimeServices:
             connectivity_store=connectivity_store,
             context_dir=getattr(assembler, "_context_dir", None),
         )
-        if isinstance(executor, APIExecutor) and hasattr(executor, "bind_context_dir"):
+        if isinstance(executor, APIExecutor):
             executor.bind_context_dir(getattr(assembler, "_context_dir", None))
         assembler_resident_store = getattr(assembler, "resident_store", None)
         if (
@@ -167,7 +169,7 @@ class RuntimeServices:
             workbench=workbench_store or WorkbenchStore(),
             dream_store=dream_store or DreamStore(),
             state_backup_store=None,
-            memory_store=memory_store if memory_store is not None else MemoryStore(),
+            memory_store=memory_store,
             memory_index=memory_index if memory_index is not None else MemoryIndex(),
             container_store=(
                 container_store if container_store is not None else ContainerStore()

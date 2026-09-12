@@ -73,7 +73,7 @@ from assembly.context_periodic import (
 )
 from data.relation_store import relation_card_label, relation_public_name
 from data.audit_store import AuditStore
-from errors import RequiredContextError
+from errors import RequiredContextError, ReadError
 from logic.popup_policy import PopupPolicy
 from logic.context_profile import normalize_context_profile
 from logic.relay_target import render_target_popup
@@ -174,11 +174,14 @@ class ContextAssembler:
     def __init__(self, state_store=None, context_dir=None, config_store=None,
                  context_store=None, context_profile="full", resident_store=None,
                  memory_store=None, container_store=None, relation_store=None):
+        from data.memory_store import MemoryStore
+
         self.state_store = state_store
         self.config_store = config_store
         self.context_store = context_store
         self.resident_store = resident_store
-        self.memory_store = memory_store
+        self.memory_store = memory_store if memory_store is not None else MemoryStore()
+        self.memory_heat = None
         self.container_store = container_store
         self.relation_store = relation_store
         self.statusbar = StatusBarBuilder()
@@ -936,6 +939,11 @@ class ContextAssembler:
         blocks = []
 
         def add(block_id, title, kind, content, source_block_id=""):
+            if callable(content):
+                try:
+                    content = content()
+                except (ReadError, OSError, UnicodeError) as exc:
+                    content = f"## {title}\n（读取失败：{type(exc).__name__}；可用 index_view 重试）"
             if content:
                 blocks.append({
                     "block_id": block_id,
@@ -947,37 +955,41 @@ class ContextAssembler:
 
         # 1. 容器索引（每容器一条最近修改子项）
         add("high_freq:container_index", "容器索引", "container_index",
-            self._build_container_index())
+            lambda: self._build_container_index())
         limits = self._high_freq_index_limits()
         # 2. LTM 热度索引（last_recalled_at排序，分钟粒度）
         add("high_freq:ltm_heat", "LTM 热度索引", "ltm_heat_index",
-            self._build_ltm_heat_index(limit=limits.get("ltm_heat_index", 16)))
+            lambda: self._build_ltm_heat_index(limit=limits.get("ltm_heat_index", 16)))
         # 3. STM 热度索引（H值降序）
+        try:
+            stm_index = self._build_stm_heat_index(
+                limit=limits.get("stm_heat_index", STM_INDEX_DISPLAY_LIMIT))
+        except (ReadError, OSError, UnicodeError):
+            stm_index = "## STM 索引\n（读取失败；可用 index_view 重试）"
         add("high_freq:stm_heat", "STM 热度索引", "stm_heat_index",
-            self._build_stm_heat_index(
-                limit=limits.get("stm_heat_index", STM_INDEX_DISPLAY_LIMIT)))
+            stm_index)
         # 4. Skills 倒排索引（8条）
         add("high_freq:skills_inverted", "Skills 倒排索引", "skills_inverted",
-            self._build_keyword_index("skills", limits.get("skills_inverted", 8)))
+            lambda: self._build_keyword_index("skills", limits.get("skills_inverted", 8)))
         # 5. LTM 倒排索引（8条）
         add("high_freq:ltm_inverted", "LTM 倒排索引", "ltm_inverted",
-            self._build_keyword_index("ltm", limits.get("ltm_inverted", 8)))
+            lambda: self._build_keyword_index("ltm", limits.get("ltm_inverted", 8)))
         # 6. STM 倒排索引（8条）
         add("high_freq:stm_inverted", "STM 倒排索引", "stm_inverted",
-            self._build_keyword_index("stm", limits.get("stm_inverted", 8)))
+            lambda: self._build_keyword_index("stm", limits.get("stm_inverted", 8)))
         # 7. 联想索引 — 只投影记忆条目，输入关键词驱动
         add("high_freq:association", "联想索引", "association_index",
-            self._build_association_index(
+            lambda: self._build_association_index(
                 limits.get("association_index", 8), input_keywords))
         # 8. 关系索引：动态倒排 + 四区底图
         add("high_freq:relation_inverted", "关系倒排索引", "relation_inverted",
-            self._build_relation_inverted_index(
+            lambda: self._build_relation_inverted_index(
                 limit=limits.get("relation_inverted", 8),
                 current_input_text=current_input_text,
                 interaction_meta=interaction_meta,
             ))
         add("high_freq:relation_domain", "关系域索引", "relation_domain",
-            self._build_relation_domain_index(
+            lambda: self._build_relation_domain_index(
                 limit=limits.get("relation_domain", 8),
                 current_input_text=current_input_text,
                 interaction_meta=interaction_meta,
@@ -1620,9 +1632,9 @@ class ContextAssembler:
                 limit=limit,
                 offset=offset,
             ))
-        except Exception as exc:
+        except (ValueError, ReadError, OSError) as exc:
             receipt.update({
-                "status": "rejected",
+                "status": "rejected" if isinstance(exc, ValueError) else "failed",
                 "reason": str(exc) or "memory_search_failed",
                 "content": "",
                 "candidates": [],

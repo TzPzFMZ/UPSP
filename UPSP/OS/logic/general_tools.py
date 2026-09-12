@@ -12,6 +12,7 @@ from fnmatch import fnmatch
 from collections import deque
 from datetime import datetime
 from html.parser import HTMLParser
+from http.client import HTTPException
 from pathlib import Path, PureWindowsPath
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
@@ -225,6 +226,37 @@ def _resolve_request_path(raw_path, allowed_roots):
     if not path.is_absolute():
         path = _resolved_roots(allowed_roots)[0] / path
     return path.resolve()
+
+
+def general_tool_input_denial(request):
+    """Reject unusable external arguments before signatures, gates or effects."""
+    tool_id = _clean(request.get("tool_id")) or "file_read"
+    fields = {
+        "file_read": ("path",), "file_write": ("path",), "file_edit": ("path",),
+        "file_glob": ("root",), "file_grep": ("root",), "shell_command": ("cwd",),
+        "subagent_dispatch": ("allowed_paths", "write_scope"),
+    }.get(tool_id, ())
+    for field in fields:
+        values = _clean_list(request.get(field)) if tool_id == "subagent_dispatch" else [request.get(field)]
+        for value in values:
+            text = _clean(value)
+            if not text or text.lower().startswith(PERSONA_READ_ALIAS):
+                continue
+            try:
+                if "\x00" in text:
+                    return "invalid_path"
+                text.encode("utf-8")
+                Path(text).resolve()
+            except (OSError, ValueError, UnicodeError):
+                return "invalid_path"
+    if tool_id == "shell_command" and "\x00" in str(request.get("command") or ""):
+        return "invalid_command"
+    if tool_id in {"file_read", "file_write", "file_edit", "file_grep"}:
+        try:
+            "".encode(_clean(request.get("encoding")) or "utf-8")
+        except (LookupError, ValueError):
+            return "invalid_encoding"
+    return ""
 
 
 def _resolve_persona_alias(raw_path):
@@ -1466,6 +1498,11 @@ def _execute_file_edit(
 
     try:
         updated, added, removed = _apply_unified_diff(original, patch)
+        candidate_bytes = updated.encode(encoding)
+    except UnicodeError as exc:
+        result = _base_result(tool_id="file_edit", status="rejected", reason="text_encoding_failed")
+        result.update(path=str(path), detail=str(exc))
+        return result
     except ValueError as exc:
         result = _base_result(tool_id="file_edit", status="rejected", reason=str(exc))
         result["path"] = str(path)
@@ -1476,7 +1513,7 @@ def _execute_file_edit(
         tool_id="file_edit",
         target_path=path,
         before_bytes=original_bytes,
-        candidate_bytes=updated.encode(encoding),
+        candidate_bytes=candidate_bytes,
     )
     if action_error:
         result = _base_result(
@@ -1542,7 +1579,11 @@ def _execute_file_write(
     try:
         before_bytes = path.read_bytes() if existed else None
         candidate_bytes = content.encode(encoding)
-    except (OSError, UnicodeError) as exc:
+    except UnicodeError as exc:
+        result = _base_result(tool_id="file_write", status="rejected", reason="text_encoding_failed")
+        result.update(path=str(path), detail=str(exc))
+        return result
+    except OSError as exc:
         result = _base_result(tool_id="file_write", status="failed", reason="write_failed")
         result["path"] = str(path)
         result["detail"] = str(exc)
@@ -1707,7 +1748,7 @@ def _validate_path_list(
         *,
         access="read"):
     paths = []
-    for raw_path in _split_list_text(raw_value):
+    for raw_path in _clean_list(raw_value):
         if (
                 access != "read"
                 and _clean(raw_path).lower().startswith(PERSONA_READ_ALIAS)):
@@ -1990,17 +2031,26 @@ def _call_subagent_backend(payload, timeout_ms, subagent_dispatch_fn):
             timeout_ms=timeout_ms,
             detail=str(exc),
         )
-    except Exception as exc:
+    except OSError as exc:
         return None, _subagent_dispatch_result(
             status="failed",
             reason="subagent_backend_failed",
             task_goal=payload["task_goal"],
             detail=str(exc),
         )
-    return backend_result or {}, None
+    return backend_result, None
 
 
 def _subagent_backend_report(payload, timeout_ms, backend_result):
+    if (not isinstance(backend_result, dict)
+            or not isinstance(backend_result.get("status"), str)
+            or backend_result.get("status") not in {"ok", "success", "completed", "failed", "rejected", "timeout"}
+            or any(key in backend_result and (
+                       not isinstance(backend_result[key], (str, list, tuple))
+                       or not all(isinstance(item, str) for item in backend_result[key]))
+                   for key in ("modified_files", "test_evidence", "risks", "unfinished"))):
+        return _subagent_dispatch_result(status="failed", reason="invalid_subagent_result",
+                                        task_goal=payload["task_goal"])
     status = _clean(backend_result.get("status")) or "ok"
     result = _base_result(tool_id="subagent_dispatch", status=status)
     result.update({
@@ -2058,10 +2108,10 @@ def _execute_subagent_dispatch(
     )
     if failure:
         return _with_action_id(failure, action_id)
-    return _with_action_id(
-        _subagent_backend_report(payload, timeout_ms, backend_result),
-        action_id,
-    )
+    report = _subagent_backend_report(payload, timeout_ms, backend_result)
+    if action_id and report.get("reason") == "invalid_subagent_result":
+        raise ActionRecoveryEffectError("subagent_result_unconfirmed", action_id=action_id)
+    return _with_action_id(report, action_id)
 
 
 class _VisibleTextExtractor(HTMLParser):
@@ -2238,7 +2288,10 @@ def _looks_like_search_challenge(body_text):
 
 def _unwrap_duckduckgo_url(raw_url):
     url = html.unescape(_clean(raw_url))
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return url
     if parsed.netloc.endswith("duckduckgo.com") and parsed.path.startswith("/l/"):
         nested = parse_qs(parsed.query).get("uddg", [""])[0]
         return nested or url
@@ -2267,7 +2320,13 @@ def _url_denial(raw_url, missing_reason="missing_url"):
     url = _clean(raw_url)
     if not url:
         return missing_reason, ""
-    parsed = urlparse(url)
+    try:
+        if any(ord(char) <= 32 for char in url):
+            return "invalid_url", url
+        parsed = urlparse(url)
+        parsed.port
+    except ValueError:
+        return "invalid_url", url
     if parsed.scheme not in {"http", "https"}:
         return "invalid_url_scheme", url
     if not parsed.hostname:
@@ -2288,16 +2347,18 @@ def _url_denial(raw_url, missing_reason="missing_url"):
 
 
 class _UnsafeWebTargetError(ValueError):
-    def __init__(self, reason, url):
+    def __init__(self, reason, url, cause=None):
         self.reason = str(reason or "unsafe_web_target")
         self.url = str(url or "")
-        super().__init__(f"{self.reason}:{self.url}")
+        self.cause = cause
+        detail = f":{type(cause).__name__}:{cause}" if cause is not None else ""
+        super().__init__(f"{self.reason}:{self.url}{detail}")
 
 
 def _resolved_url_denial(raw_url):
     denial, url = _url_denial(raw_url)
     if denial:
-        return denial, url
+        return denial, url, None
     parsed = urlparse(url)
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
@@ -2310,19 +2371,21 @@ def _resolved_url_denial(raw_url):
             )
             if item and len(item) > 4 and item[4]
         }
-    except OSError:
-        return "host_resolution_failed", url
+    except UnicodeError as exc:
+        return "invalid_url", url, exc
+    except OSError as exc:
+        return "host_resolution_failed", url, exc
     if not addresses:
-        return "host_resolution_failed", url
+        return "host_resolution_failed", url, None
     if any(_is_private_or_local_host(address) for address in addresses):
-        return "local_or_private_host_denied", url
-    return "", url
+        return "local_or_private_host_denied", url, None
+    return "", url, None
 
 
 def _require_public_web_target(raw_url):
-    denial, url = _resolved_url_denial(raw_url)
+    denial, url, cause = _resolved_url_denial(raw_url)
     if denial:
-        raise _UnsafeWebTargetError(denial, url)
+        raise _UnsafeWebTargetError(denial, url, cause) from cause
     return url
 
 
@@ -2514,7 +2577,7 @@ def _execute_web_fetch(request, web_fetch_fn=None):
         return result
     timeout_ms = _bounded_int(request.get("timeout_ms"), 5000, 500, 15000)
     if web_fetch_fn is None:
-        network_denial, _ = _resolved_url_denial(url)
+        network_denial, _, cause = _resolved_url_denial(url)
         if network_denial:
             result = _base_result(
                 tool_id="web_fetch",
@@ -2526,6 +2589,8 @@ def _execute_web_fetch(request, web_fetch_fn=None):
                 reason=network_denial,
             )
             result["url"] = url
+            if cause is not None:
+                result["detail"] = f"{type(cause).__name__}:{cause}"
             return result
     window_chars = _general_tool_window_params()["web_fetch_window_chars"]
     backend_functions = _web_fetch_backend_functions(web_fetch_fn=web_fetch_fn)
@@ -2560,6 +2625,13 @@ def _execute_web_fetch(request, web_fetch_fn=None):
         try:
             raw_payload = fetch_fn(url, timeout_ms)
         except _UnsafeWebTargetError as exc:
+            if exc.reason == "host_resolution_failed":
+                before, after = _record_web_backend_hard_fail(
+                    health, "web_fetch", backend_id, reason=exc.reason, detail=str(exc))
+                attempts.append(_web_backend_attempt(
+                    backend_id, "failed", reason=exc.reason, detail=str(exc),
+                    fail_count_before=before, fail_count_after=after))
+                continue
             result = _base_result(
                 tool_id="web_fetch",
                 status="rejected",
@@ -2585,7 +2657,7 @@ def _execute_web_fetch(request, web_fetch_fn=None):
                 fail_count_after=after,
             ))
             continue
-        except (OSError, URLError, TimeoutError) as exc:
+        except (OSError, URLError, TimeoutError, HTTPException, _UnsafeWebTargetError) as exc:
             before, after = _record_web_backend_hard_fail(
                 health,
                 "web_fetch",
@@ -2836,7 +2908,7 @@ def _default_search_web(query, max_results, timeout_ms):
                 item.setdefault("source", "duckduckgo_html")
             if results:
                 return results
-    except (OSError, URLError, TimeoutError) as exc:
+    except (OSError, URLError, TimeoutError, HTTPException, _UnsafeWebTargetError) as exc:
         failed_sources.append(f"duckduckgo_html:{exc}")
 
     search_url = f"https://www.bing.com/search?q={quote_plus(query)}"
@@ -2853,7 +2925,7 @@ def _default_search_web(query, max_results, timeout_ms):
             parser.feed(body_text)
             if parser.results:
                 return parser.results[:max_results]
-    except (OSError, URLError, TimeoutError) as exc:
+    except (OSError, URLError, TimeoutError, HTTPException, _UnsafeWebTargetError) as exc:
         failed_sources.append(f"bing_html:{exc}")
 
     if blocked_sources:
@@ -2960,14 +3032,18 @@ def _official_candidate_for_query(item, query):
     return False
 
 
-def _normalise_search_results(items, max_results, query=""):
+def _normalise_search_results(items, max_results, query="", rejected=None):
     results = []
     for item in items or []:
         if not isinstance(item, dict):
+            if rejected is not None:
+                rejected.append("invalid_result_shape")
             continue
         url = _clean(item.get("url"))
         denial, clean_url = _url_denial(url, missing_reason="missing_result_url")
         if denial:
+            if rejected is not None:
+                rejected.append(denial)
             continue
         title = _clean(item.get("title")) or clean_url
         snippet = " ".join(str(item.get("snippet") or "").split())
@@ -3055,7 +3131,7 @@ def _execute_web_search(request, web_search_fn=None):
                 fail_count_after=after,
             ))
             continue
-        except (OSError, URLError, TimeoutError) as exc:
+        except (OSError, URLError, TimeoutError, HTTPException, _UnsafeWebTargetError) as exc:
             before, after = _record_web_backend_hard_fail(
                 health,
                 "web_search",
@@ -3093,7 +3169,8 @@ def _execute_web_search(request, web_search_fn=None):
             "backend_attempts": attempts,
         })
         return result
-    results = _normalise_search_results(raw_results, window_results, query=query)
+    rejected = []
+    results = _normalise_search_results(raw_results, window_results, query=query, rejected=rejected)
     content_lines = []
     for index, item in enumerate(results, start=1):
         content_lines.append(f"{index}. {item['title']}")
@@ -3113,6 +3190,8 @@ def _execute_web_search(request, web_search_fn=None):
         "backend_attempts": attempts,
         "results": results,
         "result_count": len(results),
+        "rejected_result_count": len(rejected),
+        "rejected_result_reasons": list(dict.fromkeys(rejected)),
         "window_results": window_results,
         "read_mode": "bounded",
         "window_kind": "web_search_bounded",
@@ -3137,6 +3216,8 @@ def execute_general_tool_call(
     """Execute an enabled general tool call and return a general_tool_result."""
     request = request or {}
     tool_id = _clean(request.get("tool_id")) or "file_read"
+    if denial := general_tool_input_denial(request):
+        return _base_result(tool_id=tool_id, status="rejected", reason=denial)
     if tool_id == "file_read":
         return attach_evidence_handle(
             _execute_file_read(request, allowed_roots, denied_roots, denied_files)

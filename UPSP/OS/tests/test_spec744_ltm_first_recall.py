@@ -3,6 +3,46 @@ import json
 import pytest
 
 
+def test_spec808_real_memory_write_rollback_failure_stops_batch(recall_layout, monkeypatch):
+    from logic.memory_write import apply_memory_write_declarations
+    from types import SimpleNamespace
+    env = recall_layout
+    store = env["store"]
+    ids = iter(["MEM-80800001", "MEM-80800002", "MEM-80800003"])
+    monkeypatch.setattr("logic.memory_write.generate_mem_id", lambda: next(ids))
+    completed = []
+    restored = []
+    original_restore = store.restore_ltm_files
+    def fault(stage):
+        if stage == "after_stm_body":
+            completed.append(stage)
+            if len(completed) == 2:
+                raise OSError("original write failure")
+    def fail_restore(snapshot):
+        raise OSError("STM restore failure")
+    def restore_ltm(snapshot):
+        restored.append("ltm")
+        return original_restore(snapshot)
+    monkeypatch.setattr(store, "restore_stm_files", fail_restore)
+    monkeypatch.setattr(store, "restore_ltm_files", restore_ltm)
+    declarations = [{"title": f"记忆{i}", "body": "隔离正文", "weight": 3,
+                     "subject": "TzPz", "candidate_keywords": ["隔离"]} for i in range(3)]
+    with pytest.raises(Exception, match="memory_write_rollback_failed") as caught:
+        apply_memory_write_declarations(declarations, {"presence": {"confirmed_subjects": ["TzPz"]}}, 808,
+            {"memory_store": store, "memory_heat": env["heat"], "memory_write_fault_hook": fault,
+             "relation_store": SimpleNamespace(resolve_active_subject=lambda name: name)})
+    error = caught.value
+    assert error.round_failure_flag == "_persistent_effect_uncertain"
+    assert error.affected_ids == ["MEM-80800002"]
+    assert str(error.cause) == "original write failure"
+    assert [r["status"] for r in error.partial_receipts] == ["applied", "error"]
+    assert error.partial_receipts[0]["mem_id"] == "MEM-80800001"
+    assert error.partial_receipts[1]["mem_id"] == "MEM-80800002"
+    assert len(completed) == 2 and restored == ["ltm"]
+    assert store.ltm_entry_state("MEM-80800001", include_backup=False)
+    assert not store.ltm_entry_state("MEM-80800003", include_backup=False)
+
+
 @pytest.fixture
 def recall_layout(tmp_path, monkeypatch):
     import paths
