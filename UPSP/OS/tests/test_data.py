@@ -3261,6 +3261,26 @@ class TestRelationStore:
 # ============================================================
 
 class TestConfigStore:
+    def test_retired_stream_character_limit_is_ignored_on_load_and_save(
+            self, tmp_path, monkeypatch):
+        from data import config_store as cfs
+
+        path = tmp_path / "models.json"
+        monkeypatch.setitem(cfs._CONFIG_MAP, "models", (str(path), cfs.default_models_config))
+        catalog = cfs.default_models_config()
+        assert "stream_content_overrun_chars" not in catalog["transport"]["handshake"]
+        catalog["transport"]["handshake"]["stream_content_overrun_chars"] = 65536
+        original = json.dumps(catalog)
+        path.write_text(original, encoding="utf-8")
+        store = cfs.ConfigStore(use_api_environment=False)
+        loaded = store.load("models")
+        assert "stream_content_overrun_chars" not in loaded["transport"]["handshake"]
+        assert loaded["transport"]["handshake"]["stream_idle_timeout_seconds"] == 180
+        assert path.read_text(encoding="utf-8") == original
+        store.save("models", catalog)
+        assert json.loads(path.read_text(encoding="utf-8")) == loaded
+        assert catalog["transport"]["handshake"]["stream_content_overrun_chars"] == 65536
+
     def test_spec749_model_output_limit_defaults_and_validates(
             self, tmp_path, monkeypatch):
         from data import config_store as cfs

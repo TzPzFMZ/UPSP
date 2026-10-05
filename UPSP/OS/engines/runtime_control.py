@@ -256,13 +256,7 @@ class RuntimeControl:
         required_context_failure = (
             exc.as_dict() if isinstance(exc, RequiredContextError) else {}
         )
-        if provider_failure and str(exc).startswith("provider_stream_content_overrun:"):
-            response = (
-                "模型在未返回工具调用的情况下持续输出正文或推理，触发本地输出上限保护，本轮已停止。"
-                "已完成的结果和未完成任务仍保留；字符数与上限见技术详情。"
-            )
-            blocked_reason = "blocked/provider_stream_content_overrun"
-        elif provider_failure:
+        if provider_failure:
             response = (
                 "本轮模型调用未能在既定重试预算内完成，Runtime 已停止继续调用。"
                 "活动任务和未完成项仍保留，可在服务恢复后继续。"

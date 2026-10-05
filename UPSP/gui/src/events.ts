@@ -765,7 +765,6 @@ export function initEvents(): void {
         request_timeout_seconds: integer("request_timeout_seconds"),
         stream_first_chunk_timeout_seconds: integer("stream_first_chunk_timeout_seconds"),
         stream_idle_timeout_seconds: integer("stream_idle_timeout_seconds"),
-        stream_content_overrun_chars: integer("stream_content_overrun_chars"),
       });
       Object.assign(breaker, {
         max_failures: integer("max_failures"),

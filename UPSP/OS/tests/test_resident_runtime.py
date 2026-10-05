@@ -37,9 +37,6 @@ class TransportConfig(ConfigStoreStub):
     def get_stream_idle_timeout(self):
         return 180
 
-    def get_stream_content_overrun_chars(self):
-        return 1_000_000
-
 
 class BlockingProvider:
     def __init__(self, mode):

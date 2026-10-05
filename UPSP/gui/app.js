@@ -2024,7 +2024,6 @@
     "\u8FDE\u63A5\u63E1\u624B\u7B49\u5F85": "Connection handshake timeout",
     "\u6D41\u5F0F\u9996\u5757\u7B49\u5F85": "First stream chunk timeout",
     "\u6D41\u5F0F\u7A7A\u95F2\u7B49\u5F85": "Stream idle timeout",
-    "\u6D41\u5F0F\u5185\u5BB9\u8D85\u9650\u7A97\u53E3": "Stream content overrun window",
     "\u670D\u52A1\u5730\u5740": "Service URL",
     "\u6A21\u578B\u540D\u79F0": "Model name",
     "\u5BC6\u94A5\u73AF\u5883\u53D8\u91CF": "API key environment variable",
@@ -48793,7 +48792,7 @@
     const handshake = objectValue(transport.handshake);
     const breaker = objectValue(transport.circuit_breaker);
     const field = (name, label, value, min, max) => "<label><span>".concat(t(label), '</span><input type="number" name="').concat(name, '" value="').concat(escapeHtml2(value), '" min="').concat(min, '" max="').concat(max, '" required></label>');
-    return '<details class="transport-settings"><summary>'.concat(t("\u4F20\u8F93\u4E0E\u5BB9\u707E"), "</summary><form data-transport-settings-form>\n    ").concat(field("timeout_seconds", "\u8FDE\u63A5\u63E1\u624B\u7B49\u5F85", handshake.timeout_seconds, 1, 3600), "\n    ").concat(field("retry", "\u6682\u6001\u91CD\u8BD5\u6B21\u6570", handshake.retry, 0, 2), "\n    ").concat(field("request_timeout_seconds", "\u666E\u901A\u54CD\u5E94\u7B49\u5F85", handshake.request_timeout_seconds, 1, 3600), "\n    ").concat(field("stream_first_chunk_timeout_seconds", "\u6D41\u5F0F\u9996\u5757\u7B49\u5F85", handshake.stream_first_chunk_timeout_seconds, 1, 3600), "\n    ").concat(field("stream_idle_timeout_seconds", "\u6D41\u5F0F\u7A7A\u95F2\u7B49\u5F85", handshake.stream_idle_timeout_seconds, 1, 3600), "\n    ").concat(field("stream_content_overrun_chars", "\u6D41\u5F0F\u5185\u5BB9\u8D85\u9650\u7A97\u53E3", handshake.stream_content_overrun_chars, 0, 16777216), "\n    ").concat(field("max_failures", "\u7194\u65AD\u5931\u8D25\u4E0A\u9650", breaker.max_failures, 1, 100), "\n    ").concat(field("cooldown_seconds", "\u7194\u65AD\u51B7\u5374\u65F6\u95F4", breaker.cooldown_seconds, 0, 86400), "\n    ").concat(settingsActions(), "\n  </form></details>");
+    return '<details class="transport-settings"><summary>'.concat(t("\u4F20\u8F93\u4E0E\u5BB9\u707E"), "</summary><form data-transport-settings-form>\n    ").concat(field("timeout_seconds", "\u8FDE\u63A5\u63E1\u624B\u7B49\u5F85", handshake.timeout_seconds, 1, 3600), "\n    ").concat(field("retry", "\u6682\u6001\u91CD\u8BD5\u6B21\u6570", handshake.retry, 0, 2), "\n    ").concat(field("request_timeout_seconds", "\u666E\u901A\u54CD\u5E94\u7B49\u5F85", handshake.request_timeout_seconds, 1, 3600), "\n    ").concat(field("stream_first_chunk_timeout_seconds", "\u6D41\u5F0F\u9996\u5757\u7B49\u5F85", handshake.stream_first_chunk_timeout_seconds, 1, 3600), "\n    ").concat(field("stream_idle_timeout_seconds", "\u6D41\u5F0F\u7A7A\u95F2\u7B49\u5F85", handshake.stream_idle_timeout_seconds, 1, 3600), "\n    ").concat(field("max_failures", "\u7194\u65AD\u5931\u8D25\u4E0A\u9650", breaker.max_failures, 1, 100), "\n    ").concat(field("cooldown_seconds", "\u7194\u65AD\u51B7\u5374\u65F6\u95F4", breaker.cooldown_seconds, 0, 86400), "\n    ").concat(settingsActions(), "\n  </form></details>");
   }
   function renderModelSettings() {
     const data = settingsProjection.data;
@@ -51783,8 +51782,7 @@
           retry: integer("retry"),
           request_timeout_seconds: integer("request_timeout_seconds"),
           stream_first_chunk_timeout_seconds: integer("stream_first_chunk_timeout_seconds"),
-          stream_idle_timeout_seconds: integer("stream_idle_timeout_seconds"),
-          stream_content_overrun_chars: integer("stream_content_overrun_chars")
+          stream_idle_timeout_seconds: integer("stream_idle_timeout_seconds")
         });
         Object.assign(breaker, {
           max_failures: integer("max_failures"),

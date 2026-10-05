@@ -2388,7 +2388,6 @@ function renderTransportSettings(): string {
     ${field("request_timeout_seconds", "普通响应等待", handshake.request_timeout_seconds, 1, 3600)}
     ${field("stream_first_chunk_timeout_seconds", "流式首块等待", handshake.stream_first_chunk_timeout_seconds, 1, 3600)}
     ${field("stream_idle_timeout_seconds", "流式空闲等待", handshake.stream_idle_timeout_seconds, 1, 3600)}
-    ${field("stream_content_overrun_chars", "流式内容超限窗口", handshake.stream_content_overrun_chars, 0, 16777216)}
     ${field("max_failures", "熔断失败上限", breaker.max_failures, 1, 100)}
     ${field("cooldown_seconds", "熔断冷却时间", breaker.cooldown_seconds, 0, 86400)}
     ${settingsActions()}

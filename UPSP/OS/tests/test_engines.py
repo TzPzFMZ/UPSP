@@ -2220,15 +2220,12 @@ class TestAPIExecutor:
         assert cfg.get_request_timeout() == 180
         assert cfg.get_stream_first_chunk_timeout() == 180
         assert cfg.get_stream_idle_timeout() == 180
-        assert cfg.get_stream_content_overrun_chars() == 65536
 
         cfg.load = lambda name: {
             "handshake": {
-                "stream_content_overrun_chars": 2048,
                 "retry": 99,
             },
         } if name == "api" else {}
-        assert cfg.get_stream_content_overrun_chars() == 2048
         assert cfg.get_handshake_retry() == 2
 
         for invalid in ("bad", 0):
@@ -2619,7 +2616,6 @@ class TestAPIExecutor:
                 "request_timeout": 180,
                 "first_chunk_timeout": 30,
                 "idle_timeout": 60,
-                "content_overrun_chars": 4096,
             },
         })
 
@@ -3257,9 +3253,6 @@ class TestAPIExecutor:
             def get_stream_idle_timeout(self):
                 return 90
 
-            def get_stream_content_overrun_chars(self):
-                return 65536
-
         class FakeStreamResponse:
             headers = {"Content-Type": "text/event-stream"}
 
@@ -3313,7 +3306,6 @@ class TestAPIExecutor:
             def get_request_timeout(self): return 300
             def get_stream_first_chunk_timeout(self): return 120
             def get_stream_idle_timeout(self): return 90
-            def get_stream_content_overrun_chars(self): return 65536
 
         class FakeStreamResponse:
             headers = {"Content-Type": "text/event-stream"}
@@ -3414,10 +3406,10 @@ class TestAPIExecutor:
         assert error_payload["provider_error_recoverable"] is False
 
     @pytest.mark.parametrize("delta_field", ["content", "reasoning_content"])
-    def test_spec524_streaming_plain_text_overrun_is_rejected(
-            self, monkeypatch, delta_field):
+    @pytest.mark.parametrize("with_tool", [False, True])
+    def test_streaming_long_text_reaches_provider_completion(
+            self, monkeypatch, delta_field, with_tool):
         from engines.executor import APIExecutor
-        from errors import APIBridgeError
 
         class FakeConfig(ConfigStoreStub):
             def get_request_timeout(self):
@@ -3429,9 +3421,6 @@ class TestAPIExecutor:
             def get_stream_idle_timeout(self):
                 return 90
 
-            def get_stream_content_overrun_chars(self):
-                return 1000
-
         class FakeStreamResponse:
             headers = {"Content-Type": "text/event-stream"}
 
@@ -3442,12 +3431,17 @@ class TestAPIExecutor:
                 return False
 
             def __iter__(self):
-                chunk = "x" * 700
-                return iter([
+                chunk = "x" * 40000
+                lines = [
                     ('data: {"choices":[{"delta":{"%s":"%s"}}]}\n' % (delta_field, chunk)).encode("utf-8"),
                     ('data: {"choices":[{"delta":{"%s":"%s"}}]}\n' % (delta_field, chunk)).encode("utf-8"),
-                    b"data: [DONE]\n",
-                ])
+                ]
+                if with_tool:
+                    lines.append(('data: ' + json.dumps({"choices": [{"delta": {
+                        "tool_calls": [{"index": 0, "id": "call_long", "type": "function",
+                                        "function": {"name": "file_read", "arguments": '{"path":"README.md"}'}}],
+                    }}]}) + '\n').encode("utf-8"))
+                return iter([*lines, b"data: [DONE]\n"])
 
             def read(self):
                 raise AssertionError("streaming path must not read full response body")
@@ -3462,34 +3456,24 @@ class TestAPIExecutor:
             lambda event_type, payload: stream_events.append((event_type, payload))
         )
 
-        with pytest.raises(APIBridgeError) as exc_info:
-            ex._send_request(
-                "https://api.example/v1/chat/completions",
-                "",
-                {"model": "unit", "messages": [], "stream": True},
-            )
-
-        assert "provider_stream_content_overrun" in str(exc_info.value)
-        error_payload = next(
+        result = ex._send_request(
+            "https://api.example/v1/chat/completions",
+            "",
+            {"model": "unit", "messages": [], "stream": True},
+        )
+        message = result["choices"][0]["message"]
+        assert message[delta_field] == "x" * 80000
+        if with_tool:
+            assert message["tool_calls"][0]["id"] == "call_long"
+            assert json.loads(message["tool_calls"][0]["function"]["arguments"]) == {"path": "README.md"}
+        assert not any(event_type == "llm_stream_error" for event_type, _ in stream_events)
+        done = next(
             payload for event_type, payload in stream_events
-            if event_type == "llm_stream_error"
+            if event_type == "llm_stream_done"
         )
-        assert error_payload["provider_error_kind"] == "provider_stream_content_overrun"
-        assert error_payload["provider_error_classification"] == (
-            "provider_model_format_instability"
-        )
-        assert error_payload["provider_error_recoverable"] is False
-        assert error_payload["content_chars"] == (1400 if delta_field == "content" else 0)
-        assert error_payload["reasoning_chars"] == (1400 if delta_field == "reasoning_content" else 0)
-        assert "total_chars=1400, limit_chars=1000" in str(exc_info.value)
-        assert exc_info.value.affects_connectivity is False
-        assert ex._provider_error_kind(exc_info.value) == "provider_stream_content_overrun"
-        from engines.runtime_control import RuntimeControl
-        result = RuntimeControl.step_exception_result("reaction", exc_info.value)
-        assert result["_local_blocked_reason"] == "blocked/provider_stream_content_overrun"
-        assert "本地输出上限" in result["response"]
-        assert "重试预算" not in result["response"]
-        assert "total_chars=1400, limit_chars=1000" in result["error"]
+        assert done["content_chars"] == (80000 if delta_field == "content" else 0)
+        assert done["reasoning_chars"] == (80000 if delta_field == "reasoning_content" else 0)
+        assert done["tool_call_count"] == int(with_tool)
 
     def test_spec527_provider_interruption_recovers_after_committed_progress(
             self, tmp_path):

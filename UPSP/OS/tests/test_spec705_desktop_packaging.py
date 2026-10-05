@@ -218,8 +218,8 @@ def test_spec707_product_manifest_is_the_release_version_truth():
     assert product == {
         "schema_version": "upsp_product_manifest.v1",
         "name": "UPSP",
-        "version": "0.1.3",
-        "windows_file_version": "0.1.3.0",
+        "version": "0.1.4",
+        "windows_file_version": "0.1.4.0",
         "channel": "stable",
         "build_number": 1,
         "author": {
@@ -235,7 +235,7 @@ def test_spec707_product_manifest_is_the_release_version_truth():
         "copyright": "Copyright (c) 2026 TzPzFMZ",
     }
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "0.1.3"' in pyproject
+    assert 'version = "0.1.4"' in pyproject
     manifest = (
         DESKTOP_ROOT / "UPSP.Desktop" / "app.manifest"
     ).read_text(encoding="utf-8")
@@ -249,20 +249,20 @@ def test_current_public_release_identity_and_memory_entry_wording():
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     readme_en = (REPO_ROOT / "README.en.md").read_text(encoding="utf-8")
     release = (
-        REPO_ROOT / "docs" / "public" / "releases" / "0.1.3.md"
+        REPO_ROOT / "docs" / "public" / "releases" / "0.1.4.md"
     ).read_text(encoding="utf-8")
     installer = (
         DESKTOP_ROOT / "installer" / "UPSP.nsi"
     ).read_text(encoding="utf-8")
 
-    assert "Windows Stable `0.1.3`" in readme
-    assert "Windows Stable `0.1.3`" in readme_en
-    assert "UPSP-Setup-0.1.3-win-x64.exe" in readme
-    assert "UPSP-Setup-0.1.3-win-x64.exe" in readme_en
-    assert "docs/public/releases/0.1.3.md" in readme
-    assert "docs/public/releases/0.1.3.md" in readme_en
-    assert "# UPSP 0.1.3" in release
-    assert "记忆条目" in release
+    assert "Windows Stable `0.1.4`" in readme
+    assert "Windows Stable `0.1.4`" in readme_en
+    assert "UPSP-Setup-0.1.4-win-x64.exe" in readme
+    assert "UPSP-Setup-0.1.4-win-x64.exe" in readme_en
+    assert "docs/public/releases/0.1.4.md" in readme
+    assert "docs/public/releases/0.1.4.md" in readme_en
+    assert "# UPSP 0.1.4" in release
+    assert "stream_content_overrun_chars" in release
     assert "发布草案" not in release
     assert "[待回填]" not in release
     assert "公共记忆" not in release

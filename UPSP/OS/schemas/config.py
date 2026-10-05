@@ -170,7 +170,6 @@ def default_models_config():
                 "request_timeout_seconds": 180,
                 "stream_first_chunk_timeout_seconds": 180,
                 "stream_idle_timeout_seconds": 180,
-                "stream_content_overrun_chars": 65536,
             },
             "circuit_breaker": {
                 "max_failures": 3,

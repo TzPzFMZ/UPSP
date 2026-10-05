@@ -309,7 +309,6 @@ export const english = {
   "连接握手等待": "Connection handshake timeout",
   "流式首块等待": "First stream chunk timeout",
   "流式空闲等待": "Stream idle timeout",
-  "流式内容超限窗口": "Stream content overrun window",
   "服务地址": "Service URL",
   "模型名称": "Model name",
   "密钥环境变量": "API key environment variable",

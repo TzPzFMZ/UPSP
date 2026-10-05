@@ -6168,6 +6168,8 @@ GUI 后端将全局控制面初始化与当前活动位格配置就绪分开。�
 | model_routing | routes.{setup\|reaction\|cleanup}.primary | route slot \| null | null | 主模型与独立推理强度；反应／善后空值按阶段向下继承 |
 | model_routing | routes.{phase}.backups[0..1] | route slot \| null | null | 当前阶段两个显式备用；不继承，空白即未配置 |
 
+流式正文与推理不设本地字符数熔断，不因尚未出现工具调用而截断长输出；输出额度由模型服务端处理，遵循上述输出 Token 参数合同。旧配置的 `stream_content_overrun_chars` 在模型库读取与保存时剔除，不参与执行；GUI 不再提供该设置。连接、首块与空闲超时、用户停止继续有效，历史超限事件保留原记录。
+
 新生成的时间戳统一使用 Windows 当前本地时区及其实际偏移；不提供时区设置，也不改写历史中已带偏移的时间戳。热度范围 0–100、`AH_low≥3`、F/S/A 正文上限和记忆字段结构属于协议常量，不进入配置。
 
 > 三级反抗阈值（5轮/1小时）不进config，Base版定死在代码中。

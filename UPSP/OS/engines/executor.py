@@ -67,7 +67,7 @@ ANTHROPIC_DEFAULT_OUTPUT_TOKENS = 32000
 
 
 class _ProviderTransportConfig:
-    """Only the four transport values needed inside the killable worker."""
+    """Only the transport timeouts needed inside the killable worker."""
 
     def __init__(self, values):
         self.values = dict(values or {})
@@ -80,9 +80,6 @@ class _ProviderTransportConfig:
 
     def get_stream_idle_timeout(self):
         return int(self.values["idle_timeout"])
-
-    def get_stream_content_overrun_chars(self):
-        return int(self.values["content_overrun_chars"])
 
 
 def _provider_transport_worker(connection, request):
@@ -820,7 +817,6 @@ class APIExecutor:
     PROVIDER_FORMAT_ERROR_KINDS = {
         "provider_stream_idle_timeout",
         "provider_stream_incomplete_tool_call",
-        "provider_stream_content_overrun",
         "provider_native_tool_empty_output",
     }
     PROVIDER_RECOVERABLE_FORMAT_KINDS = {
@@ -1996,8 +1992,6 @@ class APIExecutor:
     @staticmethod
     def _provider_error_kind(error, status_code=0):
         text = str(error or "").lower()
-        if text.startswith("provider_stream_content_overrun:"):
-            return "provider_stream_content_overrun"
         if "provider_output_limit_reached" in text:
             return "output_limit"
         if "provider_response_incomplete" in text:
@@ -3103,7 +3097,6 @@ class APIExecutor:
                 "request_timeout": self.cfg.get_request_timeout(),
                 "first_chunk_timeout": self.cfg.get_stream_first_chunk_timeout(),
                 "idle_timeout": self.cfg.get_stream_idle_timeout(),
-                "content_overrun_chars": self.cfg.get_stream_content_overrun_chars(),
             },
         }
         context = multiprocessing.get_context("spawn")
@@ -3394,31 +3387,6 @@ class APIExecutor:
                         protocol=provider,
                     )
                 summary = accumulator.summary()
-                plain_text_chars = (
-                    int(summary.get("content_chars") or 0)
-                    + int(summary.get("reasoning_chars") or 0)
-                )
-                content_overrun_chars = self.cfg.get_stream_content_overrun_chars()
-                if (
-                        content_overrun_chars > 0
-                        and plain_text_chars > content_overrun_chars
-                        and int(summary.get("tool_call_count") or 0) == 0):
-                    self._emit_stream_error(
-                        "provider_stream_content_overrun",
-                        accumulator,
-                        start,
-                        first_chunk_at=first_chunk_at,
-                        protocol=provider,
-                    )
-                    raise APIBridgeError(
-                        url,
-                        "provider_stream_content_overrun: "
-                        f"content_chars={summary.get('content_chars', 0)}, "
-                        f"reasoning_chars={summary.get('reasoning_chars', 0)}, "
-                        f"total_chars={plain_text_chars}, limit_chars={content_overrun_chars}; "
-                        "local output guard triggered without tool calls",
-                        affects_connectivity=False,
-                    )
                 total_chars = (
                     int(summary.get("content_chars") or 0)
                     + int(summary.get("reasoning_chars") or 0)

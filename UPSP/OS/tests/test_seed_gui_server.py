@@ -84,7 +84,6 @@ class IsolatedConfigStore:
                         "request_timeout_seconds": 180,
                         "stream_first_chunk_timeout_seconds": 180,
                         "stream_idle_timeout_seconds": 180,
-                        "stream_content_overrun_chars": 65536,
                     },
                     "circuit_breaker": {"max_failures": 3, "cooldown_seconds": 900},
                 },
@@ -518,7 +517,7 @@ def test_spec683_static_whitelist_polling_and_runtime_status(tmp_path):
         status, about = _request(server, "GET", "/api/about")
         assert status == 200
         assert about["schema_version"] == "seed_gui_about.v1"
-        assert about["product"]["version"] == "0.1.3"
+        assert about["product"]["version"] == "0.1.4"
         assert about["product"]["author"]["zh-CN"] == (
             "由 TzPzFMZ 发起、设计并与 AI 协作开发"
         )

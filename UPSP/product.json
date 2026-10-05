@@ -1,8 +1,8 @@
 {
   "schema_version": "upsp_product_manifest.v1",
   "name": "UPSP",
-  "version": "0.1.3",
-  "windows_file_version": "0.1.3.0",
+  "version": "0.1.4",
+  "windows_file_version": "0.1.4.0",
   "channel": "stable",
   "build_number": 1,
   "author": {

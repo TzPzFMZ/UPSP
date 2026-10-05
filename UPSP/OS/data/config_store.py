@@ -393,6 +393,10 @@ class ConfigStore:
     @staticmethod
     def _normalise_models(data):
         result = deepcopy(data)
+        transport = result.get("transport")
+        handshake = transport.get("handshake") if isinstance(transport, dict) else None
+        if isinstance(handshake, dict):
+            handshake.pop("stream_content_overrun_chars", None)
         for model in result.get("models") or []:
             if isinstance(model, dict):
                 model["prompt_cache"] = deepcopy(AUTOMATIC_PROMPT_CACHE)
@@ -842,7 +846,6 @@ class ConfigStore:
                 "request_timeout_seconds": (1, 3600),
                 "stream_first_chunk_timeout_seconds": (1, 3600),
                 "stream_idle_timeout_seconds": (1, 3600),
-                "stream_content_overrun_chars": (0, 16777216),
             }
             for key, (minimum, maximum) in bounded.items():
                 value = handshake.get(key)
@@ -1358,15 +1361,6 @@ class ConfigStore:
         except (TypeError, ValueError):
             value = 180
         return value if value > 0 else 180
-
-    def get_stream_content_overrun_chars(self):
-        cfg = self.load("api")
-        raw = cfg.get("handshake", {}).get("stream_content_overrun_chars", 65536)
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = 65536
-        return max(0, value)
 
     def get_handshake_retry(self):
         cfg = self.load("api")

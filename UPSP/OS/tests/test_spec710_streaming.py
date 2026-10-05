@@ -9,11 +9,6 @@ from errors import APIBridgeError
 from logic.native_tool_calls import extract_tool_call_envelopes
 
 
-class _Config:
-    def get_stream_content_overrun_chars(self):
-        return 100_000
-
-
 class _Response:
     headers = {"Content-Type": "text/event-stream"}
 
@@ -29,7 +24,6 @@ class _Response:
 
 def _read(provider, events):
     executor = object.__new__(APIExecutor)
-    executor.cfg = _Config()
     executor._monotonic = lambda: 1.0
     executor._stream_id = f"stream-{provider}"
     emitted = []
@@ -333,7 +327,6 @@ def test_spec772_other_provider_visible_text_boundaries_remain_closed():
 
 def test_spec710_custom_url_uses_explicit_protocol_instead_of_guessing():
     executor = object.__new__(APIExecutor)
-    executor.cfg = _Config()
     executor._monotonic = lambda: 1.0
     executor._stream_id = "custom-protocol"
     executor._stream_event_sink = lambda *_args: None
@@ -377,7 +370,6 @@ def test_spec710_subthreshold_tail_flushes_while_provider_is_paused():
             yield self._lines[2]
 
     executor = object.__new__(APIExecutor)
-    executor.cfg = _Config()
     executor._monotonic = time.monotonic
     executor._stream_id = "paused-stream"
     emitted = []
@@ -491,7 +483,6 @@ def test_spec710_incomplete_anthropic_tool_arguments_fail_closed():
 
 def test_spec710_bad_sse_json_is_classified_as_interrupted():
     executor = object.__new__(APIExecutor)
-    executor.cfg = _Config()
     executor._monotonic = lambda: 1.0
     executor._stream_id = "bad-json"
     executor._stream_event_sink = lambda *_args: None
