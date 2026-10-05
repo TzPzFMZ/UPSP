@@ -1,9 +1,9 @@
 {
   "schema_version": "upsp_public_source_manifest.v1",
-  "source_commit": "8e3462ae773dda9ac400c7c62ddf770208f56aae",
-  "source_tree_sha256": "22af37ef483957d8123b0274ea3f4591158fb784604a05429d528a3ac70e39ef",
+  "source_commit": "15a4c9068946e57dba0f513b1b7c76e18f325b40",
+  "source_tree_sha256": "f11b980eba83db1a03b2bd3603161173f4c0dfa2459901ba0e17b2a61d3fffcc",
   "file_count": 568,
-  "total_bytes": 26096154,
+  "total_bytes": 26095069,
   "files": [
     {
       "path": ".editorconfig",
@@ -12,8 +12,8 @@
     },
     {
       "path": ".gitattributes",
-      "bytes": 849,
-      "sha256": "862c4a367624c22b5808530d936148ab26457e6cb2b076925609a5e20828a5c6"
+      "bytes": 907,
+      "sha256": "6f661de85f91dbc1b877fb2ec6e8ba15eb22228eb04061bef6988af90bad486e"
     },
     {
       "path": ".gitignore",
@@ -1767,8 +1767,8 @@
     },
     {
       "path": "UPSP/gui/showcase/conversation-components.js",
-      "bytes": 59374,
-      "sha256": "9e4cd7883833268edbe9dc4dab1917b61aa800c6b874e80a944f3ad339919cc6"
+      "bytes": 58231,
+      "sha256": "5570baead575cd50b4e444c3f77d7dce19934f10bd338d177eb31c7f412d817a"
     },
     {
       "path": "UPSP/gui/src/app.ts",

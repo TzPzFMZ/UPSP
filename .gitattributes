@@ -10,4 +10,5 @@ docs/library/archive/current-state/pre-spec634/current_entry_index.md -text -dif
 UPSP/gui/app.js -text -diff
 UPSP/gui/markdown-mermaid.js -text -diff
 UPSP/gui/markdown.css -text -diff
+UPSP/gui/showcase/conversation-components.js -text -diff
 .speckit/specs/696-seed-gui-rich-markdown/consolidated_gui_substages/** -text -diff
